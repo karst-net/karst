@@ -131,11 +131,10 @@ PLAN.md §4.3.
 [ADR-0056](../../docs/adr/0056-four-component-families.md) defines four families:
 node agent, transport infrastructure, control services and trust tooling.
 The Relay component combines Ponor and TURN modes through a managed adapter to
-coturn or an external provider; that unified lifecycle/configuration is pending
-#404. Today's Compose deployment still uses `karst-relay` and optional coturn
-as separate processes with separate registries. The commands below are current,
-not a new embedded TURN feature. Gateway subnet/exit forwarding is a capability
-of an enrolled node, not a capability enabled by starting this Relay stack.
+coturn or an external provider. The [Relay deployment adapter](#relay-deployment-adapter)
+uses one manifest to manage the reference Compose processes. `karst-relay` and
+coturn retain separate identities, protocol state, and registries. Gateway
+subnet/exit forwarding is a capability of an enrolled node.
 
 ## TURN fallback (optional)
 
@@ -229,3 +228,93 @@ docker pull "$image@$digest"
 
 Run the same procedure for `karstd` and `karst-relay`. A development image
 tagged `:dev` is a local build and is intentionally not a release claim.
+
+
+## Relay deployment adapter
+
+`relay-service.py` (Python 3.11+, Docker Compose v2) manages Ponor and a managed
+coturn companion from `relay-service.toml`. It targets this reference Compose
+layout, not the production/HA or Kubernetes stacks. Existing `bootstrap.sh`,
+`docker compose` commands and profiles remain valid. The adapter never rotates
+identity keys, TLS material, shared secrets, registry files or allocation ports.
+It does not embed coturn into the Ponor process.
+
+For a new managed deployment, run `bootstrap.sh --turn`, review its policy,
+quotas, listening addresses and firewall settings, then start control. Bootstrap
+is idempotent for existing material. Copy and edit the shared manifest:
+
+```sh
+cp relay-service.toml.example relay-service.toml
+# For managed TURN: [turn] enabled = true, backend = "coturn-companion"
+docker compose up -d control
+./relay-service.py plan
+./relay-service.py apply --acknowledge-process-change
+./relay-service.py status
+```
+
+For an existing deployment, retain a backup of `state/` and `.env` using your
+normal secret-safe backup process; copy the example manifest and explicitly
+match the running modes before the first apply. `plan` validates required
+bootstrap material, credential file permissions, registry entries, control's
+configured file paths, and managed coturn's matching TURN-REST secret. It prints
+only desired modes and commands, without resolved environment or secrets. A
+manifest with unknown fields or missing booleans fails instead of disabling a
+mode implicitly. `plan` does not contact Docker or test network readiness.
+
+`apply` validates the Compose configuration, starts enabled managed processes
+with `--no-deps`, then stops disabled local processes. Control must already be
+running; the adapter does not restart it. It never runs `down`, removes volumes,
+or stops control. If a command fails, earlier commands may have completed;
+inspect `status` and fix the failure before retrying. Apply is idempotent, not
+transactional. Do not run concurrent applies or edit the manifest while applying.
+Docker retains its ordinary image-pull/start behavior; pin images according to
+your deployment's release policy.
+
+A successful apply saves `state/relay-service.applied.toml` and retains the prior
+successful manifest as `state/relay-service.applied.toml.previous`, both mode
+0600. For process rollback, review/copy that previous manifest to
+`relay-service.toml`, run `plan`, then apply again. Failed applies do not record
+success. The snapshots contain desired mode configuration, not database or
+secret backups. Original bootstrap and Compose commands remain usable when
+rolling back to tooling without this adapter.
+
+### Process modes and account publication
+
+Local process state and account publication are distinct. Before stopping a
+mode, withdraw the relevant endpoints through the control **Relay Services**
+mode/publication controls and allow agents to refresh their netmaps. Coordinate
+all accounts using the shared process; disabling one association does not mean
+a backend is unused. Review fallback availability and active allocation loss,
+then apply the deployment manifest. On enabling, start/check the process first,
+then activate publication after admission/allocation observations succeed.
+Neither the script nor its acknowledgment changes membership, policy, local
+Gateway consent or control's publication authority. See
+[Relay Services](../../docs/relay-services.md) for version gates and rollback.
+
+Set `turn.backend = "external"` for a provider process you do not own. Install
+the provider's compatible TURN-REST shared secret as `state/turn-secret` (0600),
+set its endpoint(s) in `state/turns.json`, and retain the same two control file
+paths in `.env`. Update/restart control if its environment changes. The adapter
+checks integration files but does not provision, restart, stop or assert
+readiness of that provider. It stops this stack's local coturn when selecting
+external mode, so withdraw any local endpoint before switching. Provider-specific
+credentials without TURN-REST compatibility are not implemented by this adapter.
+
+Status exposes the Ponor process and TURN companion independently, including a
+leftover local coturn process even when an external backend is selected. Running
+containers with no healthcheck report `unprobed`, not healthy. Use control's
+fresh Ponor admission and TURN allocation observations for readiness; deployment
+state does not prove credential acceptance, permissions/channel bindings,
+network reachability, or end-to-end encrypted transit. One mode's success must
+not hide the other's failure. Existing coturn quotas and bandwidth settings are
+retained; shared accounting and other deployment-platform adapters remain #404
+work.
+
+Run the adapter tests with:
+
+```sh
+python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
+# Also exercise real Compose start/stop/re-enable in an isolated project.
+# Requires local alpine:latest; containers are harmless process stand-ins.
+KARST_COMPOSE_LIFECYCLE_TEST=1 python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
+```

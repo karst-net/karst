@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+# Copy to relay-service.toml after bootstrap.sh (or bootstrap.sh --turn).
+# Process configuration only: account publication uses the Relay Services API.
+schema_version = 1
+
+[ponor]
+enabled = true
+
+[turn]
+enabled = false
+# none, coturn-companion, or external. External never starts a provider process.
+backend = "none"

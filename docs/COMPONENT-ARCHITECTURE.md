@@ -117,8 +117,10 @@ presence fields describe registry availability, not runtime health. Legacy
 credential minting and wire projections remain in use. Operators can preview
 and explicitly enable service-based publication, or retain legacy registry
 publication. A bounded adapter probes TURN allocation readiness from control and exposes
-fresh/stale results independently of Ponor admission. Runtime backend process
-management and full transport-path verification remain pending. The Relay console groups
+fresh/stale results independently of Ponor admission. The reference Compose
+[deployment adapter](../deploy/compose/README.md#relay-deployment-adapter) manages
+Ponor/coturn process modes from one manifest without changing account publication.
+Other deployment adapters and full transport-path verification remain pending. The Relay console groups
 service associations and existing Ponor/TURN backend controls in one view.
 Explicit per-mode controls withdraw service endpoints and pause TURN probes
 without deleting backend configuration. Versioned persistence guards older

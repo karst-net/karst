@@ -11,3 +11,6 @@ state/
 # KARST_TURN_REGISTRY_FILE/KARST_TURN_SHARED_SECRET_FILE automatically.
 # Deployment-specific, like state/.
 .env
+
+# Local desired process modes; the reviewed template is tracked.
+relay-service.toml
