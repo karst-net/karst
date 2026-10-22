@@ -4,8 +4,9 @@
 ADR-0056 combines Ponor and TURN under one Relay service model. The first
 control implementation adds explicit, account-scoped service associations;
 service-driven netmap publication is opt-in. An allocation adapter checks TURN
-admission and readiness. Companion process management and full transport
-verification remain tracked in #404.
+admission and readiness. The reference [Compose deployment adapter](../deploy/compose/README.md#relay-deployment-adapter)
+manages local companion processes separately from account publication. Other
+platform adapters and full transport verification remain tracked in #404.
 
 ## Console
 
@@ -57,8 +58,8 @@ TURN metadata is refreshed even on an `unchanged` netmap response, as required
 by the existing wire contract. Its exclusion from the peer-content hash is
 preserved. Clients predating these runtime fixes need restart-based handling of
 transport registry changes; live lifecycle behavior requires updated agents.
-Mixed-version capability enforcement and complete namespace forwarding tests
-remain tracked in #404.
+The compatibility gate below protects live mode changes. Complete mixed-version
+deployment and namespace forwarding tests remain tracked in #404.
 
 Current agent publication supports UDP `turn:host:port` endpoints, including
 IPv6 literals. TCP/TLS TURN endpoints and transport-query URI variants can be
