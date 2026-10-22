@@ -152,6 +152,38 @@ anything. A non-administrator can see the current exit but cannot change it.
 | `karstd` is uninstalled or stopped for good | Only state Karst itself changed is undone: the `karst_routes` nftables table is removed, and a forwarding sysctl Karst flipped from `0` is restored to `0` — one it found already enabled is left alone. Any operator firewall rules and any forwarding sysctl already on before Karst ran are untouched. |
 | A route's gateway *group* has more than one member and the currently-effective one goes offline | The server excludes an offline gateway from the route's candidate set entirely once its control-channel session ends (not the row above's `REKEY_AFTER_TIME`, which is a *recipient's own* data-plane session-liveness question, not this one) — the next netmap push carries only the remaining, connected candidate(s), and every recipient's local HA selection (lowest metric, tied by gateway ID) converges on the same one deterministically. Recovery is bounded by netmap refresh latency, typically seconds, not the ~2-minute figure above. If every member of the group is offline, the route is withdrawn entirely rather than offered pointing at nothing reachable. This governs which gateway a route is offered through; it is not liveness-aware selection *within* an already-accepted netmap — a recipient does not re-run selection on its own between pushes. |
 
+### Gateway consent configuration migration
+
+Server-managed nodes accept `node.gateway_exit_state_file` as the canonical
+name for local durable exit consent. `node.exit_node_state_file` remains a
+supported compatibility alias. Both names resolve relative paths against the
+configuration directory and use the same protected file and route-ID format.
+Omitting the setting retains the existing platform default. This setting
+chooses storage only: it neither enables forwarding nor grants exit consent.
+Static rosters do not receive managed route offers and do not use this setting.
+
+Before changing a deployed configuration:
+
+1. Back up the configuration and existing consent file with their owner-only
+   permissions intact. Record the resolved path; do not change it.
+2. In the existing `[node]` table, replace only the key
+   `exit_node_state_file` with `gateway_exit_state_file`, keeping its value.
+   Do not add both: the daemon rejects duplicate spellings, even if equal.
+3. Upgrade the daemon before using the new spelling. Older daemons reject it
+   as an unknown field; the legacy spelling works on both versions.
+4. After restarting, inspect `karst gateway exit list` and
+   `karst gateway status`. Existing selection is retained; actual exit use
+   still requires an eligible authenticated offer and the usual policy checks.
+
+For rollback, restore the legacy key spelling and keep the **current** consent
+file at the same path. Do not restore an old consent backup over a later
+`gateway exit disable`, which would resurrect withdrawn consent. No file move,
+route-ID conversion, permission change, or default-path change is required.
+Legacy settings remain supported; no removal version has been scheduled.
+This additive migration covers local consent storage naming only; unified
+control configuration, route persistence, APIs/UI and Relay migration remain
+tracked in #404.
+
 ## 5. Inspecting effective state
 
 The Gateway command group combines inspection of subnet and exit routing with

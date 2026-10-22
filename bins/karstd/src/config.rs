@@ -437,7 +437,14 @@ pub struct NodeSection {
     /// on the same host, such as an integration test running several nodes in
     /// separate network namespaces, which would otherwise all share one root's
     /// worth of exit-route state.
-    #[serde(default)]
+    /// The canonical TOML spelling is `gateway_exit_state_file`; the legacy
+    /// `exit_node_state_file` alias reads the same file. Serde rejects both
+    /// spellings together, even with equal values, rather than choosing one.
+    #[serde(
+        default,
+        rename = "gateway_exit_state_file",
+        alias = "exit_node_state_file"
+    )]
     pub exit_node_state_file: Option<PathBuf>,
     /// How many TUN-queue/UDP-socket worker threads carry the datapath —
     /// karst-net/karst#118's sharded datapath.
@@ -464,6 +471,24 @@ pub struct NodeSection {
     /// property for a benefit most of them cannot use.
     #[serde(default = "default_datapath_workers")]
     pub datapath_workers: usize,
+}
+
+impl NodeSection {
+    /// Resolve local consent storage without moving or rewriting existing state.
+    /// Relative paths remain relative to the configuration directory.
+    #[must_use]
+    pub fn gateway_exit_state_path(&self, config_dir: &Path) -> PathBuf {
+        self.exit_node_state_file.as_ref().map_or_else(
+            || crate::exit_node::DEFAULT_STATE_FILE.into(),
+            |path| {
+                if path.is_absolute() {
+                    path.clone()
+                } else {
+                    config_dir.join(path)
+                }
+            },
+        )
+    }
 }
 
 /// The `[control]` table: how to reach the coordination server.
@@ -1967,6 +1992,68 @@ host_integration = "resolvconf"
         let (dns, interface) = load_dns_settings(&path).expect("dns-only load");
         assert_eq!(interface, "karst7");
         assert_eq!(dns.host_integration, HostIntegration::Resolvconf);
+    }
+
+    fn gateway_node(settings: &str) -> Result<NodeSection, toml::de::Error> {
+        toml::from_str(&format!(
+            "listen = \"0.0.0.0:51820\"\nprivate_key_file = \"missing.key\"\n{settings}"
+        ))
+    }
+
+    #[test]
+    fn gateway_consent_config_preserves_defaults_and_path_resolution() {
+        let dir = Scratch::new("gateway-config");
+        let node = gateway_node("").expect("default node");
+        assert_eq!(
+            node.gateway_exit_state_path(dir.path()),
+            PathBuf::from(crate::exit_node::DEFAULT_STATE_FILE)
+        );
+        for key in ["gateway_exit_state_file", "exit_node_state_file"] {
+            let node = gateway_node(&format!("{key} = \"state/selected\"")).expect("alias");
+            assert_eq!(
+                node.gateway_exit_state_path(dir.path()),
+                dir.join("state/selected")
+            );
+            let absolute = dir.join("absolute");
+            let value = toml::Value::String(absolute.to_string_lossy().into_owned());
+            let node = gateway_node(&format!("{key} = {value}")).expect("absolute path");
+            assert_eq!(node.gateway_exit_state_path(dir.path()), absolute);
+        }
+    }
+
+    #[test]
+    fn gateway_consent_config_rejects_ambiguous_aliases_and_unknown_settings() {
+        for second in ["old", "new"] {
+            for settings in [
+                format!("exit_node_state_file = \"old\"\ngateway_exit_state_file = \"{second}\""),
+                format!("gateway_exit_state_file = \"{second}\"\nexit_node_state_file = \"old\""),
+            ] {
+                let error = gateway_node(&settings).expect_err("duplicate setting");
+                assert!(error.to_string().contains("duplicate field"));
+                assert!(error.to_string().contains("gateway_exit_state_file"));
+            }
+        }
+        assert!(gateway_node("gateway_enabled = true").is_err());
+        assert!(gateway_node("gateway_exit_state_file = true").is_err());
+    }
+
+    #[test]
+    fn gateway_consent_config_migration_and_rollback_preserve_selection() {
+        let dir = Scratch::new("gateway-migration");
+        let legacy = gateway_node("exit_node_state_file = \"state/selected\"").expect("legacy");
+        let modern = gateway_node("gateway_exit_state_file = \"state/selected\"").expect("modern");
+        let old_path = legacy.gateway_exit_state_path(dir.path());
+        let new_path = modern.gateway_exit_state_path(dir.path());
+        let mut selection = crate::exit_node::Selection::load(&old_path).expect("load");
+        assert_eq!(selection.active(), None);
+        selection.select("internet").expect("consent");
+        let before = std::fs::read(&old_path).expect("persisted consent");
+        let mut migrated = crate::exit_node::Selection::load(&new_path).expect("upgrade");
+        assert_eq!(migrated.active(), Some("internet"));
+        assert_eq!(std::fs::read(&new_path).expect("same file"), before);
+        migrated.disable().expect("withdraw consent");
+        let rolled_back = crate::exit_node::Selection::load(&old_path).expect("rollback");
+        assert_eq!(rolled_back.active(), None);
     }
 
     /// ADR-0020: QUIC is opt-in, matching the relay side's own default.

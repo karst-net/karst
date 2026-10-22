@@ -1377,6 +1377,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
     let mut client = Client::new(section, dir, &keys)?;
     client.reach_via_nat64(nat64);
 
+    let gateway_exit_state_path = file.node.gateway_exit_state_path(dir);
     let local = LocalSettings {
         keys,
         listen: file.node.listen,
@@ -1397,10 +1398,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         // a relative one means what an operator editing the file expects.
         relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),
         prefer_quic_relay: section.prefer_quic_relay,
-        exit_node_state_file: Some(file.node.exit_node_state_file.as_ref().map_or_else(
-            || crate::exit_node::DEFAULT_STATE_FILE.into(),
-            |p| resolve(p, dir),
-        )),
+        exit_node_state_file: Some(gateway_exit_state_path),
     };
 
     // A current-thread runtime, created and dropped here. The datapath is
