@@ -56,7 +56,6 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
-	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/karst/tutorialmode"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
@@ -135,18 +134,12 @@ type Karst struct {
 // and nothing else, which is only meaningful if a human decided what it is.
 // Nil means no relays, and therefore no relaying — see karst/relayreg.
 //
-// turnServers and turnMinter are ADR-0008 §4's TURN fallback, in the same
-// spirit as relays: operator-configured input rather than something this
-// package discovers. Either nil means no TURN configured — see
-// karst/turncred — and produces netmaps with no turn_servers field at all,
-// exactly as before this parameter existed.
-//
 // scalerAdvisorURL is ADR-0045 §7 Phase 1 PR 5's own operator-configured
 // address (KARST_SCALER_ADVISOR_URL): where karst-scaler advise's own
 // loopback /recommendations endpoint is reachable from this server's host.
 // Empty means the GET /karst/v1/scaler/recommendations endpoint is
 // configured-but-absent — see RegisterEndpoints' own doc comment.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration) (*Karst, error) {
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -297,10 +290,6 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// data to train/chart against -- see relayreg.Store's own doc comment
 	// on RegionDemandSample for why this did not already exist.
 	relayStore.StartDemandHistoryWorker(context.Background(), demandHistoryInterval, demandHistoryRetention)
-	turnStore, err := turncred.NewStore(db)
-	if err != nil {
-		return nil, fmt.Errorf("karst: turn store: %w", err)
-	}
 	relayServiceStore, err := relayservice.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay service store: %w", err)
@@ -452,8 +441,8 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, router)
-		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager(), TurnConfigured: turnMinter != nil})
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, router)
+		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager()})
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)
@@ -496,9 +485,6 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			Relays:              relays,
 			RelayStore:          relayStore,
 			RelayServices:       relayServiceStore,
-			TurnServers:         turnServers,
-			TurnMinter:          turnMinter,
-			TurnStore:           turnStore,
 			Bedrock:             bedrockLog,
 			RegionAllow:         regionAllowStore,
 			EphemeralAnchors:    ephemeralAnchorStore,

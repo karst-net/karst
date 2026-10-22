@@ -8,8 +8,8 @@ behind an operational choice, use the [security whitepaper](SECURITY-WHITEPAPER.
 
 [Component architecture](COMPONENT-ARCHITECTURE.md) groups operations into
 node agent, transport infrastructure, control services and trust tooling.
-Gateway is the node's subnet/exit forwarding capability. Relay combines Ponor
-and TURN modes through a managed coturn/external-provider adapter; unified
+Gateway is the node's subnet/exit forwarding capability. Relay is Ponor only
+— standalone TURN support was dropped (ADR-0056's addendum); unified
 configuration/lifecycle is pending #404. The commands below remain current.
 
 ## 1. Deployment topologies
@@ -17,9 +17,8 @@ configuration/lifecycle is pending #404. The commands below remain current.
 ### Container deployment
 
 Use [`deploy/compose/README.md`](../deploy/compose/README.md) as the canonical
-procedure for co-located control services and the Relay's Ponor process plus
-optional coturn backend. Current deployment still uses separate processes and
-configuration. Keep `state/` private and backed up off-host; it contains the server keys pinned by
+procedure for co-located control services and the Relay's Ponor process. Keep
+`state/` private and backed up off-host; it contains the server keys pinned by
 every node. Verify release images with `cosign`, record their immutable
 digests, and deploy those digests rather than mutable tags. Re-running
 `bootstrap.sh` completes missing state without rotating existing identities.
@@ -73,11 +72,9 @@ retaining per-route kind and counters. Only supported forwarding hosts may
 serve this capability; endpoint support alone is insufficient.
 
 For Relay, inspect Ponor roster freshness/admission, reflector reachability,
-and TURN backend allocation/permission failures, credential expiry, port and
-bandwidth capacity independently. Keep per-mode evidence when one mode is
-healthy and another is not. Configure quotas/rate limits at each backend;
+port and bandwidth capacity. Configure quotas/rate limits at the backend;
 never expose a shared secret in status output. #404 will unify the service
-view and managed adapter, preserving coturn/external-provider support.
+view.
 
 Back up control state, node consent and identity state, and Bedrock signing
 material under their separate custody rules. A healthy Relay neither proves
@@ -112,7 +109,7 @@ move the one-writer duty—never run competing roster writers.
 Run `sudo karst status`. Empty `addresses` means no netmap arrived;
 `policy.enforcing = false` means traffic is not filtered; `connecting` with
 `transport = relay` is normal during path discovery, while persistent relay
-use deserves NAT/TURN inspection. Check netmap age and control-session health
+use deserves NAT inspection. Check netmap age and control-session health
 before changing firewall rules.
 
 ## 3. Observability and diagnostics
@@ -128,10 +125,10 @@ Print a sanitized support bundle with:
 sudo karst bugreport
 ```
 
-Review the output before sharing it. It intentionally omits netmap PSKs,
-TURN credentials, and keys, while reporting control-session health, Bedrock
-chain state, relay/TURN reachability, configuration with secrets redacted, and
-recent logs. Correlate a stale netmap with
+Review the output before sharing it. It intentionally omits netmap PSKs and
+keys, while reporting control-session health, Bedrock chain state, relay
+reachability, configuration with secrets redacted, and recent logs.
+Correlate a stale netmap with
 `management_karst_netmap_push_duration_ms_milliseconds`; check
 `management_karst_bedrock_anchor_age_seconds` and
 `management_karst_psk_epoch_age_seconds` before blaming the datapath.

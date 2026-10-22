@@ -11,13 +11,13 @@ listed below describe the current implementation, not newly available syntax.
 | Family | Main functions | Current programs and integrations |
 |---|---|---|
 | Node agent | Device identity; encrypted sessions; path selection; packet enforcement; local routes/DNS; optional Gateway forwarding | `karstd`, `karst`, platform client UI; PHREATIC, AVEN, KarstDNS |
-| Transport infrastructure | One Relay with Ponor and TURN modes; presence/bootstrap; discovery reflection; ciphertext transit | `karst-relay` plus optional coturn or an external TURN provider; managed adapter consolidation pending #404 |
+| Transport infrastructure | One Relay (Ponor); presence/bootstrap; discovery reflection; ciphertext transit | `karst-relay`; standalone TURN support dropped in favor of Relay-only transport fallback |
 | Control services | Enrollment; users/groups; policy; netmaps; route/DNS configuration; Relay discovery and credentials; administration/audit | `karst-control`, console, portal; IdP/SCIM and SIEM integrations |
 | Trust tooling | Bedrock roots/authorities; membership approval/revocation; verifiable chain; audit anchoring | `karst-bedrock`; verification in agents/control; optional scoped online anchor signer |
 
 Protocols are not additional components. Gateway is a capability of a node;
-subnet access and exit egress are its route behaviors. Relay is one component
-with two transport modes. Families can share a host without sharing authority.
+subnet access and exit egress are its route behaviors. Relay is one component.
+Families can share a host without sharing authority.
 
 ```mermaid
 flowchart TD
@@ -25,7 +25,7 @@ flowchart TD
     Control -->|policy, peers, routes, DNS, credentials| Nodes["Node agents"]
     Trust -->|independent verification| Nodes
     Control -->|discovery and admission configuration| Relay["Transport infrastructure: Relay"]
-    Nodes <-->|Ponor or TURN ciphertext| Relay
+    Nodes <-->|Ponor ciphertext| Relay
     Nodes <-->|direct PHREATIC sessions| Peers["Other node agents"]
     Nodes -->|Gateway forwards inner packets| Network["LAN, VPC, or Internet"]
 ```
@@ -76,73 +76,58 @@ endpoint platform or userspace networking mode does not by itself establish
 support for hosting a forwarding Gateway; #404 must publish a verified platform
 matrix rather than assume parity.
 
-## Relay: one service, Ponor and TURN modes
+## Relay: one service, Ponor only
 
 Ponor supplies persistent peer presence/bootstrap, opaque forwarding, and AVEN
-reflector assistance. TURN supplies allocated relay addresses and permission/
-channel state; it does not replace Ponor presence. Client AVEN path selection
-uses direct connectivity when viable and supported relay modes otherwise.
+reflector assistance. Client AVEN path selection uses direct connectivity when
+viable and the co-located relay otherwise.
 
-ADR-0056 chooses a managed TURN adapter. The target Relay service has one
-operator-facing identity/record associating its Ponor endpoints and optional
-TURN backends, mode enablement, readiness, lifecycle, limits, and accounting.
-Each mode retains its own authentication and protocol state. A provider's
-failure must remain visible even while Ponor is healthy, and vice versa.
-Co-location is optional; an external backend's location and operator must be
-disclosed rather than inferred from its associated Ponor host.
+ADR-0056's addendum dropped the standalone TURN fallback this component used
+to also support: a managed adapter to coturn or an external TURN provider was
+one of two options #403/ADR-0056 originally left open for combining Ponor and
+TURN, and the simpler alternative — drop TURN, Relay-only — was chosen instead
+once the Gateway inventory and Relay Services work made the added complexity
+of a second, independently-authenticated transport mode hard to justify for
+the coverage it bought. The target Relay service has one operator-facing
+identity/record associating its Ponor endpoints, mode enablement, readiness,
+lifecycle, limits, and accounting.
 
-**Current implementation:** `karst-relay` serves Ponor and its reflector; it
-is not an embedded TURN server. Compose can deploy coturn as a companion via
-`bootstrap.sh --turn` and the `turn` profile. Control reads separate Relay and
-TURN registries and sends separate `relays` and `turn_servers` netmap data.
-The client maintains separate Ponor and TURN connection workers. See
-[`deploy/compose/README.md`](../deploy/compose/README.md#turn-fallback-optional),
-`bins/karstd/src/netmap.rs`, and `bins/karstd/src/turn.rs`.
+**Current implementation:** `karst-relay` serves Ponor and its reflector.
+Control reads the Relay registry and sends `relays` netmap data. See
+[`deploy/compose/README.md`](../deploy/compose/README.md) and
+`bins/karstd/src/netmap.rs`.
 
-Operational requirements for the combined component:
+Operational requirements for the component:
 
-- Publish usable endpoints and protocol-specific authentication material;
-  Ponor identity pins, TLS names, and admission rosters remain distinct from
-  TURN time-limited credentials and backend shared secrets.
-- Refresh Ponor roster leases and TURN credentials/allocations before expiry;
-  never treat cached expired credentials as a healthy path.
-- Track presence, admissions, allocation/permission/channel failures, expiry,
-  mode-specific latency, capacity, bandwidth/quotas, reconnect, and failover.
-- Enforce backend allocation/port limits and quotas as well as Ponor admission
-  and rate limits. A shared view must not turn either mode into an open relay.
-- Redact secrets from diagnostics; disclose the backend operator's access to
-  traffic endpoints, timing, and volume. Neither mode reads overlay plaintext.
+- Publish usable endpoints and protocol-specific authentication material:
+  Ponor identity pins, TLS names, and admission rosters.
+- Refresh Ponor roster leases before expiry; never treat a cached expired
+  credential as a healthy path.
+- Track presence, admissions, expiry, latency, capacity, reconnect, and
+  failover.
+- Enforce Ponor admission and rate limits. A shared view must not turn the
+  mode into an open relay.
+- Redact secrets from diagnostics. Ponor does not read overlay plaintext.
 
-These requirements are acceptance targets for #404, not claims that a unified
-health endpoint or provider lifecycle adapter already exists.
-
-The additive [Relay service association API](relay-services.md) stores explicit
-account-local Ponor/TURN links and backend operator declarations. Its per-mode
-presence fields describe registry availability, not runtime health. Legacy
-credential minting and wire projections remain in use. Operators can preview
-and explicitly enable service-based publication, or retain legacy registry
-publication. A bounded adapter probes TURN allocation readiness from control and exposes
-fresh/stale results independently of Ponor admission. The reference Compose
-[deployment adapter](../deploy/compose/README.md#relay-deployment-adapter) manages
-Ponor/coturn process modes from one manifest without changing account publication.
-Other deployment adapters and full transport-path verification remain pending. The Relay console groups
-service associations and existing Ponor/TURN backend controls in one view.
-Explicit per-mode controls withdraw service endpoints and pause TURN probes
-without deleting backend configuration. Versioned persistence guards older
-service-aware control against ignoring those flags. Updated agents support
-live activation/withdrawal and refresh TURN credentials on unchanged netmaps.
+The additive [Relay service association API](relay-services.md) stores an
+explicit account-local Ponor link. Its presence field describes registry
+availability, not runtime health. Legacy credential minting and wire
+projections remain in use. Operators can preview and explicitly enable
+service-based publication, or retain legacy registry publication. The
+reference Compose [deployment adapter](../deploy/compose/README.md#relay-deployment-adapter)
+manages the Ponor process mode from one manifest without changing account
+publication. Other deployment adapters remain pending. The Relay console
+groups service associations and existing Ponor backend controls in one view.
+Explicit mode controls withdraw service endpoints without deleting backend
+configuration. Versioned persistence guards older service-aware control
+against ignoring those flags. Updated agents support live
+activation/withdrawal on unchanged netmaps.
 
 ### Current transport limits
 
 The AVEN specification's [path-selection rules](../spec/aven-v1.md#8-path-selection)
 and [open items](../spec/aven-v1.md#12-open-items--this-draft-is-incomplete)
-remain authoritative. Current Ponor-versus-TURN choice is structural, not a new
-latency-based comparison supplied by the combined model. The measured TURN
-path assumes a shared TURN host per account; different per-peer TURN hosts can
-still reproduce the documented dispatch failure. #404 must test and resolve
-or explicitly reject unsupported backend combinations before offering them
-through the unified service. Association with one Relay record alone does not
-make an arbitrary multi-backend topology work.
+remain authoritative.
 
 ## Ownership at overlaps
 
@@ -167,9 +152,9 @@ The implementation must provide the following compatibility path:
 
 1. **Inventory and normalization:** map existing subnet/exit route records into
    one Gateway model without changing route IDs, approved prefixes, groups,
-   metrics, NAT settings, recipient choices, or consent. Map separate Relay and
-   TURN records into explicit service/backend associations; never infer an
-   association solely from a matching IP, region, or provider.
+   metrics, NAT settings, recipient choices, or consent. Map Relay records
+   into explicit service/backend associations; never infer an association
+   solely from a matching IP, region, or provider.
 2. **Additive rollout:** introduce versioned/additive API and persistence support
    before changing writers. Keep existing CLI/config aliases and separate
    wire projections for older clients while supported. Preserve route kinds
@@ -185,11 +170,9 @@ The implementation must provide the following compatibility path:
 5. **Operator migration:** supply a dry-run report of old-to-new associations,
    permissions, and deployment changes, plus backup/restore instructions.
    Preserve current ports/profile behavior until a documented migration exists.
-   External TURN remains supported through the adapter; external processes
-   are not stopped by a local service disable unless explicitly managed.
 6. **Verification and rollback:** test old/new client and control combinations,
    both Gateway behaviors together, local consent across restart, policy denial,
-   route precedence, IPv4/IPv6/DNS, both Relay modes and failover, expiry,
+   route precedence, IPv4/IPv6/DNS, Relay failover, expiry,
    admission, and Bedrock enforcement. Keep old projections during the support
    window. Publish its concrete version boundaries in #404 before removal.
    Rollback must not activate dormant routes, clear client consent, rotate

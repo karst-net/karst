@@ -173,7 +173,7 @@ func TestEnrollmentPortalThroughControl(t *testing.T) {
 	nodes, err := karstnode.NewStore(am.Store.(*store.SqlStore).GetDB())
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodPost, "/karst/v1/me/devices/enroll", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: user.AccountID, UserId: user.Id})
 	rec := httptest.NewRecorder()
@@ -695,7 +695,7 @@ func TestDeviceInvitationHTTPLifecycle(t *testing.T) {
 	nodes, err := karstnode.NewStore(am.Store.(*store.SqlStore).GetDB())
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
 	request := func(method, path, body, user string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: user})
@@ -752,7 +752,7 @@ func TestDeviceInvitationHTTPDelegatedAdminReachesOwnDomainOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, domainManager, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, domainManager, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
 	request := func(method, path, body, user string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: user})
@@ -958,7 +958,7 @@ func TestEnrollmentDomainDNSNamesInDelegatedViewsAfterRename(t *testing.T) {
 	_, err = mgr.CommitRootRename(ctx, member.AccountID, "owner", "corp.example", preview.Revision)
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/domains", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: member.Id})
 	response := httptest.NewRecorder()
@@ -988,7 +988,7 @@ func TestEnrollmentRootHTTPProtectedLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	mgr := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
 	for _, method := range []string{http.MethodDelete, http.MethodPut, http.MethodPatch} {
 		req := httptest.NewRequest(method, "/karst/v1/domains/"+root.ID, strings.NewReader(`{"parent_id":"another-domain"}`))
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: "owner"})

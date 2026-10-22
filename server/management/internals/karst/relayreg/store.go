@@ -206,12 +206,10 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 // learns its registry id, which is derived from the relay's own identity
 // key (RelayID), generated at the relay's own boot, not from its address.
 //
-// Unlike DeleteByURI on turncred.Store (#320), the id here cannot be
-// derived from the input directly — a relay's id and its address are
-// independent values, where a TURN server's id *is* its URI's own
-// encoding. So this looks the row up by address first, then deletes by
-// the id it finds, reusing Delete for the invalidation/metrics side
-// effects that method already has right.
+// The id here cannot be derived from the input directly — a relay's id and
+// its address are independent values. So this looks the row up by address
+// first, then deletes by the id it finds, reusing Delete for the
+// invalidation/metrics side effects that method already has right.
 func (s *Store) DeleteByAddress(ctx context.Context, address string) error {
 	accountID, err := accountFromContext(ctx)
 	if err != nil {

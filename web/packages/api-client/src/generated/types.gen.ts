@@ -504,25 +504,9 @@ export type RelayService = {
      */
     ponor_id: string;
     /**
-     * Optional existing account-local TURN registry ID.
-     */
-    turn_id?: string;
-    /**
-     * Required with turn_id; omitted without it. Deployment ownership only.
-     */
-    backend_kind?: 'external' | 'coturn-companion';
-    /**
-     * Required with turn_id; identifies who operates the backend.
-     */
-    backend_operator?: string;
-    /**
      * Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
      */
     ponor_disabled?: boolean;
-    /**
-     * Withdraw this association's TURN endpoint in service publication mode and exclude it from subsequent probes unless another association enables it.
-     */
-    turn_disabled?: boolean;
 };
 
 export type RelayServiceView = RelayService & {
@@ -530,22 +514,6 @@ export type RelayServiceView = RelayService & {
      * Referenced Ponor registry entry exists in this account; not a health result.
      */
     ponor_present: boolean;
-    /**
-     * Referenced TURN registry entry exists in this account; false when TURN is absent; not a health result.
-     */
-    turn_present: boolean;
-    turn_health?: RelayTurnHealth;
-};
-
-/**
- * Authenticated TURN allocation observation from the control host. Does not prove client reachability or encrypted overlay delivery. Observations older than three minutes are stale.
- */
-export type RelayTurnHealth = {
-    source: 'control_allocation_probe';
-    state: 'unknown' | 'ready' | 'denied' | 'unreachable' | 'timeout' | 'canceled' | 'tls_failed' | 'unsupported' | 'credentials_expired' | 'credentials_unavailable' | 'stale';
-    last_result?: string;
-    observed_at?: string;
-    duration_ms?: number;
 };
 
 export type RelayCreate = {
@@ -764,22 +732,6 @@ export type DiscoveredResource = {
     enabled?: boolean;
 };
 
-export type TurnServerCreate = {
-    /**
-     * A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
-     */
-    uri: string;
-    region?: string;
-    location?: RelayLocation;
-};
-
-export type TurnServer = TurnServerCreate & {
-    /**
-     * Derived from uri; never accepted from callers.
-     */
-    readonly id: string;
-};
-
 export type LocationCreate = {
     lat: number;
     lon: number;
@@ -805,7 +757,7 @@ export type GroupLocation = {
 };
 
 export type NocComponent = {
-    kind: 'relay' | 'turn' | 'route' | 'control_plane' | 'bedrock';
+    kind: 'relay' | 'route' | 'control_plane' | 'bedrock';
     id: string;
     label: string;
     health?: 'confirmed' | 'stale' | 'unknown';
@@ -1006,8 +958,6 @@ export type InfrastructureConnectionWritable = {
     status?: 'ok' | 'error';
 };
 
-export type TurnServerWritable = TurnServerCreate;
-
 export type LocationWritable = LocationCreate;
 
 export type GroupLocationWritable = {
@@ -1021,8 +971,6 @@ export type AuditSinkWritable = AuditSinkWrite;
 export type Handle = string;
 
 export type RelayId = string;
-
-export type TurnId = string;
 
 export type SinkId = string;
 
@@ -2355,7 +2303,6 @@ export type DeleteRelayServiceResponse = DeleteRelayServiceResponses[keyof Delet
 export type SetRelayServiceModesData = {
     body: {
         ponor_enabled: boolean;
-        turn_enabled: boolean;
         acknowledge_connectivity_change: true;
     };
     path: {
@@ -3381,87 +3328,6 @@ export type ListInfrastructureConnectionResourcesResponses = {
 };
 
 export type ListInfrastructureConnectionResourcesResponse = ListInfrastructureConnectionResourcesResponses[keyof ListInfrastructureConnectionResourcesResponses];
-
-export type ListTurnServersData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/turns';
-};
-
-export type ListTurnServersErrors = {
-    /**
-     * Error response
-     */
-    default: Error;
-};
-
-export type ListTurnServersError = ListTurnServersErrors[keyof ListTurnServersErrors];
-
-export type ListTurnServersResponses = {
-    /**
-     * TURN server registry
-     */
-    200: Array<TurnServer>;
-};
-
-export type ListTurnServersResponse = ListTurnServersResponses[keyof ListTurnServersResponses];
-
-export type CreateTurnServerData = {
-    body: TurnServerCreate;
-    path?: never;
-    query?: never;
-    url: '/turns';
-};
-
-export type CreateTurnServerErrors = {
-    /**
-     * Validation error
-     */
-    422: Error;
-    /**
-     * Error response
-     */
-    default: Error;
-};
-
-export type CreateTurnServerError = CreateTurnServerErrors[keyof CreateTurnServerErrors];
-
-export type CreateTurnServerResponses = {
-    /**
-     * Onboarded TURN server
-     */
-    201: TurnServer;
-};
-
-export type CreateTurnServerResponse = CreateTurnServerResponses[keyof CreateTurnServerResponses];
-
-export type DeleteTurnServerData = {
-    body?: never;
-    path: {
-        readonly turnId: string;
-    };
-    query?: never;
-    url: '/turns/{turnId}';
-};
-
-export type DeleteTurnServerErrors = {
-    /**
-     * Error response
-     */
-    default: Error;
-};
-
-export type DeleteTurnServerError = DeleteTurnServerErrors[keyof DeleteTurnServerErrors];
-
-export type DeleteTurnServerResponses = {
-    /**
-     * TURN server removed
-     */
-    204: void;
-};
-
-export type DeleteTurnServerResponse = DeleteTurnServerResponses[keyof DeleteTurnServerResponses];
 
 export type GetBedrockData = {
     body?: never;

@@ -14,7 +14,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
-	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/auth"
@@ -35,23 +34,20 @@ func TestRelayServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	require.NoError(t, db.AutoMigrate(&relayreg.StoredRelay{}, &turncred.StoredTurnServer{}))
+	require.NoError(t, db.AutoMigrate(&relayreg.StoredRelay{}))
 	require.NoError(t, db.Create(&relayreg.StoredRelay{AccountID: "a", ID: "ponor-a"}).Error)
-	require.NoError(t, db.Create(&turncred.StoredTurnServer{AccountID: "b", ID: "turn-b"}).Error)
+	require.NoError(t, db.Create(&relayreg.StoredRelay{AccountID: "b", ID: "ponor-b"}).Error)
 	store, err := relayservice.NewStore(db)
 	require.NoError(t, err)
 	router := mux.NewRouter()
 	RegisterRelayServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store)
-	w := serviceRequest(router, http.MethodPost, "", `{"id":"one","ponor_id":"ponor-a","turn_id":"turn-b","backend_kind":"external","backend_operator":"provider"}`, true)
+	w := serviceRequest(router, http.MethodPost, "", `{"id":"one","ponor_id":"ponor-b"}`, true)
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
-	require.NoError(t, db.Create(&turncred.StoredTurnServer{AccountID: "a", ID: "turn-a", URI: "turn:turn.example.test:3478"}).Error)
-	w = serviceRequest(router, http.MethodPost, "", `{"id":"one","ponor_id":"ponor-a","turn_id":"turn-a","backend_kind":"external","backend_operator":"Provider"}`, true)
+	w = serviceRequest(router, http.MethodPost, "", `{"id":"one","ponor_id":"ponor-a"}`, true)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	w = serviceRequest(router, http.MethodGet, "", "", true)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"ponor_present":true`)
-	require.Contains(t, w.Body.String(), `"turn_present":true`)
-	require.Contains(t, w.Body.String(), `"state":"unknown"`)
 	var response any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	spec := loadKarstOpenAPISchemas(t)
@@ -75,7 +71,7 @@ func TestRelayServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
 	var remaining int64
 	require.NoError(t, db.Model(&relayreg.StoredRelay{}).Count(&remaining).Error)
-	require.EqualValues(t, 1, remaining)
+	require.EqualValues(t, 2, remaining, "deleting the association must not delete the underlying relay registry rows")
 }
 
 func (s *serviceStub) Create(_ context.Context, service relayservice.Service) (*relayservice.Service, error) {

@@ -5,8 +5,8 @@
 // the (provider, region) pairs any pool may ever be declared in, and the
 // ones §4b's anchor dispatcher may ever enumerate or probe. Declarative and
 // boot-time only (karst-control/main.go's KARST_ALLOWED_REGIONS_FILE), the
-// same operational shape tenancy grants and the relay/TURN registries
-// already use — see Reconcile.
+// same operational shape tenancy grants and the relay registry already
+// use — see Reconcile.
 //
 // Deployment-wide, not per-account: ADR-0045 §4c's own section title calls
 // this "a deployment-wide region allowlist" — one list for the whole control
@@ -106,7 +106,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 // but missing from the table are added, entries present in the table but
 // absent from wanted are removed. Declarative, not additive — the file is
 // the source of truth on every boot, the same convention
-// tenancy.Store.Reconcile and the relay/TURN registries already use. An
+// tenancy.Store.Reconcile and the relay registry already use. An
 // empty/nil wanted (KARST_ALLOWED_REGIONS_FILE unset) clears any allowlist a
 // previous run left — §4c's own fail-closed default, not a special case.
 func (s *Store) Reconcile(ctx context.Context, wanted Document) error {

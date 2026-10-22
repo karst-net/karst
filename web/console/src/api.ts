@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -243,7 +243,7 @@ export const api = {
   relayPublication: () => request<RelayPublication>("/relay-services/publication"),
   previewRelayPublication: () => request<RelayService[]>("/relay-services/publication/preview", { method: "POST" }),
   setRelayPublication: (mode: RelayPublication["mode"]) => request<RelayPublication>("/relay-services/publication", { method: "PUT", body: body({ mode, acknowledge_connectivity_change: true }) }),
-  setRelayServiceModes: (id: string, ponorEnabled: boolean, turnEnabled: boolean) => request<RelayService>(`/relay-services/${encodeURIComponent(id)}/modes`, { method: "PUT", body: body({ ponor_enabled: ponorEnabled, turn_enabled: turnEnabled, acknowledge_connectivity_change: true }) }),
+  setRelayServiceModes: (id: string, ponorEnabled: boolean) => request<RelayService>(`/relay-services/${encodeURIComponent(id)}/modes`, { method: "PUT", body: body({ ponor_enabled: ponorEnabled, acknowledge_connectivity_change: true }) }),
   relayServices: () => request<RelayServiceView[]>("/relay-services"),
   addRelayService: (service: RelayService) => request<RelayService>("/relay-services", { method: "POST", body: body(service) }),
   removeRelayService: (id: string) => request<void>(`/relay-services/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -289,11 +289,6 @@ export const api = {
   allowedRegions: () => request<AllowedRegion[]>("/regions"),
   addAllowedRegion: (entry: AllowedRegion) => request<AllowedRegion>("/regions", { method: "POST", body: body(entry) }),
   removeAllowedRegion: (provider: string, region: string) => request<void>(`/regions/${encodeURIComponent(provider)}/${encodeURIComponent(region)}`, { method: "DELETE" }),
-
-  // ── turn servers ───────────────────────────────────────────────────────────
-  turns: () => request<TurnServer[]>("/turns"),
-  addTurn: (entry: { uri: string; region: string; location?: RelayLocation }) => request<TurnServer>("/turns", { method: "POST", body: body(entry) }),
-  removeTurn: (id: string) => request<void>(`/turns/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── auth keys ──────────────────────────────────────────────────────────────
   setupKeys: () => management<SetupKey[]>("/setup-keys"),

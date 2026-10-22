@@ -6,15 +6,11 @@ package relayservice
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"strconv"
 	"strings"
 
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/shared/management/proto"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -60,24 +56,21 @@ func (s *Store) Publication(ctx context.Context) (Publication, error) {
 // Preview validates every selected backend without mutating configuration.
 // It returns only association metadata; credentials and public identity keys
 // stay in their protocol-specific stores and projections.
-func (s *Store) Preview(ctx context.Context, turnConfigured bool) ([]Service, error) {
+func (s *Store) Preview(ctx context.Context) ([]Service, error) {
 	account, err := accountFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var services []Service
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var turns []turncred.Entry
-		services, _, turns, err = project(tx, account, true)
-		if err == nil && len(turns) > 0 && !turnConfigured {
-			return fmt.Errorf("%w: TURN credential minting is not configured", ErrInvalid)
-		}
+		var err error
+		services, _, err = project(tx, account, true)
 		return err
 	})
 	return services, err
 }
 
-func (s *Store) SetPublication(ctx context.Context, mode string, turnConfigured bool) (Publication, error) {
+func (s *Store) SetPublication(ctx context.Context, mode string) (Publication, error) {
 	account, err := accountFromContext(ctx)
 	if err != nil {
 		return Publication{}, err
@@ -88,16 +81,12 @@ func (s *Store) SetPublication(ctx context.Context, mode string, turnConfigured 
 	value := Publication{AccountID: account, Mode: mode}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if mode == "services" {
-			_, _, turns, err := project(tx, account, true)
-			if err != nil {
+			if _, _, err := project(tx, account, true); err != nil {
 				return err
-			}
-			if len(turns) > 0 && !turnConfigured {
-				return fmt.Errorf("%w: TURN credential minting is not configured", ErrInvalid)
 			}
 		}
 		var disabled int64
-		if err := tx.Model(&Service{}).Where("account_id = ? AND (ponor_disabled = ? OR turn_disabled = ?)", account, true, true).Count(&disabled).Error; err != nil {
+		if err := tx.Model(&Service{}).Where("account_id = ? AND ponor_disabled = ?", account, true).Count(&disabled).Error; err != nil {
 			return err
 		}
 		if disabled > 0 {
@@ -123,7 +112,7 @@ func (s *Store) SetPublication(ctx context.Context, mode string, turnConfigured 
 // selection can clear the marker after all mode flags have been reset.
 func (s *Store) protectModeSchema(ctx context.Context, tx *gorm.DB, account string, current Publication) error {
 	var disabled int64
-	if err := tx.Model(&Service{}).Where("account_id = ? AND (ponor_disabled = ? OR turn_disabled = ?)", account, true, true).Count(&disabled).Error; err != nil {
+	if err := tx.Model(&Service{}).Where("account_id = ? AND ponor_disabled = ?", account, true).Count(&disabled).Error; err != nil {
 		return err
 	}
 	if disabled > 0 && current.Mode == "services" {
@@ -140,14 +129,13 @@ func (s *Store) protectModeSchema(ctx context.Context, tx *gorm.DB, account stri
 
 // Netmap projects the service model into existing authenticated wire fields.
 // The boolean distinguishes legacy authority from an empty service projection.
-func (s *Store) Netmap(ctx context.Context) (bool, []*proto.KarstRelay, []turncred.Entry, error) {
+func (s *Store) Netmap(ctx context.Context) (bool, []*proto.KarstRelay, error) {
 	account, err := accountFromContext(ctx)
 	if err != nil {
-		return false, nil, nil, err
+		return false, nil, err
 	}
 	active := false
 	var relays []*proto.KarstRelay
-	var turns []turncred.Entry
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		value, err := publication(tx, account)
 		if err != nil {
@@ -157,92 +145,47 @@ func (s *Store) Netmap(ctx context.Context) (bool, []*proto.KarstRelay, []turncr
 		if !active {
 			return nil
 		}
-		_, relays, turns, err = project(tx, account, false)
+		_, relays, err = project(tx, account, false)
 		return err
 	})
-	return active, relays, turns, err
+	return active, relays, err
 }
 
-func project(tx *gorm.DB, account string, strict bool) ([]Service, []*proto.KarstRelay, []turncred.Entry, error) {
+func project(tx *gorm.DB, account string, strict bool) ([]Service, []*proto.KarstRelay, error) {
 	services := make([]Service, 0)
 	if err := tx.Where("account_id = ?", account).Order("id").Find(&services).Error; err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	relays := make([]*proto.KarstRelay, 0)
-	turns := make([]turncred.Entry, 0)
 	seenPonor := map[string]bool{}
-	seenTurn := map[string]bool{}
-	configuredPonor := false
 	for _, service := range services {
 		if err := validate(service); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
-		if !service.PonorDisabled {
-			configuredPonor = true
+		if service.PonorDisabled || seenPonor[service.PonorID] {
+			continue
 		}
-		if !service.PonorDisabled && !seenPonor[service.PonorID] {
-			var backend relayreg.StoredRelay
-			lookup := tx.Where("account_id = ? AND id = ?", account, service.PonorID).First(&backend).Error
-			if errors.Is(lookup, gorm.ErrRecordNotFound) && !strict {
-				// Withdraw this mode only; never replace it with a global entry.
-			} else if lookup != nil {
-				return nil, nil, nil, fmt.Errorf("%w: service %s Ponor backend unavailable", ErrInvalid, service.ID)
-			} else {
-				entry := relayreg.Entry{Address: backend.Address, TLSServerName: backend.TLSServerName, IdentityKey: backend.IdentityKey, Region: backend.Region}
-				if backend.LocationLat != nil && backend.LocationLon != nil {
-					entry.Location = &relayreg.Location{Lat: *backend.LocationLat, Lon: *backend.LocationLon, Label: backend.LocationLabel}
-				}
-				relay, err := relayreg.Compile(entry)
-				if err != nil {
-					return nil, nil, nil, fmt.Errorf("%w: service %s Ponor configuration invalid", ErrInvalid, service.ID)
-				}
-				if base64.RawURLEncoding.EncodeToString(relay.RelayId) != service.PonorID {
-					return nil, nil, nil, fmt.Errorf("%w: service %s Ponor identity changed", ErrInvalid, service.ID)
-				}
-				relays = append(relays, relay)
+		var backend relayreg.StoredRelay
+		lookup := tx.Where("account_id = ? AND id = ?", account, service.PonorID).First(&backend).Error
+		if errors.Is(lookup, gorm.ErrRecordNotFound) && !strict {
+			// Withdraw this mode only; never replace it with a global entry.
+		} else if lookup != nil {
+			return nil, nil, fmt.Errorf("%w: service %s Ponor backend unavailable", ErrInvalid, service.ID)
+		} else {
+			entry := relayreg.Entry{Address: backend.Address, TLSServerName: backend.TLSServerName, IdentityKey: backend.IdentityKey, Region: backend.Region}
+			if backend.LocationLat != nil && backend.LocationLon != nil {
+				entry.Location = &relayreg.Location{Lat: *backend.LocationLat, Lon: *backend.LocationLon, Label: backend.LocationLabel}
 			}
-			seenPonor[service.PonorID] = true
-		}
-		if service.TurnID != "" && !service.TurnDisabled && !seenTurn[service.TurnID] {
-			var backend turncred.StoredTurnServer
-			lookup := tx.Where("account_id = ? AND id = ?", account, service.TurnID).First(&backend).Error
-			if errors.Is(lookup, gorm.ErrRecordNotFound) && !strict {
-				continue
-			}
-			if lookup != nil {
-				return nil, nil, nil, fmt.Errorf("%w: service %s TURN backend unavailable", ErrInvalid, service.ID)
-			}
-			// Reject unsupported topology rather than publishing a known-broken path.
-			if len(turns) > 0 {
-				return nil, nil, nil, fmt.Errorf("%w: service publication currently requires one shared TURN backend per account", ErrInvalid)
-			}
-			if base64.RawURLEncoding.EncodeToString([]byte(backend.URI)) != service.TurnID {
-				return nil, nil, nil, fmt.Errorf("%w: service %s TURN identity changed", ErrInvalid, service.ID)
-			}
-			target, supported := strings.CutPrefix(backend.URI, "turn:")
-			host, port, addressErr := net.SplitHostPort(target)
-			number, portErr := strconv.Atoi(port)
-			if !supported || addressErr != nil || host == "" || strings.ContainsAny(target, "/?#@ \t\r\n") || portErr != nil || number < 1 || number > 65535 {
-				return nil, nil, nil, fmt.Errorf("%w: service %s requires a UDP turn:host:port endpoint supported by current agents", ErrInvalid, service.ID)
-			}
-			// Reuse the legacy registry validator, including its URI and
-			// default-region rules, without duplicating credential handling.
-			raw, err := json.Marshal(struct {
-				Turn []turncred.Entry `json:"turn"`
-			}{Turn: []turncred.Entry{{URI: backend.URI, Region: backend.Region}}})
+			relay, err := relayreg.Compile(entry)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, fmt.Errorf("%w: service %s Ponor configuration invalid", ErrInvalid, service.ID)
 			}
-			entries, err := turncred.Parse(raw)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("%w: service %s TURN configuration invalid", ErrInvalid, service.ID)
+			if base64.RawURLEncoding.EncodeToString(relay.RelayId) != service.PonorID {
+				return nil, nil, fmt.Errorf("%w: service %s Ponor identity changed", ErrInvalid, service.ID)
 			}
-			turns = append(turns, entries...)
-			seenTurn[service.TurnID] = true
+			relays = append(relays, relay)
 		}
+		seenPonor[service.PonorID] = true
 	}
-	if len(turns) > 0 && !configuredPonor {
-		return nil, nil, nil, fmt.Errorf("%w: TURN publication requires enabled Ponor bootstrap", ErrInvalid)
-	}
-	return services, relays, turns, nil
+	return services, relays, nil
 }

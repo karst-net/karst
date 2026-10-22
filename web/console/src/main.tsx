@@ -22,14 +22,13 @@ import { Dns } from "./views/dns";
 import { Routes } from "./views/routes";
 import { Audit } from "./views/audit";
 import { RelayServices } from "./views/relay-services";
-import { Turns } from "./views/turns";
 import { Locations } from "./views/locations";
 import { Settings } from "./views/settings";
 import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "turns" | "locations" | "noc" | "scaler" | "billing" | "settings";
+type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "locations" | "noc" | "scaler" | "billing" | "settings";
 
 const nav: Array<[Route, string]> = [
   ["domains", "Domains"], ["machines", "Machines"], ["enroll", "Add device"], ["access", "Access controls"], ["keys", "Auth keys"],
@@ -37,7 +36,7 @@ const nav: Array<[Route, string]> = [
   ["dns", "DNS"], ["routes", "Gateways"], ["audit", "Audit log"], ["relays", "Relays"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
 ];
 
-const routeFromHash = (): Route => location.hash === "#/gateways" ? "routes" : location.hash === "#/turns" ? "turns" : (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
+const routeFromHash = (): Route => location.hash === "#/gateways" ? "routes" : (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
 
 /** True once GET /firstrun reports completed=true; undefined while that
  *  fetch is in flight. A deployment that fails to reach the endpoint (e.g.
@@ -103,7 +102,6 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "routes" && <Routes />}
       {route === "audit" && <Audit />}
       {route === "relays" && <RelayServices />}
-      {route === "turns" && <Turns />}
       {route === "locations" && <Locations />}
       {route === "noc" && <Noc />}
       {route === "scaler" && <Scaler />}

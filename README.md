@@ -49,10 +49,10 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | **KARST-CONTROL** — control channel ([spec](spec/karst-control-v1.md)) | Draft 0.1. Enrollment, netmap, per-pair PSKs and disco keys, encrypted cache |
 | **Ponor** — relay ([spec](spec/ponor-v1.md)) | Draft 0.1. TLS 1.3 with `X25519MLKEM768` enforced, ML-DSA-65 relay identity, structural admission |
 | **AVEN** — NAT traversal ([spec](spec/aven-v1.md)) | Draft 0.1. Probing, path selection with hysteresis, candidate exchange, server-reflexive discovery |
-| `karstd` — node agent | TUN or userspace datapath, stateful packet filter, discovery, relay and TURN client |
+| `karstd` — node agent | TUN or userspace datapath, stateful packet filter, discovery, relay client |
 | `karst-relay` — relay server | Forwarding, presence, rate limiting, AVEN reflector |
 | `karst-portmap` — NAT-PMP and PCP | Codec for both, verified against `miniupnpd` rather than against itself; wired into `karstd` |
-| `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay/TURN registry, SSO and SCIM 2.0 |
+| `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay registry, SSO and SCIM 2.0 |
 | Console / portal (TypeScript) | Administration, invitations, device lifecycle, policy and self-service downloads |
 | **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Resolver, split DNS and host integration: Linux (`systemd-resolved`/NetworkManager/`resolv.conf`), macOS (`/etc/resolver`) and Windows (NRPT) |
 | Windows client | TUN adapter and session I/O, IP Helper addressing, SCM service integration, protected key storage, and MSI installer are built; Wintun signer verification and adapter creation run in Windows CI. Unsigned Karst executables/MSI and release validation remain beta work |
@@ -184,7 +184,7 @@ Notable decisions, each with an ADR:
 | Greenfield Rust datapath — a 3210-byte handshake breaks WireGuard's framing | [0003](docs/adr/0003-greenfield-rust-datapath.md) |
 | Fragmentation with a stateless-under-load responder; per-pair PSK hedge | [0004](docs/adr/0004-handshake-mtu-and-kem-selection.md) |
 | MIT/Apache clients, AGPL server, DCO not CLA, no commercial license | [0007](docs/adr/0007-licensing.md) |
-| Relay co-located with control; Ponor and TURN modes unified by ADR-0056 | [0008](docs/adr/0008-relay-infrastructure-and-funding.md), [0056](docs/adr/0056-four-component-families.md) |
+| Relay co-located with control; standalone TURN support dropped (Relay-only), per ADR-0056's addendum | [0008](docs/adr/0008-relay-infrastructure-and-funding.md), [0056](docs/adr/0056-four-component-families.md) |
 | Control plane forked from NetBird rather than greenfield | [0009](docs/adr/0009-control-plane-fork-vs-greenfield.md) |
 | NAT64 synthesis at the socket boundary; RFC 7050 over RFC 8781 | [0013](docs/adr/0013-nat64-address-synthesis.md) |
 
@@ -197,14 +197,13 @@ are not additional families.
 | Family | Programs and capabilities | Main responsibility |
 |---|---|---|
 | Node agent | `karstd`, `karst`, platform UI; optional **Gateway** | Encrypted sessions, local policy, AVEN path selection, KarstDNS and routing; Gateway serves specific-prefix subnet access and default-route exit egress |
-| Transport infrastructure | One **Relay** with Ponor and TURN modes | Presence/bootstrap, discovery assistance and ciphertext forwarding; currently `karst-relay` plus optional coturn/external TURN |
+| Transport infrastructure | One **Relay** (Ponor) | Presence/bootstrap, discovery assistance and ciphertext forwarding; `karst-relay` only — standalone TURN support dropped |
 | Control services | `karst-control`, console and portal | Enrollment, users/groups, policy, peer maps, routes/DNS, Relay registry/credentials, administration and audit |
 | Trust tooling | `karst-bedrock`, Bedrock verifiers and scoped anchor signer | Independent membership approval, revocation, chain verification and audit anchoring |
 
 The family model is accepted. Unified Gateway and Relay configuration, APIs,
 UI and lifecycle are pending [#404](https://github.com/karst-net/karst/issues/404).
-Existing commands and separate Ponor/TURN registries still apply. TURN will be
-integrated through a managed adapter to coturn or an external provider.
+Existing commands and the Ponor registry still apply.
 See [component architecture](docs/COMPONENT-ARCHITECTURE.md) for ownership,
 current interfaces, migration requirements and platform limits.
 
@@ -218,8 +217,8 @@ named for karst hydrology — see
 Stated here rather than buried, because a security product that only advertises
 its strengths is not trustworthy:
 
-- **Metadata is not protected.** Relays and TURN providers learn who talks to
-  whom, when, and how much.
+- **Metadata is not protected.** Relays learn who talks to whom, when, and how
+  much.
 - **Endpoint compromise is total.** Root on a node yields that node's keys.
 - **Coordination-server compromise plus a full lattice break is a total
   break**, because the server derives the per-pair PSKs. Server compromise

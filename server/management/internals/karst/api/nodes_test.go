@@ -33,7 +33,6 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
-	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/server/account"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/peer"
@@ -437,53 +436,6 @@ func (r relaysWithTelemetry) LatestTelemetry(context.Context, string) (*relayreg
 	return r.telemetry, nil
 }
 
-type scanTurns struct{}
-
-func (scanTurns) List(context.Context) ([]turncred.StoredTurnServer, error) { return nil, nil }
-func (scanTurns) Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error) {
-	return &turncred.StoredTurnServer{}, nil
-}
-func (scanTurns) Delete(context.Context, string) error      { return nil }
-func (scanTurns) DeleteByURI(context.Context, string) error { return nil }
-
-type scanTurnsExists struct{ scanTurns }
-
-func (scanTurnsExists) Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error) {
-	return nil, turncred.ErrExists
-}
-
-type scanTurnsMissing struct{ scanTurns }
-
-func (scanTurnsMissing) DeleteByURI(context.Context, string) error { return turncred.ErrNotFound }
-
-// scanTurnEnrollAccounts fakes the two ADR-0045 §7b methods
-// turnEnrollTokensCreate/turnEnroll type-assert for (MintTurnEnrollKey,
-// ConsumeTurnEnrollKey) -- the TURN counterpart of scanRelayEnrollAccounts.
-type scanTurnEnrollAccounts struct {
-	mintToken string
-	mintErr   error
-
-	consumeAccountID string
-	consumeKeyID     string
-	consumeErr       error
-}
-
-func (scanTurnEnrollAccounts) UpdateAccountPeers(context.Context, string, types.UpdateReason) {}
-
-func (s scanTurnEnrollAccounts) MintTurnEnrollKey(context.Context, string, time.Duration) (string, error) {
-	if s.mintErr != nil {
-		return "", s.mintErr
-	}
-	return s.mintToken, nil
-}
-
-func (s scanTurnEnrollAccounts) ConsumeTurnEnrollKey(context.Context, string) (string, string, error) {
-	if s.consumeErr != nil {
-		return "", "", s.consumeErr
-	}
-	return s.consumeAccountID, s.consumeKeyID, nil
-}
-
 type scanPermissions struct{ role types.UserRole }
 
 func (p scanPermissions) ValidateUserPermissions(ctx context.Context, _, _ string, _ modules.Module, operation operations.Operation) (bool, context.Context, error) {
@@ -517,7 +469,7 @@ func TestListNodes_OnlyEnrolledNodesAndNoKeyMaterial(t *testing.T) {
 	}, fakePeers{
 		{Key: "fork-only-peer", Name: "not-karst", UserID: "user-a"},
 		{Key: "handle-a", Name: "karst-node", UserID: "user-a", Status: &peer.PeerStatus{LastSeen: created}},
-	}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/nodes?limit=1", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
@@ -543,7 +495,7 @@ func TestListNodes_OnlyEnrolledNodesAndNoKeyMaterial(t *testing.T) {
 func TestNodeResponsesNeverContainSecretFixtureMaterial(t *testing.T) {
 	secrets := []string{"known-psk-fixture-bytes", "known-disco-fixture-bytes", "known-setup-key-fixture-bytes"}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a", PublicKey: []byte(secrets[0]), KemPublicKey: []byte(secrets[1])}}, fakePeers{{Key: "handle-a", Name: "node", UserID: "user-a", SSHKey: secrets[2]}}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a", PublicKey: []byte(secrets[0]), KemPublicKey: []byte(secrets[1])}}, fakePeers{{Key: "handle-a", Name: "node", UserID: "user-a", SSHKey: secrets[2]}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	for _, path := range []string{"/karst/v1/nodes", "/karst/v1/nodes/handle-a"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
@@ -561,7 +513,7 @@ func TestGetNode_HidesNodesOutsideAuthorizedPeerSet(t *testing.T) {
 	RegisterEndpoints(fakeNodes{
 		"handle-a": {Handle: "handle-a"},
 		"handle-b": {Handle: "handle-b"},
-	}, fakePeers{{Key: "handle-a", Name: "visible", UserID: "user-a"}}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	}, fakePeers{{Key: "handle-a", Name: "visible", UserID: "user-a"}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/nodes/handle-b", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
@@ -573,7 +525,7 @@ func TestGetNode_HidesNodesOutsideAuthorizedPeerSet(t *testing.T) {
 
 func TestUserRoleIsDeniedByKarstAuthorization(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, deniedAdminPeers{}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, deniedAdminPeers{}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/nodes", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -598,7 +550,7 @@ func TestRelayEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot(t *testing.T
 		t.Run(string(tc.role), func(t *testing.T) {
 			router := mux.NewRouter()
 			accounts := scanRelayEnrollAccounts{mintToken: "RELAY-ENROLL-SECRET"}
-			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, accounts, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, accounts, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 			req := httptest.NewRequest(http.MethodPost, relayEnrollTokensPath, strings.NewReader(`{"pool_id":"aws-use1"}`))
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 			response := httptest.NewRecorder()
@@ -621,8 +573,8 @@ func TestRelayEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot(t *testing.T
 func TestScalerRoleCannotReachAnyOtherKarstRoute(t *testing.T) {
 	router := mux.NewRouter()
 	accounts := scanRelayEnrollAccounts{mintToken: "irrelevant"}
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, scanTurns{}, nil, nil, accounts, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	req := httptest.NewRequest(http.MethodPost, "/karst/v1/turns", strings.NewReader(`{}`))
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, accounts, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays", strings.NewReader(`{}`))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
@@ -637,7 +589,7 @@ func TestRelaysEnroll(t *testing.T) {
 
 	t.Run("no bearer token is unauthenticated", func(t *testing.T) {
 		router := mux.NewRouter()
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, scanRelayEnrollAccounts{}, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, scanRelayEnrollAccounts{}, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
@@ -647,7 +599,7 @@ func TestRelaysEnroll(t *testing.T) {
 	t.Run("an invalid token is refused", func(t *testing.T) {
 		router := mux.NewRouter()
 		accounts := scanRelayEnrollAccounts{consumeErr: status.Errorf(status.PermissionDenied, "relay enroll key is invalid")}
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
 		req.Header.Set("Authorization", "Bearer wrong-secret")
 		response := httptest.NewRecorder()
@@ -658,7 +610,7 @@ func TestRelaysEnroll(t *testing.T) {
 	t.Run("a valid token registers the relay into the token's own account", func(t *testing.T) {
 		router := mux.NewRouter()
 		accounts := scanRelayEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
 		req.Header.Set("Authorization", "Bearer the-real-secret")
 		response := httptest.NewRecorder()
@@ -669,7 +621,7 @@ func TestRelaysEnroll(t *testing.T) {
 	t.Run("an already-registered relay is a precondition failure, same as relaysCreate", func(t *testing.T) {
 		router := mux.NewRouter()
 		accounts := scanRelayEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysExists{}, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysExists{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
 		req.Header.Set("Authorization", "Bearer the-real-secret")
 		response := httptest.NewRecorder()
@@ -678,146 +630,6 @@ func TestRelaysEnroll(t *testing.T) {
 	})
 }
 
-// ADR-0045 §7b: the Scaler role may mint turn-enroll tokens too, the same
-// relationship it has with relay-enroll tokens (TestRelayEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot).
-func TestTurnEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot(t *testing.T) {
-	for _, tc := range []struct {
-		role     types.UserRole
-		wantCode int
-	}{
-		{types.UserRoleScaler, http.StatusCreated},
-		{types.UserRoleAdmin, http.StatusCreated},
-		{types.UserRoleOwner, http.StatusCreated},
-		{types.UserRoleAdvisor, http.StatusForbidden},
-		{types.UserRoleUser, http.StatusForbidden},
-	} {
-		t.Run(string(tc.role), func(t *testing.T) {
-			router := mux.NewRouter()
-			accounts := scanTurnEnrollAccounts{mintToken: "TURN-ENROLL-SECRET"}
-			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, accounts, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-			req := httptest.NewRequest(http.MethodPost, turnEnrollTokensPath, strings.NewReader(`{}`))
-			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
-			response := httptest.NewRecorder()
-			router.ServeHTTP(response, req)
-			require.Equal(t, tc.wantCode, response.Code, response.Body.String())
-			if tc.wantCode != http.StatusCreated {
-				return
-			}
-			var decoded turnEnrollTokenResponse
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &decoded))
-			require.Equal(t, "TURN-ENROLL-SECRET", decoded.Token)
-		})
-	}
-}
-
-// ADR-0045 §7b: turnEnroll authenticates by bearer token alone, with no
-// session at all -- the TURN counterpart of TestRelaysEnroll.
-func TestTurnEnroll(t *testing.T) {
-	entryBody := `{"uri":"turn:turn.example.test:3478","region":"aws-use1"}`
-
-	t.Run("no bearer token is unauthenticated", func(t *testing.T) {
-		router := mux.NewRouter()
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, scanTurnEnrollAccounts{}, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-		req := httptest.NewRequest(http.MethodPost, "/karst/v1/turn/enroll", strings.NewReader(entryBody))
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, req)
-		require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
-	})
-
-	t.Run("an invalid token is refused", func(t *testing.T) {
-		router := mux.NewRouter()
-		accounts := scanTurnEnrollAccounts{consumeErr: status.Errorf(status.PermissionDenied, "turn enroll key is invalid")}
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-		req := httptest.NewRequest(http.MethodPost, "/karst/v1/turn/enroll", strings.NewReader(entryBody))
-		req.Header.Set("Authorization", "Bearer wrong-secret")
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, req)
-		require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
-	})
-
-	t.Run("a valid token registers the turn server into the token's own account", func(t *testing.T) {
-		router := mux.NewRouter()
-		accounts := scanTurnEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-		req := httptest.NewRequest(http.MethodPost, "/karst/v1/turn/enroll", strings.NewReader(entryBody))
-		req.Header.Set("Authorization", "Bearer the-real-secret")
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, req)
-		require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
-	})
-
-	t.Run("an already-registered turn server is a precondition failure, same as turnsCreate", func(t *testing.T) {
-		router := mux.NewRouter()
-		accounts := scanTurnEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurnsExists{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-		req := httptest.NewRequest(http.MethodPost, "/karst/v1/turn/enroll", strings.NewReader(entryBody))
-		req.Header.Set("Authorization", "Bearer the-real-secret")
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, req)
-		require.Equal(t, http.StatusPreconditionFailed, response.Code, response.Body.String())
-	})
-}
-
-// ADR-0045 §7b (issue #311): the Scaler role may ask for a TURN server it
-// enrolled to be de-enrolled, the one exception to roles.Scaler's own
-// Delete grant staying false -- turnDeenroll is a POST, so this reaches
-// the same Create-shaped permission relayEnrollTokensCreate/
-// turnEnrollTokensCreate already have, then the hard allowlist (updated
-// alongside this route) is what actually lets a Scaler-role caller
-// through to it.
-func TestTurnDeenroll_ScalerAndAdminCanRemoveAdvisorCannot(t *testing.T) {
-	for _, tc := range []struct {
-		role     types.UserRole
-		wantCode int
-	}{
-		{types.UserRoleScaler, http.StatusNoContent},
-		{types.UserRoleAdmin, http.StatusNoContent},
-		{types.UserRoleOwner, http.StatusNoContent},
-		{types.UserRoleAdvisor, http.StatusForbidden},
-		{types.UserRoleUser, http.StatusForbidden},
-	} {
-		t.Run(string(tc.role), func(t *testing.T) {
-			router := mux.NewRouter()
-			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, nil, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-			req := httptest.NewRequest(http.MethodPost, turnDeenrollPath, strings.NewReader(`{"uri":"turn:turn.example.test:3478"}`))
-			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
-			response := httptest.NewRecorder()
-			router.ServeHTTP(response, req)
-			require.Equal(t, tc.wantCode, response.Code, response.Body.String())
-		})
-	}
-}
-
-// Confirms turnDeenroll passes turncred.ErrNotFound through as 404, the
-// same contract turnsDelete already has, rather than masking it as a
-// generic error.
-func TestTurnDeenroll_UnknownURIIsNotFound(t *testing.T) {
-	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurnsMissing{}, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	req := httptest.NewRequest(http.MethodPost, turnDeenrollPath, strings.NewReader(`{"uri":"turn:never-registered.example.test:3478"}`))
-	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, req)
-	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
-}
-
-// The Scaler role's own narrow allowlist must still refuse the ordinary
-// admin route for the exact same underlying resource -- gaining
-// turnDeenroll must not have widened reach to turnsDelete too.
-func TestScalerRoleCannotReachTurnsDeleteEvenThoughItCanReachTurnDeenroll(t *testing.T) {
-	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, nil, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/turns/some-id", nil)
-	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, req)
-	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
-}
-
-// Mirrors TestTurnDeenroll_ScalerAndAdminCanRemoveAdvisorCannot for the
-// relay side (#319) -- the Scaler hard-allowlist entry for
-// relayDeenrollPath (alongside this route) is what actually lets a
-// Scaler-role caller through to it.
 func TestRelayDeenroll_ScalerAndAdminCanRemoveAdvisorCannot(t *testing.T) {
 	for _, tc := range []struct {
 		role     types.UserRole
@@ -831,7 +643,7 @@ func TestRelayDeenroll_ScalerAndAdminCanRemoveAdvisorCannot(t *testing.T) {
 	} {
 		t.Run(string(tc.role), func(t *testing.T) {
 			router := mux.NewRouter()
-			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, nil, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 			req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(`{"address":"203.0.113.9:443"}`))
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 			response := httptest.NewRecorder()
@@ -846,7 +658,7 @@ func TestRelayDeenroll_ScalerAndAdminCanRemoveAdvisorCannot(t *testing.T) {
 // generic error.
 func TestRelayDeenroll_UnknownAddressIsNotFound(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysMissing{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysMissing{}, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(`{"address":"203.0.113.99:443"}`))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -859,7 +671,7 @@ func TestRelayDeenroll_UnknownAddressIsNotFound(t *testing.T) {
 // not just DeleteByAddress, when that's the field the request carries.
 func TestRelayDeenroll_UnknownTLSServerNameIsNotFound(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysMissing{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysMissing{}, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(`{"tls_server_name":"pool-never-registered.aws.karst.internal"}`))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -880,7 +692,7 @@ func TestRelayDeenroll_RequiresExactlyOneOfAddressOrTLSServerName(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			router := mux.NewRouter()
-			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 			req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(tc.body))
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 			response := httptest.NewRecorder()
@@ -895,7 +707,7 @@ func TestRelayDeenroll_RequiresExactlyOneOfAddressOrTLSServerName(t *testing.T) 
 // relayDeenroll must not have widened reach to relaysDelete too.
 func TestScalerRoleCannotReachRelaysDeleteEvenThoughItCanReachRelayDeenroll(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/relays/some-id", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -907,7 +719,7 @@ func TestScalerRoleCannotReachRelaysDeleteEvenThoughItCanReachRelayDeenroll(t *t
 // newly-added admin route therefore cannot silently become usable by Members.
 func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a"}}, fakeOwnDevices{peers: fakePeers{{ID: "peer-a", Key: "handle-a", Name: "mine", UserID: "user-a"}}}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a"}}, fakeOwnDevices{peers: fakePeers{{ID: "peer-a", Key: "handle-a", Name: "mine", UserID: "user-a"}}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	require.NoError(t, router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 		template, err := route.GetPathTemplate()
 		if err != nil || !strings.HasPrefix(template, "/karst/v1/") || strings.HasPrefix(template, "/karst/v1/me/") {
@@ -922,16 +734,15 @@ func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
 		if strings.HasPrefix(template, "/karst/v1/domains") || strings.HasPrefix(template, "/karst/v1/invitations") {
 			return nil
 		}
-		// relaysEnroll (ADR-0045 §6) and turnEnroll (ADR-0045 §7b) are
-		// bearer-token-gated, not session-gated -- both deliberately sit
-		// outside karstAuthorization (see their own doc comments), so a
-		// member's session cannot reach KarstControl's permission check to
-		// be denied by in the first place. Each still correctly refuses a
-		// member with no enroll token (401, checked by TestRelaysEnroll/
-		// TestTurnEnroll below) -- this walk's own "every admin route
-		// denies a session-bearing member" shape just does not apply to a
-		// route with no session-based gate at all.
-		if template == "/karst/v1/relays/enroll" || template == "/karst/v1/turn/enroll" {
+		// relaysEnroll (ADR-0045 §6) is bearer-token-gated, not
+		// session-gated -- it deliberately sits outside karstAuthorization
+		// (see its own doc comment), so a member's session cannot reach
+		// KarstControl's permission check to be denied by in the first
+		// place. It still correctly refuses a member with no enroll token
+		// (401, checked by TestRelaysEnroll below) -- this walk's own
+		// "every admin route denies a session-bearing member" shape just
+		// does not apply to a route with no session-based gate at all.
+		if template == "/karst/v1/relays/enroll" {
 			return nil
 		}
 		methods, err := route.GetMethods()
@@ -975,7 +786,7 @@ func TestMemberPortalCanRenameAndRevokeOnlyOwnDevice(t *testing.T) {
 	devices := fakePeers{{ID: "mine", Key: "handle-a", Name: "old", UserID: "user-a", Meta: peer.PeerSystemMeta{GoOS: "linux"}}, {ID: "theirs", Key: "handle-b", Name: "other", UserID: "user-b", Meta: peer.PeerSystemMeta{GoOS: "windows"}}}
 	ownedDevices := fakeOwnDevices{peers: devices}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a"}, "handle-b": {Handle: "handle-b"}}, ownedDevices, ownedDevices, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a"}, "handle-b": {Handle: "handle-b"}}, ownedDevices, ownedDevices, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	list := httptest.NewRequest(http.MethodGet, "/karst/v1/me/devices", nil)
 	list = nbcontext.SetUserAuthInRequest(list, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	listResponse := httptest.NewRecorder()
@@ -1003,7 +814,7 @@ func TestMemberPortalRevokeAcceptsEscapedHandle(t *testing.T) {
 	handle := "base64/handle+="
 	device := &peer.Peer{ID: "mine", Key: handle, UserID: "user-a"}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{handle: {Handle: handle}}, fakeOwnDevices{peers: fakePeers{device}}, fakeOwnDevices{peers: fakePeers{device}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{handle: {Handle: handle}}, fakeOwnDevices{peers: fakePeers{device}}, fakeOwnDevices{peers: fakePeers{device}}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/me/devices/"+url.PathEscape(handle), nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
@@ -1017,7 +828,7 @@ func TestMemberAccessExplainsCompiledDestinationWithRuleAndGroup(t *testing.T) {
 	devices := fakePeers{{ID: "mine", Key: "handle-a", Name: "laptop", UserID: "user-a"}, {ID: "database", Key: "handle-b", Name: "db-prod", UserID: "user-b"}}
 	policy := portalPolicy{version: karstpolicy.Version{Version: 4, Author: "alice@example.test", CreatedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC), Document: `{"groups":{"group:sre":["user-a"],"group:db":["user-b"]},"acls":[{"action":"accept","src":["group:sre"],"dst":["group:db:5432"]}]}`}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a"}, "handle-b": {Handle: "handle-b"}}, devices, fakeOwnDevices{peers: devices}, nil, policy, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a"}, "handle-b": {Handle: "handle-b"}}, devices, fakeOwnDevices{peers: devices}, nil, policy, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/me/access", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -1044,7 +855,7 @@ func TestMemberEnrollmentIssuesShortLivedSingleUseKey(t *testing.T) {
 		ephemeral bool
 	}{}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, devices, enrollmentWriter{fakeOwnDevices: fakeOwnDevices{peers: devices}, got: got}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, devices, enrollmentWriter{fakeOwnDevices: fakeOwnDevices{peers: devices}, got: got}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodPost, "/karst/v1/me/devices/enroll", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -1076,7 +887,7 @@ func TestNodePathsIncludesReportedByteCounts(t *testing.T) {
 		},
 	}
 	router := mux.NewRouter()
-	RegisterEndpoints(nodes, fakePeers{{ID: "peer-a", Key: "handle-a", Name: "mine", UserID: "user-a"}}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(nodes, fakePeers{{ID: "peer-a", Key: "handle-a", Name: "mine", UserID: "user-a"}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/nodes/handle-a/paths", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -1099,7 +910,7 @@ func TestNodePathsIncludesReportedByteCounts(t *testing.T) {
 
 func TestPolicySchemaNeedsNoPolicyStore(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/policy/schema", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -1119,7 +930,7 @@ func TestPolicySchemaNeedsNoPolicyStore(t *testing.T) {
 func TestPolicyWritePushesAnAccountWideUpdate(t *testing.T) {
 	accounts := &spyAccountUpdater{}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, scanPolicy{}, nil, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, scanPolicy{}, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	req := httptest.NewRequest(http.MethodPut, "/karst/v1/policy", strings.NewReader(`{"document":"{\"acls\":[]}"}`))
 	req.Header.Set("If-Match", `"0"`)
@@ -1149,7 +960,7 @@ func (rollbackablePolicy) Get(context.Context, uint64) (*karstpolicy.Version, er
 func TestPolicyRollbackPushesAnAccountWideUpdate(t *testing.T) {
 	accounts := &spyAccountUpdater{}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, rollbackablePolicy{}, nil, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, rollbackablePolicy{}, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	req := httptest.NewRequest(http.MethodPost, "/karst/v1/policy/rollback/1", nil)
 	req.Header.Set("If-Match", `"1"`)
@@ -1167,7 +978,7 @@ func TestPolicyRollbackPushesAnAccountWideUpdate(t *testing.T) {
 // pattern as every other optional capability interface in this package.
 func TestPolicyWriteWithNoAccountUpdaterDoesNotPanic(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, scanPolicy{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, scanPolicy{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	req := httptest.NewRequest(http.MethodPut, "/karst/v1/policy", strings.NewReader(`{"document":"{\"acls\":[]}"}`))
 	req.Header.Set("If-Match", `"0"`)
@@ -1186,7 +997,7 @@ func TestPolicyPreviewCompilesFiftyNodesUnderOneSecond(t *testing.T) {
 		peers = append(peers, &peer.Peer{Key: handle, Name: handle, UserID: fmt.Sprintf("user-%02d@example.test", i)})
 	}
 	router := mux.NewRouter()
-	RegisterEndpoints(nodes, peers, nil, nil, scanPolicy{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(nodes, peers, nil, nil, scanPolicy{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodPost, "/karst/v1/policy/preview", strings.NewReader(`{"document":"{\"acls\":[{\"action\":\"accept\",\"src\":[\"*\"],\"dst\":[\"*:443\"]}]}"}`))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	started := time.Now()
@@ -1218,7 +1029,7 @@ func TestPolicyPreviewDescribesSshGrantsSeparately(t *testing.T) {
 		{Key: "jump", UserID: "user-a"},
 	}
 	router := mux.NewRouter()
-	RegisterEndpoints(nodes, peers, nil, nil, scanPolicy{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(nodes, peers, nil, nil, scanPolicy{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	body := `{"document":"{\"ssh\":[{\"action\":\"accept\",\"src\":[\"jump\"],\"dst\":[\"prod\"]}]}"}`
 	req := httptest.NewRequest(http.MethodPost, "/karst/v1/policy/preview", strings.NewReader(body))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
@@ -1243,7 +1054,7 @@ func TestBedrockEnforcingStaleacknowledgmentReturnsConflict(t *testing.T) {
 	store, err := bedrock.NewStore(db)
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{"node-a": {Handle: "node-a"}, "node-b": {Handle: "node-b"}}, fakePeers{{Key: "node-a", UserID: "user-a"}, {Key: "node-b", UserID: "user-a"}}, nil, nil, nil, nil, nil, store, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{"node-a": {Handle: "node-a"}, "node-b": {Handle: "node-b"}}, fakePeers{{Key: "node-a", UserID: "user-a"}, {Key: "node-b", UserID: "user-a"}}, nil, nil, nil, nil, store, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodPut, "/karst/v1/bedrock/mode", strings.NewReader(`{"mode":"enforcing","acknowledged_cut_off_handles":["node-a"]}`))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -1263,7 +1074,7 @@ func TestBedrockStatusPublishesUncoveredHandles(t *testing.T) {
 	store, err := bedrock.NewStore(db)
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{"node-a": {Handle: "node-a"}, "node-b": {Handle: "node-b"}}, fakePeers{{Key: "node-a", UserID: "user-a"}, {Key: "node-b", UserID: "user-a"}}, nil, nil, nil, nil, nil, store, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{"node-a": {Handle: "node-a"}, "node-b": {Handle: "node-b"}}, fakePeers{{Key: "node-a", UserID: "user-a"}, {Key: "node-b", UserID: "user-a"}}, nil, nil, nil, nil, store, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/bedrock", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -1310,7 +1121,7 @@ func TestBedrockOfflineCeremonyCoversEnrollmentBeforeEnforcing(t *testing.T) {
 	require.NoError(t, builder.Commit(genesis, rootSigs))
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{handle: {Handle: handle, PublicKey: identityKey, KemPublicKey: kem}}, fakePeers{{Key: handle, UserID: "user-a"}}, nil, auditLog, nil, nil, nil, configuration, chain, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{handle: {Handle: handle, PublicKey: identityKey, KemPublicKey: kem}}, fakePeers{{Key: handle, UserID: "user-a"}}, nil, auditLog, nil, nil, configuration, chain, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	user := auth.UserAuth{AccountId: "account-a", UserId: "user-a"}
 	bootstrapBody, err := json.Marshal(map[string]string{"format": "bedrock-log-v1", "payload": base64.StdEncoding.EncodeToString(bedrock.EncodeLog(builder.Entries()))})
 	require.NoError(t, err)
@@ -1493,7 +1304,7 @@ func TestAuditListReportsAnchorContradiction(t *testing.T) {
 	require.NoError(t, chain.Import(ctx, "account-a", builder.Entries()))
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, chain, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, chain, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	user := auth.UserAuth{AccountId: "account-a", UserId: "admin"}
 
 	auditRequest := httptest.NewRequest(http.MethodGet, "/karst/v1/audit?limit=10", nil)
@@ -1522,7 +1333,7 @@ func TestAllRegisteredResponsesExcludeSecretSentinels(t *testing.T) {
 	require.NoError(t, err)
 	for _, role := range []types.UserRole{types.UserRoleOwner, types.UserRoleAdmin, types.UserRoleNetworkAdmin, types.UserRoleAuditor, types.UserRoleUser, types.UserRoleAdvisor} {
 		router := mux.NewRouter()
-		RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a", PublicKey: []byte(secrets[0]), KemPublicKey: []byte(secrets[1])}}, fakePeers{{ID: "peer-a", Key: "handle-a", Name: "node", UserID: "user-a", SSHKey: secrets[2]}}, nil, scanAudit{}, scanPolicy{}, scanRelays{}, scanTurns{}, bedrockStore, nil, nil, scanPermissions{role: role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+		RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a", PublicKey: []byte(secrets[0]), KemPublicKey: []byte(secrets[1])}}, fakePeers{{ID: "peer-a", Key: "handle-a", Name: "node", UserID: "user-a", SSHKey: secrets[2]}}, nil, scanAudit{}, scanPolicy{}, scanRelays{}, bedrockStore, nil, nil, scanPermissions{role: role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 		require.NoError(t, router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 			template, err := route.GetPathTemplate()
 			if err != nil || !strings.HasPrefix(template, "/karst/v1/") {
@@ -1574,7 +1385,7 @@ func TestAuditExportRequiresAndStreamsRequestedFormat(t *testing.T) {
 		Hash:      "current",
 	}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, exportAudit{entries: entries}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, exportAudit{entries: entries}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	request := func(query string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/karst/v1/audit/export"+query, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
@@ -1608,7 +1419,7 @@ func TestSuccessfulMutationAppendsToTheAuditLog(t *testing.T) {
 	auditLog, err := audit.New(db)
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodPost, "/karst/v1/audit/sinks", strings.NewReader(`{"kind":"webhook","endpoint":"https://siem.example.test/ingest"}`))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
 	response := httptest.NewRecorder()
@@ -1628,7 +1439,7 @@ func TestAuditSinkListAndDelete(t *testing.T) {
 	auditLog, err := audit.New(db)
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	authed := func(req *http.Request) *http.Request {
 		return nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
 	}
@@ -1683,7 +1494,7 @@ func TestAuditListIsScopedToTheAskingAccount(t *testing.T) {
 	auditLog, err := audit.New(db)
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	mutate := func(accountID string) {
 		req := httptest.NewRequest(http.MethodPost, "/karst/v1/audit/sinks",
@@ -1717,7 +1528,7 @@ func TestAuditListIsScopedToTheAskingAccount(t *testing.T) {
 // A route added without a KarstControl role entry therefore fails closed here.
 func TestRoleMatrixCoversEveryKarstRoute(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	var routes []struct {
 		method    string
 		operation operations.Operation
@@ -1764,7 +1575,7 @@ func TestRoleMatrixCoversEveryKarstRoute(t *testing.T) {
 func TestNOCRoleReachesComponentsAndDrilldownButNotWrites(t *testing.T) {
 	relays := fixedRelays{{AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu"}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	for _, tc := range []struct {
 		method, path string
@@ -1794,7 +1605,7 @@ func TestNOCViewAndDrilldownAreAuditLoggedOnGET(t *testing.T) {
 	require.NoError(t, err)
 	relays := fixedRelays{{AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu"}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	for _, path := range []string{"/karst/v1/noc/components", "/karst/v1/noc/relays/relay-id"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
@@ -1834,7 +1645,7 @@ func TestAdvisorRoleReachesDemandEndpointsButNotWrites(t *testing.T) {
 	relays := fixedRelays{{AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu"}}
 	anchors := fixedAnchors{{Provider: "aws", Region: "us-east-1", Bucket: "under_20ms", Count: 3}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, anchors, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, anchors, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	for _, tc := range []struct {
 		method, path string
@@ -1868,7 +1679,7 @@ func TestOnlyAdvisorRoleReachesDemandEndpoints(t *testing.T) {
 		types.UserRoleAuditor, types.UserRoleNOC, types.UserRoleUser,
 	} {
 		router := mux.NewRouter()
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, anchors, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, scanPermissions{role: role}, nil, nil, anchors, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 		for _, path := range []string{
 			"/karst/v1/demand/regions",
@@ -1905,7 +1716,7 @@ func TestDemandRegionsHistoryResponseShape(t *testing.T) {
 		{Region: "eu", AccountID: "account-a", SampledAt: sampledAt, RTTUnder20ms: 5, RTT20To50ms: 1, RTT50To100ms: 2, RTTOver100ms: 3},
 	}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/demand/regions/history?since=2026-01-01T00:00:00Z&until=2026-01-02T00:00:00Z", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -1922,7 +1733,7 @@ func TestDemandRegionsHistoryResponseShape(t *testing.T) {
 // point is "a specific range to train or chart against".
 func TestDemandRegionsHistoryRequiresSinceAndUntil(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, fixedRelays{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, fixedRelays{}, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	for _, path := range []string{
 		"/karst/v1/demand/regions/history",
@@ -1945,7 +1756,7 @@ func TestDemandRegionsHistoryRequiresSinceAndUntil(t *testing.T) {
 func TestDemandRegionsResponseShape(t *testing.T) {
 	relays := fixedRelays{{AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu"}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/demand/regions", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -1965,7 +1776,7 @@ func TestDemandRegionsResponseShape(t *testing.T) {
 func TestDemandAnchorsResponseShape(t *testing.T) {
 	anchors := fixedAnchors{{Provider: "aws", Region: "us-east-1", Bucket: "under_20ms", Count: 3}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, anchors, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, anchors, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/demand/anchors", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -1988,7 +1799,7 @@ func TestDemandEndpointsAreAuditLoggedOnGET(t *testing.T) {
 	relays := fixedRelays{{AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu"}}
 	anchors := fixedAnchors{{Provider: "aws", Region: "us-east-1", Bucket: "under_20ms", Count: 1}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, anchors, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, anchors, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	for _, path := range []string{"/karst/v1/demand/regions", "/karst/v1/demand/anchors"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
@@ -2027,7 +1838,7 @@ func TestOnlyAdvisorRoleReachesScalerRecommendations(t *testing.T) {
 		types.UserRoleAuditor, types.UserRoleNOC, types.UserRoleUser,
 	} {
 		router := mux.NewRouter()
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 		request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/recommendations", nil)
 		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "non-advisor-viewer"})
@@ -2037,7 +1848,7 @@ func TestOnlyAdvisorRoleReachesScalerRecommendations(t *testing.T) {
 	}
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/recommendations", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
 	response := httptest.NewRecorder()
@@ -2052,7 +1863,7 @@ func TestOnlyAdvisorRoleReachesScalerRecommendations(t *testing.T) {
 // being nil already has.
 func TestScalerRecommendationsIsPreconditionFailedWhenUnconfigured(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/recommendations", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -2076,7 +1887,7 @@ func TestScalerRecommendationsProxiesUpstreamJSON(t *testing.T) {
 	defer upstream.Close()
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/recommendations", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -2100,7 +1911,7 @@ func TestScalerRecommendationsPropagatesUpstreamFailure(t *testing.T) {
 	defer upstream.Close()
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/recommendations", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -2125,7 +1936,7 @@ func TestScalerRecommendationsIsAuditLoggedOnGET(t *testing.T) {
 	require.NoError(t, err)
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/recommendations", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -2159,7 +1970,7 @@ func TestOnlyAdvisorRoleReachesScalerSuggestions(t *testing.T) {
 		types.UserRoleAuditor, types.UserRoleNOC, types.UserRoleUser,
 	} {
 		router := mux.NewRouter()
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 		request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
 		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "non-advisor-viewer"})
@@ -2169,7 +1980,7 @@ func TestOnlyAdvisorRoleReachesScalerSuggestions(t *testing.T) {
 	}
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
 	response := httptest.NewRecorder()
@@ -2181,7 +1992,7 @@ func TestOnlyAdvisorRoleReachesScalerSuggestions(t *testing.T) {
 // TestScalerRecommendationsIsPreconditionFailedWhenUnconfigured.
 func TestScalerSuggestionsIsPreconditionFailedWhenUnconfigured(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -2202,7 +2013,7 @@ func TestScalerSuggestionsProxiesUpstreamJSON(t *testing.T) {
 	defer upstream.Close()
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -2224,7 +2035,7 @@ func TestScalerSuggestionsPropagatesUpstreamFailure(t *testing.T) {
 	defer upstream.Close()
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -2247,7 +2058,7 @@ func TestScalerSuggestionsIsAuditLoggedOnGET(t *testing.T) {
 	require.NoError(t, err)
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -2275,7 +2086,7 @@ func TestRelayResponsesUseContractFieldsAndHealth(t *testing.T) {
 		Region:        "eu",
 	}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/relays", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
 	response := httptest.NewRecorder()
@@ -2298,7 +2109,7 @@ func TestDetectedLocationOverridesDeclared(t *testing.T) {
 		telemetry: &relayreg.RelayTelemetryRecord{DetectedLat: &lat, DetectedLon: &lon},
 	}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/relays", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
 	response := httptest.NewRecorder()
@@ -2328,7 +2139,7 @@ func TestDeclaredLocationSurvivesWithNoTelemetry(t *testing.T) {
 		LocationLat: &declaredLat, LocationLon: &declaredLon, LocationLabel: "Denver",
 	}}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/relays", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
 	response := httptest.NewRecorder()
@@ -2344,89 +2155,6 @@ func TestDeclaredLocationSurvivesWithNoTelemetry(t *testing.T) {
 	require.Equal(t, "declared", decoded[0].LocationSource)
 	require.NotNil(t, decoded[0].Location)
 	require.Equal(t, "Denver", decoded[0].Location.Label)
-}
-
-// The DB-backed TURN registry's CRUD surface, driven against a real
-// turncred.Store rather than a fake — list/create/delete happy path, a
-// duplicate URI, and deleting a server that does not exist.
-func TestTurnServerCRUD(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:api-turns?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec("DROP TABLE IF EXISTS karst_turn_servers").Error)
-	store, err := turncred.NewStore(db)
-	require.NoError(t, err)
-
-	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, store, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	user := auth.UserAuth{AccountId: "account-a", UserId: "admin"}
-
-	doRequest := func(method, path, requestBody string) *httptest.ResponseRecorder {
-		var reader *strings.Reader
-		if requestBody != "" {
-			reader = strings.NewReader(requestBody)
-		} else {
-			reader = strings.NewReader("")
-		}
-		req := httptest.NewRequest(method, path, reader)
-		req = nbcontext.SetUserAuthInRequest(req, user)
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, req)
-		return response
-	}
-
-	// An empty registry lists as an empty array, not an error.
-	list := doRequest(http.MethodGet, "/karst/v1/turns", "")
-	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
-	require.JSONEq(t, `[]`, list.Body.String())
-
-	// Create round-trips with lowercase field names — the regression guard
-	// for the relayreg.StoredRelay bug this package must not repeat.
-	created := doRequest(http.MethodPost, "/karst/v1/turns", `{"uri":"turn:turn.example.test:3478","region":"eu"}`)
-	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
-	var turn struct {
-		ID     string `json:"id"`
-		URI    string `json:"uri"`
-		Region string `json:"region"`
-	}
-	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &turn))
-	require.NotEmpty(t, turn.ID)
-	require.Equal(t, "turn:turn.example.test:3478", turn.URI)
-	require.Equal(t, "eu", turn.Region)
-
-	list = doRequest(http.MethodGet, "/karst/v1/turns", "")
-	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
-	require.Contains(t, list.Body.String(), `"turn:turn.example.test:3478"`)
-
-	// A duplicate URI within the account is a precondition failure, not a
-	// second row.
-	duplicate := doRequest(http.MethodPost, "/karst/v1/turns", `{"uri":"turn:turn.example.test:3478","region":"us"}`)
-	require.Equal(t, http.StatusPreconditionFailed, duplicate.Code, duplicate.Body.String())
-
-	// Deleting an unknown id is a 404, and does not disturb the real row.
-	missing := doRequest(http.MethodDelete, "/karst/v1/turns/does-not-exist", "")
-	require.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
-
-	// Deleting the real row succeeds and is reflected in a subsequent list.
-	deleted := doRequest(http.MethodDelete, "/karst/v1/turns/"+turn.ID, "")
-	require.Equal(t, http.StatusNoContent, deleted.Code, deleted.Body.String())
-
-	list = doRequest(http.MethodGet, "/karst/v1/turns", "")
-	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
-	require.JSONEq(t, `[]`, list.Body.String())
-}
-
-// A router with no turn store configured answers every /turns route with a
-// precondition failure rather than a panic or a silently empty registry.
-func TestTurnServerRoutesRequireAConfiguredStore(t *testing.T) {
-	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	user := auth.UserAuth{AccountId: "account-a", UserId: "admin"}
-
-	req := httptest.NewRequest(http.MethodGet, "/karst/v1/turns", nil)
-	req = nbcontext.SetUserAuthInRequest(req, user)
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, req)
-	require.Equal(t, http.StatusPreconditionFailed, response.Code, response.Body.String())
 }
 
 // fixedGroupLocations is a groupLocationReader with a fixed List result —
@@ -2472,7 +2200,7 @@ func TestNOCRouteComponentCarriesEgressAndIngress(t *testing.T) {
 	routes := fixedRoutes{{ID: "route-a:selected-peer-id", NetID: "net-a", PeerGroups: []string{"group-a"}, Enabled: true}}
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, nil, "", nil, nil, groupLocations, nil, routes, nil, nil, routeTelemetryStore, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, nil, "", nil, nil, groupLocations, nil, routes, nil, nil, routeTelemetryStore, nil, nil, nil, nil, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/noc/components", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "noc-viewer"})
@@ -2515,7 +2243,7 @@ func TestScalingModeDefaultsToAutomatedAndRoundTrips(t *testing.T) {
 
 	doRequest := func(role types.UserRole, method, body string) *httptest.ResponseRecorder {
 		router := mux.NewRouter()
-		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, scalingModeStore, nil, nil, nil, router)
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, scalingModeStore, nil, nil, nil, router)
 		var reader *strings.Reader
 		if body == "" {
 			reader = strings.NewReader("")

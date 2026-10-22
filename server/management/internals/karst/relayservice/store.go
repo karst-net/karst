@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-// Package relayservice stores explicit Ponor/TURN associations (ADR-0056).
-// It does not infer associations from endpoints, regions, or providers and
-// does not copy credentials or identity keys into the service record.
+// Package relayservice stores an explicit, operator-selected Ponor
+// association (ADR-0056). It does not infer associations from endpoints,
+// regions, or providers and does not copy credentials or identity keys into
+// the service record.
 package relayservice
 
 import (
@@ -12,13 +13,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 )
 
 var (
@@ -42,33 +41,25 @@ func accountFromContext(ctx context.Context) (string, error) {
 	return account, nil
 }
 
-// Service has its own stable operator-selected ID, independent of protocol
-// identities. TURN is optional. Multiple Ponor services may explicitly refer
-// to the same TURN backend; this preserves the shared-host fallback topology.
-// BackendKind describes deployment ownership, not a claim of runtime health
-// or authority to stop an external process.
+// Service has its own stable operator-selected ID, independent of the
+// Ponor relay's own identity.
 type Service struct {
-	AccountID       string `gorm:"primaryKey;size:64" json:"-"`
-	ID              string `gorm:"primaryKey;size:64" json:"id"`
-	PonorID         string `gorm:"not null" json:"ponor_id"`
-	TurnID          string `json:"turn_id,omitempty"`
-	BackendKind     string `json:"backend_kind,omitempty"`
-	BackendOperator string `json:"backend_operator,omitempty"`
-	PonorDisabled   bool   `gorm:"not null;default:false" json:"ponor_disabled,omitempty"`
-	TurnDisabled    bool   `gorm:"not null;default:false" json:"turn_disabled,omitempty"`
+	AccountID     string `gorm:"primaryKey;size:64" json:"-"`
+	ID            string `gorm:"primaryKey;size:64" json:"id"`
+	PonorID       string `gorm:"not null" json:"ponor_id"`
+	PonorDisabled bool   `gorm:"not null;default:false" json:"ponor_disabled,omitempty"`
 }
 
 func (Service) TableName() string { return "karst_relay_services" }
 
-// View keeps configuration availability separate for each protocol. Present
-// means the referenced registry record exists, not that a health probe passed.
-// Legacy registry deletion can leave an association dangling; retain it for
-// diagnosis instead of silently reassigning the service to a different backend.
+// View keeps configuration availability separate from the record itself.
+// Present means the referenced registry record exists, not that a health
+// probe passed. Legacy registry deletion can leave an association dangling;
+// retain it for diagnosis instead of silently reassigning the service to a
+// different backend.
 type View struct {
 	Service
-	PonorPresent bool        `json:"ponor_present"`
-	TurnPresent  bool        `json:"turn_present"`
-	TurnHealth   *TurnHealth `gorm:"-" json:"turn_health,omitempty"`
+	PonorPresent bool `json:"ponor_present"`
 }
 
 type Store struct {
@@ -82,7 +73,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("relay service: nil database")
 	}
-	if err := db.AutoMigrate(&Service{}, &Publication{}, &turnObservation{}); err != nil {
+	if err := db.AutoMigrate(&Service{}, &Publication{}); err != nil {
 		return nil, err
 	}
 	return &Store{db: db}, nil
@@ -93,18 +84,6 @@ var validID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 func validate(service Service) error {
 	if !validID.MatchString(service.ID) || service.PonorID == "" {
 		return fmt.Errorf("%w: id must be 1-64 letters, digits, underscores or hyphens and ponor_id is required", ErrInvalid)
-	}
-	if service.TurnID == "" {
-		if service.BackendKind != "" || service.BackendOperator != "" {
-			return fmt.Errorf("%w: backend metadata requires turn_id", ErrInvalid)
-		}
-		return nil
-	}
-	if service.BackendKind != "external" && service.BackendKind != "coturn-companion" {
-		return fmt.Errorf("%w: backend_kind must be external or coturn-companion", ErrInvalid)
-	}
-	if strings.TrimSpace(service.BackendOperator) == "" || len(service.BackendOperator) > 256 {
-		return fmt.Errorf("%w: backend_operator must identify the operator in 1-256 bytes", ErrInvalid)
 	}
 	return nil
 }
@@ -130,14 +109,6 @@ func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 		if count != 1 {
 			return fmt.Errorf("%w: ponor_id is not registered in this account", ErrInvalid)
 		}
-		if service.TurnID != "" {
-			if err := tx.Model(&turncred.StoredTurnServer{}).Where("account_id = ? AND id = ?", account, service.TurnID).Count(&count).Error; err != nil {
-				return err
-			}
-			if count != 1 {
-				return fmt.Errorf("%w: turn_id is not registered in this account", ErrInvalid)
-			}
-		}
 		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&service)
 		if result.Error != nil {
 			return result.Error
@@ -150,7 +121,7 @@ func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 			return err
 		}
 		if mode.Mode == "services" {
-			_, _, _, err = project(tx, account, true)
+			_, _, err = project(tx, account, true)
 		}
 		if err != nil {
 			return err
@@ -169,32 +140,20 @@ func (s *Store) List(ctx context.Context) ([]View, error) {
 		return nil, err
 	}
 	views := make([]View, 0)
-	// Account equality is part of both joins, even when protocol IDs happen
-	// to be identical across tenants. No telemetry or credentials are joined.
+	// Account equality is part of the join, even when protocol IDs happen to
+	// be identical across tenants. No telemetry or credentials are joined.
 	err = s.db.WithContext(ctx).Table("karst_relay_services AS service").
-		Select("service.*, ponor.id IS NOT NULL AS ponor_present, turn_backend.id IS NOT NULL AS turn_present").
+		Select("service.*, ponor.id IS NOT NULL AS ponor_present").
 		Joins("LEFT JOIN karst_relays AS ponor ON ponor.account_id = service.account_id AND ponor.id = service.ponor_id").
-		Joins("LEFT JOIN karst_turn_servers AS turn_backend ON turn_backend.account_id = service.account_id AND turn_backend.id = service.turn_id").
 		Where("service.account_id = ?", account).Order("service.id").Scan(&views).Error
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
-	for index := range views {
-		if views[index].TurnID == "" {
-			continue
-		}
-		health, err := s.turnHealth(ctx, account, views[index].TurnID, now)
-		if err != nil {
-			return nil, err
-		}
-		views[index].TurnHealth = &health
-	}
 	return views, nil
 }
 
-// Delete removes only the association. In particular it cannot stop an
-// external TURN provider or delete a shared backend's legacy registry record.
+// Delete removes only the association. In particular it cannot delete a
+// shared backend's legacy registry record.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	account, err := accountFromContext(ctx)
 	if err != nil {

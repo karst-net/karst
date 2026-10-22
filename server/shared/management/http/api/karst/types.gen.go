@@ -558,7 +558,6 @@ const (
 	NocComponentKindControlPlane NocComponentKind = "control_plane"
 	NocComponentKindRelay        NocComponentKind = "relay"
 	NocComponentKindRoute        NocComponentKind = "route"
-	NocComponentKindTurn         NocComponentKind = "turn"
 )
 
 // Valid indicates whether the value is a known member of the NocComponentKind enum.
@@ -571,8 +570,6 @@ func (e NocComponentKind) Valid() bool {
 	case NocComponentKindRelay:
 		return true
 	case NocComponentKindRoute:
-		return true
-	case NocComponentKindTurn:
 		return true
 	default:
 		return false
@@ -780,102 +777,6 @@ const (
 func (e RelayPublicationSchemaVersion) Valid() bool {
 	switch e {
 	case RelayPublicationSchemaVersionN2:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayServiceBackendKind.
-const (
-	RelayServiceBackendKindCoturnCompanion RelayServiceBackendKind = "coturn-companion"
-	RelayServiceBackendKindExternal        RelayServiceBackendKind = "external"
-)
-
-// Valid indicates whether the value is a known member of the RelayServiceBackendKind enum.
-func (e RelayServiceBackendKind) Valid() bool {
-	switch e {
-	case RelayServiceBackendKindCoturnCompanion:
-		return true
-	case RelayServiceBackendKindExternal:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayServiceViewBackendKind.
-const (
-	RelayServiceViewBackendKindCoturnCompanion RelayServiceViewBackendKind = "coturn-companion"
-	RelayServiceViewBackendKindExternal        RelayServiceViewBackendKind = "external"
-)
-
-// Valid indicates whether the value is a known member of the RelayServiceViewBackendKind enum.
-func (e RelayServiceViewBackendKind) Valid() bool {
-	switch e {
-	case RelayServiceViewBackendKindCoturnCompanion:
-		return true
-	case RelayServiceViewBackendKindExternal:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayTurnHealthSource.
-const (
-	RelayTurnHealthSourceControlAllocationProbe RelayTurnHealthSource = "control_allocation_probe"
-)
-
-// Valid indicates whether the value is a known member of the RelayTurnHealthSource enum.
-func (e RelayTurnHealthSource) Valid() bool {
-	switch e {
-	case RelayTurnHealthSourceControlAllocationProbe:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayTurnHealthState.
-const (
-	RelayTurnHealthStateCanceled               RelayTurnHealthState = "canceled"
-	RelayTurnHealthStateCredentialsExpired     RelayTurnHealthState = "credentials_expired"
-	RelayTurnHealthStateCredentialsUnavailable RelayTurnHealthState = "credentials_unavailable"
-	RelayTurnHealthStateDenied                 RelayTurnHealthState = "denied"
-	RelayTurnHealthStateReady                  RelayTurnHealthState = "ready"
-	RelayTurnHealthStateStale                  RelayTurnHealthState = "stale"
-	RelayTurnHealthStateTimeout                RelayTurnHealthState = "timeout"
-	RelayTurnHealthStateTlsFailed              RelayTurnHealthState = "tls_failed"
-	RelayTurnHealthStateUnknown                RelayTurnHealthState = "unknown"
-	RelayTurnHealthStateUnreachable            RelayTurnHealthState = "unreachable"
-	RelayTurnHealthStateUnsupported            RelayTurnHealthState = "unsupported"
-)
-
-// Valid indicates whether the value is a known member of the RelayTurnHealthState enum.
-func (e RelayTurnHealthState) Valid() bool {
-	switch e {
-	case RelayTurnHealthStateCanceled:
-		return true
-	case RelayTurnHealthStateCredentialsExpired:
-		return true
-	case RelayTurnHealthStateCredentialsUnavailable:
-		return true
-	case RelayTurnHealthStateDenied:
-		return true
-	case RelayTurnHealthStateReady:
-		return true
-	case RelayTurnHealthStateStale:
-		return true
-	case RelayTurnHealthStateTimeout:
-		return true
-	case RelayTurnHealthStateTlsFailed:
-		return true
-	case RelayTurnHealthStateUnknown:
-		return true
-	case RelayTurnHealthStateUnreachable:
-		return true
-	case RelayTurnHealthStateUnsupported:
 		return true
 	default:
 		return false
@@ -2096,37 +1997,18 @@ type RelayPublicationSchemaVersion int
 
 // RelayService defines model for RelayService.
 type RelayService struct {
-	// BackendKind Required with turn_id; omitted without it. Deployment ownership only.
-	BackendKind *RelayServiceBackendKind `json:"backend_kind,omitempty"`
-
-	// BackendOperator Required with turn_id; identifies who operates the backend.
-	BackendOperator *string `json:"backend_operator,omitempty"`
-	Id              string  `json:"id"`
+	Id string `json:"id"`
 
 	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
 	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
 
 	// PonorId Existing account-local Ponor registry ID.
 	PonorId string `json:"ponor_id"`
-
-	// TurnDisabled Withdraw this association's TURN endpoint in service publication mode and exclude it from subsequent probes unless another association enables it.
-	TurnDisabled *bool `json:"turn_disabled,omitempty"`
-
-	// TurnId Optional existing account-local TURN registry ID.
-	TurnId *string `json:"turn_id,omitempty"`
 }
-
-// RelayServiceBackendKind Required with turn_id; omitted without it. Deployment ownership only.
-type RelayServiceBackendKind string
 
 // RelayServiceView defines model for RelayServiceView.
 type RelayServiceView struct {
-	// BackendKind Required with turn_id; omitted without it. Deployment ownership only.
-	BackendKind *RelayServiceViewBackendKind `json:"backend_kind,omitempty"`
-
-	// BackendOperator Required with turn_id; identifies who operates the backend.
-	BackendOperator *string `json:"backend_operator,omitempty"`
-	Id              string  `json:"id"`
+	Id string `json:"id"`
 
 	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
 	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
@@ -2136,37 +2018,7 @@ type RelayServiceView struct {
 
 	// PonorPresent Referenced Ponor registry entry exists in this account; not a health result.
 	PonorPresent bool `json:"ponor_present"`
-
-	// TurnDisabled Withdraw this association's TURN endpoint in service publication mode and exclude it from subsequent probes unless another association enables it.
-	TurnDisabled *bool `json:"turn_disabled,omitempty"`
-
-	// TurnHealth Authenticated TURN allocation observation from the control host. Does not prove client reachability or encrypted overlay delivery. Observations older than three minutes are stale.
-	TurnHealth *RelayTurnHealth `json:"turn_health,omitempty"`
-
-	// TurnId Optional existing account-local TURN registry ID.
-	TurnId *string `json:"turn_id,omitempty"`
-
-	// TurnPresent Referenced TURN registry entry exists in this account; false when TURN is absent; not a health result.
-	TurnPresent bool `json:"turn_present"`
 }
-
-// RelayServiceViewBackendKind Required with turn_id; omitted without it. Deployment ownership only.
-type RelayServiceViewBackendKind string
-
-// RelayTurnHealth Authenticated TURN allocation observation from the control host. Does not prove client reachability or encrypted overlay delivery. Observations older than three minutes are stale.
-type RelayTurnHealth struct {
-	DurationMs *int64                `json:"duration_ms,omitempty"`
-	LastResult *string               `json:"last_result,omitempty"`
-	ObservedAt *time.Time            `json:"observed_at,omitempty"`
-	Source     RelayTurnHealthSource `json:"source"`
-	State      RelayTurnHealthState  `json:"state"`
-}
-
-// RelayTurnHealthSource defines model for RelayTurnHealth.Source.
-type RelayTurnHealthSource string
-
-// RelayTurnHealthState defines model for RelayTurnHealth.State.
-type RelayTurnHealthState string
 
 // RelayUsageDay defines model for RelayUsageDay.
 type RelayUsageDay struct {
@@ -2344,26 +2196,6 @@ type SshGrant struct {
 	Target    string `json:"target"`
 }
 
-// TurnServer defines model for TurnServer.
-type TurnServer struct {
-	// Id Derived from uri; never accepted from callers.
-	Id       *string        `json:"id,omitempty"`
-	Location *RelayLocation `json:"location,omitempty"`
-	Region   *string        `json:"region,omitempty"`
-
-	// Uri A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
-	Uri string `json:"uri"`
-}
-
-// TurnServerCreate defines model for TurnServerCreate.
-type TurnServerCreate struct {
-	Location *RelayLocation `json:"location,omitempty"`
-	Region   *string        `json:"region,omitempty"`
-
-	// Uri A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
-	Uri string `json:"uri"`
-}
-
 // TutorialMode defines model for TutorialMode.
 type TutorialMode struct {
 	// Enabled Whether per-page "what is this" guidance text is shown across the console. Defaults to true.
@@ -2408,9 +2240,6 @@ type SinkId = string
 
 // Tag defines model for tag.
 type Tag = string
-
-// TurnId defines model for turnId.
-type TurnId = string
 
 // User defines model for user.
 type User = string
@@ -2569,7 +2398,6 @@ type SetRelayPublicationJSONBodyMode string
 type SetRelayServiceModesJSONBody struct {
 	AcknowledgeConnectivityChange SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
 	PonorEnabled                  bool                                                      `json:"ponor_enabled"`
-	TurnEnabled                   bool                                                      `json:"turn_enabled"`
 }
 
 // SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange defines parameters for SetRelayServiceModes.
@@ -2681,9 +2509,6 @@ type CreateRelayJSONRequestBody = RelayCreate
 
 // SetScalingModeJSONRequestBody defines body for SetScalingMode for application/json ContentType.
 type SetScalingModeJSONRequestBody = ScalingMode
-
-// CreateTurnServerJSONRequestBody defines body for CreateTurnServer for application/json ContentType.
-type CreateTurnServerJSONRequestBody = TurnServerCreate
 
 // SetTutorialModeJSONRequestBody defines body for SetTutorialMode for application/json ContentType.
 type SetTutorialModeJSONRequestBody = TutorialMode

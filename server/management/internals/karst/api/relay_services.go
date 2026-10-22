@@ -27,17 +27,16 @@ type relayServiceStore interface {
 
 type relayServicePublisher interface {
 	Publication(context.Context) (relayservice.Publication, error)
-	Preview(context.Context, bool) ([]relayservice.Service, error)
-	SetPublication(context.Context, string, bool) (relayservice.Publication, error)
+	Preview(context.Context) ([]relayservice.Service, error)
+	SetPublication(context.Context, string) (relayservice.Publication, error)
 }
 
 type relayServiceModes interface {
-	SetModes(context.Context, string, bool, bool, bool) (*relayservice.Service, error)
+	SetModes(context.Context, string, bool) (*relayservice.Service, error)
 }
 
 type RelayServiceOptions struct {
-	Accounts       accountUpdater
-	TurnConfigured bool
+	Accounts accountUpdater
 }
 
 // RegisterRelayServiceEndpoints adds the explicit association model without
@@ -85,7 +84,6 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			}
 			var request struct {
 				PonorEnabled *bool `json:"ponor_enabled"`
-				TurnEnabled  *bool `json:"turn_enabled"`
 				Acknowledge  bool  `json:"acknowledge_connectivity_change"`
 			}
 			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
@@ -98,11 +96,11 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 				util.WriteErrorResponse("expected one Relay mode request", http.StatusBadRequest, w)
 				return
 			}
-			if request.PonorEnabled == nil || request.TurnEnabled == nil || !request.Acknowledge {
-				util.WriteErrorResponse("both mode states and acknowledge_connectivity_change are required", http.StatusBadRequest, w)
+			if request.PonorEnabled == nil || !request.Acknowledge {
+				util.WriteErrorResponse("both the mode state and acknowledge_connectivity_change are required", http.StatusBadRequest, w)
 				return
 			}
-			service, err := modes.SetModes(ctx, mux.Vars(r)["serviceId"], *request.PonorEnabled, *request.TurnEnabled, config.TurnConfigured)
+			service, err := modes.SetModes(ctx, mux.Vars(r)["serviceId"], *request.PonorEnabled)
 			if err != nil {
 				relayServiceError(w, r, err)
 				return
@@ -130,7 +128,7 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 				return
 			}
 			if mux.CurrentRoute(r).GetName() == "relay-publication-preview" {
-				services, err := publisher.Preview(ctx, config.TurnConfigured)
+				services, err := publisher.Preview(ctx)
 				if err != nil {
 					relayServiceError(w, r, err)
 					return
@@ -156,7 +154,7 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 				util.WriteErrorResponse("acknowledge_connectivity_change must be true", http.StatusBadRequest, w)
 				return
 			}
-			value, err := publisher.SetPublication(ctx, request.Mode, config.TurnConfigured)
+			value, err := publisher.SetPublication(ctx, request.Mode)
 			if err != nil {
 				relayServiceError(w, r, err)
 				return
