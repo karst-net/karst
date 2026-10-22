@@ -65,6 +65,49 @@ One healthy mode must not hide the other mode's outage or admission failure.
 Maintain per-mode quotas, bandwidth limits, credential renewal, metadata
 disclosure, and failover diagnostics under the shared Relay view.
 
+> **Addendum, 2026-10-22 — drop standalone TURN, Relay-only transport
+> fallback.** The managed-adapter decision two paragraphs above is
+> superseded, not narrowed: Karst drops standalone TURN support entirely
+> rather than building the coturn/external-provider adapter. The Relay
+> component keeps exactly one transport mode, Ponor, and the "two protocol
+> modes" framing in this section's heading no longer describes the target
+> architecture.
+>
+> This was the simpler of the two options the original decision already
+> named as open ("whether TURN is embedded or provided through a managed
+> adapter to an external server") plus a third not named there at all: drop
+> it. It was chosen once the Gateway inventory and Relay Services work
+> (#404) made the complexity of a second, independently-authenticated
+> transport mode — its own registry, credential minting, health probing,
+> and deployment adapter — hard to justify against the coverage it actually
+> bought: ADR-0008 §4 already treated TURN as covering networks the
+> co-located relay cannot reach, not as a capability most deployments rely
+> on, and the Relay service model's own pairing record (`relayservice.Service`)
+> turned out not to need a TURN half at all to remain useful — it still
+> carries real, non-redundant value as a Ponor-only admin enable/disable
+> layer over the raw Ponor registry.
+>
+> Removed: the `turncred` registry/credential-minting package, the
+> `turnhealth` allocation-readiness probe, `TurnID`/`TurnDisabled`/
+> `TurnPresent`/`BackendKind`/`BackendOperator` from the Relay service
+> association record, the `/turns` and `/turn/*` control API routes, the
+> `karst-scaler-turn-k8s` driver crate, the reference Compose `coturn`
+> companion service and `bootstrap.sh --turn`, and `karst_control.proto`'s
+> `turn_servers` field (now `reserved`, never reused — see that file's own
+> comment). Kept, deliberately: the inherited NetBird-fork `TURNConfig`
+> legacy channel (`server/management/internals/shared/grpc/token_mgr.go`)
+> and `karst-control`'s own `rejectLegacyTurnConfig` guard against it — that
+> channel predates and is unrelated to the Karst-specific TURN support
+> described in this ADR, was already fatally refused at startup before this
+> addendum, and remains so; this addendum does not touch it.
+>
+> The "Alternatives rejected" list's "Embed TURN immediately" entry and the
+> "Reconsider if" condition below about an external TURN backend are now
+> moot rather than wrong — there is no TURN backend, embedded or external,
+> left to reconsider. [Component architecture](../COMPONENT-ARCHITECTURE.md)
+> and [Relay service associations](../relay-services.md) describe the
+> resulting Ponor-only shape.
+
 ### Ownership and trust
 
 Control defines and distributes policy; agents enforce packets and routes.

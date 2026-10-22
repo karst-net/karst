@@ -372,6 +372,57 @@ func (e EnrollmentSettingsControlMinimumVersion) Valid() bool {
 	}
 }
 
+// Defines values for GatewayInventorySchemaVersion.
+const (
+	GatewayInventorySchemaVersionN1 GatewayInventorySchemaVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the GatewayInventorySchemaVersion enum.
+func (e GatewayInventorySchemaVersion) Valid() bool {
+	switch e {
+	case GatewayInventorySchemaVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GatewayNodeForwardingReadiness.
+const (
+	GatewayNodeForwardingReadinessUnreported GatewayNodeForwardingReadiness = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the GatewayNodeForwardingReadiness enum.
+func (e GatewayNodeForwardingReadiness) Valid() bool {
+	switch e {
+	case GatewayNodeForwardingReadinessUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GatewayOfferKind.
+const (
+	GatewayOfferKindDefaultIpv4 GatewayOfferKind = "default_ipv4"
+	GatewayOfferKindDefaultIpv6 GatewayOfferKind = "default_ipv6"
+	GatewayOfferKindSubnet      GatewayOfferKind = "subnet"
+)
+
+// Valid indicates whether the value is a known member of the GatewayOfferKind enum.
+func (e GatewayOfferKind) Valid() bool {
+	switch e {
+	case GatewayOfferKindDefaultIpv4:
+		return true
+	case GatewayOfferKindDefaultIpv6:
+		return true
+	case GatewayOfferKindSubnet:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InfrastructureConnectionMode.
 const (
 	InfrastructureConnectionModeReadOnly  InfrastructureConnectionMode = "read_only"
@@ -507,7 +558,6 @@ const (
 	NocComponentKindControlPlane NocComponentKind = "control_plane"
 	NocComponentKindRelay        NocComponentKind = "relay"
 	NocComponentKindRoute        NocComponentKind = "route"
-	NocComponentKindTurn         NocComponentKind = "turn"
 )
 
 // Valid indicates whether the value is a known member of the NocComponentKind enum.
@@ -520,8 +570,6 @@ func (e NocComponentKind) Valid() bool {
 	case NocComponentKindRelay:
 		return true
 	case NocComponentKindRoute:
-		return true
-	case NocComponentKindTurn:
 		return true
 	default:
 		return false
@@ -696,6 +744,39 @@ func (e RelayHealthSource) Valid() bool {
 	case RelayHealthSourceRelayTelemetry:
 		return true
 	case RelayHealthSourceRosterMtime:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayPublicationMode.
+const (
+	RelayPublicationModeLegacy   RelayPublicationMode = "legacy"
+	RelayPublicationModeServices RelayPublicationMode = "services"
+)
+
+// Valid indicates whether the value is a known member of the RelayPublicationMode enum.
+func (e RelayPublicationMode) Valid() bool {
+	switch e {
+	case RelayPublicationModeLegacy:
+		return true
+	case RelayPublicationModeServices:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayPublicationSchemaVersion.
+const (
+	RelayPublicationSchemaVersionN2 RelayPublicationSchemaVersion = 2
+)
+
+// Valid indicates whether the value is a known member of the RelayPublicationSchemaVersion enum.
+func (e RelayPublicationSchemaVersion) Valid() bool {
+	switch e {
+	case RelayPublicationSchemaVersionN2:
 		return true
 	default:
 		return false
@@ -993,6 +1074,54 @@ func (e ListPostureSessionsParamsPosture) Valid() bool {
 	case ListPostureSessionsParamsPostureStale:
 		return true
 	case ListPostureSessionsParamsPostureUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetRelayPublicationJSONBodyAcknowledgeConnectivityChange.
+const (
+	SetRelayPublicationJSONBodyAcknowledgeConnectivityChangeTrue SetRelayPublicationJSONBodyAcknowledgeConnectivityChange = true
+)
+
+// Valid indicates whether the value is a known member of the SetRelayPublicationJSONBodyAcknowledgeConnectivityChange enum.
+func (e SetRelayPublicationJSONBodyAcknowledgeConnectivityChange) Valid() bool {
+	switch e {
+	case SetRelayPublicationJSONBodyAcknowledgeConnectivityChangeTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetRelayPublicationJSONBodyMode.
+const (
+	SetRelayPublicationJSONBodyModeLegacy   SetRelayPublicationJSONBodyMode = "legacy"
+	SetRelayPublicationJSONBodyModeServices SetRelayPublicationJSONBodyMode = "services"
+)
+
+// Valid indicates whether the value is a known member of the SetRelayPublicationJSONBodyMode enum.
+func (e SetRelayPublicationJSONBodyMode) Valid() bool {
+	switch e {
+	case SetRelayPublicationJSONBodyModeLegacy:
+		return true
+	case SetRelayPublicationJSONBodyModeServices:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange.
+const (
+	SetRelayServiceModesJSONBodyAcknowledgeConnectivityChangeTrue SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange = true
+)
+
+// Valid indicates whether the value is a known member of the SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange enum.
+func (e SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange) Valid() bool {
+	switch e {
+	case SetRelayServiceModesJSONBodyAcknowledgeConnectivityChangeTrue:
 		return true
 	default:
 		return false
@@ -1386,6 +1515,48 @@ type Flow struct {
 	Protocol    string `json:"protocol"`
 	Source      string `json:"source"`
 }
+
+// GatewayInventory defines model for GatewayInventory.
+type GatewayInventory struct {
+	Gateways      []GatewayNode                 `json:"gateways"`
+	SchemaVersion GatewayInventorySchemaVersion `json:"schema_version"`
+
+	// UnresolvedRoutes Configured routes without a visible eligible node, including empty or missing routing groups.
+	UnresolvedRoutes []string `json:"unresolved_routes"`
+
+	// UnsupportedRoutes Non-CIDR route declarations that cannot be projected as Karst Gateway offers.
+	UnsupportedRoutes []string `json:"unsupported_routes"`
+}
+
+// GatewayInventorySchemaVersion defines model for GatewayInventory.SchemaVersion.
+type GatewayInventorySchemaVersion int
+
+// GatewayNode defines model for GatewayNode.
+type GatewayNode struct {
+	ControlConnected    bool                           `json:"control_connected"`
+	ForwardingReadiness GatewayNodeForwardingReadiness `json:"forwarding_readiness"`
+	Name                string                         `json:"name"`
+	NodeId              string                         `json:"node_id"`
+	Offers              []GatewayOffer                 `json:"offers"`
+}
+
+// GatewayNodeForwardingReadiness defines model for GatewayNode.ForwardingReadiness.
+type GatewayNodeForwardingReadiness string
+
+// GatewayOffer defines model for GatewayOffer.
+type GatewayOffer struct {
+	Enabled               bool             `json:"enabled"`
+	Id                    string           `json:"id"`
+	Kind                  GatewayOfferKind `json:"kind"`
+	Masquerade            bool             `json:"masquerade"`
+	Metric                int              `json:"metric"`
+	NetworkId             string           `json:"network_id"`
+	Prefix                string           `json:"prefix"`
+	RequiresClientConsent bool             `json:"requires_client_consent"`
+}
+
+// GatewayOfferKind defines model for GatewayOffer.Kind.
+type GatewayOfferKind string
 
 // GroupLocation defines model for GroupLocation.
 type GroupLocation struct {
@@ -1810,6 +1981,45 @@ type RelayLocation struct {
 	Lon   float32 `json:"lon"`
 }
 
+// RelayPublication defines model for RelayPublication.
+type RelayPublication struct {
+	Mode RelayPublicationMode `json:"mode"`
+
+	// SchemaVersion Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
+	SchemaVersion *RelayPublicationSchemaVersion `json:"schema_version,omitempty"`
+}
+
+// RelayPublicationMode defines model for RelayPublication.Mode.
+type RelayPublicationMode string
+
+// RelayPublicationSchemaVersion Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
+type RelayPublicationSchemaVersion int
+
+// RelayService defines model for RelayService.
+type RelayService struct {
+	Id string `json:"id"`
+
+	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
+	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
+
+	// PonorId Existing account-local Ponor registry ID.
+	PonorId string `json:"ponor_id"`
+}
+
+// RelayServiceView defines model for RelayServiceView.
+type RelayServiceView struct {
+	Id string `json:"id"`
+
+	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
+	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
+
+	// PonorId Existing account-local Ponor registry ID.
+	PonorId string `json:"ponor_id"`
+
+	// PonorPresent Referenced Ponor registry entry exists in this account; not a health result.
+	PonorPresent bool `json:"ponor_present"`
+}
+
 // RelayUsageDay defines model for RelayUsageDay.
 type RelayUsageDay struct {
 	Date              openapi_types.Date        `json:"date"`
@@ -1986,26 +2196,6 @@ type SshGrant struct {
 	Target    string `json:"target"`
 }
 
-// TurnServer defines model for TurnServer.
-type TurnServer struct {
-	// Id Derived from uri; never accepted from callers.
-	Id       *string        `json:"id,omitempty"`
-	Location *RelayLocation `json:"location,omitempty"`
-	Region   *string        `json:"region,omitempty"`
-
-	// Uri A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
-	Uri string `json:"uri"`
-}
-
-// TurnServerCreate defines model for TurnServerCreate.
-type TurnServerCreate struct {
-	Location *RelayLocation `json:"location,omitempty"`
-	Region   *string        `json:"region,omitempty"`
-
-	// Uri A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
-	Uri string `json:"uri"`
-}
-
 // TutorialMode defines model for TutorialMode.
 type TutorialMode struct {
 	// Enabled Whether per-page "what is this" guidance text is shown across the console. Defaults to true.
@@ -2050,9 +2240,6 @@ type SinkId = string
 
 // Tag defines model for tag.
 type Tag = string
-
-// TurnId defines model for turnId.
-type TurnId = string
 
 // User defines model for user.
 type User = string
@@ -2195,6 +2382,27 @@ type ListPostureSessionsParams struct {
 // ListPostureSessionsParamsPosture defines parameters for ListPostureSessions.
 type ListPostureSessionsParamsPosture string
 
+// SetRelayPublicationJSONBody defines parameters for SetRelayPublication.
+type SetRelayPublicationJSONBody struct {
+	AcknowledgeConnectivityChange SetRelayPublicationJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
+	Mode                          SetRelayPublicationJSONBodyMode                          `json:"mode"`
+}
+
+// SetRelayPublicationJSONBodyAcknowledgeConnectivityChange defines parameters for SetRelayPublication.
+type SetRelayPublicationJSONBodyAcknowledgeConnectivityChange bool
+
+// SetRelayPublicationJSONBodyMode defines parameters for SetRelayPublication.
+type SetRelayPublicationJSONBodyMode string
+
+// SetRelayServiceModesJSONBody defines parameters for SetRelayServiceModes.
+type SetRelayServiceModesJSONBody struct {
+	AcknowledgeConnectivityChange SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
+	PonorEnabled                  bool                                                      `json:"ponor_enabled"`
+}
+
+// SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange defines parameters for SetRelayServiceModes.
+type SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange bool
+
 // GetDeviceUsageParams defines parameters for GetDeviceUsage.
 type GetDeviceUsageParams struct {
 	Start time.Time `form:"start" json:"start"`
@@ -2287,14 +2495,20 @@ type ValidatePolicyJSONRequestBody = PolicyWrite
 // CreateAllowedRegionJSONRequestBody defines body for CreateAllowedRegion for application/json ContentType.
 type CreateAllowedRegionJSONRequestBody = AllowedRegion
 
+// CreateRelayServiceJSONRequestBody defines body for CreateRelayService for application/json ContentType.
+type CreateRelayServiceJSONRequestBody = RelayService
+
+// SetRelayPublicationJSONRequestBody defines body for SetRelayPublication for application/json ContentType.
+type SetRelayPublicationJSONRequestBody SetRelayPublicationJSONBody
+
+// SetRelayServiceModesJSONRequestBody defines body for SetRelayServiceModes for application/json ContentType.
+type SetRelayServiceModesJSONRequestBody SetRelayServiceModesJSONBody
+
 // CreateRelayJSONRequestBody defines body for CreateRelay for application/json ContentType.
 type CreateRelayJSONRequestBody = RelayCreate
 
 // SetScalingModeJSONRequestBody defines body for SetScalingMode for application/json ContentType.
 type SetScalingModeJSONRequestBody = ScalingMode
-
-// CreateTurnServerJSONRequestBody defines body for CreateTurnServer for application/json ContentType.
-type CreateTurnServerJSONRequestBody = TurnServerCreate
 
 // SetTutorialModeJSONRequestBody defines body for SetTutorialMode for application/json ContentType.
 type SetTutorialModeJSONRequestBody = TutorialMode

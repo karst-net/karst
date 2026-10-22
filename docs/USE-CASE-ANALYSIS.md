@@ -12,8 +12,8 @@ ready; the project is beta ([README](../README.md)).
 A **Gateway** is an enrolled node agent with forwarding enabled for approved
 prefixes. Specific-prefix routing provides subnet access; default-route
 routing provides exit behavior with local recipient consent. A **Relay**
-forwards encrypted overlay frames using Ponor or TURN; it does not terminate
-the peer tunnel. A host can run both, with separate privileges and keys.
+forwards encrypted overlay frames using Ponor; it does not terminate the peer
+tunnel.
 
 ## System boundary and components
 
@@ -22,15 +22,15 @@ the peer tunnel. A host can run both, with separate privileges and keys.
 | Family | Runs where | Primary responsibility | Principal interactions |
 |---|---|---|---|
 | Node agent | Linux, macOS or Windows endpoint; supported forwarding host for Gateway | Identity, sessions, local policy, AVEN path selection, KarstDNS, routing and optional Gateway forwarding | Receives control netmaps, independently verifies Bedrock, uses direct or relayed peer paths |
-| Transport infrastructure | Publicly reachable Relay host and optional TURN backend | One Relay with Ponor presence/bootstrap, reflector and forwarding, plus TURN allocation-based transit | Control publishes endpoints/admission/credentials; clients exchange ciphertext |
+| Transport infrastructure | Publicly reachable Relay host | One Relay with Ponor presence/bootstrap, reflector and forwarding | Control publishes endpoints/admission/credentials; clients exchange ciphertext |
 | Control services | Coordination hosts and browser console/portal | Enrollment, users/groups, policy, route/DNS and transport distribution, administration/audit | Integrates IdP/SCIM and SIEM; distributes configuration and signed Bedrock state |
 | Trust tooling | Offline authority devices, optional online anchor host, verifiers in consumers | Bedrock membership signatures, revocation, chain verification and audit anchors | Authorities sign reviewed requests; control transports state; enforcing clients verify |
 
 The family model is accepted; combined Relay/Gateway configuration and UI are
-pending [#404](https://github.com/karst-net/karst/issues/404). Current Ponor and
-TURN registries remain separate. TURN will use a managed coturn/external-provider
-adapter, not an embedded server. Endpoint support does not imply forwarding
-host support; see [architecture and platform limits](COMPONENT-ARCHITECTURE.md).
+pending [#404](https://github.com/karst-net/karst/issues/404). ADR-0056's
+addendum dropped standalone TURN support in favor of Relay-only transport
+fallback. Endpoint support does not imply forwarding host support; see
+[architecture and platform limits](COMPONENT-ARCHITECTURE.md).
 
 ### Connectivity and control-plane relationship
 
@@ -39,7 +39,7 @@ flowchart TD
     Trust["Trust tooling: Bedrock authorities"] -->|signed chain| Control["Control services: server, console, portal"]
     Control -->|netmap: policy, peers, routes, DNS| Clients["Node agents with local verification"]
     Control -->|admission and backend configuration| Relay["Transport infrastructure: Relay"]
-    Clients <-->|Ponor or TURN ciphertext| Relay
+    Clients <-->|Ponor ciphertext| Relay
     Clients <-->|direct encrypted peer path| Peers["Other node agents"]
     Clients -->|Gateway forwards inner packets| Network["Approved LAN, VPC or Internet"]
 ```
@@ -138,10 +138,8 @@ fallback relay.
    the configured TLS server name.
 3. The administrator records the relay’s numeric `IP:port`, TLS server name,
    public identity key, and region in the relay registry.
-4. Control publishes the Relay to clients and refreshes Ponor admission rosters.
-   If TURN mode is enabled, configure the coturn/external backend, bounded
-   credentials and allocation/port limits; monitor each mode's readiness,
-   credential renewal, capacity and admission separately. The unified service
+4. Control publishes the Relay to clients and refreshes Ponor admission
+   rosters; monitor readiness, capacity and admission. The unified service
    adapter is pending #404; current deployment steps remain in the Compose guide.
 
 **Success:** a newly enrolled node learns the relay and can authenticate it;
@@ -307,19 +305,17 @@ rename does not imply new forwarding support or faster failover.
    route/policy information, pairwise material, and relay options in its
    encrypted netmap.
 2. The clients attempt AVEN discovery and a direct PHREATIC path.
-3. If direct connectivity is not available, clients use the Relay's supported
-   Ponor or TURN mode, with protocol-specific admission and credentials. Ponor
-   retains presence/bootstrap when TURN supplies fallback transit. They keep
-   probing and upgrade to direct connectivity when a safe candidate succeeds.
-   Unified mode discovery/health is pending #404; current registry and worker
-   paths remain separate.
+3. If direct connectivity is not available, clients use the Relay's Ponor
+   mode, with protocol-specific admission and credentials. They keep probing
+   and upgrade to direct connectivity when a safe candidate succeeds. Unified
+   mode discovery/health is pending #404.
 4. Clients report bounded, authenticated last-known path observations to
    control; control exposes them as telemetry, not as proof of current state.
 
 **Success:** traffic is encrypted end-to-end and passes only when policy
 allows it; a direct path is preferred but not required.  
-**Control:** relay/TURN operators can learn peer identifiers, timing, and
-volume, but not overlay plaintext. Some NAT pairs remain correctly relayed.
+**Control:** relay operators can learn peer identifiers, timing, and volume,
+but not overlay plaintext. Some NAT pairs remain correctly relayed.
 
 ### UC-09 — Govern Bedrock network membership
 
@@ -369,8 +365,8 @@ into administrators.
    sink.
 2. The auditor examines policy history, Bedrock-log verification, node posture,
    session posture, Gateway route readiness, Relay mode/admission freshness,
-   TURN expiry/allocation health, and last-known path observations. Unified
-   mode health presentation is a #404 target, not an existing endpoint.
+   and last-known path observations. Unified mode health presentation is a
+   #404 target, not an existing endpoint.
 3. A security administrator uses that evidence to block a user, deprovision a
    node, remove a relay, or roll back a policy under the appropriate change
    process.

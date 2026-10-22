@@ -29,8 +29,8 @@ allow = [
     # Mozilla root-CA-certificate data bundle `rustls-platform-verifier`
     # depends on — itself pulled in unconditionally by `kube-client` 4.2.0's
     # own `rustls-tls` feature (new in that release; 4.0.0's `rustls-tls`
-    # had no such dependency), via `bins/karst-scaler-k8s` and
-    # `bins/karst-scaler-turn-k8s` (issue #353). It is a data license, not a
+    # had no such dependency), via `bins/karst-scaler-k8s` (issue #353). It
+    # is a data license, not a
     # software license — the Linux Foundation's permissive sibling to
     # CDLA-Sharing, imposing attribution only, with no copyleft, source-
     # availability, or non-commercial restriction — so it does not fall

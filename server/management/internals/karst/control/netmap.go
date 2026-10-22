@@ -27,8 +27,8 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
-	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/management/proto"
@@ -149,25 +149,13 @@ type NetmapHandler struct {
 
 	// Relays is the authenticated Ponor registry. Entries are static at this
 	// boundary until relay administration is moved into the control database.
+	RelayServices interface {
+		Netmap(context.Context) (bool, []*proto.KarstRelay, error)
+		Publication(context.Context) (relayservice.Publication, error)
+	}
 	Relays     []*proto.KarstRelay
 	RelayStore interface {
 		NetmapRelays(context.Context) ([]*proto.KarstRelay, error)
-	}
-
-	// TurnServers and TurnMinter are ADR-0008 §4's TURN fallback: an
-	// operator-configured server list and a shared-secret minter, both nil
-	// for a deployment that has not configured TURN — turncred.NetmapEntries
-	// then produces no turn_servers field at all, so this feature is opt-in
-	// the same way Relays above is.
-	TurnServers []turncred.Entry
-	TurnMinter  *turncred.Minter
-	// TurnStore is the account-scoped, DB-backed TURN registry, mirroring
-	// RelayStore above. Entries are static at this boundary until an account
-	// has written its own registry, exactly as Relays/RelayStore fall back.
-	// TurnMinter is unaffected: the shared secret stays file/env-configured
-	// regardless of where the server list comes from.
-	TurnStore interface {
-		Entries(context.Context) ([]turncred.Entry, error)
 	}
 
 	// Policy is the ACL document to compile a per-node filter from (§4.3).
@@ -294,6 +282,18 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, "node is not registered")
 	}
+	if err := h.Nodes.SetRelayLifecycleSchema(ctx, self, req.GetRelayLifecycleSchema()); err != nil {
+		return nil, fmt.Errorf("record Relay lifecycle capability: %w", err)
+	}
+	if h.RelayServices != nil {
+		publication, err := h.RelayServices.Publication(relayservice.WithAccount(ctx, accountID))
+		if err != nil {
+			return nil, fmt.Errorf("load Relay publication compatibility: %w", err)
+		}
+		if publication.Mode == "services" && publication.SchemaVersion >= 2 && req.GetRelayLifecycleSchema() != 1 {
+			return nil, status.Error(codes.FailedPrecondition, "Relay lifecycle schema 1 is required by this account; upgrade the agent before using service modes")
+		}
+	}
 	peers, err := h.Peers.GetPeersFromAccount(ctx, accountID, selfPeer.ID, selfPeer.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %w", err)
@@ -365,35 +365,31 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		return nil, fmt.Errorf("account prefixes: %w", err)
 	}
 
-	// h.Relays/h.TurnServers are the fallback documented above: they apply
-	// only when the account-scoped store has nothing of its own, not
-	// whenever a store happens to be configured. RelayStore and TurnStore
-	// are always non-nil in a real deployment, so treating their presence
-	// alone as the switch would make the static, file/env-configured lists
-	// permanently unreachable — exactly the accounts they exist to serve.
-	relays := h.Relays
-	if h.RelayStore != nil {
-		stored, err := h.RelayStore.NetmapRelays(relayreg.WithAccount(ctx, accountID))
+	// h.Relays is the fallback documented above: it applies only when the
+	// account-scoped store has nothing of its own, not whenever a store
+	// happens to be configured. RelayStore is always non-nil in a real
+	// deployment, so treating its presence alone as the switch would make
+	// the static, file/env-configured list permanently unreachable --
+	// exactly the accounts it exists to serve.
+	var relays []*proto.KarstRelay
+	servicePublication := false
+	if h.RelayServices != nil {
+		servicePublication, relays, err = h.RelayServices.Netmap(relayservice.WithAccount(ctx, accountID))
 		if err != nil {
-			return nil, fmt.Errorf("load relays: %w", err)
-		}
-		if len(stored) > 0 {
-			relays = stored
+			return nil, fmt.Errorf("load Relay services: %w", err)
 		}
 	}
-	turnEntries := h.TurnServers
-	if h.TurnStore != nil {
-		stored, err := h.TurnStore.Entries(turncred.WithAccount(ctx, accountID))
-		if err != nil {
-			return nil, fmt.Errorf("load turn servers: %w", err)
+	if !servicePublication {
+		relays = h.Relays
+		if h.RelayStore != nil {
+			stored, err := h.RelayStore.NetmapRelays(relayreg.WithAccount(ctx, accountID))
+			if err != nil {
+				return nil, fmt.Errorf("load relays: %w", err)
+			}
+			if len(stored) > 0 {
+				relays = stored
+			}
 		}
-		if len(stored) > 0 {
-			turnEntries = stored
-		}
-	}
-	turnServers, err := turncred.NetmapEntries(turnEntries, h.TurnMinter)
-	if err != nil {
-		return nil, fmt.Errorf("mint turn credentials: %w", err)
 	}
 	// Loaded once and reused for every peer below, rather than re-read per
 	// peer: a rotation landing mid-response must not hand out a mix of old-
@@ -401,12 +397,11 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// netmap.
 	epoch := h.Epoch.Load()
 	resp := &proto.KarstNetmapResponse{
-		PskEpoch:    epoch,
-		NodeId:      []byte(self),
-		Addresses:   addressesOf(selfPeer, v4Bits, v6Bits),
-		DnsName:     selfPeer.DNSLabel,
-		Relays:      relays,
-		TurnServers: turnServers,
+		PskEpoch:  epoch,
+		NodeId:    []byte(self),
+		Addresses: addressesOf(selfPeer, v4Bits, v6Bits),
+		DnsName:   selfPeer.DNSLabel,
+		Relays:    relays,
 	}
 	if h.ComplianceIngestion {
 		resp.ComplianceIngestionSchema = 1

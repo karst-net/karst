@@ -82,12 +82,8 @@ let controlPlaneLocation = { lat: 37.7749, lon: -122.4194, label: "Control room"
 let allowedRegions = [
   { provider: "aws", region: "us-east-1" },
 ];
-// ADR-0008 §4's TURN registry. Seeded with one declared-location entry so
-// the Turns view and the "turn" NOC-map marker kind both have something to
-// show without the "empty" fixture path, matching every other resource here.
-let turns = [
-  { id: "turn-fixture-1", uri: "turn:turn.example.test:3478", region: "default", location: { lat: 48.8566, lon: 2.3522, label: "Paris" } },
-];
+let relayServices = [];
+let relayPublication = { mode: "legacy" };
 // Console first-run onboarding gate (GET/POST /firstrun). Defaults to true
 // so the existing e2e suite's direct navigation to any route keeps working
 // unchanged -- flip this to false (and restart the mock) to exercise the
@@ -392,6 +388,11 @@ const server = http.createServer((request, response) => {
   if (nsMatch && method === "PUT") return readBody(request).then((body) => replace(nameservers, nsMatch[1], body, response));
   if (nsMatch && method === "DELETE") return remove(nameservers, nsMatch[1], response);
 
+  if (path === "/api/karst/v1/gateways" && method === "GET") return json(response, 200, {
+    schema_version: 1,
+    gateways: [{ node_id: "gateway-fixture", name: "Gateway fixture", control_connected: true, forwarding_readiness: "unreported", offers: routes.filter((route) => route.peer_groups.includes("group-gateways")).map((route) => ({ id: route.id, network_id: route.network_id, prefix: route.network, kind: route.network === "0.0.0.0/0" ? "default_ipv4" : route.network === "::/0" ? "default_ipv6" : "subnet", enabled: route.enabled, masquerade: route.masquerade, metric: route.metric, requires_client_consent: route.network === "0.0.0.0/0" || route.network === "::/0" })) }],
+    unresolved_routes: [], unsupported_routes: [],
+  });
   if (path === "/api/routes" && method === "GET") return json(response, 200, routes);
   if (path === "/api/routes" && method === "POST") {
     return readBody(request).then((draft) => {
@@ -560,6 +561,23 @@ const server = http.createServer((request, response) => {
   if ((method === "PUT" && karst === "/policy") || (method === "POST" && /^\/policy\/rollback\/\d+$/.test(karst))) return json(response, 200, fixture.policy);
   if (method === "POST" && karst === "/policy/test") return json(response, 200, { passed: false, results: [{ name: "SRE SSH access", passed: true, message: "allowed" }, { name: "contractor production SSH", passed: false, message: "expected deny, got allow" }] });
 
+  if (method === "GET" && karst === "/relay-services/publication") return json(response, 200, relayPublication);
+  if (method === "POST" && karst === "/relay-services/publication/preview") return json(response, 200, relayServices);
+  if (method === "PUT" && karst === "/relay-services/publication") return readBody(request).then((value) => {
+    if (!["legacy", "services"].includes(value.mode) || value.acknowledge_connectivity_change !== true) return error(response, 422, "invalid_argument", "valid publication mode and acknowledgment required");
+    relayPublication = { mode: value.mode };
+    return json(response, 200, relayPublication);
+  });
+  if (method === "GET" && karst === "/relay-services") return json(response, 200, relayServices.map((service) => ({ ...service, ponor_present: fixture.relays.some((entry) => entry.id === service.ponor_id) })));
+  if (method === "POST" && karst === "/relay-services") return readBody(request).then((service) => {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(service.id ?? "") || !fixture.relays.some((entry) => entry.id === service.ponor_id)) return error(response, 422, "invalid_argument", "valid service name and registered Ponor endpoint required");
+    if (relayServices.some((entry) => entry.id === service.id)) return error(response, 409, "already_exists", "service already exists");
+    relayServices.push(service);
+    return json(response, 201, service);
+  });
+  const serviceMatch = karst.match(/^\/relay-services\/([^/]+)$/);
+  if (serviceMatch && method === "DELETE") return remove(relayServices, serviceMatch[1], response);
+
   if (method === "GET" && karst === "/relays") return json(response, 200, fixture.relays);
   if (method === "POST" && karst === "/relays") {
     return readBody(request).then((entry) => {
@@ -573,33 +591,14 @@ const server = http.createServer((request, response) => {
   if (relayMatch && method === "GET" && karst.endsWith("/health")) return json(response, 200, fixture.relays.find((item) => item.id === relayMatch[1])?.health ?? fixture.relays[0].health);
   if (relayMatch && method === "DELETE") return remove(fixture.relays, relayMatch[1], response);
 
-  // ADR-0008 §4's TURN registry. turncred.go's own validate() requires a
-  // turn: or turns: URI and nothing else; mirrored here so a malformed URI
-  // is rejected the same way the real server rejects it.
-  if (method === "GET" && karst === "/turns") return json(response, 200, turns);
-  if (method === "POST" && karst === "/turns") {
-    return readBody(request).then((entry) => {
-      if (!/^turns?:/.test(entry.uri ?? "")) return error(response, 422, "invalid_argument", "uri must start with turn: or turns:");
-      if (turns.some((turn) => turn.uri === entry.uri)) return error(response, 412, "already_exists", "turn server already exists");
-      const turn = { id: id("turn"), uri: entry.uri, region: entry.region ?? "default", location: entry.location ?? undefined };
-      turns.push(turn);
-      return json(response, 201, turn);
-    });
-  }
-  const turnMatch = karst.match(/^\/turns\/([^/]+)$/);
-  if (turnMatch && method === "DELETE") return remove(turns, turnMatch[1], response);
-
   // NOC view (#241 Phase 1a, extended to ADR-0046 §1's full component list)
-  // -- one discriminated union assembled from relays, TURN servers, route
-  // gateway groups with a declared location, and the account's
-  // control-plane/Bedrock declared locations.
+  // -- one discriminated union assembled from relays, route gateway groups
+  // with a declared location, and the account's control-plane/Bedrock
+  // declared locations.
   if (method === "GET" && karst === "/noc/components") {
     const result = [];
     for (const relay of fixture.relays) {
       result.push({ kind: "relay", id: relay.id, label: relay.location?.label || relay.region, health: relay.health.admission_state, location: relay.location });
-    }
-    for (const turn of turns) {
-      result.push({ kind: "turn", id: turn.id, label: turn.location?.label || turn.uri, location: turn.location });
     }
     for (const gl of groupLocations) {
       const servedBy = routes.filter((route) => route.enabled && route.peer_groups.includes(gl.group_id)).map((route) => route.network_id);

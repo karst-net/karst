@@ -24,7 +24,8 @@ function GroupSelect({ label, value, groups, onChange }: { label: string; value:
 export function Routes() {
   const resource = useResource(api.routes);
   const groupResource = useResource(api.groups);
-  const { message, setMessage, run } = useMutation(resource.reload);
+  const inventory = useResource(api.gateways);
+  const { message, setMessage, run } = useMutation(() => { resource.reload(); inventory.reload(); });
   const [draft, setDraft] = useState<{ value: NetworkRouteDraft; id?: string }>();
 
   if (resource.loading || groupResource.loading) return <p>Loading network routes…</p>;
@@ -63,7 +64,25 @@ export function Routes() {
   };
 
   return <section>
-    <h2>Network routes</h2>
+    <h2>Gateways</h2>
+    <section aria-label="Configured Gateway nodes">
+      <h3>Configured Gateway nodes</h3>
+      <p className="lede">One enrolled node can serve subnet access and default-route egress together. Control connectivity is shown separately from forwarding readiness. Local exit consent and destination policy still apply.</p>
+      <button onClick={inventory.reload}>Refresh Gateway inventory</button>
+      {inventory.loading ? <p>Loading Gateway inventory…</p> : inventory.error ? <><Failure message={`Gateway inventory unavailable: ${inventory.error}`} retry={inventory.reload} /><p>Route administration remains available below.</p></> : <>
+        {inventory.value?.gateways.length ? <Rows head={<><th>Node</th><th>Configured behaviors</th><th>Recorded control connection</th><th>Forwarding readiness</th></>}>
+          {inventory.value.gateways.map((gateway) => <tr key={gateway.node_id}>
+            <td><strong>{gateway.name}</strong><br /><code>{gateway.node_id}</code></td>
+            <td>{gateway.offers.map((offer) => <div key={offer.id}><code>{offer.prefix}</code> · {offer.kind === "subnet" ? "Subnet" : offer.kind === "default_ipv4" ? "IPv4 default" : "IPv6 default"} · {offer.enabled ? "enabled" : "disabled"}{offer.requires_client_consent && " · client consent required"}</div>)}</td>
+            <td>{gateway.control_connected ? "Connected" : "Disconnected"}</td>
+            <td>Unreported — inspect <code>karst gateway status</code> on the node.</td>
+          </tr>)}
+        </Rows> : <p>No Gateway nodes resolved from the configured route offers.</p>}
+        {Boolean(inventory.value?.unresolved_routes.length) && <p role="status">Routes without a visible eligible node: {inventory.value?.unresolved_routes.join(", ")}. Check routing groups and enrolled machines.</p>}
+        {Boolean(inventory.value?.unsupported_routes.length) && <p role="status">Routes outside the CIDR Gateway model: {inventory.value?.unsupported_routes.join(", ")}.</p>}
+      </>}
+    </section>
+    <h3>Route offers</h3>
     <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled machines ("gateways") will carry traffic to it. Advertise a subnet or default route through enrolled gateway machines. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
     <div className="actions">
       <button className="primary" onClick={() => setDraft({ value: fresh() })}>Add subnet route</button>
@@ -93,7 +112,7 @@ export function Routes() {
       <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <label>Identifier<input aria-label="Route identifier" placeholder="aws-prod" value={draft?.value.network_id ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network_id: event.target.value } })} /></label>
         <label>Network (CIDR)<input aria-label="Route network (CIDR)" placeholder="10.10.0.0/16" value={draft?.value.network ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value, skip_auto_apply: isExit(event.target.value) } })} /></label>
-        {isExit(draft?.value.network ?? "") && <p className="lede">The server only offers this default route. Each client must run <code>karst exit-node use &lt;route-id&gt;</code> locally before it becomes active. IPv4 and IPv6 consent are independent.</p>}
+        {isExit(draft?.value.network ?? "") && <p className="lede">The server only offers this default route. Each client must run <code>karst gateway exit use &lt;route-id&gt;</code> locally before it becomes active. IPv4 and IPv6 consent are independent.</p>}
         <label>Description<input aria-label="Route description" value={draft?.value.description ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, description: event.target.value } })} /></label>
         <GroupSelect label="Routing groups" groups={groups} value={draft?.value.peer_groups ?? []} onChange={(peer_groups) => setDraft((current) => current && { ...current, value: { ...current.value, peer_groups } })} />
         <p className="lede">These machines must have Linux forwarding and nftables available. Multiple members form a failover set; the selected route metric determines preference.</p>

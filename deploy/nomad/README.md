@@ -11,9 +11,8 @@ already run Nomad (for example, alongside other workloads on a shared host)
 and would rather manage karst the same way.
 
 ```sh
-cd ../compose && ./bootstrap.sh --turn=... # same as the compose README, once
-nomad job run karst.nomad.hcl              # control + relay
-nomad job run turn.nomad.hcl               # optional, only if you ran bootstrap.sh --turn
+cd ../compose && ./bootstrap.sh # same as the compose README, once
+nomad job run karst.nomad.hcl   # control + relay
 ```
 
 `bootstrap.sh` is orchestrator-agnostic -- it only ever does standalone
@@ -24,18 +23,13 @@ set up before running it.
 
 - **The base job (`karst.nomad.hcl`, control + relay only) uses host
   networking** for both tasks -- there's no third service for either to
-  collide with, so this is the simplest option and matches `turn.nomad.hcl`'s
-  `coturn` (`network_mode: host`, same reasoning as compose's own optional
-  coturn service: RFC 8656's per-session port range doesn't map cleanly
-  through a bridge network either way).
+  collide with, so this is the simplest option.
 - **`prod/` splits networking instead**, because it has two services
   (control, keycloak) that must stay unpublished and two (relay, caddy) that
   must own a real host port, and both control and caddy default to listening
   on the same internal port (33073) -- host networking for everyone would
   make them collide. See `prod/karst.nomad.hcl`'s own header comment for the
   split and the pre-created `docker network create karst` it depends on.
-- **No `--profile` equivalent.** Compose's `docker compose --profile turn up
-  -d` is just "also run `nomad job run turn.nomad.hcl`" here.
 - **Variables instead of `.env`.** `deploy_dir` (and, in `prod/`,
   `shared_state_dir`/`prod_dir`/`repo_root`/`jobspec_dir`) replace compose's
   `${VAR}` substitution from a cwd-local `.env` file. Pass them with

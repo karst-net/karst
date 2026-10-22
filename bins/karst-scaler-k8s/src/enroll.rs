@@ -80,9 +80,7 @@ pub(crate) fn mint_token(
 /// existed).
 ///
 /// A `404` (the row is already gone — e.g. a retried `destroy()` call) is
-/// treated as success, the same convention
-/// `karst_scaler_turn_k8s::enroll::deenroll` uses for the identical
-/// reason.
+/// treated as success.
 ///
 /// # Errors
 /// If the request fails, is refused, or the response is neither success

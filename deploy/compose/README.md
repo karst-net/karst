@@ -124,51 +124,17 @@ PLAN.md §4.3.
 | `KARST_CONTROL_PORT` | `33073` | Host port for the coordination server |
 | `KARST_AQUIFER` | *(unset)* | Optional deployment-namespace prefix on the per-account forwarding scope (§5.4, ADR-0033) — not required for isolation itself |
 | `KARST_REGION` | `default` | Relay region (§8, §9) |
-| `KARST_TURN_PORT` | `3478` | coturn's listening port, only relevant with `--turn` |
 
 ## Component model
 
 [ADR-0056](../../docs/adr/0056-four-component-families.md) defines four families:
-node agent, transport infrastructure, control services and trust tooling.
-The Relay component combines Ponor and TURN modes through a managed adapter to
-coturn or an external provider; that unified lifecycle/configuration is pending
-#404. Today's Compose deployment still uses `karst-relay` and optional coturn
-as separate processes with separate registries. The commands below are current,
-not a new embedded TURN feature. Gateway subnet/exit forwarding is a capability
-of an enrolled node, not a capability enabled by starting this Relay stack.
-
-## TURN fallback (optional)
-
-The relay above is the always-on path and works for the great majority of
-networks — ADR-0008 §4 reserves TURN for the networks it does not reach. It
-is off by default and does not affect the deployment above at all until you
-opt in:
-
-```sh
-KARST_RELAY_IP=203.0.113.7 ./bootstrap.sh --turn   # once, in addition to the plain run
-docker compose --profile turn up -d
-```
-
-`--turn` generates three more files under `state/` — `turn-secret` (a
-shared secret, `chmod 600`), `turns.json` (the registry every node's netmap
-carries, at `turn:$KARST_RELAY_IP:$KARST_TURN_PORT`), and `turnserver.conf`
-— and writes `KARST_TURN_REGISTRY_FILE`/`KARST_TURN_SHARED_SECRET_FILE`
-into `.env`, which `docker compose` substitutes into the `control` service
-automatically. `karst-control` mints a fresh HMAC-SHA1 TURN-REST credential
-per netmap response from the same secret `coturn` validates against —
-never a static one; see `server/management/internals/karst/turncred`'s
-package doc for why.
-
-The `coturn` service runs with `network_mode: host`, not the bridge network
-the other two services use. RFC 8656 allocates one relay port per active
-session out of the range `turnserver.conf` opens (`49160`-`49200` by
-default); mapping that range through Docker's bridge network one port at a
-time is why real-world coturn deployments use host networking instead of
-per-port `ports:` entries.
-
-Re-running `./bootstrap.sh --turn` is safe — like every other step, it skips
-regenerating a file that already exists, so it will not rotate a secret every
-node and every `coturn` instance has already agreed on.
+node agent, transport infrastructure, control services and trust tooling. The
+Relay component is transport infrastructure's only member — ADR-0056's
+addendum dropped the standalone TURN fallback this deployment used to also
+support, in favor of the co-located relay alone. The
+[Relay deployment adapter](#relay-deployment-adapter) uses one manifest to
+manage the reference Compose process. Gateway subnet/exit forwarding is a
+capability of an enrolled node.
 
 `bootstrap.sh` is idempotent: every step skips if its output exists, so
 re-running it after a partial failure finishes the job rather than replacing a
@@ -229,3 +195,77 @@ docker pull "$image@$digest"
 
 Run the same procedure for `karstd` and `karst-relay`. A development image
 tagged `:dev` is a local build and is intentionally not a release claim.
+
+
+## Relay deployment adapter
+
+`relay-service.py` (Python 3.11+, Docker Compose v2) manages the Ponor process
+from `relay-service.toml`. It targets this reference Compose layout, not the
+production/HA or Kubernetes stacks. Existing `bootstrap.sh`, `docker compose`
+commands and profiles remain valid. The adapter never rotates identity keys,
+TLS material, shared secrets, registry files or allocation ports.
+
+For a new managed deployment, run `bootstrap.sh`, review its policy, quotas,
+listening addresses and firewall settings, then start control. Bootstrap is
+idempotent for existing material. Copy and edit the shared manifest:
+
+```sh
+cp relay-service.toml.example relay-service.toml
+docker compose up -d control
+./relay-service.py plan
+./relay-service.py apply --acknowledge-process-change
+./relay-service.py status
+```
+
+For an existing deployment, retain a backup of `state/` and `.env` using your
+normal secret-safe backup process; copy the example manifest and explicitly
+match the running mode before the first apply. `plan` validates required
+bootstrap material and control's configured file paths. It prints only the
+desired mode and commands, without resolved environment or secrets. A
+manifest with unknown fields or a missing boolean fails instead of disabling
+the mode implicitly. `plan` does not contact Docker or test network readiness.
+
+`apply` validates the Compose configuration, starts enabled managed processes
+with `--no-deps`, then stops disabled local processes. Control must already be
+running; the adapter does not restart it. It never runs `down`, removes volumes,
+or stops control. If a command fails, earlier commands may have completed;
+inspect `status` and fix the failure before retrying. Apply is idempotent, not
+transactional. Do not run concurrent applies or edit the manifest while applying.
+Docker retains its ordinary image-pull/start behavior; pin images according to
+your deployment's release policy.
+
+A successful apply saves `state/relay-service.applied.toml` and retains the prior
+successful manifest as `state/relay-service.applied.toml.previous`, both mode
+0600. For process rollback, review/copy that previous manifest to
+`relay-service.toml`, run `plan`, then apply again. Failed applies do not record
+success. The snapshots contain desired mode configuration, not database or
+secret backups. Original bootstrap and Compose commands remain usable when
+rolling back to tooling without this adapter.
+
+### Process modes and account publication
+
+Local process state and account publication are distinct. Before stopping the
+mode, withdraw the relevant endpoints through the control **Relay Services**
+mode/publication controls and allow agents to refresh their netmaps. Coordinate
+all accounts using the shared process; disabling the association does not mean
+the backend is unused. Review fallback availability and active allocation loss,
+then apply the deployment manifest. On enabling, start/check the process first,
+then activate publication after admission observations succeed. Neither the
+script nor its acknowledgment changes membership, policy, local Gateway
+consent or control's publication authority. See
+[Relay Services](../../docs/relay-services.md) for version gates and rollback.
+
+Status exposes the Ponor process's state. Running containers with no
+healthcheck report `unprobed`, not healthy. Use control's fresh Ponor
+admission observations for readiness; deployment state does not prove
+credential acceptance, permissions/channel bindings, network reachability, or
+end-to-end encrypted transit.
+
+Run the adapter tests with:
+
+```sh
+python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
+# Also exercise real Compose start/stop/re-enable in an isolated project.
+# Requires local alpine:latest; containers are harmless process stand-ins.
+KARST_COMPOSE_LIFECYCLE_TEST=1 python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
+```

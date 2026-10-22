@@ -13,6 +13,21 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /gateways:
+    get:
+      operationId: gatewayInventory
+      description: Account-scoped configured Gateway capabilities resolved through visible route, group and administrative peer records. Control connectivity does not establish forwarding readiness. No consent or route writes.
+      responses:
+        '200':
+          description: Unified subnet and default-route offers per enrolled node
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayInventory'
+        '403':
+          description: Caller lacks source permissions
+        '412':
+          description: Gateway inventory sources unavailable
   /versions:
     get:
       operationId: softwareVersions
@@ -483,6 +498,87 @@ paths:
       responses:
         '200': {description: Policy test results, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyTestResult'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /relay-services:
+    get:
+      operationId: listRelayServices
+      tags: [relays]
+      description: Explicit account-scoped Ponor associations. Presence means registry availability, not runtime health.
+      responses:
+        '200': {description: Relay services, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayServiceView'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createRelayService
+      tags: [relays]
+      description: Associate existing account-local registry records. Service publication mode updates client endpoints; credentials and backend processes remain separate.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
+      responses:
+        '201': {description: Association created, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-services/publication:
+    get:
+      operationId: getRelayPublication
+      tags: [relays]
+      responses:
+        '200': {description: Active publication authority, content: {application/json: {schema: {$ref: '#/components/schemas/RelayPublication'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setRelayPublication
+      tags: [relays]
+      description: Explicitly select legacy registries or validated service publication and notify connected clients. Empty service publication withdraws all Relay endpoints without falling back to legacy registries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [mode, acknowledge_connectivity_change]
+              properties:
+                mode: {type: string, enum: [legacy, services]}
+                acknowledge_connectivity_change: {type: boolean, enum: [true]}
+      responses:
+        '200': {description: Publication authority changed, content: {application/json: {schema: {$ref: '#/components/schemas/RelayPublication'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-services/publication/preview:
+    post:
+      operationId: previewRelayPublication
+      tags: [relays]
+      description: Validate the service projection and return its explicit backend associations without changing publication.
+      responses:
+        '200': {description: Validated service projection, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayService'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-services/{serviceId}:
+    parameters:
+      - {name: serviceId, in: path, required: true, schema: {type: string}}
+    delete:
+      operationId: deleteRelayService
+      tags: [relays]
+      description: Remove the association. Service publication mode withdraws endpoints no other service uses; registry records and external processes remain independently managed.
+      responses:
+        '204': {description: Association removed}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-services/{serviceId}/modes:
+    parameters:
+      - {name: serviceId, in: path, required: true, schema: {type: string}}
+    put:
+      operationId: setRelayServiceModes
+      tags: [relays]
+      description: Explicitly enable or withdraw the service mode. Changes affect service publication; backend processes and registry records are retained.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ponor_enabled, acknowledge_connectivity_change]
+              properties:
+                ponor_enabled: {type: boolean}
+                acknowledge_connectivity_change: {type: boolean, enum: [true]}
+      responses:
+        '200': {description: Updated mode configuration, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /relays:
     get:
       operationId: listRelays
@@ -520,8 +616,8 @@ paths:
       tags: [noc]
       description: >-
         The NOC view's map data source (#241 Phase 1a, ADR-0046/ADR-0047,
-        extended to ADR-0046 §1's full component list) -- every relay, TURN
-        server, exit-node/subnet-router gateway group, and the account's
+        extended to ADR-0046 §1's full component list) -- every relay,
+        exit-node/subnet-router gateway group, and the account's
         control-plane/Bedrock declared locations this account can see,
         reshaped into one discriminated union. Every call is audit-logged
         (karst.noc.view) explicitly, since this is a GET.
@@ -872,29 +968,6 @@ paths:
       responses:
         '200': {description: Discovered resources, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/DiscoveredResource'}}}}}
         default: {$ref: '#/components/responses/Error'}
-  /turns:
-    get:
-      operationId: listTurnServers
-      tags: [turns]
-      responses:
-        '200': {description: TURN server registry, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/TurnServer'}}}}}
-        default: {$ref: '#/components/responses/Error'}
-    post:
-      operationId: createTurnServer
-      tags: [turns]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TurnServerCreate'}}}}
-      responses:
-        '201': {description: Onboarded TURN server, content: {application/json: {schema: {$ref: '#/components/schemas/TurnServer'}}}}
-        '422': {$ref: '#/components/responses/ValidationError'}
-        default: {$ref: '#/components/responses/Error'}
-  /turns/{turnId}:
-    parameters: [{$ref: '#/components/parameters/turnId'}]
-    delete:
-      operationId: deleteTurnServer
-      tags: [turns]
-      responses:
-        '204': {description: TURN server removed}
-        default: {$ref: '#/components/responses/Error'}
   /bedrock:
     get:
       operationId: getBedrock
@@ -1037,7 +1110,6 @@ components:
   parameters:
     handle: {name: handle, in: path, required: true, schema: {type: string, minLength: 44, maxLength: 44}}
     relayId: {name: relayId, in: path, required: true, schema: {type: string, readOnly: true}}
-    turnId: {name: turnId, in: path, required: true, schema: {type: string, readOnly: true}}
     sinkId: {name: sinkId, in: path, required: true, schema: {type: string, readOnly: true}}
     version: {name: version, in: path, required: true, schema: {type: integer, minimum: 1}}
     cursor: {name: cursor, in: query, schema: {type: string}}
@@ -1057,6 +1129,45 @@ components:
     VersionConflict: {description: The supplied policy version is no longer current, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     AcknowledgmentMismatch: {description: Enforcing acknowledgment does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgmentMismatch'}}}}
   schemas:
+    GatewayOffer:
+      type: object
+      required: [id, network_id, prefix, kind, enabled, masquerade, metric, requires_client_consent]
+      properties:
+        id: { type: string }
+        network_id: { type: string }
+        prefix: { type: string }
+        kind: { type: string, enum: [subnet, default_ipv4, default_ipv6] }
+        enabled: { type: boolean }
+        masquerade: { type: boolean }
+        metric: { type: integer }
+        requires_client_consent: { type: boolean }
+    GatewayNode:
+      type: object
+      required: [node_id, name, control_connected, forwarding_readiness, offers]
+      properties:
+        node_id: { type: string }
+        name: { type: string }
+        control_connected: { type: boolean }
+        forwarding_readiness: { type: string, enum: [unreported] }
+        offers:
+          type: array
+          items: { $ref: '#/components/schemas/GatewayOffer' }
+    GatewayInventory:
+      type: object
+      required: [schema_version, gateways, unresolved_routes, unsupported_routes]
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        gateways:
+          type: array
+          items: { $ref: '#/components/schemas/GatewayNode' }
+        unresolved_routes:
+          type: array
+          description: Configured routes without a visible eligible node, including empty or missing routing groups.
+          items: { type: string }
+        unsupported_routes:
+          type: array
+          description: Non-CIDR route declarations that cannot be projected as Karst Gateway offers.
+          items: { type: string }
     MeshDomainView:
       type: object
       required: [id, label, path, is_root, naming_revision]
@@ -1394,6 +1505,28 @@ components:
       type: object
       required: [passed, results]
       properties: {passed: {type: boolean}, results: {type: array, items: {type: object, required: [name, passed], properties: {name: {type: string}, passed: {type: boolean}, message: {type: string}}}}}
+    RelayPublication:
+      type: object
+      required: [mode]
+      additionalProperties: false
+      properties:
+        mode: {type: string, enum: [legacy, services]}
+        schema_version: {type: integer, enum: [2], description: Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.}
+    RelayService:
+      type: object
+      required: [id, ponor_id]
+      additionalProperties: false
+      properties:
+        id: {type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}
+        ponor_id: {type: string, minLength: 1, description: Existing account-local Ponor registry ID.}
+        ponor_disabled: {type: boolean, default: false, description: Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.}
+    RelayServiceView:
+      allOf:
+        - {$ref: '#/components/schemas/RelayService'}
+        - type: object
+          required: [ponor_present]
+          properties:
+            ponor_present: {type: boolean, description: Referenced Ponor registry entry exists in this account; not a health result.}
     RelayCreate:
       type: object
       required: [address, identity_key, region]
@@ -1582,18 +1715,11 @@ components:
         lon: {type: number, minimum: -180, maximum: 180}
         parent_region: {type: string, description: 'Set for a kind other than region/namespace/datacenter -- the region to call the enable endpoint against.'}
         enabled: {type: boolean, description: 'True for a region and an already opted-in local zone. False only for a read_write AWS connection''s not-yet-opted-in local zone. Absent for a Kubernetes namespace or a Nomad datacenter, neither of which has an opt-in concept.'}
-    TurnServerCreate:
-      type: object
-      required: [uri]
-      additionalProperties: false
-      properties: {uri: {type: string, description: 'A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.'}, region: {type: string}, location: {$ref: '#/components/schemas/RelayLocation'}}
-    TurnServer:
-      allOf: [{$ref: '#/components/schemas/TurnServerCreate'}, {type: object, required: [id], properties: {id: {type: string, readOnly: true, description: Derived from uri; never accepted from callers.}}}]
     # The NOC map's admin-authorized "possible locations" registry (ADR-0046
     # §1 extension) -- a site an operator has declared this deployment may
     # place infrastructure at, independent of whether anything is deployed
-    # there yet. Additive, not a foreign key: a Relay/TurnServer/etc. may
-    # still declare a location that is not in this registry.
+    # there yet. Additive, not a foreign key: a Relay/etc. may still declare
+    # a location that is not in this registry.
     LocationCreate:
       type: object
       required: [lat, lon]
@@ -1614,7 +1740,7 @@ components:
       type: object
       required: [kind, id, label]
       properties:
-        kind: {type: string, enum: [relay, turn, route, control_plane, bedrock]}
+        kind: {type: string, enum: [relay, route, control_plane, bedrock]}
         id: {type: string}
         label: {type: string}
         health: {type: string, enum: [confirmed, stale, unknown]}

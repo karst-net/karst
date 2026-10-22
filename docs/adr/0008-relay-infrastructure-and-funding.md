@@ -8,11 +8,14 @@
 ---
 
 > **Partially superseded by [ADR-0056](0056-four-component-families.md).**
-> Relay and TURN now form one conceptual Relay component with Ponor and TURN
-> modes; TURN uses a managed coturn/external-provider adapter. Sections below
-> retain the original decision history. Presence, provider compatibility,
-> co-location defaults, admission, funding and fleet restrictions remain in force.
-> Implementation consolidation is tracked in #404.
+> Relay is now one conceptual component. ADR-0056's 2026-10-22 addendum
+> dropped standalone TURN support entirely (Relay-only transport fallback),
+> superseding §4 below's TURN decision rather than just wrapping it in a
+> managed coturn/external-provider adapter as ADR-0056 originally planned.
+> Sections below retain the original decision history. Presence, provider
+> compatibility, co-location defaults, admission, funding and fleet
+> restrictions remain in force. Implementation consolidation is tracked in
+> #404.
 
 ## Context
 

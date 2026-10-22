@@ -65,8 +65,8 @@ pub(crate) struct BreakerSection {
 /// The `[driver]` TOML table.
 ///
 /// Every field below other than `kind` is only ever *read* by whichever
-/// one of `main.rs`'s `#[cfg(feature = "k8s")]`/`#[cfg(feature = "turn-k8s")]`/
-/// `#[cfg(feature = "aws")]` builders matches `kind` -- a default build still parses and carries
+/// one of `main.rs`'s `#[cfg(feature = "k8s")]`/`#[cfg(feature = "aws")]`
+/// builders matches `kind` -- a default build still parses and carries
 /// all of them (an operator's config must not silently lose fields
 /// depending on how the binary happened to be compiled), it just never
 /// looks at them. Each field below is `allow(dead_code)`d individually,
@@ -76,37 +76,24 @@ pub(crate) struct BreakerSection {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DriverSection {
-    /// `"noop"`, `"k8s"`, `"turn-k8s"`, or `"aws"` — anything else is
-    /// refused at the point `drive` starts. `"k8s"`/`"turn-k8s"`/`"aws"`
-    /// on a `karst-scaler` built without the matching Cargo feature (see
-    /// `karst-scaler-k8s`/`karst-scaler-turn-k8s`/`karst-scaler-aws`'s
-    /// own crate docs) is refused the same way, not silently downgraded
-    /// to the no-op driver.
+    /// `"noop"`, `"k8s"`, or `"aws"` — anything else is refused at the
+    /// point `drive` starts. `"k8s"`/`"aws"` on a `karst-scaler` built
+    /// without the matching Cargo feature (see `karst-scaler-k8s`'s/
+    /// `karst-scaler-aws`'s own crate docs) is refused the same way, not
+    /// silently downgraded to the no-op driver.
     pub kind: String,
-    /// Required when `kind = "k8s"` or `"turn-k8s"`: the namespace every
-    /// `StatefulSet`, `Pod`, and bundle `Secret` this driver touches
-    /// lives in.
-    #[cfg_attr(not(any(feature = "k8s", feature = "turn-k8s")), allow(dead_code))]
+    /// Required when `kind = "k8s"`: the namespace every `StatefulSet`,
+    /// `Pod`, and bundle `Secret` this driver touches lives in.
+    #[cfg_attr(not(feature = "k8s"), allow(dead_code))]
     #[serde(default)]
     pub namespace: Option<String>,
-    /// Required when `kind = "k8s"`, `"turn-k8s"`, or `"aws"`: path to a
-    /// file holding a `UserRoleScaler`-scoped PAT (ADR-0045 §7 Phase 2
-    /// PR 3), trimmed of surrounding whitespace when read — same
-    /// convention as `pat_file` above.
-    #[cfg_attr(
-        not(any(feature = "k8s", feature = "turn-k8s", feature = "aws")),
-        allow(dead_code)
-    )]
+    /// Required when `kind = "k8s"` or `"aws"`: path to a file holding a
+    /// `UserRoleScaler`-scoped PAT (ADR-0045 §7 Phase 2 PR 3), trimmed of
+    /// surrounding whitespace when read — same convention as `pat_file`
+    /// above.
+    #[cfg_attr(not(any(feature = "k8s", feature = "aws")), allow(dead_code))]
     #[serde(default)]
     pub enroll_pat_file: Option<String>,
-    /// Required when `kind = "turn-k8s"`: must equal the control
-    /// server's own `turncred.Minter` TTL, in seconds — see
-    /// `karst_scaler_turn_k8s::K8sTurnDriverConfig::credential_ttl`'s own
-    /// doc comment for what this bounds and why this driver cannot read
-    /// it from the control server itself.
-    #[cfg_attr(not(feature = "turn-k8s"), allow(dead_code))]
-    #[serde(default)]
-    pub credential_ttl_secs: Option<u64>,
     /// Required when `kind = "aws"`: the AWS region every EC2 call this
     /// driver makes targets — ADR-0045 §4c's region allowlist makes this
     /// a load-bearing fact `karst-scaler-aws` must be told explicitly,
@@ -226,29 +213,6 @@ poll_interval_secs = 30
         let text = format!("{BASE}\n[metrics]\nlisten = \"0.0.0.0:9100\"\n");
         let err = AdviseConfig::parse(&text).expect_err("non-loopback refused");
         assert!(format!("{err}").contains("loopback"), "{err}");
-    }
-
-    #[test]
-    fn a_turn_k8s_driver_section_parses_its_credential_ttl() {
-        let text = format!(
-            "{BASE}\n[driver]\nkind = \"turn-k8s\"\nnamespace = \"karst-turn\"\n\
-             enroll_pat_file = \"turn-enroll.pat\"\ncredential_ttl_secs = 86400\n"
-        );
-        let config = AdviseConfig::parse(&text).expect("parses");
-        let driver = config.driver.expect("driver section present");
-        assert_eq!(driver.kind, "turn-k8s");
-        assert_eq!(driver.credential_ttl_secs, Some(86400));
-    }
-
-    #[test]
-    fn credential_ttl_secs_defaults_to_unset() {
-        let text = format!(
-            "{BASE}\n[driver]\nkind = \"k8s\"\nnamespace = \"karst-relays\"\n\
-             enroll_pat_file = \"enroll.pat\"\n"
-        );
-        let config = AdviseConfig::parse(&text).expect("parses");
-        let driver = config.driver.expect("driver section present");
-        assert_eq!(driver.credential_ttl_secs, None);
     }
 
     #[test]

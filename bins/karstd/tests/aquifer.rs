@@ -23,7 +23,8 @@
 //!
 //! Each was invisible from inside a component and obvious from outside one.
 //!
-//! Needs `CAP_NET_ADMIN` and a Go toolchain, so it is `#[ignore]`d. Run it with:
+//! Needs root/network namespace privileges and a Go toolchain (unless a
+//! prebuilt fixture is supplied), so it is `#[ignore]`d. Run it with:
 //!
 //! ```text
 //! just test-aquifer
@@ -36,6 +37,11 @@
 //! dpkg-deb -x karst-client-linux_*.deb /tmp/karst-client
 //! KARST_AQUIFER_BIN_DIR=/tmp/karst-client/usr/bin just test-aquifer
 //! ```
+//!
+//! `scripts/test-aquifer-container.sh` builds products and the SQLite-enabled
+//! Go fixture on the host, then runs them in an isolated container. Only staged
+//! binaries are mounted, read-only. `KARST_AQUIFER_TESTSERVER` can explicitly
+//! name that prebuilt fixture; an invalid path fails instead of rebuilding.
 //!
 //! The override is deliberately all-or-nothing: `karstd`, `karst`, and
 //! `karst-relay` must all come from the same directory. A package drill that
@@ -160,15 +166,6 @@ const RELAY_PORT_2: u16 = 8444;
 /// because a NAT maps TCP and UDP separately and the Ponor connection's
 /// mapping is not the one AVEN needs.
 const REFLECT_PORT: u16 = 3478;
-/// `coturn`'s listening port — [`Shape::TurnOnly`] only. Distinct from
-/// [`REFLECT_PORT`], which happens to be the same RFC 8656 default: the two
-/// are unrelated services on the same public bridge and must not collide.
-const TURN_PORT: u16 = 3479;
-/// `coturn`'s relay port range — narrow, since one aquifer row needs at most a
-/// couple of allocations at once. `bootstrap.sh --turn`'s own
-/// `turnserver.conf` uses the same shape of range for the same reason.
-const TURN_RELAY_MIN: u16 = 49160;
-const TURN_RELAY_MAX: u16 = 49200;
 const SERVER_PORT: u16 = 9443;
 /// The fixture's out-of-band control surface. Only the revocation row uses it:
 /// there is no other way to change the account while nodes are connected,
@@ -227,10 +224,7 @@ fn effective_uid() -> u32 {
 /// `dnsmasq` are named on the same ground — without the first, the NAT64 row's
 /// node A is not on a NAT64 network but on an IPv6 island; without the second
 /// it is on one with no DNS64, and the row would report the daemon failing to
-/// discover a prefix that nothing was offering. `turnserver` is the same
-/// argument for [`Shape::TurnOnly`]: without a real `coturn` there is nothing
-/// for §7.8's client to allocate on, and the row would report the daemon
-/// failing to reach a fallback that was never offered.
+/// discover a prefix that nothing was offering.
 fn missing_prerequisites() -> Vec<&'static str> {
     let mut missing = Vec::new();
     if effective_uid() != 0 {
@@ -244,14 +238,16 @@ fn missing_prerequisites() -> Vec<&'static str> {
         ("ip", "-Version"),
         ("nft", "--version"),
         ("go", "version"),
+        ("python3", "--version"),
         ("miniupnpd", "--help"),
         ("tayga", "--help"),
         ("dnsmasq", "--version"),
         // The revocation row drives the fixture's control surface with it.
         ("curl", "--version"),
-        // Shape::TurnOnly's real coturn server.
-        ("turnserver", "--version"),
     ] {
+        if tool == "go" && std::env::var_os("KARST_AQUIFER_TESTSERVER").is_some() {
+            continue;
+        }
         // `miniupnpd --help` exits non-zero, as usage output usually does, so
         // the test is whether the program ran at all.
         if Command::new(tool).arg(probe).output().is_err() {
@@ -689,49 +685,6 @@ enum Shape {
     /// address it arrived from. The translation is invisible to B, which is the
     /// interesting half — B holds a plain IPv4 address for a peer that has none.
     Nat64,
-    /// **Both** nodes behind ordinary port-restricted cone NATs — the same
-    /// flavor [`Shape::BothNat`] uses — with the raw NAT-to-NAT path blocked
-    /// and a real `coturn` server advertised on the netmap —
-    /// `spec/aven-v1.md` §7.8, ADR-0008 §4.
-    ///
-    /// **Not [`Shape::BothSymmetric`] plus TURN**, and the reason is worth
-    /// stating because it looks like the obvious pairing and is wrong: a
-    /// symmetric NAT's mapping is unpredictable *per destination*, and
-    /// `coturn`'s relay port is a destination neither side has ever sent
-    /// anything to before. §7.8's permission-priming primes the address a
-    /// peer's `CallMeMaybe` names — the reflexive address the relay's
-    /// reflector reported — which is only the address that mapping *will*
-    /// present if the NAT reuses one external mapping for every destination,
-    /// which is what a cone does and a symmetric NAT specifically does not.
-    /// Running this row against two symmetric NATs was the first attempt, and
-    /// it reproduces exactly the timeout [`Shape::BothSymmetric`] itself
-    /// measures — proof by failure that the two rows are not testing the same
-    /// thing wearing different flavors.
-    ///
-    /// **So the row keeps the flavor [`Shape::BothNat`] already succeeds
-    /// with**, and blocks the one thing that would let it succeed the same,
-    /// ordinary way: [`block_direct_path_between_the_nats`] drops NAT-to-NAT
-    /// UDP specifically, leaving each NAT's path to `coturn` — a different
-    /// destination entirely — untouched. What is left standing is exactly the
-    /// path §7.8 exists for: each side reaches the other's TURN-relayed
-    /// address instead of the raw one, over a real RFC 8656 allocation on a
-    /// real `coturn`, with a credential minted by the real coordination
-    /// server — proof that §7.8's candidate tier, its permission-priming
-    /// rule, and the RFC 8656 client wired into `Engine::via` actually move
-    /// traffic, not merely that the unit tests around them pass.
-    ///
-    /// **Reports `Transport::Turn`, not `direct`.** `Engine::via` recognizes
-    /// its own decision to route through this node's own allocation by
-    /// comparing the confirmed endpoint's host against this node's own TURN
-    /// server — a *sending*-side fact, not an inference about the peer, so
-    /// reporting it is not the wire-tag `Endpoint` deliberately lacks (§7.8's
-    /// own accepted gap is about a *receiving* node telling a peer's TURN
-    /// candidate apart from a genuine one, which this says nothing about).
-    /// `assert_endpoints` still checks the thing that only a real TURN
-    /// allocation could produce: an endpoint address on the `coturn`
-    /// server's own host, in its relay port range, and neither NAT's outer
-    /// address.
-    TurnOnly,
 }
 
 /// How a NAT allocates external ports, and what it lets back through.
@@ -787,18 +740,6 @@ enum Expect {
     /// The relay, permanently. Traffic must still cross it, and the pair must
     /// **not** claim a direct path it cannot actually use.
     Relay,
-    /// Each side reaching the other through its own TURN allocation, within
-    /// `budget` — [`Shape::TurnOnly`] only.
-    ///
-    /// **Not [`Self::Direct`], even though §7.8 first drew the line the other
-    /// way.** The spec's own reasoning was that a *receiving* node cannot
-    /// tell a peer's TURN candidate from a genuine one — true, and beside the
-    /// point here: `Engine::via`'s same-host check is the *sending* node
-    /// recognizing its own decision to route through its own allocation, not
-    /// an inference about the peer, so `Transport::Turn` is honest rather
-    /// than a leak. Watching for `"direct"` here would watch for a state the
-    /// row can no longer reach.
-    Turn,
 }
 
 impl Shape {
@@ -814,7 +755,6 @@ impl Shape {
             | Self::DoubleNat
             | Self::Nat64
             | Self::SameLan => Expect::Direct,
-            Self::TurnOnly => Expect::Turn,
             // **Not "not yet".** §7.7's birthday-paradox port search is the
             // only technique that reaches this row without help from the NAT,
             // and it was specified, implemented, measured and then *declined*
@@ -835,16 +775,10 @@ impl Shape {
     /// node before either has anything worth advertising.
     fn budget(self) -> Duration {
         Duration::from_secs(match self {
-            // The RFC 8656 Allocate exchange and this daemon's own backoff
-            // (`TURN_BACKOFF_MIN` in `crate::run`) run before `TurnOnly`'s
-            // candidate is even advertised, on top of the ordinary AVEN round
-            // trips every other row needs — more moving parts than a
-            // reflexive candidate, so more time to let them land.
             Self::BothNat
             | Self::SymmetricAndMapped
             | Self::SymmetricAndAddressRestricted
-            | Self::SymmetricAndPortRestrictedMapped
-            | Self::TurnOnly => 210,
+            | Self::SymmetricAndPortRestrictedMapped => 210,
             _ => 150,
         })
     }
@@ -920,8 +854,7 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
         | Shape::UdpBlocked
         | Shape::SymmetricAndAddressRestricted
         | Shape::SymmetricAndPortRestricted
-        | Shape::SymmetricAndPortRestrictedMapped
-        | Shape::TurnOnly => {
+        | Shape::SymmetricAndPortRestrictedMapped => {
             let flavor = flavor_for_a(shape);
             nat_in_front_of(
                 net,
@@ -952,8 +885,7 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
         | Shape::SymmetricAndMapped
         | Shape::SymmetricAndAddressRestricted
         | Shape::SymmetricAndPortRestricted
-        | Shape::SymmetricAndPortRestrictedMapped
-        | Shape::TurnOnly => {
+        | Shape::SymmetricAndPortRestrictedMapped => {
             let flavor = flavor_for_b(shape);
             nat_in_front_of(
                 net,
@@ -968,49 +900,7 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
             IP_B_PRIVATE
         }
     };
-    if shape == Shape::TurnOnly {
-        block_direct_path_between_the_nats();
-    }
     (ip_a, ip_b)
-}
-
-/// Block the raw NAT-to-NAT path specifically — [`Shape::TurnOnly`] only.
-///
-/// Both NATs stay ordinary port-restricted cones ([`flavor_for_a`]'s default,
-/// the same one [`Shape::NatA`] and [`Shape::BothNat`] use), which is what
-/// keeps each side's *reflexive* address — the one the relay's reflector
-/// reports and the one advertised in `CallMeMaybe` — equal to the mapping
-/// either side ends up using toward `coturn`'s relay port too. Left alone,
-/// that is exactly [`Shape::BothNat`]'s topology, and the pair would go
-/// direct over the raw mapping the ordinary way, never touching TURN at all.
-///
-/// So this drops the one leg that would let that happen: each NAT's own
-/// `forward` hook refuses anything addressed to the *other* NAT's outer
-/// address, before that NAT's own `postrouting` translation ever runs — the
-/// same ordering [`nat_rules`]'s `Flavor::UdpBlocked` chain relies on, scoped
-/// to one destination instead of the whole protocol. Traffic to [`IP_PUB`] —
-/// the relay, the reflector, and `coturn` alike — is a different destination
-/// and is untouched, on both sides.
-fn block_direct_path_between_the_nats() {
-    for (nat_ns, other_outer) in [(NS_NAT_A, NAT_B_OUTER), (NS_NAT_B, NAT_A_OUTER)] {
-        must(&nsr(
-            nat_ns,
-            &[
-                "nft",
-                "add",
-                "chain",
-                "ip",
-                "karst",
-                "turnonly",
-                "{ type filter hook forward priority 0 ; }",
-            ],
-        ));
-        let rule = format!("ip daddr {other_outer} meta l4proto udp drop");
-        must(&nsr(
-            nat_ns,
-            &["nft", "add", "rule", "ip", "karst", "turnonly", &rule],
-        ));
-    }
 }
 
 /// How node A's NAT allocates ports, for every shape [`build_topology`]
@@ -1025,17 +915,6 @@ fn flavor_for_a(shape: Shape) -> Flavor {
         | Shape::SymmetricAndPortRestricted
         | Shape::SymmetricAndPortRestrictedMapped => Flavor::Symmetric,
         Shape::UdpBlocked => Flavor::UdpBlocked,
-        // **Deliberately not symmetric.** §7.8's permission-priming relies on
-        // the reflexive address the relay's reflector reports — the one
-        // advertised in `CallMeMaybe` — being the *same* mapping this NAT
-        // ends up using toward `coturn`'s relay port. A port-restricted cone
-        // reuses one external mapping for every destination; a symmetric NAT
-        // allocates a fresh, unpredictable one per destination and would
-        // defeat priming just as it defeats ordinary hole-punching. See
-        // [`block_direct_path_between_the_nats`] for how the row still
-        // forces TURN rather than the ordinary cone-to-cone path
-        // [`Shape::BothNat`] already reaches. `Shape::TurnOnly` falls
-        // through to the default below, the same as [`Shape::NatA`].
         _ => Flavor::PortRestrictedCone,
     }
 }
@@ -1046,8 +925,6 @@ fn flavor_for_b(shape: Shape) -> Flavor {
         Shape::SymmetricAndMapped | Shape::BothSymmetric => Flavor::Symmetric,
         Shape::SymmetricAndAddressRestricted => Flavor::AddressRestrictedCone,
         Shape::SymmetricAndPortRestrictedMapped => Flavor::PortRestrictedWithPortMapping,
-        // `Shape::TurnOnly` falls through to the cone default too —
-        // [`flavor_for_a`]'s doc comment explains why.
         _ => Flavor::PortRestrictedCone,
     }
 }
@@ -2082,52 +1959,6 @@ fn start_relay(net: &mut Aquifer) -> (PathBuf, String) {
     (net.dir.join("relay.crt"), relay_pk)
 }
 
-/// Start a real `coturn` server on the public segment — [`Shape::TurnOnly`]
-/// only — and return the shared secret `karst-testserver --turn-secret` must
-/// be given so both ends mint and validate the identical TURN-REST
-/// credential, exactly as `bootstrap.sh --turn`'s own comment says for the
-/// compose deployment.
-///
-/// **No entropy needed.** `deploy/compose/bootstrap.sh` generates a random
-/// secret because it protects a real deployment's credential minting; this
-/// one protects nothing beyond a `coturn` process this test starts and stops
-/// itself, so a fixed literal is one fewer thing that can make the fixture
-/// flaky for no benefit.
-///
-/// `listening-ip`/`relay-ip` are set explicitly, unlike `bootstrap.sh`'s own
-/// `turnserver.conf` (which relies on `network_mode: host` and coturn's
-/// default of "every interface"): [`NS_PUB`] carries exactly one address,
-/// but an explicit bind is what `spawn_relay` already does for the identical
-/// reason, and leaving coturn to guess is one more way a namespace with
-/// `lo` and a bridge could bind the wrong one.
-fn spawn_coturn(net: &mut Aquifer) -> String {
-    let secret = "aquifer-turn-shared-secret".to_owned();
-    let conf = net.dir.join("turnserver.conf");
-    std::fs::write(
-        &conf,
-        format!(
-            "listening-port={TURN_PORT}\n\
-             listening-ip={IP_PUB}\n\
-             relay-ip={IP_PUB}\n\
-             external-ip={IP_PUB}\n\
-             use-auth-secret\n\
-             static-auth-secret={secret}\n\
-             realm=aquifer\n\
-             no-cli\n\
-             min-port={TURN_RELAY_MIN}\n\
-             max-port={TURN_RELAY_MAX}\n",
-        ),
-    )
-    .expect("write turnserver.conf");
-    net.spawn_service(
-        NS_PUB,
-        "turnserver",
-        &["-c", &conf.to_string_lossy(), "-v"],
-        "coturn.log",
-    );
-    secret
-}
-
 /// Build and start the Go coordination server, advertising the running relay.
 fn start_server(net: &mut Aquifer, relay_pk: &str) -> Pins {
     start_server_with(
@@ -2160,22 +1991,32 @@ fn start_server_with_options(
     preload: usize,
     extra: &[String],
 ) -> Pins {
-    let server_bin = format!("{}/target/karst-testserver", repo());
-    let build = Command::new("go")
-        .args([
-            "build",
-            "-o",
-            &server_bin,
-            "./management/internals/karst/testserver/",
-        ])
-        .current_dir(format!("{}/server", repo()))
-        .output()
-        .expect("run `go build`");
-    assert!(
-        build.status.success(),
-        "go build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    let server_bin = if let Some(prebuilt) = std::env::var_os("KARST_AQUIFER_TESTSERVER") {
+        let path = PathBuf::from(prebuilt);
+        assert!(
+            path.is_file(),
+            "KARST_AQUIFER_TESTSERVER must name a fixture binary"
+        );
+        path.to_string_lossy().into_owned()
+    } else {
+        let path = format!("{}/target/karst-testserver", repo());
+        let build = Command::new("go")
+            .args([
+                "build",
+                "-o",
+                &path,
+                "./management/internals/karst/testserver/",
+            ])
+            .current_dir(format!("{}/server", repo()))
+            .output()
+            .expect("run `go build`");
+        assert!(
+            build.status.success(),
+            "go build failed: {}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        path
+    };
 
     let listen = format!("{IP_PUB}:{SERVER_PORT}");
     let mut argv: Vec<String> = [
@@ -2958,24 +2799,6 @@ fn an_ipv6_only_node_behind_nat64_reaches_an_ipv4_mesh() {
     run(Shape::Nat64);
 }
 
-/// **The real end-to-end proof for `spec/aven-v1.md` §7.8**: everything else
-/// that exercises the TURN fallback is a unit test against a value the test
-/// itself supplied (`bins/karstd/tests/relay_path.rs`'s
-/// `a_peer_with_no_endpoint_and_no_relay_is_reachable_through_this_nodes_own_turn_allocation`,
-/// `bins/karstd/src/disco.rs`'s candidate-ordering and permission-priming
-/// tests). This row is the one that runs a real `coturn`, mints real
-/// TURN-REST credentials server-side, and drives two full daemons through it.
-///
-/// See [`Shape::TurnOnly`]'s own doc comment for the topology and why it is
-/// two ordinary cone NATs with the direct leg blocked, not two symmetric ones
-/// — the pairing that looks like the obvious choice and defeats
-/// permission-priming instead.
-#[test]
-#[ignore = "needs root, network namespaces, a Go toolchain and coturn"]
-fn a_pair_of_cone_nats_reaches_each_other_through_a_real_turn_server_once_direct_is_blocked() {
-    run(Shape::TurnOnly);
-}
-
 fn run(shape: Shape) {
     if !have_prerequisites() {
         return;
@@ -2989,24 +2812,7 @@ fn run(shape: Shape) {
     std::fs::create_dir_all(&net.dir).expect("temp dir");
     let ips = build_topology(&mut net, shape);
     let (ca, relay_pk) = start_relay(&mut net);
-    let pins = if shape == Shape::TurnOnly {
-        let turn_secret = spawn_coturn(&mut net);
-        start_server_with_options(
-            &mut net,
-            &[(format!("{IP_PUB}:{RELAY_PORT}"), relay_pk)],
-            "",
-            0,
-            &[
-                "--turn".to_owned(),
-                format!("turn:{IP_PUB}:{TURN_PORT}"),
-                "aquifer".to_owned(),
-                "--turn-secret".to_owned(),
-                turn_secret,
-            ],
-        )
-    } else {
-        start_server(&mut net, &relay_pk)
-    };
+    let pins = start_server(&mut net, &relay_pk);
     write_node_configs(&net, &pins, &ca, ips);
 
     // **A first, then B, then A again.** Each node's netmap is a snapshot taken
@@ -3070,26 +2876,6 @@ fn converge(net: &Aquifer, shape: Shape) {
                  observe the transition it exists to observe"
             );
         }
-        Expect::Turn => {
-            let mut saw_relay = false;
-            wait_for(
-                net,
-                "both nodes to reach each other through their own turn allocation",
-                shape.budget(),
-                || {
-                    let (a, b) = transports(net);
-                    if a.as_deref() == Some("relay") || b.as_deref() == Some("relay") {
-                        saw_relay = true;
-                    }
-                    a.as_deref() == Some("turn") && b.as_deref() == Some("turn")
-                },
-            );
-            assert!(
-                saw_relay,
-                "the pair never appeared on the relay, so this test did not \
-                 observe the transition it exists to observe"
-            );
-        }
         Expect::Relay => {
             wait_for(
                 net,
@@ -3129,7 +2915,7 @@ fn converge(net: &Aquifer, shape: Shape) {
 /// read once.
 ///
 /// **Issue #144.** `converge()` waits for the `transport` field to reach
-/// `"direct"`/`"turn"`; every caller here reads the separately-updated
+/// `"direct"`; every caller here reads the separately-updated
 /// `endpoint` field straight after, in a fresh `status()` call. The two
 /// fields settle on their own schedules, so a read taken the instant
 /// `converge()` returns can still catch `endpoint` at its `"-"` placeholder
@@ -3200,11 +2986,6 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
         assert_nat64(net);
         return;
     }
-    if shape == Shape::TurnOnly {
-        assert_turn_only(net);
-        return;
-    }
-
     if matches!(
         shape,
         Shape::NatA
@@ -3265,37 +3046,6 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
             Some("-"),
             "A's NAT served a mapping, so this row is not the one-sided case \
              it claims to be:\n{s}"
-        );
-    }
-}
-
-/// The one assertion only a real TURN allocation could satisfy —
-/// [`Shape::TurnOnly`]'s whole content, split out for the same reason
-/// [`assert_nat64`] and [`assert_double_nat`] below are.
-///
-/// `converge`'s `Expect::Turn` branch already checked `transport`; this
-/// checks the address, which is the harder thing to fake. A confirmed
-/// endpoint on the `coturn` host, inside its own relay port range, is not a
-/// coincidence: nothing else in this fixture hands out addresses there.
-fn assert_turn_only(net: &Aquifer) {
-    for (tag, ns, other_nat_outer) in [("a", NS_A, NAT_B_OUTER), ("b", NS_B, NAT_A_OUTER)] {
-        let endpoint = wait_for_endpoint(net, tag, ns, IP_PUB);
-        assert!(
-            !endpoint.starts_with(other_nat_outer),
-            "node {tag} reached its peer at the raw NAT address \
-             {other_nat_outer}, which would mean this pairing goes direct \
-             without turn and the row measures something else: {endpoint}"
-        );
-        let port: u16 = endpoint
-            .rsplit(':')
-            .next()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or_else(|| panic!("{endpoint} is not host:port"));
-        assert!(
-            (TURN_RELAY_MIN..=TURN_RELAY_MAX).contains(&port),
-            "node {tag}'s endpoint {endpoint} is on {IP_PUB} but its port \
-             {port} is outside coturn's relay range \
-             {TURN_RELAY_MIN}..={TURN_RELAY_MAX} — not a turn allocation"
         );
     }
 }
@@ -5368,4 +5118,111 @@ fn fixture_remove(handle: &str) -> bool {
         ])
         .output()
         .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
+}
+
+/// One enrolled Gateway must serve a specific prefix and a default route at
+/// once. Subnet access does not imply consent to default-route use, and
+/// withdrawing consent must preserve the subnet's established reachability.
+#[test]
+#[ignore = "needs root and network namespaces"]
+#[allow(clippy::too_many_lines)]
+fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
+    if !have_prerequisites() {
+        return;
+    }
+    let (mut net, _pins, _ca) = start_routing_topology("combined-gateway");
+    let gateway_handle = fixture_handle_for(&overlay_peer_address(&net, "b", NS_B));
+    let exit_destination = "10.99.0.3";
+    must(&nsr(
+        NS_DEST,
+        &["ip", "addr", "add", "10.99.0.3/24", "dev", "ktn-dest-a"],
+    ));
+    for (route_id, prefix) in [("subnet", "10.99.0.2/32"), ("internet", "0.0.0.0/0")] {
+        assert!(fixture_create_route(&RouteOfferBody {
+            route_id,
+            prefix,
+            gateway_handle: &gateway_handle,
+            metric: 100,
+            masquerade: true,
+            keep_route: false,
+            enabled: None,
+        }));
+    }
+    let listener = "import socket\ns=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\ns.bind(('0.0.0.0',22)); s.listen(5)\nwhile True:\n c,_=s.accept(); c.sendall(b'combined gateway'); c.close()\n";
+    net.spawn_service(NS_DEST, "python3", &["-c", listener], "listener.log");
+    let probe = |destination: &str| {
+        let script = format!("import socket,sys\ns=socket.create_connection(('{destination}',22),timeout=2)\nsys.exit(0 if s.recv(64)==b'combined gateway' else 1)\n");
+        Command::new("ip")
+            .args(["netns", "exec", NS_B, "python3", "-c", &script])
+            .output()
+            .is_ok_and(|out| out.status.success())
+    };
+    wait_for(
+        &net,
+        "subnet traffic through the combined gateway before exit consent",
+        Duration::from_secs(30),
+        || probe(DEST_HOST),
+    );
+    assert!(
+        !probe(exit_destination),
+        "a subnet grant must not activate the offered default route"
+    );
+    wait_for(
+        &net,
+        "both subnet and default offers in the recipient netmap",
+        Duration::from_secs(10),
+        || field(&status(&net, "b", NS_B), "offers").as_deref() == Some("2"),
+    );
+    let socket = net.dir.join("run").join("b.sock");
+    let consent = |action: &str| {
+        let mut command = Command::new("ip");
+        command.args([
+            "netns",
+            "exec",
+            NS_B,
+            &bin("karst"),
+            "gateway",
+            "exit",
+            action,
+        ]);
+        if action == "use" {
+            command.arg("internet");
+        }
+        let out = command
+            .args(["--socket", &socket.to_string_lossy()])
+            .output()
+            .expect("Gateway consent CLI");
+        assert!(
+            out.status.success(),
+            "Gateway consent failed: {} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    consent("use");
+    wait_for(
+        &net,
+        "default-route traffic through the same gateway after consent",
+        Duration::from_secs(20),
+        || probe(exit_destination),
+    );
+    assert!(
+        probe(DEST_HOST),
+        "specific-prefix access must survive default-route activation"
+    );
+    consent("disable");
+    wait_for(
+        &net,
+        "default-route withdrawal after consent removal",
+        Duration::from_secs(15),
+        || field(&status(&net, "b", NS_B), "exit_route_active").as_deref() == Some("false"),
+    );
+    assert!(
+        !probe(exit_destination),
+        "withdrawing consent must remove default-route reachability"
+    );
+    assert!(
+        probe(DEST_HOST),
+        "withdrawing exit consent must preserve subnet access"
+    );
 }

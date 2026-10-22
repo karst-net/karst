@@ -46,7 +46,6 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
-	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/karst/tutorialmode"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/peer"
@@ -111,7 +110,6 @@ type handler struct {
 	audit      auditReader
 	policy     policyReader
 	relays     relayReader
-	turns      turnReader
 	bedrock    bedrockReader
 	chain      bedrockLogReader
 	peerWriter peerWriter
@@ -305,19 +303,6 @@ type relayResponse struct {
 	LocationSource string `json:"location_source,omitempty"`
 }
 
-// turnResponse adds a TURN server's declared location to the stored record
-// -- StoredTurnServer's own LocationLat/Lon/Label columns are json:"-" for
-// the same reason relayreg.StoredRelay's are, so every read path needs this
-// wrapper rather than encoding the store row directly.
-type turnResponse struct {
-	turncred.StoredTurnServer
-	Location *geo.Location `json:"location,omitempty"`
-}
-
-func turnResponseFor(turn turncred.StoredTurnServer) turnResponse {
-	return turnResponse{StoredTurnServer: turn, Location: turn.LocationFor()}
-}
-
 // nocComponent is the NOC map's discriminated union (ADR-0046 §1's full
 // component list) -- one shape every kind reshapes into, so the console's
 // map rendering does not need five different response types to draw five
@@ -463,8 +448,7 @@ type relayReader interface {
 	Delete(context.Context, string) error
 	// DeleteByAddress is ADR-0045 §7's own driver-initiated teardown path
 	// (issue #319) — see relayDeenroll and relayreg.Store.DeleteByAddress's
-	// own doc comment for why this is keyed by address, not id, unlike
-	// turnReader.DeleteByURI.
+	// own doc comment for why this is keyed by address, not id.
 	DeleteByAddress(context.Context, string) error
 	// DeleteByTLSServerName is DeleteByAddress's own counterpart for the
 	// AWS driver (issue #329) — see relayreg.Store.DeleteByTLSServerName's
@@ -516,18 +500,10 @@ type ephemeralAnchorReadWriter interface {
 	SetSchedule(ctx context.Context, windowPeriodSeconds, dutyCycleSeconds uint32) error
 }
 
-type turnReader interface {
-	List(context.Context) ([]turncred.StoredTurnServer, error)
-	Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error)
-	Delete(context.Context, string) error
-	DeleteByURI(context.Context, string) error
-}
-
 // knownEventReader is ADR-0045 §8 (Phase 3)'s operator-entered calendar --
-// account-scoped, the same shape turnReader already has, not deployment-
-// wide or cross-account the way relayReader.DemandHistory is: when an
-// organization's own traffic is expected to change is that organization's
-// own calendar.
+// account-scoped, not deployment-wide or cross-account the way
+// relayReader.DemandHistory is: when an organization's own traffic is
+// expected to change is that organization's own calendar.
 type knownEventReader interface {
 	List(context.Context) ([]knownevents.StoredKnownEvent, error)
 	Create(context.Context, knownevents.Entry) (*knownevents.StoredKnownEvent, error)
@@ -583,8 +559,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -598,6 +574,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	} else {
 		karstRouter.Use(karstAuthorization(permissionsManager))
 	}
+	karstRouter.HandleFunc("/gateways", h.gateways).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/invitations", h.invitations).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/invitations/{id}/revoke", h.revokeInvitation).Methods(http.MethodPost, http.MethodOptions)
 	// Mesh domains (ADR-0032). Deliberately exempted from the blanket
@@ -677,9 +654,6 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/ephemeral-anchors/schedule", h.ephemeralAnchorsSchedule).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/ephemeral-anchors/schedule", h.ephemeralAnchorsScheduleSet).Methods(http.MethodPut, http.MethodOptions)
 	karstRouter.HandleFunc("/ephemeral-anchors/{label}", h.ephemeralAnchorsDelete).Methods(http.MethodDelete, http.MethodOptions)
-	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
-	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
-	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/locations", h.locationsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/locations", h.locationsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/locations/{locationId}", h.locationsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -689,13 +663,6 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/control-plane/location", h.controlPlaneLocationGet).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/control-plane/location", h.controlPlaneLocationSet).Methods(http.MethodPut, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock/location", h.bedrockLocationSet).Methods(http.MethodPut, http.MethodOptions)
-	karstRouter.HandleFunc("/turn/enroll-tokens", h.turnEnrollTokensCreate).Methods(http.MethodPost, http.MethodOptions)
-	karstRouter.HandleFunc("/turn/deenroll", h.turnDeenroll).Methods(http.MethodPost, http.MethodOptions)
-	// Deliberately on the parent router, not karstRouter -- see
-	// relaysEnroll's own doc comment (and turnEnroll's own, below) for why.
-	// limitRequestBody is applied explicitly since this route does not
-	// inherit karstRouter's own middleware stack.
-	router.Handle("/karst/v1/turn/enroll", limitRequestBody(http.HandlerFunc(h.turnEnroll))).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/known-events", h.knownEventsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/known-events", h.knownEventsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/known-events/{eventId}", h.knownEventsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -854,24 +821,24 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 				return
 			}
 			// ADR-0045 §6/§7b: the Scaler role exists to mint relay-enroll
-			// and turn-enroll tokens, and to ask for a relay or TURN server
-			// it enrolled to be de-enrolled, nothing else. roles.Scaler's
-			// own Create grant on modules.KarstControl is coarser than that
-			// (this RBAC model's only module granularity covers every
-			// mutation under /karst/v1, not just these four routes — see
-			// roles.Scaler's own doc comment), so this hard allowlist is
-			// what actually keeps the role narrow, independent of whatever
-			// a future endpoint added under this same module gate would
-			// otherwise permit it to reach. turnDeenroll/relayDeenroll are
-			// deliberately POSTs (operations.Create), not the DELETE
-			// turnsDelete/relaysDelete already are -- roles.Scaler's own
-			// Delete grant stays false; see turnDeenroll's own doc comment
-			// (and relayDeenroll's, issue #319) for why these are requests
-			// shaped like a Create rather than a widened Delete grant.
+			// tokens and to ask for a relay it enrolled to be de-enrolled,
+			// nothing else. roles.Scaler's own Create grant on
+			// modules.KarstControl is coarser than that (this RBAC model's
+			// only module granularity covers every mutation under
+			// /karst/v1, not just these two routes — see roles.Scaler's own
+			// doc comment), so this hard allowlist is what actually keeps
+			// the role narrow, independent of whatever a future endpoint
+			// added under this same module gate would otherwise permit it
+			// to reach. relayDeenroll is deliberately a POST
+			// (operations.Create), not the DELETE relaysDelete already is
+			// -- roles.Scaler's own Delete grant stays false; see
+			// relayDeenroll's own doc comment (issue #319) for why this is
+			// a request shaped like a Create rather than a widened Delete
+			// grant.
 			if role, ok := nbcontext.RoleFromContext(ctx); ok && types.UserRole(role) == types.UserRoleScaler {
 				path := strings.TrimPrefix(r.URL.Path, "/api")
-				if path != relayEnrollTokensPath && path != turnEnrollTokensPath && path != turnDeenrollPath && path != relayDeenrollPath {
-					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll or turn-enroll tokens, or request relay or turn de-enrollment"), w)
+				if path != relayEnrollTokensPath && path != relayDeenrollPath {
+					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll tokens or request relay de-enrollment"), w)
 					return
 				}
 			}
@@ -888,7 +855,6 @@ func scopeToAccount(ctx context.Context, accountID string) context.Context {
 	ctx = knownevents.WithAccount(ctx, accountID)
 	ctx = karstpolicy.WithAccount(ctx, accountID)
 	ctx = relayreg.WithAccount(ctx, accountID)
-	ctx = turncred.WithAccount(ctx, accountID)
 	ctx = locationreg.WithAccount(ctx, accountID)
 	ctx = grouplocation.WithAccount(ctx, accountID)
 	ctx = cplocation.WithAccount(ctx, accountID)
@@ -1855,12 +1821,10 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 
 // relayDeenrollRequest is what a karst-scaler Kubernetes (or AWS) relay
 // driver sends to remove the registry entry for a relay instance it has
-// destroyed (issue #319). Keyed by address, not id, mirroring
-// turnDeenrollRequest's own shape and for the same underlying reason --
-// the driver computes a to-be-destroyed instance's own address
-// deterministically at create() time and has no reason to List first just
-// to recover the id relaysDelete expects. Unlike a TURN instance's uri,
-// though, a relay's registry id cannot be derived from its address either
+// destroyed (issue #319). Keyed by address, not id -- the driver computes a
+// to-be-destroyed instance's own address deterministically at create() time
+// and has no reason to List first just to recover the id relaysDelete
+// expects. A relay's registry id cannot be derived from its address either
 // -- see relayreg.Store.DeleteByAddress's own doc comment for why that
 // matters to how this request is handled, not just how it is shaped.
 //
@@ -1883,9 +1847,8 @@ type relayDeenrollRequest struct {
 // relayDeenroll lets the Scaler role remove a relayreg.Store entry without
 // the generic Delete grant relaysDelete needs -- see this route's own
 // entry in the Scaler hard-allowlist (above, in karstAuthorization) for
-// why this is shaped as a POST/Create request rather than a widened
-// Delete permission, the same reasoning turnDeenroll's own doc comment
-// gives for TURN. Runs through the ordinary karstRouter/karstAuthorization
+// why this is shaped as a POST/Create request rather than a widened Delete
+// permission. Runs through the ordinary karstRouter/karstAuthorization
 // stack: the caller is karst-scaler's own drive loop, which already holds
 // a session-bearing Scaler PAT.
 func (h *handler) relayDeenroll(w http.ResponseWriter, r *http.Request) {
@@ -1922,14 +1885,10 @@ func (h *handler) relayDeenroll(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// relayEnrollTokensPath, turnEnrollTokensPath, turnDeenrollPath and
-// relayDeenrollPath are the only four routes the Scaler role's hard
-// allowlist in karstAuthorization permits — see that allowlist's own
-// comment, relayEnrollTokensCreate below, turnEnrollTokensCreate,
-// turnDeenroll, and relayDeenroll.
+// relayEnrollTokensPath and relayDeenrollPath are the only two routes the
+// Scaler role's hard allowlist in karstAuthorization permits — see that
+// allowlist's own comment, relayEnrollTokensCreate below, and relayDeenroll.
 const relayEnrollTokensPath = "/karst/v1/relays/enroll-tokens"
-const turnEnrollTokensPath = "/karst/v1/turn/enroll-tokens"
-const turnDeenrollPath = "/karst/v1/turn/deenroll"
 const relayDeenrollPath = "/karst/v1/relays/deenroll"
 
 // relayEnrollTokenRequest is what karst-scaler's own drive loop (ADR-0045
@@ -2074,125 +2033,10 @@ func (h *handler) relaysEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// turnEnrollTokenRequest is what provisions a new TURN server (today, an
-// operator's own script or console action; ADR-0045 §7b names a future
-// karst-scaler driver as the eventual caller, not built yet) sends to get
-// a credential that server redeems at turnEnroll below, in place of an
-// admin pasting its URI into the console (turnsCreate above). No PoolID
-// the way relayEnrollTokenRequest has one: no pool concept exists for
-// TURN servers anywhere in this system yet.
-type turnEnrollTokenRequest struct {
-	// ExpiresInSecs overrides the default expiry (see
-	// DefaultAccountManager.MintTurnEnrollKey) — 0 means "use the
-	// default," not "never expires," the same posture
-	// relayEnrollTokenRequest's own field has.
-	ExpiresInSecs int64 `json:"expires_in_secs,omitempty"`
-}
-
-type turnEnrollTokenResponse struct {
-	Token string `json:"token"`
-}
-
-// turnEnrollTokensCreate mints ADR-0045 §7b's TURN counterpart of
-// relayEnrollTokensCreate's own "short-lived, single-use enrollment
-// token" — see that function's own doc comment for the full reasoning,
-// which applies unchanged here.
-func (h *handler) turnEnrollTokensCreate(w http.ResponseWriter, r *http.Request) {
-	user, err := nbcontext.GetUserAuthFromContext(r.Context())
-	if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	minter, ok := h.accounts.(interface {
-		MintTurnEnrollKey(context.Context, string, time.Duration) (string, error)
-	})
-	if !ok {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn enrollment is not configured"), w)
-		return
-	}
-	var req turnEnrollTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
-		return
-	}
-	token, err := minter.MintTurnEnrollKey(r.Context(), user.AccountId, time.Duration(req.ExpiresInSecs)*time.Second)
-	if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(turnEnrollTokenResponse{Token: token}); err != nil {
-		util.WriteError(r.Context(), err, w)
-	}
-}
-
-// turnEnroll lets a newly-provisioned TURN server register itself with no
-// admin session — ADR-0045 §7b's TURN counterpart of relaysEnroll above;
-// see that function's own doc comment for why this is registered on the
-// parent router rather than karstRouter, and for the token being this
-// endpoint's entire authentication. Unlike a relay, a TURN server has no
-// identity key to assert at all (RFC 8656 authenticates the client to the
-// server, never the reverse — see turncred's own package doc), so there is
-// no analogous proof-of-possession gap to note here: the submitted
-// [turncred.Entry] (a URI and a region) carries no identity claim in the
-// first place.
-func (h *handler) turnEnroll(w http.ResponseWriter, r *http.Request) {
-	token := bearerToken(r)
-	if token == "" {
-		util.WriteError(r.Context(), status.Errorf(status.Unauthorized, "turn enrollment requires a bearer token"), w)
-		return
-	}
-	if h.turns == nil {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
-		return
-	}
-	consumer, ok := h.accounts.(interface {
-		ConsumeTurnEnrollKey(context.Context, string) (string, string, error)
-	})
-	if !ok {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn enrollment is not configured"), w)
-		return
-	}
-	accountID, keyID, err := consumer.ConsumeTurnEnrollKey(r.Context(), token)
-	if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	var entry turncred.Entry
-	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
-		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
-		return
-	}
-	ctx := turncred.WithAccount(r.Context(), accountID)
-	turn, err := h.turns.Create(ctx, entry)
-	if errors.Is(err, turncred.ErrExists) {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn server already exists"), w)
-		return
-	}
-	if err != nil {
-		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
-		return
-	}
-	if h.audit != nil {
-		if _, err := h.audit.Append(audit.WithAccount(ctx, accountID), keyID, "karst.turn.enroll", "turn", turn.ID); err != nil {
-			// Not fatal -- relaysEnroll's own comment gives the same
-			// reasoning: an audit outage must not turn a working
-			// admission path into an impossible one.
-			log.WithContext(r.Context()).Errorf("append turn-enroll audit event: %v", err)
-		}
-	}
-	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(turn); err != nil {
-		util.WriteError(r.Context(), err, w)
-	}
-}
-
 // nocComponents is the NOC view's map data source (#241 Phase 1a,
 // ADR-0046/ADR-0047, extended to ADR-0046 §1's full component list): every
-// relay, TURN server, exit-node/subnet-router gateway group, and the
-// account's control-plane/Bedrock declared locations, reshaped into the one
+// relay, exit-node/subnet-router gateway group, and the account's
+// control-plane/Bedrock declared locations, reshaped into the one
 // nocComponent union the map draws. Shows nothing a console operator with
 // read access to each underlying page could not already see there, only
 // drawn on a map instead of five separate tables.
@@ -2223,22 +2067,6 @@ func (h *handler) nocComponents(w http.ResponseWriter, r *http.Request) {
 				label = resp.Location.Label
 			}
 			result = append(result, nocComponent{Kind: "relay", ID: resp.ID, Label: label, Health: resp.Health.AdmissionState, Location: resp.Location})
-		}
-	}
-
-	if h.turns != nil {
-		turns, err := h.turns.List(r.Context())
-		if err != nil {
-			util.WriteError(r.Context(), err, w)
-			return
-		}
-		for _, turn := range turns {
-			location := turn.LocationFor()
-			label := turn.URI
-			if location != nil && location.Label != "" {
-				label = location.Label
-			}
-			result = append(result, nocComponent{Kind: "turn", ID: turn.ID, Label: label, Location: location})
 		}
 	}
 
@@ -2796,74 +2624,6 @@ func (h *handler) scalerSuggestions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	util.WriteJSONObject(r.Context(), w, result)
-}
-
-func (h *handler) turnsList(w http.ResponseWriter, r *http.Request) {
-	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	if h.turns == nil {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
-		return
-	}
-	turns, err := h.turns.List(r.Context())
-	if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	result := make([]turnResponse, 0, len(turns))
-	for _, turn := range turns {
-		result = append(result, turnResponseFor(turn))
-	}
-	util.WriteJSONObject(r.Context(), w, result)
-}
-func (h *handler) turnsCreate(w http.ResponseWriter, r *http.Request) {
-	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	if h.turns == nil {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
-		return
-	}
-	var entry turncred.Entry
-	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
-		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
-		return
-	}
-	turn, err := h.turns.Create(r.Context(), entry)
-	if errors.Is(err, turncred.ErrExists) {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn server already exists"), w)
-		return
-	}
-	if err != nil {
-		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(turnResponseFor(*turn)); err != nil {
-		util.WriteError(r.Context(), err, w)
-	}
-}
-func (h *handler) turnsDelete(w http.ResponseWriter, r *http.Request) {
-	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	if h.turns == nil {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
-		return
-	}
-	if err := h.turns.Delete(r.Context(), mux.Vars(r)["turnId"]); errors.Is(err, turncred.ErrNotFound) {
-		util.WriteError(r.Context(), status.Errorf(status.NotFound, "turn server not found"), w)
-		return
-	} else if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // locationsList/locationsCreate/locationsDelete manage the NOC map's
@@ -3729,51 +3489,8 @@ func (h *handler) bedrockLocationSet(w http.ResponseWriter, r *http.Request) {
 	util.WriteJSONObject(r.Context(), w, location)
 }
 
-// turnDeenrollRequest is what a karst-scaler TURN driver (ADR-0045 §7b,
-// issue #311 -- not built yet) sends to remove the registry entry for a
-// TURN instance it is draining or has destroyed. Keyed by uri, not id:
-// the driver builds an instance's uri deterministically at create() time
-// (see turncred.Store.DeleteByURI's own doc comment) and has no reason to
-// List first just to recover the id turnsDelete expects.
-type turnDeenrollRequest struct {
-	URI string `json:"uri"`
-}
-
-// turnDeenroll lets the Scaler role remove a turncred.Store entry without
-// the generic Delete grant turnsDelete needs -- see this route's own
-// entry in the Scaler hard-allowlist (above, in karstAuthorization) for
-// why this is shaped as a POST/Create request rather than a widened
-// Delete permission. Unlike turnEnroll, this runs through the ordinary
-// karstRouter/karstAuthorization stack: the caller here is karst-scaler's
-// own drive loop, which already holds a session-bearing Scaler PAT, not
-// an unenrolled instance with no credential at all.
-func (h *handler) turnDeenroll(w http.ResponseWriter, r *http.Request) {
-	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	if h.turns == nil {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
-		return
-	}
-	var req turnDeenrollRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
-		return
-	}
-	if err := h.turns.DeleteByURI(r.Context(), req.URI); errors.Is(err, turncred.ErrNotFound) {
-		util.WriteError(r.Context(), status.Errorf(status.NotFound, "turn server not found"), w)
-		return
-	} else if err != nil {
-		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // knownEventsList/knownEventsCreate/knownEventsDelete are ADR-0045 §8
-// (Phase 3)'s operator-entered calendar -- the same shape as
-// turnsList/turnsCreate/turnsDelete above, account-scoped via the ordinary
+// (Phase 3)'s operator-entered calendar, account-scoped via the ordinary
 // karstAuthorization gate (this is the caller's own account's data, not
 // cross-account the way the demand-history endpoint is).
 func (h *handler) knownEventsList(w http.ResponseWriter, r *http.Request) {

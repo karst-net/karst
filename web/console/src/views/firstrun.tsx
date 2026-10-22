@@ -63,7 +63,7 @@ export function FirstRunWizard({ onComplete }: { onComplete: () => void }) {
 
         {step === "locations" && <li aria-current="step">
           <h2>3. Authorized locations</h2>
-          <p className="lede">Relays and TURN servers are placed at an authorized location, so little else is useful until at least one exists. Add an infrastructure connection below (an AWS, Azure, or GCP account, a Kubernetes cluster, or a Nomad cluster) and at least one location from it — or finish setup now and do this later from Infrastructure Connections and Authorized Locations in the sidebar.</p>
+          <p className="lede">Relays are placed at an authorized location, so little else is useful until at least one exists. Add an infrastructure connection below (an AWS, Azure, or GCP account, a Kubernetes cluster, or a Nomad cluster) and at least one location from it — or finish setup now and do this later from Infrastructure Connections and Authorized Locations in the sidebar.</p>
           <InfrastructureConnections />
           <Locations />
           <div className="actions">

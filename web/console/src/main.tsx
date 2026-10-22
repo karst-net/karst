@@ -21,8 +21,7 @@ import { Posture } from "./views/posture";
 import { Dns } from "./views/dns";
 import { Routes } from "./views/routes";
 import { Audit } from "./views/audit";
-import { Relays } from "./views/relays";
-import { Turns } from "./views/turns";
+import { RelayServices } from "./views/relay-services";
 import { Locations } from "./views/locations";
 import { InfrastructureConnections } from "./views/infrastructure-connections";
 import { Settings } from "./views/settings";
@@ -30,15 +29,15 @@ import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "turns" | "locations" | "connections" | "noc" | "scaler" | "billing" | "settings";
+type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
 
 const nav: Array<[Route, string]> = [
   ["domains", "Domains"], ["machines", "Machines"], ["enroll", "Add device"], ["access", "Access controls"], ["keys", "Auth keys"],
   ["users", "Users"], ["groups", "Groups"], ["bedrock", "Network lock"], ["posture", "Crypto posture"],
-  ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["turns", "TURN servers"], ["connections", "Infrastructure connections"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
+  ["dns", "DNS"], ["routes", "Gateways"], ["audit", "Audit log"], ["relays", "Relays"], ["connections", "Infrastructure connections"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
 ];
 
-const routeFromHash = (): Route => (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
+const routeFromHash = (): Route => location.hash === "#/gateways" ? "routes" : (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
 
 /** True once GET /firstrun reports completed=true; undefined while that
  *  fetch is in flight. A deployment that fails to reach the endpoint (e.g.
@@ -55,7 +54,7 @@ function useFirstRunCompleted() {
 function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
   const [route, setRoute] = useState<Route>(routeFromHash());
   useEffect(() => { const change = () => setRoute(routeFromHash()); addEventListener("hashchange", change); return () => removeEventListener("hashchange", change); }, []);
-  const navigate = (next: string) => { location.hash = `/${next}`; };
+  const navigate = (next: string) => { location.hash = `/${next === "routes" ? "gateways" : next}`; };
   const firstRun = useFirstRunCompleted();
 
   // Everything else -- the sidebar included -- stays hidden until the
@@ -87,7 +86,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
     <aside>
       <h1>Karst</h1>
       <p>Administration console</p>
-      <nav aria-label="Primary">{nav.map(([key, label]) => <a key={key} aria-current={route === key ? "page" : undefined} href={`#/${key}`}>{label}</a>)}</nav>
+      <nav aria-label="Primary">{nav.map(([key, label]) => <a key={key} aria-current={route === key ? "page" : undefined} href={`#/${key === "routes" ? "gateways" : key}`}>{label}</a>)}</nav>
     </aside>
     <main id="main">
       <header><AccountSwitcher config={config} />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
@@ -103,8 +102,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "dns" && <Dns />}
       {route === "routes" && <Routes />}
       {route === "audit" && <Audit />}
-      {route === "relays" && <Relays />}
-      {route === "turns" && <Turns />}
+      {route === "relays" && <RelayServices />}
       {route === "connections" && <InfrastructureConnections />}
       {route === "locations" && <Locations />}
       {route === "noc" && <Noc />}

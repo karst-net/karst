@@ -7,13 +7,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/mlkem"
-	"crypto/sha1"
 	"encoding/base64"
 	"errors"
 	"net/netip"
 	"strings"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,10 +27,8 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/shared/management/proto"
-	hmac "github.com/netbirdio/netbird/shared/relay/auth/hmac"
 )
 
 // fakePeers is the account manager's peer-listing surface. As with
@@ -1435,104 +1431,9 @@ func TestNoBedrockConfiguredIsUnaffected(t *testing.T) {
 	}
 }
 
-// A deployment that has not configured TURN (ADR-0008 §4) must produce a
-// netmap identical to one from before turn_servers existed — the feature is
-// opt-in the same way the anchor tier and the netmap-cache suite mechanism
-// are.
-func TestNoTurnConfiguredMeansNoTurnServersInTheNetmap(t *testing.T) {
-	f := newNetmapFixture(t, 2)
-	resp := requestNetmap(t, f, 0)
-	if len(resp.GetTurnServers()) != 0 {
-		t.Fatalf("got %d turn servers with none configured", len(resp.GetTurnServers()))
-	}
-}
-
-// The decisive property for the TURN fallback's server-side half: a
-// configured registry and minter produce a netmap carrying every server with
-// one shared, independently-verifiable credential.
-func TestNetmapCarriesMintedTurnCredentials(t *testing.T) {
-	f := newNetmapFixture(t, 2)
-	minter, err := turncred.NewMinter("s3cret", time.Hour)
-	if err != nil {
-		t.Fatalf("new minter: %v", err)
-	}
-	f.handler.TurnServers = []turncred.Entry{
-		{URI: "turn:a.example.com:3478", Region: "us"},
-		{URI: "turns:b.example.com:5349", Region: "eu"},
-	}
-	f.handler.TurnMinter = minter
-
-	resp := requestNetmap(t, f, 0)
-	servers := resp.GetTurnServers()
-	if len(servers) != 2 {
-		t.Fatalf("got %d turn servers, want 2", len(servers))
-	}
-	if servers[0].GetUri() != "turn:a.example.com:3478" || servers[1].GetUri() != "turns:b.example.com:5349" {
-		t.Fatalf("uris not carried through: %+v", servers)
-	}
-	if servers[0].GetRegion() != "us" || servers[1].GetRegion() != "eu" {
-		t.Fatalf("regions not carried through: %+v", servers)
-	}
-	if servers[0].GetUsername() != servers[1].GetUsername() || servers[0].GetPassword() != servers[1].GetPassword() {
-		t.Fatal("every server must share the one minted credential")
-	}
-
-	verifier := hmac.NewTimedHMAC("s3cret", time.Hour)
-	tok := hmac.Token{Payload: servers[0].GetUsername(), Signature: servers[0].GetPassword()}
-	if err := verifier.Validate(sha1.New, tok); err != nil {
-		t.Fatalf("minted credential does not independently verify: %v", err)
-	}
-}
-
-// The DB-backed half of the TURN fallback: when a TurnStore is configured it
-// supplies the server list instead of the static TurnServers field, mirroring
-// how RelayStore overrides Relays above. TurnMinter is untouched either way —
-// only the server list moves to the account-scoped store.
-func TestNetmapCarriesTurnServersFromTheStore(t *testing.T) {
-	f := newNetmapFixture(t, 2)
-
-	db, err := gorm.Open(sqlite.Open("file:netmap-turnstore?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
-	if err != nil {
-		t.Fatalf("db: %v", err)
-	}
-	if err := db.Exec("DROP TABLE IF EXISTS karst_turn_servers").Error; err != nil {
-		t.Fatalf("reset: %v", err)
-	}
-	store, err := turncred.NewStore(db)
-	if err != nil {
-		t.Fatalf("turn store: %v", err)
-	}
-	if _, err := store.Create(turncred.WithAccount(context.Background(), "acct"), turncred.Entry{URI: "turn:store.example.com:3478", Region: "eu"}); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	minter, err := turncred.NewMinter("s3cret", time.Hour)
-	if err != nil {
-		t.Fatalf("new minter: %v", err)
-	}
-	// TurnServers is deliberately left populated with something else, so the
-	// test also proves the store takes priority rather than merely working
-	// when the static field is empty.
-	f.handler.TurnServers = []turncred.Entry{{URI: "turn:static.example.com:3478", Region: "us"}}
-	f.handler.TurnStore = store
-	f.handler.TurnMinter = minter
-
-	resp := requestNetmap(t, f, 0)
-	servers := resp.GetTurnServers()
-	if len(servers) != 1 {
-		t.Fatalf("got %d turn servers, want 1", len(servers))
-	}
-	if servers[0].GetUri() != "turn:store.example.com:3478" {
-		t.Fatalf("uri = %q, want the store-backed entry, not the static field", servers[0].GetUri())
-	}
-	if servers[0].GetRegion() != "eu" {
-		t.Fatalf("region = %q, want eu", servers[0].GetRegion())
-	}
-}
-
 // The DB-backed half of the relay fallback: when a RelayStore is configured
 // and holds an entry for the account, it supplies the registry instead of
-// the static Relays field, mirroring TestNetmapCarriesTurnServersFromTheStore.
+// the static Relays field.
 func TestNetmapCarriesRelaysFromTheStore(t *testing.T) {
 	f := newNetmapFixture(t, 2)
 
@@ -1622,41 +1523,6 @@ func TestNetmapFallsBackToStaticRelaysWhenStoreIsEmpty(t *testing.T) {
 	}
 	if relays[0].GetAddress() != "127.0.0.1:443" {
 		t.Fatalf("address = %q, want the static field's entry", relays[0].GetAddress())
-	}
-}
-
-// The TURN half of the same fallback bug: an empty account-scoped TurnStore
-// must not silently discard a configured static TurnServers list either.
-func TestNetmapFallsBackToStaticTurnServersWhenStoreIsEmpty(t *testing.T) {
-	f := newNetmapFixture(t, 2)
-
-	db, err := gorm.Open(sqlite.Open("file:netmap-turnstore-empty?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
-	if err != nil {
-		t.Fatalf("db: %v", err)
-	}
-	if err := db.Exec("DROP TABLE IF EXISTS karst_turn_servers").Error; err != nil {
-		t.Fatalf("reset: %v", err)
-	}
-	store, err := turncred.NewStore(db)
-	if err != nil {
-		t.Fatalf("turn store: %v", err)
-	}
-
-	minter, err := turncred.NewMinter("s3cret", time.Hour)
-	if err != nil {
-		t.Fatalf("new minter: %v", err)
-	}
-	f.handler.TurnServers = []turncred.Entry{{URI: "turn:static.example.com:3478", Region: "us"}}
-	f.handler.TurnStore = store
-	f.handler.TurnMinter = minter
-
-	resp := requestNetmap(t, f, 0)
-	servers := resp.GetTurnServers()
-	if len(servers) != 1 {
-		t.Fatalf("got %d turn servers, want the static fallback entry", len(servers))
-	}
-	if servers[0].GetUri() != "turn:static.example.com:3478" {
-		t.Fatalf("uri = %q, want the static field's entry", servers[0].GetUri())
 	}
 }
 

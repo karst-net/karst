@@ -33,7 +33,6 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
-	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/karst/tutorialmode"
 	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
@@ -216,17 +215,6 @@ func consoleMutations() []consoleCase {
 			skipRoleChecks: true,
 		},
 		{
-			name: "register a turn server", method: http.MethodPost,
-			path: "/karst/v1/turns",
-			body: `{"uri":"turn:turn.example.test:3478","region":"eu"}`,
-			want: []int{http.StatusCreated, http.StatusOK}, template: "/karst/v1/turns",
-		},
-		{
-			name: "remove a turn server", method: http.MethodDelete,
-			path: "/karst/v1/turns/unknown-turn", body: "",
-			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/turns/{turnId}",
-		},
-		{
 			name: "register an authorized location", method: http.MethodPost,
 			path: "/karst/v1/locations",
 			body: `{"lat":51.5072,"lon":-0.1276,"label":"London","kind":"datacenter"}`,
@@ -294,28 +282,6 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusOK}, template: "/karst/v1/bedrock/location",
 		},
 		{
-			name: "mint a turn enroll token", method: http.MethodPost,
-			path: "/karst/v1/turn/enroll-tokens", body: `{}`,
-			want: []int{http.StatusCreated}, template: "/karst/v1/turn/enroll-tokens",
-		},
-		{
-			name: "de-enroll a turn server", method: http.MethodPost,
-			path: "/karst/v1/turn/deenroll",
-			body: `{"uri":"turn:unknown-turn.example.test:3478"}`,
-			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/turn/deenroll",
-		},
-		{
-			// Same shape as "enroll a relay with a token" above -- no real
-			// token is minted for this case, so this exercises only that
-			// the route exists and answers 401 with no bearer token, not
-			// the happy path.
-			name: "enroll a turn server with a token", method: http.MethodPost,
-			path: "/karst/v1/turn/enroll",
-			body: `{"uri":"turn:turn-enroll.example.test:3478","region":"eu"}`,
-			want: []int{http.StatusUnauthorized}, template: "/karst/v1/turn/enroll",
-			skipRoleChecks: true,
-		},
-		{
 			name: "record a known event", method: http.MethodPost,
 			path: "/karst/v1/known-events",
 			body: `{"label":"company all-hands","starts_at":"2026-03-01T00:00:00Z","ends_at":"2026-03-02T00:00:00Z"}`,
@@ -334,7 +300,7 @@ func consoleMutations() []consoleCase {
 		},
 		{
 			// Idempotent by design (audit.RemoveSink), so a missing id is
-			// still success, unlike the relay/turn deletes above.
+			// still success, unlike the relay delete above.
 			name: "remove an audit sink", method: http.MethodDelete,
 			path: "/karst/v1/audit/sinks/unknown-sink", body: "",
 			want: []int{http.StatusNoContent}, template: "/karst/v1/audit/sinks/{sinkId}",
@@ -513,7 +479,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	}
 	for _, table := range []string{
 		"karst_node_identities", "karst_device_sessions", "karst_policy_versions",
-		"karst_relays", "karst_turn_servers", "karst_audit_entries", "karst_audit_sinks",
+		"karst_relays", "karst_audit_entries", "karst_audit_sinks",
 		"karst_locations", "karst_group_locations", "karst_control_plane_location",
 		"karst_allowed_regions", "karst_ephemeral_anchors", "karst_ephemeral_anchor_schedule",
 		"karst_ephemeral_anchor_rtt_histogram", "karst_route_telemetry",
@@ -536,10 +502,6 @@ func consoleRouter(t *testing.T) *mux.Router {
 	relayStore, err := relayreg.NewStore(db)
 	if err != nil {
 		t.Fatalf("relay store: %v", err)
-	}
-	turnStore, err := turncred.NewStore(db)
-	if err != nil {
-		t.Fatalf("turn store: %v", err)
 	}
 	bedrockStore, err := bedrock.NewStore(db)
 	if err != nil {
@@ -606,7 +568,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	domainManager := meshdomainmanager.NewManager(s, am, permissionsManager)
 
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
+	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore,
 		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore,
 		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, router)
 	return router

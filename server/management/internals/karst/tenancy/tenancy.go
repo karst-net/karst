@@ -7,8 +7,8 @@
 // unconditional false.
 //
 // Grants are declarative and boot-time only (karst-control/main.go's
-// KARST_TENANCY_GRANTS_FILE), the same operational shape as the relay and
-// TURN registries — see Reconcile.
+// KARST_TENANCY_GRANTS_FILE), the same operational shape as the relay
+// registry — see Reconcile.
 package tenancy
 
 import (
@@ -87,7 +87,7 @@ func (s *Store) AccessibleAccounts(ctx context.Context, userID string) ([]string
 // wanted but missing from the table are created, grants present in the
 // table but absent from wanted are revoked. Declarative, not additive — the
 // file is the source of truth on every boot, the same convention the relay
-// and TURN registries already use.
+// registry already uses.
 func (s *Store) Reconcile(ctx context.Context, wanted []Grant) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing []grantRow

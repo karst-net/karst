@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -240,6 +240,13 @@ export const api = {
   removeAuditSink: (id: string) => request<void>(`/audit/sinks/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── relays ─────────────────────────────────────────────────────────────────
+  relayPublication: () => request<RelayPublication>("/relay-services/publication"),
+  previewRelayPublication: () => request<RelayService[]>("/relay-services/publication/preview", { method: "POST" }),
+  setRelayPublication: (mode: RelayPublication["mode"]) => request<RelayPublication>("/relay-services/publication", { method: "PUT", body: body({ mode, acknowledge_connectivity_change: true }) }),
+  setRelayServiceModes: (id: string, ponorEnabled: boolean) => request<RelayService>(`/relay-services/${encodeURIComponent(id)}/modes`, { method: "PUT", body: body({ ponor_enabled: ponorEnabled, acknowledge_connectivity_change: true }) }),
+  relayServices: () => request<RelayServiceView[]>("/relay-services"),
+  addRelayService: (service: RelayService) => request<RelayService>("/relay-services", { method: "POST", body: body(service) }),
+  removeRelayService: (id: string) => request<void>(`/relay-services/${encodeURIComponent(id)}`, { method: "DELETE" }),
   relays: () => request<Relay[]>("/relays"),
   addRelay: (entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: RelayLocation }) => request<Relay>("/relays", { method: "POST", body: body(entry) }),
   removeRelay: (id: string) => request<void>(`/relays/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -283,11 +290,6 @@ export const api = {
   addAllowedRegion: (entry: AllowedRegion) => request<AllowedRegion>("/regions", { method: "POST", body: body(entry) }),
   removeAllowedRegion: (provider: string, region: string) => request<void>(`/regions/${encodeURIComponent(provider)}/${encodeURIComponent(region)}`, { method: "DELETE" }),
 
-  // ── turn servers ───────────────────────────────────────────────────────────
-  turns: () => request<TurnServer[]>("/turns"),
-  addTurn: (entry: { uri: string; region: string; location?: RelayLocation }) => request<TurnServer>("/turns", { method: "POST", body: body(entry) }),
-  removeTurn: (id: string) => request<void>(`/turns/${encodeURIComponent(id)}`, { method: "DELETE" }),
-
   // ── auth keys ──────────────────────────────────────────────────────────────
   setupKeys: () => management<SetupKey[]>("/setup-keys"),
   createSetupKey: (draft: SetupKeyDraft) => management<SetupKey>("/setup-keys", { method: "POST", body: body(draft) }),
@@ -330,6 +332,11 @@ export const api = {
   deleteNameserverGroup: (id: string) => management<void>(`/dns/nameservers/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── network routes ─────────────────────────────────────────────────────────
+  gateways: async () => {
+    const inventory = await request<GatewayInventory>("/gateways");
+    if (inventory.schema_version !== 1) throw new Error("Unsupported Gateway inventory schema; upgrade the console before using this view.");
+    return inventory;
+  },
   routes: () => management<NetworkRoute[]>("/routes"),
   createRoute: (draft: NetworkRouteDraft) => management<NetworkRoute>("/routes", { method: "POST", body: body(draft) }),
   updateRoute: (id: string, draft: NetworkRouteDraft) => management<NetworkRoute>(`/routes/${encodeURIComponent(id)}`, { method: "PUT", body: body(draft) }),

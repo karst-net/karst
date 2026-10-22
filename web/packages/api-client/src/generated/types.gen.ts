@@ -6,6 +6,38 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}/api/karst/v1` | (string & {});
 };
 
+export type GatewayOffer = {
+    id: string;
+    network_id: string;
+    prefix: string;
+    kind: 'subnet' | 'default_ipv4' | 'default_ipv6';
+    enabled: boolean;
+    masquerade: boolean;
+    metric: number;
+    requires_client_consent: boolean;
+};
+
+export type GatewayNode = {
+    node_id: string;
+    name: string;
+    control_connected: boolean;
+    forwarding_readiness: 'unreported';
+    offers: Array<GatewayOffer>;
+};
+
+export type GatewayInventory = {
+    schema_version: 1;
+    gateways: Array<GatewayNode>;
+    /**
+     * Configured routes without a visible eligible node, including empty or missing routing groups.
+     */
+    unresolved_routes: Array<string>;
+    /**
+     * Non-CIDR route declarations that cannot be projected as Karst Gateway offers.
+     */
+    unsupported_routes: Array<string>;
+};
+
 export type MeshDomainView = {
     /**
      * Stable domain identity.
@@ -457,6 +489,33 @@ export type PolicyTestResult = {
     }>;
 };
 
+export type RelayPublication = {
+    mode: 'legacy' | 'services';
+    /**
+     * Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
+     */
+    schema_version?: 2;
+};
+
+export type RelayService = {
+    id: string;
+    /**
+     * Existing account-local Ponor registry ID.
+     */
+    ponor_id: string;
+    /**
+     * Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
+     */
+    ponor_disabled?: boolean;
+};
+
+export type RelayServiceView = RelayService & {
+    /**
+     * Referenced Ponor registry entry exists in this account; not a health result.
+     */
+    ponor_present: boolean;
+};
+
 export type RelayCreate = {
     address: string;
     identity_key: string;
@@ -673,22 +732,6 @@ export type DiscoveredResource = {
     enabled?: boolean;
 };
 
-export type TurnServerCreate = {
-    /**
-     * A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
-     */
-    uri: string;
-    region?: string;
-    location?: RelayLocation;
-};
-
-export type TurnServer = TurnServerCreate & {
-    /**
-     * Derived from uri; never accepted from callers.
-     */
-    readonly id: string;
-};
-
 export type LocationCreate = {
     lat: number;
     lon: number;
@@ -714,7 +757,7 @@ export type GroupLocation = {
 };
 
 export type NocComponent = {
-    kind: 'relay' | 'turn' | 'route' | 'control_plane' | 'bedrock';
+    kind: 'relay' | 'route' | 'control_plane' | 'bedrock';
     id: string;
     label: string;
     health?: 'confirmed' | 'stale' | 'unknown';
@@ -915,8 +958,6 @@ export type InfrastructureConnectionWritable = {
     status?: 'ok' | 'error';
 };
 
-export type TurnServerWritable = TurnServerCreate;
-
 export type LocationWritable = LocationCreate;
 
 export type GroupLocationWritable = {
@@ -930,8 +971,6 @@ export type AuditSinkWritable = AuditSinkWrite;
 export type Handle = string;
 
 export type RelayId = string;
-
-export type TurnId = string;
 
 export type SinkId = string;
 
@@ -961,6 +1000,33 @@ export type ObservedSince = string;
 export type IfMatch = string;
 
 export type ExportFormat = 'json' | 'csv';
+
+export type GatewayInventoryData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/gateways';
+};
+
+export type GatewayInventoryErrors = {
+    /**
+     * Caller lacks source permissions
+     */
+    403: unknown;
+    /**
+     * Gateway inventory sources unavailable
+     */
+    412: unknown;
+};
+
+export type GatewayInventoryResponses = {
+    /**
+     * Unified subnet and default-route offers per enrolled node
+     */
+    200: GatewayInventory;
+};
+
+export type GatewayInventoryResponse = GatewayInventoryResponses[keyof GatewayInventoryResponses];
 
 export type SoftwareVersionsData = {
     body?: never;
@@ -2075,6 +2141,195 @@ export type TestPolicyResponses = {
 
 export type TestPolicyResponse = TestPolicyResponses[keyof TestPolicyResponses];
 
+export type ListRelayServicesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/relay-services';
+};
+
+export type ListRelayServicesErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListRelayServicesError = ListRelayServicesErrors[keyof ListRelayServicesErrors];
+
+export type ListRelayServicesResponses = {
+    /**
+     * Relay services
+     */
+    200: Array<RelayServiceView>;
+};
+
+export type ListRelayServicesResponse = ListRelayServicesResponses[keyof ListRelayServicesResponses];
+
+export type CreateRelayServiceData = {
+    body: RelayService;
+    path?: never;
+    query?: never;
+    url: '/relay-services';
+};
+
+export type CreateRelayServiceErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateRelayServiceError = CreateRelayServiceErrors[keyof CreateRelayServiceErrors];
+
+export type CreateRelayServiceResponses = {
+    /**
+     * Association created
+     */
+    201: RelayService;
+};
+
+export type CreateRelayServiceResponse = CreateRelayServiceResponses[keyof CreateRelayServiceResponses];
+
+export type GetRelayPublicationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/relay-services/publication';
+};
+
+export type GetRelayPublicationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetRelayPublicationError = GetRelayPublicationErrors[keyof GetRelayPublicationErrors];
+
+export type GetRelayPublicationResponses = {
+    /**
+     * Active publication authority
+     */
+    200: RelayPublication;
+};
+
+export type GetRelayPublicationResponse = GetRelayPublicationResponses[keyof GetRelayPublicationResponses];
+
+export type SetRelayPublicationData = {
+    body: {
+        mode: 'legacy' | 'services';
+        acknowledge_connectivity_change: true;
+    };
+    path?: never;
+    query?: never;
+    url: '/relay-services/publication';
+};
+
+export type SetRelayPublicationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetRelayPublicationError = SetRelayPublicationErrors[keyof SetRelayPublicationErrors];
+
+export type SetRelayPublicationResponses = {
+    /**
+     * Publication authority changed
+     */
+    200: RelayPublication;
+};
+
+export type SetRelayPublicationResponse = SetRelayPublicationResponses[keyof SetRelayPublicationResponses];
+
+export type PreviewRelayPublicationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/relay-services/publication/preview';
+};
+
+export type PreviewRelayPublicationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type PreviewRelayPublicationError = PreviewRelayPublicationErrors[keyof PreviewRelayPublicationErrors];
+
+export type PreviewRelayPublicationResponses = {
+    /**
+     * Validated service projection
+     */
+    200: Array<RelayService>;
+};
+
+export type PreviewRelayPublicationResponse = PreviewRelayPublicationResponses[keyof PreviewRelayPublicationResponses];
+
+export type DeleteRelayServiceData = {
+    body?: never;
+    path: {
+        serviceId: string;
+    };
+    query?: never;
+    url: '/relay-services/{serviceId}';
+};
+
+export type DeleteRelayServiceErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteRelayServiceError = DeleteRelayServiceErrors[keyof DeleteRelayServiceErrors];
+
+export type DeleteRelayServiceResponses = {
+    /**
+     * Association removed
+     */
+    204: void;
+};
+
+export type DeleteRelayServiceResponse = DeleteRelayServiceResponses[keyof DeleteRelayServiceResponses];
+
+export type SetRelayServiceModesData = {
+    body: {
+        ponor_enabled: boolean;
+        acknowledge_connectivity_change: true;
+    };
+    path: {
+        serviceId: string;
+    };
+    query?: never;
+    url: '/relay-services/{serviceId}/modes';
+};
+
+export type SetRelayServiceModesErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetRelayServiceModesError = SetRelayServiceModesErrors[keyof SetRelayServiceModesErrors];
+
+export type SetRelayServiceModesResponses = {
+    /**
+     * Updated mode configuration
+     */
+    200: RelayService;
+};
+
+export type SetRelayServiceModesResponse = SetRelayServiceModesResponses[keyof SetRelayServiceModesResponses];
+
 export type ListRelaysData = {
     body?: never;
     path?: never;
@@ -3073,87 +3328,6 @@ export type ListInfrastructureConnectionResourcesResponses = {
 };
 
 export type ListInfrastructureConnectionResourcesResponse = ListInfrastructureConnectionResourcesResponses[keyof ListInfrastructureConnectionResourcesResponses];
-
-export type ListTurnServersData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/turns';
-};
-
-export type ListTurnServersErrors = {
-    /**
-     * Error response
-     */
-    default: Error;
-};
-
-export type ListTurnServersError = ListTurnServersErrors[keyof ListTurnServersErrors];
-
-export type ListTurnServersResponses = {
-    /**
-     * TURN server registry
-     */
-    200: Array<TurnServer>;
-};
-
-export type ListTurnServersResponse = ListTurnServersResponses[keyof ListTurnServersResponses];
-
-export type CreateTurnServerData = {
-    body: TurnServerCreate;
-    path?: never;
-    query?: never;
-    url: '/turns';
-};
-
-export type CreateTurnServerErrors = {
-    /**
-     * Validation error
-     */
-    422: Error;
-    /**
-     * Error response
-     */
-    default: Error;
-};
-
-export type CreateTurnServerError = CreateTurnServerErrors[keyof CreateTurnServerErrors];
-
-export type CreateTurnServerResponses = {
-    /**
-     * Onboarded TURN server
-     */
-    201: TurnServer;
-};
-
-export type CreateTurnServerResponse = CreateTurnServerResponses[keyof CreateTurnServerResponses];
-
-export type DeleteTurnServerData = {
-    body?: never;
-    path: {
-        readonly turnId: string;
-    };
-    query?: never;
-    url: '/turns/{turnId}';
-};
-
-export type DeleteTurnServerErrors = {
-    /**
-     * Error response
-     */
-    default: Error;
-};
-
-export type DeleteTurnServerError = DeleteTurnServerErrors[keyof DeleteTurnServerErrors];
-
-export type DeleteTurnServerResponses = {
-    /**
-     * TURN server removed
-     */
-    204: void;
-};
-
-export type DeleteTurnServerResponse = DeleteTurnServerResponses[keyof DeleteTurnServerResponses];
 
 export type GetBedrockData = {
     body?: never;

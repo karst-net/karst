@@ -505,28 +505,6 @@ impl fmt::Debug for TurnServer {
     }
 }
 
-impl TurnServer {
-    fn from_wire(server: &pb::KarstTurnServer) -> Result<Self, Error> {
-        if server.uri.is_empty()
-            || !(server.uri.starts_with("turn:") || server.uri.starts_with("turns:"))
-        {
-            return Err(Error::Turn("uri is not a turn: or turns: URI".to_owned()));
-        }
-        if server.username.is_empty() || server.password.is_empty() {
-            return Err(Error::Turn(
-                "a minted TURN credential is missing its username or password".to_owned(),
-            ));
-        }
-        Ok(Self {
-            uri: server.uri.clone(),
-            region: server.region.clone(),
-            username: server.username.clone(),
-            password: TurnCredential(server.password.clone()),
-            expires_at: server.expires_at,
-        })
-    }
-}
-
 /// A minted TURN password. Like [`Psk`], a real secret that does not print —
 /// `turncred.Credential`'s doc comment on the Go side explains why: Phase 3's
 /// exit criterion is an automated scan for secret bytes in logs, traces and
@@ -1051,18 +1029,11 @@ impl Netmap {
     /// [`Error::PskLength`] for a malformed PSK, and [`Error::VersionMismatch`]
     /// if the assembled state does not reproduce the server's version.
     pub fn apply(&mut self, resp: pb::KarstNetmapResponse) -> Result<Outcome, Error> {
-        // **Before the `unchanged` check, deliberately.** A minted TURN
-        // credential is fresh on every response the server sends — including
-        // one that reports `unchanged` for everything else — so applying it
-        // only on the non-`unchanged` path would leave this node holding a
-        // credential that ages toward its own expiry on every poll that
-        // changed nothing, which on a quiet netmap is most of them. See the
-        // field's own doc comment.
-        self.turn_servers = resp
-            .turn_servers
-            .iter()
-            .map(TurnServer::from_wire)
-            .collect::<Result<_, _>>()?;
+        // karst_control.proto's turn_servers field (16) is reserved, never
+        // sent: Karst dropped standalone TURN support in favor of Relay-only
+        // transport fallback. self.turn_servers stays permanently empty,
+        // same as new()'s own default -- nothing populates it from the wire
+        // anymore.
 
         // Read the flags before anything else is mutated. `unchanged` wins over
         // `delta`: the server sets only one, and treating an unchanged response
@@ -1347,15 +1318,6 @@ impl Netmap {
                 .iter()
                 .map(crate::route_offer::Offer::to_wire)
                 .collect(),
-            // **Deliberately absent.** This is what goes into the on-disk
-            // cache, and a minted TURN credential belongs there even less than
-            // it belongs in `content_version()` — writing it to disk would
-            // have this node try a credential that may already be expired the
-            // next time it starts, for no benefit: `crate::run` never treats a
-            // cached netmap as a substitute for the first live one, and a
-            // credential is worthless until the control client reaches the
-            // server anyway.
-            turn_servers: Vec::new(),
             delta: false,
             removed_peers: Vec::new(),
             unchanged: false,
@@ -1473,16 +1435,6 @@ mod tests {
         }
     }
 
-    fn wire_turn_server(uri: &str) -> pb::KarstTurnServer {
-        pb::KarstTurnServer {
-            uri: uri.to_owned(),
-            region: "test".to_owned(),
-            username: "1700000000".to_owned(),
-            password: "test-fixture-turn-password".to_owned(),
-            expires_at: 1_700_000_000,
-        }
-    }
-
     // ── the three shapes ────────────────────────────────────────────────────
 
     #[test]
@@ -1568,64 +1520,14 @@ mod tests {
     }
 
     // ── TURN — `spec/aven-v1.md` §7.8 ───────────────────────────────────────
-
-    /// **The one field `unchanged` does not mean "keep".** A minted TURN
-    /// credential is fresh on every response, including one that reports
-    /// `unchanged` for everything else, so it must be applied before the
-    /// early return — see `Netmap::apply`'s own doc comment on why.
-    #[test]
-    fn turn_servers_are_replaced_even_when_the_response_is_unchanged() {
-        let mut map = loaded();
-        map.apply(sealed(
-            pb::KarstNetmapResponse {
-                turn_servers: vec![wire_turn_server("turn:turn.example.com:3478")],
-                ..full(vec![])
-            },
-            &map,
-        ))
-        .expect("first apply");
-        assert_eq!(map.turn_servers.len(), 1);
-
-        let resp = pb::KarstNetmapResponse {
-            unchanged: true,
-            turn_servers: vec![wire_turn_server("turn:turn2.example.com:3478")],
-            ..pb::KarstNetmapResponse::default()
-        };
-        assert_eq!(map.apply(resp), Ok(Outcome::Unchanged));
-        assert_eq!(
-            map.turn_servers.len(),
-            1,
-            "the field is replaced, not appended"
-        );
-        assert_eq!(
-            map.turn_servers.first().map(|s| s.uri.as_str()),
-            Some("turn:turn2.example.com:3478")
-        );
-        // Nothing else moved — the whole point of `unchanged`.
-        assert_eq!(map.peers().len(), 0);
-    }
-
-    #[test]
-    fn turn_server_from_wire_rejects_a_non_turn_uri() {
-        let mut map = loaded();
-        let resp = pb::KarstNetmapResponse {
-            turn_servers: vec![wire_turn_server("https://turn.example.com")],
-            ..full(vec![])
-        };
-        assert!(matches!(map.apply(resp), Err(Error::Turn(_))));
-    }
-
-    #[test]
-    fn turn_server_from_wire_rejects_an_empty_credential() {
-        let mut map = loaded();
-        let mut server = wire_turn_server("turn:turn.example.com:3478");
-        server.password.clear();
-        let resp = pb::KarstNetmapResponse {
-            turn_servers: vec![server],
-            ..full(vec![])
-        };
-        assert!(matches!(map.apply(resp), Err(Error::Turn(_))));
-    }
+    //
+    // Karst dropped standalone TURN support (Relay-only transport
+    // fallback): karst_control.proto's turn_servers field (16) is reserved,
+    // never sent, so there is no wire shape left to decode and no
+    // from_wire-rejection behavior left to test here. TurnCredential's own
+    // redaction still matters -- it is the client-local type
+    // `crate::turn`'s connectivity client (unrelated to this removal) still
+    // builds a credential as -- so that property stays covered below.
 
     #[test]
     fn turn_credential_does_not_print() {

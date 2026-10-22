@@ -10,9 +10,7 @@
 #
 # Host networking, not Nomad's bridge/CNI networking: this is a single-node
 # deployment and CNI reference plugins are an extra dependency this doesn't
-# need. Each task binds directly to the host's ports, same as compose's own
-# `network_mode: host` already does for the optional coturn service in
-# turn.nomad.hcl.
+# need. Each task binds directly to the host's ports.
 #
 # See README.md for how this differs operationally from the compose path,
 # and for the unrelated "Nomad" meaning elsewhere in this repo (the

@@ -101,7 +101,7 @@ export function Locations() {
 
   return <section>
     <h2>Authorized locations</h2>
-    <TutorialHint>Sites this deployment is authorized to place infrastructure at, each derived from an infrastructure connection: an AWS, Azure, or GCP region/zone, a Kubernetes cluster, or a Nomad cluster. The NOC map draws every one of these as a hollow marker, whether or not anything is deployed there yet. This registry does not restrict where a relay, TURN server, or other component may actually declare its own location — it is informational, not an enforcement gate. A location is a logical entry here, not a running component: it only becomes "occupied" once something else (a relay, a TURN server) declares the same place.</TutorialHint>
+    <TutorialHint>Sites this deployment is authorized to place infrastructure at, each derived from an infrastructure connection: an AWS, Azure, or GCP region/zone, a Kubernetes cluster, or a Nomad cluster. The NOC map draws every one of these as a hollow marker, whether or not anything is deployed there yet. This registry does not restrict where a relay or other component may actually declare its own location — it is informational, not an enforcement gate. A location is a logical entry here, not a running component: it only becomes "occupied" once something else (a relay) declares the same place.</TutorialHint>
     <div className="actions"><button className="primary" onClick={openDialog}>Add authorized location</button></div>
     <Notice message={message} />
     {locations.length === 0

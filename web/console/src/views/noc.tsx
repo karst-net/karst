@@ -3,9 +3,9 @@
 
 // The NOC view, Phase 1a (#241, ADR-0046/ADR-0047), extended to ADR-0046
 // §1's full component list plus the admin-authorized "possible locations"
-// registry: a map of every relay, TURN server, exit-node/subnet-router
-// gateway group, and the account's control-plane/Bedrock declared
-// locations, each colored by health where it has one, plus every
+// registry: a map of every relay, exit-node/subnet-router gateway group,
+// and the account's control-plane/Bedrock declared locations, each colored
+// by health where it has one, plus every
 // authorized-but-possibly-unoccupied location as a hollow marker. History,
 // current rate and utilization are Phase 1b (ADR-0047 §1/§3/§4) -- this
 // page shows only what ADR-0021's existing telemetry already carries, drawn
@@ -57,9 +57,9 @@ function token(name: string): string {
 // glyph here is also always paired with its color in the legend, which is
 // what makes the chart-4/chart-5 slots' relaxed CVD floor acceptable for
 // this use (see the token comment).
-const kindGlyph: Record<string, string> = { relay: "●", turn: "◆", route: "▲", control_plane: "■", bedrock: "★" };
-const kindLabel: Record<string, string> = { relay: "Relay", turn: "TURN server", route: "Exit/subnet gateway", control_plane: "Control plane", bedrock: "Bedrock" };
-const kindChartToken: Record<string, string> = { relay: "--chart-1", turn: "--chart-2", route: "--chart-3", control_plane: "--chart-4", bedrock: "--chart-5" };
+const kindGlyph: Record<string, string> = { relay: "●", route: "▲", control_plane: "■", bedrock: "★" };
+const kindLabel: Record<string, string> = { relay: "Relay", route: "Exit/subnet gateway", control_plane: "Control plane", bedrock: "Bedrock" };
+const kindChartToken: Record<string, string> = { relay: "--chart-1", route: "--chart-3", control_plane: "--chart-4", bedrock: "--chart-5" };
 const kinds = Object.keys(kindGlyph);
 
 const healthState = (health?: string): StatusState => health === "confirmed" ? "healthy" : health === "stale" ? "warning" : "unknown";
@@ -171,8 +171,8 @@ export function Noc() {
       });
 
       // Every other component kind (ADR-0046 §1): one shared source, not
-      // clustered -- turn/route/control_plane/bedrock are infrastructure,
-      // never numerous enough in one deployment to need it the way a
+      // clustered -- route/control_plane/bedrock are infrastructure, never
+      // numerous enough in one deployment to need it the way a
       // client-peer-scale fleet of relays can be.
       instance.addSource("components", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       instance.addLayer({
@@ -180,17 +180,17 @@ export function Noc() {
         paint: {
           "circle-radius": 7,
           "circle-stroke-width": 2,
-          "circle-stroke-color": ["match", ["get", "kind"], "turn", token(kindChartToken.turn), "route", token(kindChartToken.route), "control_plane", token(kindChartToken.control_plane), "bedrock", token(kindChartToken.bedrock), token("--border")],
+          "circle-stroke-color": ["match", ["get", "kind"], "route", token(kindChartToken.route), "control_plane", token(kindChartToken.control_plane), "bedrock", token(kindChartToken.bedrock), token("--border")],
           "circle-color": ["match", ["get", "health"], "healthy", token("--success"), "warning", token("--warning"), token("--muted")],
         },
       });
       instance.addLayer({
         id: "component-glyph", type: "symbol", source: "components",
         layout: {
-          "text-field": ["match", ["get", "kind"], "turn", kindGlyph.turn, "route", kindGlyph.route, "control_plane", kindGlyph.control_plane, "bedrock", kindGlyph.bedrock, "?"],
+          "text-field": ["match", ["get", "kind"], "route", kindGlyph.route, "control_plane", kindGlyph.control_plane, "bedrock", kindGlyph.bedrock, "?"],
           "text-size": 10, "text-allow-overlap": true,
         },
-        paint: { "text-color": ["match", ["get", "kind"], "turn", token(kindChartToken.turn), "route", token(kindChartToken.route), "control_plane", token(kindChartToken.control_plane), "bedrock", token(kindChartToken.bedrock), token("--text")] },
+        paint: { "text-color": ["match", ["get", "kind"], "route", token(kindChartToken.route), "control_plane", token(kindChartToken.control_plane), "bedrock", token(kindChartToken.bedrock), token("--text")] },
       });
 
       // Authorized-but-possibly-unoccupied locations: always rendered,
@@ -290,7 +290,7 @@ export function Noc() {
 
   return <section className="noc-view">
     <h2>NOC view</h2>
-    <TutorialHint>A read-only map of this account's physical components (relays, TURN servers) and logical ones (exit-node/subnet-router gateways, the control plane itself, Bedrock) plotted wherever each has a location — detected, declared, or just authorized but not yet occupied (the hollow markers). Every relay, TURN server, exit-node/subnet-router gateway, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</TutorialHint>
+    <TutorialHint>A read-only map of this account's physical components (relays) and logical ones (exit-node/subnet-router gateways, the control plane itself, Bedrock) plotted wherever each has a location — detected, declared, or just authorized but not yet occupied (the hollow markers). Every relay, exit-node/subnet-router gateway, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</TutorialHint>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {locations.error && <Failure message={locations.error} retry={locations.reload} />}
     <div ref={container} className="noc-map" role="application" aria-label="Component map" />

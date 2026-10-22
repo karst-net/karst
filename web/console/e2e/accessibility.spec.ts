@@ -305,6 +305,7 @@ test("groups can be created and renamed, and provider groups cannot", async ({ p
 
 test("a relay with a DNS name for an address is refused before it is sent", async ({ page }) => {
   await page.goto("/#/relays");
+  await page.getByRole("button", { name: "Ponor endpoints" }).click();
   await page.getByRole("button", { name: "Add relay" }).click();
   await page.getByLabel("Relay address").fill("relay.example.com:443");
   await page.getByLabel("TLS server name").fill("relay.example.com");
@@ -321,6 +322,7 @@ test("a relay with a DNS name for an address is refused before it is sent", asyn
 
 test("a relay can be added and removed", async ({ page }) => {
   await page.goto("/#/relays");
+  await page.getByRole("button", { name: "Ponor endpoints" }).click();
   await page.getByRole("button", { name: "Add relay" }).click();
   await page.getByLabel("Relay address").fill("203.0.113.9:443");
   await page.getByLabel("TLS server name").fill("relay-new.example.test");
@@ -504,7 +506,7 @@ test.afterEach(async ({ page }) => { await setUncovered(page, uncovered); await 
 
 test("empty-account list views explain what happens next", async ({ page }) => {
   await setFixture(page, true);
-  for (const [route, title] of [["machines", "No machines yet"], ["keys", "No auth keys"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No relays configured"]]) {
+  for (const [route, title] of [["machines", "No machines yet"], ["keys", "No auth keys"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No Relay services configured"]]) {
     await page.goto(`/#/${route}`);
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
   }
