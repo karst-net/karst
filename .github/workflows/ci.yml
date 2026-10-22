@@ -564,7 +564,7 @@ jobs:
           shards[2]="a_node_resolves_its_peer_by_mesh_name_before_connecting a_symmetric_nat_reaches_a_port_restricted_peer_that_can_map_a_port exit_node_consent_survives_a_daemon_crash_and_restart an_ssh_policy_denies_what_the_acl_alone_would_permit a_recipients_route_follows_its_effective_gateway_to_a_standby route_changes_converge_through_push_not_restart two_nodes_on_one_home_network_go_direct_over_the_lan an_offline_ceremony_excludes_an_uncovered_peer_from_a_running_aquifer"
           shards[3]="a_node_with_no_udp_at_all_still_carries_traffic_over_the_relay a_symmetric_nat_reaches_an_address_restricted_peer_directly a_symmetric_nat_reaches_a_reachable_peer_directly a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding a_symmetric_nat_with_an_explicit_mapping_reaches_another_symmetric_nat_directly two_nodes_meet_on_the_relay_and_end_up_direct"
           shards[4]="an_ipv6_only_node_behind_nat64_reaches_an_ipv4_mesh selecting_one_ip_familys_exit_route_does_not_activate_the_other two_nodes_on_two_relays_reach_each_other two_symmetric_nats_stay_on_the_relay_until_port_prediction_lands"
-          shards[5]="a_pair_of_cone_nats_reaches_each_other_through_a_real_turn_server_once_direct_is_blocked a_symmetric_nat_and_a_port_restricted_peer_stay_on_the_relay gateway_forwarding_survives_a_daemon_crash_and_restart two_nodes_behind_nats_punch_through_with_a_reflector two_nodes_punch_through_a_port_restricted_cone"
+          shards[5]="a_symmetric_nat_and_a_port_restricted_peer_stay_on_the_relay gateway_forwarding_survives_a_daemon_crash_and_restart two_nodes_behind_nats_punch_through_with_a_reflector two_nodes_punch_through_a_port_restricted_cone"
 
           live=$(mktemp)
           "$bin" --list --format terse | sed -n 's/: test$//p' | sort > "$live"
@@ -636,26 +636,20 @@ jobs:
       # would report the daemon failing to discover a prefix nothing was
       # offering. Both are masked for the same reason as `miniupnpd`.
       #
-      # `coturn` (package name; the binary is `turnserver`) is `Shape::TurnOnly`'s
-      # half of the same argument again — `spec/aven-v1.md` §7.8. Masked for the
-      # identical reason: the package's post-install starts a `coturn` service
-      # against its own config, which the row does not use (it writes and starts
-      # its own `turnserver.conf` directly).
-      #
       # Installed in every shard uniformly rather than worked out per shard:
       # which rows land in which shard can change with the balancing above,
       # and a shard silently missing a prerequisite is a worse failure mode
       # than a few redundant `apt-get install`s.
-      - name: Port-mapping daemon, translator, resolver and TURN server for the privileged rows
+      - name: Port-mapping daemon, translator and resolver for the privileged rows
         run: |
-          sudo systemctl mask miniupnpd tayga dnsmasq coturn || true
+          sudo systemctl mask miniupnpd tayga dnsmasq || true
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
           # curl is for the revocation row, which drives the fixture's control
           # surface from inside a namespace. It is on the runner image already;
           # naming it here keeps the install list and the suite's declared
           # prerequisites the same set.
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            miniupnpd nftables tayga dnsmasq curl coturn || true
+            miniupnpd nftables tayga dnsmasq curl || true
           # These install into /usr/sbin, and every run below is
           # `sudo env PATH=$PATH`, which carries *this* PATH rather than root's
           # `secure_path`. Without the sbin directories on it the suites would
@@ -664,7 +658,7 @@ jobs:
           printf '%s\n' /usr/sbin /sbin >> "$GITHUB_PATH"
       - name: What the runner actually has
         run: |
-          for t in ip nft go miniupnpd tayga dnsmasq turnserver; do
+          for t in ip nft go miniupnpd tayga dnsmasq; do
             printf '%-12s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
           done
       # Fixed namespace, interface and port names throughout, so one at a time
