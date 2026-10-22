@@ -305,6 +305,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay service store: %w", err)
 	}
+	relayServiceStore.LifecycleAgents = nodes
 	knownEventsStore, err := knownevents.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: known events store: %w", err)

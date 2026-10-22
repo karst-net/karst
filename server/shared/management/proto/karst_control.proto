@@ -145,6 +145,12 @@ message KarstNetmapRequest {
   // Both egress and ingress (issues #371, #372) — the matching return
   // leg is attributed per route too, not lumped into one shared bucket.
   repeated KarstRouteObservation route_observations = 7;
+
+  // Additive compatibility declaration on the authenticated control channel.
+  // Schema 1 supports live Ponor/TURN activation/withdrawal and refreshing
+  // TURN credentials on unchanged netmaps. Zero is legacy/unknown. This is
+  // not an authorization grant or software attestation.
+  uint32 relay_lifecycle_schema = 8;
 }
 
 // KarstRouteObservation is one route's egress and ingress bytes/packets

@@ -11,17 +11,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/shared/management/proto"
 	hmac "github.com/netbirdio/netbird/shared/relay/auth/hmac"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+type compatibleLifecycleAgents struct{}
+
+func (compatibleLifecycleAgents) CheckRelayLifecycle(context.Context, string, *gorm.DB) error {
+	return nil
+}
 
 func TestRelayServicePublicationPreservesWireIdentityCredentialsAndExplicitRollback(t *testing.T) {
 	f := newNetmapFixture(t, 2)
@@ -36,6 +45,7 @@ func TestRelayServicePublicationPreservesWireIdentityCredentialsAndExplicitRollb
 	require.NoError(t, err)
 	services, err := relayservice.NewStore(db)
 	require.NoError(t, err)
+	services.LifecycleAgents = compatibleLifecycleAgents{}
 	entry := relayreg.Entry{Address: "203.0.113.2:443", TLSServerName: "relay.example.com", IdentityKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, relayreg.IdentityKeySize)), Region: "eu", Location: &relayreg.Location{Lat: 40, Lon: 10, Label: "declared"}}
 	p, err := ponor.Create(relayreg.WithAccount(context.Background(), "acct"), entry)
 	require.NoError(t, err)
@@ -49,11 +59,20 @@ func TestRelayServicePublicationPreservesWireIdentityCredentialsAndExplicitRollb
 	f.handler.TurnServers = []turncred.Entry{{URI: "turn:legacy.example.com:3478"}}
 	f.handler.TurnMinter, err = turncred.NewMinter("test-secret", time.Hour)
 	require.NoError(t, err)
-	legacy := requestNetmap(t, f, 0)
+	lifecycleRequest := func(known uint64) *proto.KarstNetmapResponse {
+		payload, err := pb.Marshal(&proto.KarstNetmapRequest{KnownVersion: known, RelayLifecycleSchema: 1})
+		require.NoError(t, err)
+		raw, err := f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
+		require.NoError(t, err)
+		response := &proto.KarstNetmapResponse{}
+		require.NoError(t, pb.Unmarshal(raw, response))
+		return response
+	}
+	legacy := lifecycleRequest(0)
 	require.Equal(t, "203.0.113.9:443", legacy.Relays[0].Address)
 	_, err = services.SetPublication(ctx, "services", true)
 	require.NoError(t, err)
-	managed := requestNetmap(t, f, legacy.Version)
+	managed := lifecycleRequest(legacy.Version)
 	require.NotEqual(t, legacy.Version, managed.Version)
 	require.Len(t, managed.Relays, 1)
 	want, err := relayreg.Compile(entry)
@@ -67,7 +86,15 @@ func TestRelayServicePublicationPreservesWireIdentityCredentialsAndExplicitRollb
 	require.NotEqual(t, "test-secret", credential.Password)
 	_, err = services.SetModes(ctx, "primary", true, false, true)
 	require.NoError(t, err)
-	ponorOnly := requestNetmap(t, f, managed.Version)
+	legacyPayload, err := pb.Marshal(&proto.KarstNetmapRequest{})
+	require.NoError(t, err)
+	_, err = f.handler.Handle(context.Background(), nil, f.self.Public(), legacyPayload)
+	require.ErrorContains(t, err, "upgrade")
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	recorded, err := f.handler.Nodes.Get(node.Handle(f.self.Public()))
+	require.NoError(t, err)
+	require.Zero(t, recorded.RelayLifecycleSchema, "a downgrade replaces the previous declaration even when netmap is refused")
+	ponorOnly := lifecycleRequest(managed.Version)
 	require.Len(t, ponorOnly.Relays, 1)
 	require.Empty(t, ponorOnly.TurnServers)
 	require.Equal(t, managed.Version, ponorOnly.Version, "TURN is refreshed independently of the peer-content hash")
@@ -78,17 +105,19 @@ func TestRelayServicePublicationPreservesWireIdentityCredentialsAndExplicitRollb
 	// not silently produce a service whose TURN mode disappeared.
 	minter := f.handler.TurnMinter
 	f.handler.TurnMinter = nil
-	_, err = f.handler.Handle(context.Background(), nil, f.self.Public(), nil)
+	credentialCheck, err := pb.Marshal(&proto.KarstNetmapRequest{RelayLifecycleSchema: 1})
+	require.NoError(t, err)
+	_, err = f.handler.Handle(context.Background(), nil, f.self.Public(), credentialCheck)
 	require.ErrorContains(t, err, "TURN credential minting")
 	f.handler.TurnMinter = minter
 	require.NoError(t, services.Delete(ctx, "primary"))
-	empty := requestNetmap(t, f, managed.Version)
+	empty := lifecycleRequest(managed.Version)
 	require.NotEqual(t, managed.Version, empty.Version)
 	require.Empty(t, empty.Relays)
 	require.Empty(t, empty.TurnServers)
 	_, err = services.SetPublication(ctx, "legacy", false)
 	require.NoError(t, err)
-	rollback := requestNetmap(t, f, empty.Version)
+	rollback := lifecycleRequest(empty.Version)
 	require.Equal(t, "203.0.113.9:443", rollback.Relays[0].Address)
 	require.Equal(t, "turn:legacy.example.com:3478", rollback.TurnServers[0].Uri)
 }

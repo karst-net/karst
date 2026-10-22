@@ -66,6 +66,25 @@ staged and health-probed, but service preview/activation rejects them until the
 node worker supports those transports. Allocation health from control does not
 establish client protocol support. No TLS endpoint is rewritten to plaintext.
 
+### Agent compatibility
+
+Updated agents declare `relay_lifecycle_schema: 1` on each authenticated netmap
+request. Control records the latest declaration for that identity, including
+zero after a downgrade. Live service mode changes and activation of staged
+disabled modes require schema 1 from every enrolled Karst agent in the account.
+Offline agents with missing or incompatible reports block activation: upgrade
+and refresh their netmaps, or remove retired agents. Legacy publication and
+service publication without mode flags remain compatible with older agents.
+
+Under active schema 2 service publication, an incompatible agent receives an
+explicit failed-precondition response. The declaration describes compatibility;
+it is neither software attestation nor authorization. It does not revoke cached
+configuration or replace policy, Bedrock, identity pins, or packet authentication.
+
+If incompatible agents block recovery, explicitly select legacy publication,
+reset the staged mode flags, then select publication again to clear the marker.
+Review the legacy endpoints before selecting that authority.
+
 ### Downgrade preparation
 
 Mode flags require persistence schema 2. Control stores a `legacy-v2` or

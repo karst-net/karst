@@ -152,6 +152,7 @@ type NetmapHandler struct {
 	// boundary until relay administration is moved into the control database.
 	RelayServices interface {
 		Netmap(context.Context) (bool, []*proto.KarstRelay, []turncred.Entry, error)
+		Publication(context.Context) (relayservice.Publication, error)
 	}
 	Relays     []*proto.KarstRelay
 	RelayStore interface {
@@ -297,6 +298,18 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	selfPeer, err := h.Peers.GetPeerByPeerPubKey(ctx, self)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, "node is not registered")
+	}
+	if err := h.Nodes.SetRelayLifecycleSchema(ctx, self, req.GetRelayLifecycleSchema()); err != nil {
+		return nil, fmt.Errorf("record Relay lifecycle capability: %w", err)
+	}
+	if h.RelayServices != nil {
+		publication, err := h.RelayServices.Publication(relayservice.WithAccount(ctx, accountID))
+		if err != nil {
+			return nil, fmt.Errorf("load Relay publication compatibility: %w", err)
+		}
+		if publication.Mode == "services" && publication.SchemaVersion >= 2 && req.GetRelayLifecycleSchema() != 1 {
+			return nil, status.Error(codes.FailedPrecondition, "Relay lifecycle schema 1 is required by this account; upgrade the agent before using service modes")
+		}
 	}
 	peers, err := h.Peers.GetPeersFromAccount(ctx, accountID, selfPeer.ID, selfPeer.UserID)
 	if err != nil {

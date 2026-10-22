@@ -40,6 +40,9 @@ func (s *Store) SetModes(ctx context.Context, id string, ponorEnabled, turnEnabl
 			return err
 		}
 		if mode.Mode == "services" {
+			if err := s.requireLifecycle(ctx, account, tx); err != nil {
+				return err
+			}
 			_, _, turns, err := project(tx, account, true)
 			if err != nil {
 				return err
@@ -48,7 +51,7 @@ func (s *Store) SetModes(ctx context.Context, id string, ponorEnabled, turnEnabl
 				return fmt.Errorf("%w: TURN credential minting is not configured", ErrInvalid)
 			}
 		}
-		return protectModeSchema(tx, account, mode)
+		return s.protectModeSchema(ctx, tx, account, mode)
 	})
 	if err != nil {
 		return nil, err
