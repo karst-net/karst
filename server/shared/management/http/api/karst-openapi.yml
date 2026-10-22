@@ -543,6 +543,28 @@ paths:
       responses:
         '204': {description: Association removed}
         default: {$ref: '#/components/responses/Error'}
+  /relay-services/{serviceId}/modes:
+    parameters:
+      - {name: serviceId, in: path, required: true, schema: {type: string}}
+    put:
+      operationId: setRelayServiceModes
+      tags: [relays]
+      description: Explicitly enable or withdraw service modes. Changes affect service publication and subsequent TURN probes; backend processes and registry records are retained.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ponor_enabled, turn_enabled, acknowledge_connectivity_change]
+              properties:
+                ponor_enabled: {type: boolean}
+                turn_enabled: {type: boolean}
+                acknowledge_connectivity_change: {type: boolean, enum: [true]}
+      responses:
+        '200': {description: Updated mode configuration, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /relays:
     get:
       operationId: listRelays
@@ -1460,6 +1482,7 @@ components:
       additionalProperties: false
       properties:
         mode: {type: string, enum: [legacy, services]}
+        schema_version: {type: integer, enum: [2], description: Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.}
     RelayService:
       type: object
       required: [id, ponor_id]
@@ -1470,6 +1493,8 @@ components:
         turn_id: {type: string, description: Optional existing account-local TURN registry ID.}
         backend_kind: {type: string, enum: [external, coturn-companion], description: Required with turn_id; omitted without it. Deployment ownership only.}
         backend_operator: {type: string, minLength: 1, maxLength: 256, description: Required with turn_id; identifies who operates the backend.}
+        ponor_disabled: {type: boolean, default: false, description: Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.}
+        turn_disabled: {type: boolean, default: false, description: Withdraw this association's TURN endpoint in service publication mode and exclude it from subsequent probes unless another association enables it.}
     RelayServiceView:
       allOf:
         - {$ref: '#/components/schemas/RelayService'}

@@ -26,6 +26,62 @@ Removing an association does not remove either backend process or registry recor
 In service publication mode, endpoints used only by that association are withdrawn
 from clients. The console makes the active publication mode explicit.
 
+## Mode lifecycle
+
+**Change modes** sets Ponor and TURN participation explicitly and requires a
+connectivity acknowledgment. In service publication mode, disabled endpoints
+are withdrawn from subsequent netmaps. In legacy publication mode, flags are
+staged and do not change the legacy endpoint set. Disabling TURN pauses later
+readiness probes for that association. Existing checks may finish within their
+five-second bound. A shared backend stays published/probed while another
+association enables it. Disabling both modes retains the service for diagnosis
+and later re-enablement; it does not invoke provider process controls.
+
+`PUT /relay-services/{serviceId}/modes` requires both `ponor_enabled` and
+`turn_enabled`, plus `acknowledge_connectivity_change: true`. Missing booleans
+are rejected rather than interpreted as false. Enabling TURN requires a
+configured backend. Active publication is validated transactionally, including
+credential configuration and an enabled Ponor bootstrap endpoint somewhere in
+the account. A failed update rolls back both flags. Legacy rows acquire
+`ponor_disabled: false` and `turn_disabled: false` defaults on upgrade.
+
+Updated agents keep transport workers available when the initial registry is
+empty. Ponor connections stop when their published endpoint is withdrawn and
+can reconnect after re-enablement. TURN allocations are released when the
+selected server is withdrawn/replaced, when their credential expires, or when
+fresh credentials are available within sixty seconds of expiry. Ordinary
+credential renewal does not rebuild the peer roster on every control poll.
+Endpoint changes still reconcile underlay escapes before becoming active.
+
+TURN metadata is refreshed even on an `unchanged` netmap response, as required
+by the existing wire contract. Its exclusion from the peer-content hash is
+preserved. Clients predating these runtime fixes need restart-based handling of
+transport registry changes; live lifecycle behavior requires updated agents.
+Mixed-version capability enforcement and complete namespace forwarding tests
+remain tracked in #404.
+
+Current agent publication supports UDP `turn:host:port` endpoints, including
+IPv6 literals. TCP/TLS TURN endpoints and transport-query URI variants can be
+staged and health-probed, but service preview/activation rejects them until the
+node worker supports those transports. Allocation health from control does not
+establish client protocol support. No TLS endpoint is rewritten to plaintext.
+
+### Downgrade preparation
+
+Mode flags require persistence schema 2. Control stores a `legacy-v2` or
+`services-v2` authority marker while returning the ordinary public `mode` plus
+`schema_version: 2`. Earlier service-aware control rejects these unknown
+markers on netmap reads, instead of silently ignoring disabled modes. Never
+overwrite the marker using an older administrative API.
+
+Before downgrading, use updated control to reset both mode flags for every
+association (or remove the associations), then explicitly select publication
+again. The version marker clears only when no disabled flags remain. Verify
+that `schema_version` is absent and review the selected legacy endpoint set
+before switching to a pre-service binary. Such older binaries ignore the
+service authority table entirely. Keep database backups and retained backend
+credentials/identity pins; mode changes do not rotate them.
+
 ## TURN allocation observations
 
 Control checks each distinct account/backend association about once a minute,

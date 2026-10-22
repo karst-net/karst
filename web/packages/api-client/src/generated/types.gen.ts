@@ -459,6 +459,10 @@ export type PolicyTestResult = {
 
 export type RelayPublication = {
     mode: 'legacy' | 'services';
+    /**
+     * Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
+     */
+    schema_version?: 2;
 };
 
 export type RelayService = {
@@ -479,6 +483,14 @@ export type RelayService = {
      * Required with turn_id; identifies who operates the backend.
      */
     backend_operator?: string;
+    /**
+     * Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
+     */
+    ponor_disabled?: boolean;
+    /**
+     * Withdraw this association's TURN endpoint in service publication mode and exclude it from subsequent probes unless another association enables it.
+     */
+    turn_disabled?: boolean;
 };
 
 export type RelayServiceView = RelayService & {
@@ -2280,6 +2292,37 @@ export type DeleteRelayServiceResponses = {
 };
 
 export type DeleteRelayServiceResponse = DeleteRelayServiceResponses[keyof DeleteRelayServiceResponses];
+
+export type SetRelayServiceModesData = {
+    body: {
+        ponor_enabled: boolean;
+        turn_enabled: boolean;
+        acknowledge_connectivity_change: true;
+    };
+    path: {
+        serviceId: string;
+    };
+    query?: never;
+    url: '/relay-services/{serviceId}/modes';
+};
+
+export type SetRelayServiceModesErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetRelayServiceModesError = SetRelayServiceModesErrors[keyof SetRelayServiceModesErrors];
+
+export type SetRelayServiceModesResponses = {
+    /**
+     * Updated mode configuration
+     */
+    200: RelayService;
+};
+
+export type SetRelayServiceModesResponse = SetRelayServiceModesResponses[keyof SetRelayServiceModesResponses];
 
 export type ListRelaysData = {
     body?: never;

@@ -120,6 +120,10 @@ publication. A bounded adapter probes TURN allocation readiness from control and
 fresh/stale results independently of Ponor admission. Runtime backend process
 management and full transport-path verification remain pending. The Relay console groups
 service associations and existing Ponor/TURN backend controls in one view.
+Explicit per-mode controls withdraw service endpoints and pause TURN probes
+without deleting backend configuration. Versioned persistence guards older
+service-aware control against ignoring those flags. Updated agents support
+live activation/withdrawal and refresh TURN credentials on unchanged netmaps.
 
 ### Current transport limits
 

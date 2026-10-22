@@ -54,6 +54,8 @@ type Service struct {
 	TurnID          string `json:"turn_id,omitempty"`
 	BackendKind     string `json:"backend_kind,omitempty"`
 	BackendOperator string `json:"backend_operator,omitempty"`
+	PonorDisabled   bool   `gorm:"not null;default:false" json:"ponor_disabled,omitempty"`
+	TurnDisabled    bool   `gorm:"not null;default:false" json:"turn_disabled,omitempty"`
 }
 
 func (Service) TableName() string { return "karst_relay_services" }
@@ -145,7 +147,10 @@ func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 		if mode.Mode == "services" {
 			_, _, _, err = project(tx, account, true)
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return protectModeSchema(tx, account, mode)
 	})
 	if err != nil {
 		return nil, err

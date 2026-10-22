@@ -67,7 +67,7 @@ func (s *Store) CheckHealth(ctx context.Context, minter *turncred.Minter, probe 
 	err := s.db.WithContext(ctx).Table("karst_relay_services AS service").
 		Select("DISTINCT service.account_id, service.turn_id, backend.uri").
 		Joins("JOIN karst_turn_servers AS backend ON backend.account_id = service.account_id AND backend.id = service.turn_id").
-		Where("service.turn_id <> ?", "").Order("service.account_id, service.turn_id").Scan(&targets).Error
+		Where("service.turn_id <> ? AND service.turn_disabled = ?", "", false).Order("service.account_id, service.turn_id").Scan(&targets).Error
 	if err != nil {
 		return err
 	}

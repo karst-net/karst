@@ -4,6 +4,41 @@
 import { expect, test } from "@playwright/test";
 import { AxeBuilder } from "@axe-core/playwright";
 
+test("acknowledged mode withdrawal keeps Ponor and backend records intact", async ({ page }) => {
+  let service = { id: "primary", ponor_id: "ponor", turn_id: "turn-fixture-1", backend_kind: "external", backend_operator: "Remote", ponor_present: true, turn_present: true, ponor_disabled: false, turn_disabled: false };
+  let submitted: unknown;
+  await page.route("**/api/karst/v1/relays", (route) => route.fulfill({ json: [{ id: "ponor", address: "203.0.113.1:443", health: { admission_state: "confirmed" } }] }));
+  await page.route("**/api/karst/v1/relay-services**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/publication")) { await route.fulfill({ json: { mode: "services" } }); return; }
+    if (path.endsWith("/modes")) {
+      const request = route.request().postDataJSON();
+      submitted = request;
+      service = { ...service, ponor_disabled: !request.ponor_enabled, turn_disabled: !request.turn_enabled };
+      await route.fulfill({ json: service }); return;
+    }
+    await route.fulfill({ json: [service] });
+  });
+  await page.goto("/#/relays");
+  await page.getByRole("button", { name: "Change modes" }).click();
+  await page.getByRole("checkbox", { name: "Enable TURN", exact: true }).uncheck();
+  await expect(page.getByRole("button", { name: "Apply modes" })).toBeDisabled();
+  await page.getByRole("checkbox", { name: "I understand mode changes may interrupt client connectivity." }).check();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole("button", { name: "Apply modes" }).click();
+  await expect(page.getByText("TURN disabled", { exact: false })).toBeVisible();
+  await expect(page.getByText("Ponor admission: confirmed")).toBeVisible();
+  expect(submitted).toEqual({ ponor_enabled: true, turn_enabled: false, acknowledge_connectivity_change: true });
+  await page.getByRole("button", { name: "Change modes" }).click();
+  await expect(page.getByRole("checkbox", { name: "Enable TURN", exact: true })).not.toBeChecked();
+  await page.getByRole("checkbox", { name: "Enable Ponor", exact: true }).uncheck();
+  await page.getByRole("checkbox", { name: "I understand mode changes may interrupt client connectivity." }).check();
+  await page.getByRole("button", { name: "Apply modes" }).click();
+  await expect(page.getByText("Ponor disabled")).toBeVisible();
+  await page.getByRole("button", { name: "TURN backends" }).click();
+  await expect(page.getByRole("cell", { name: "turn:turn.example.test:3478" })).toBeVisible();
+});
+
 test("publication preview is read only and activation requires acknowledgment", async ({ page }) => {
   let mode = "legacy";
   let updates = 0;

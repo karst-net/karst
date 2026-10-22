@@ -22,6 +22,43 @@ type publicationStub struct {
 	credentialConfigured bool
 }
 
+func (s *publicationStub) SetModes(_ context.Context, id string, ponor, turn, configured bool) (*relayservice.Service, error) {
+	s.setCalls++
+	s.credentialConfigured = configured
+	return &relayservice.Service{ID: id, PonorID: "p", TurnID: "t", PonorDisabled: !ponor, TurnDisabled: !turn}, s.err
+}
+
+func TestRelayModesRequireCompleteAcknowledgedStateAndPushOnlyAfterSuccess(t *testing.T) {
+	store := &publicationStub{mode: "legacy"}
+	push := &publicationPush{}
+	router := mux.NewRouter()
+	RegisterRelayServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store, RelayServiceOptions{Accounts: push, TurnConfigured: true})
+	for _, body := range []string{
+		`{"ponor_enabled":true,"acknowledge_connectivity_change":true}`,
+		`{"ponor_enabled":true,"turn_enabled":false}`,
+		`{"ponor_enabled":true,"turn_enabled":false,"acknowledge_connectivity_change":true} {}`,
+	} {
+		w := serviceRequest(router, http.MethodPut, "/one/modes", body, true)
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	}
+	require.Zero(t, store.setCalls)
+	w := serviceRequest(router, http.MethodPut, "/one/modes", `{"ponor_enabled":true,"turn_enabled":false,"acknowledge_connectivity_change":true}`, true)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"turn_disabled":true`)
+	require.True(t, store.credentialConfigured)
+	require.Equal(t, []string{"a"}, push.accounts)
+	store.err = relayservice.ErrNotFound
+	w = serviceRequest(router, http.MethodPut, "/other/modes", `{"ponor_enabled":true,"turn_enabled":false,"acknowledge_connectivity_change":true}`, true)
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	require.Equal(t, []string{"a"}, push.accounts)
+	for _, role := range []types.UserRole{types.UserRoleUser, types.UserRoleScaler} {
+		router := mux.NewRouter()
+		RegisterRelayServiceEndpoints(router, scanPermissions{role: role}, store)
+		w := serviceRequest(router, http.MethodPut, "/one/modes", `{"ponor_enabled":false,"turn_enabled":false,"acknowledge_connectivity_change":true}`, true)
+		require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	}
+}
+
 func (s *publicationStub) Publication(context.Context) (relayservice.Publication, error) {
 	return relayservice.Publication{Mode: s.mode}, s.err
 }
