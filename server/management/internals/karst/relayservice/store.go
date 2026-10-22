@@ -71,7 +71,12 @@ type View struct {
 	TurnHealth   *TurnHealth `gorm:"-" json:"turn_health,omitempty"`
 }
 
-type Store struct{ db *gorm.DB }
+type Store struct {
+	db              *gorm.DB
+	LifecycleAgents interface {
+		CheckRelayLifecycle(context.Context, string, *gorm.DB) error
+	}
+}
 
 func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
@@ -150,7 +155,7 @@ func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 		if err != nil {
 			return err
 		}
-		return protectModeSchema(tx, account, mode)
+		return s.protectModeSchema(ctx, tx, account, mode)
 	})
 	if err != nil {
 		return nil, err

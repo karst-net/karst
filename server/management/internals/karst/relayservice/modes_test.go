@@ -24,6 +24,7 @@ func TestModesPersistWithdrawAndRestoreWithoutReinterpretingLegacyState(t *testi
 	require.NoError(t, err)
 	reopened, err := NewStore(store.db)
 	require.NoError(t, err)
+	reopened.LifecycleAgents = store.LifecycleAgents
 	active, ponor, turn, err := reopened.Netmap(ctx)
 	require.NoError(t, err)
 	require.True(t, active)
@@ -132,4 +133,32 @@ func TestUnsupportedClientTransportMustBeDisabledBeforeServicePublication(t *tes
 	require.NoError(t, err)
 	require.Len(t, ps, 1)
 	require.Empty(t, ts)
+}
+
+func TestLifecycleTrackingRequiredForAllActivationPaths(t *testing.T) {
+	store, _, _, service := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	_, err := store.Create(ctx, service)
+	require.NoError(t, err)
+	_, err = store.SetPublication(ctx, "services", true)
+	require.NoError(t, err) // v1 remains additive for existing agents.
+	store.LifecycleAgents = nil
+	_, err = store.SetModes(ctx, service.ID, true, false, true)
+	require.ErrorIs(t, err, ErrInvalid)
+	views, err := store.List(ctx)
+	require.NoError(t, err)
+	require.False(t, views[0].TurnDisabled, "failed capability checks roll back mode changes")
+	service.ID = "disabled"
+	service.TurnDisabled = true
+	_, err = store.Create(ctx, service)
+	require.ErrorIs(t, err, ErrInvalid, "creation must not bypass live-mode gate")
+	_, err = store.SetPublication(ctx, "legacy", true)
+	require.NoError(t, err)
+	_, err = store.SetModes(ctx, "primary", true, false, true)
+	require.NoError(t, err, "legacy authority permits staging")
+	_, err = store.SetPublication(ctx, "services", true)
+	require.ErrorIs(t, err, ErrInvalid, "staged modes require capabilities on activation")
+	publication, err := store.Publication(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "legacy", publication.Mode)
 }

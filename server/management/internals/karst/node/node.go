@@ -82,9 +82,10 @@ type Identity struct {
 	// behind a symmetric NAT reachable at all — a peer that dials the wrong
 	// relay reaches nothing, so this being stale is not a slow path but a
 	// missing one.
-	HomeRelay []byte
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	HomeRelay            []byte
+	RelayLifecycleSchema uint32 `gorm:"not null;default:0"`
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 // EnrollmentOwner binds the secret of a portal-issued, one-time setup key to

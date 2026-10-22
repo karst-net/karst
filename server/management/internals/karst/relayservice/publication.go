@@ -101,6 +101,11 @@ func (s *Store) SetPublication(ctx context.Context, mode string, turnConfigured 
 			return err
 		}
 		if disabled > 0 {
+			if mode == "services" {
+				if err := s.requireLifecycle(ctx, account, tx); err != nil {
+					return err
+				}
+			}
 			value.Mode += "-v2"
 		}
 		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "account_id"}}, DoUpdates: clause.AssignmentColumns([]string{"mode"})}).Create(&value).Error
@@ -116,10 +121,15 @@ func (s *Store) SetPublication(ctx context.Context, mode string, turnConfigured 
 // service-aware control cannot honor. Those versions reject unknown markers
 // instead of silently republishing a disabled endpoint. Explicit publication
 // selection can clear the marker after all mode flags have been reset.
-func protectModeSchema(tx *gorm.DB, account string, current Publication) error {
+func (s *Store) protectModeSchema(ctx context.Context, tx *gorm.DB, account string, current Publication) error {
 	var disabled int64
 	if err := tx.Model(&Service{}).Where("account_id = ? AND (ponor_disabled = ? OR turn_disabled = ?)", account, true, true).Count(&disabled).Error; err != nil {
 		return err
+	}
+	if disabled > 0 && current.Mode == "services" {
+		if err := s.requireLifecycle(ctx, account, tx); err != nil {
+			return err
+		}
 	}
 	if disabled == 0 || current.SchemaVersion == 2 {
 		return nil

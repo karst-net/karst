@@ -20,6 +20,10 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 )
 
+type compatibleAgents struct{}
+
+func (compatibleAgents) CheckRelayLifecycle(context.Context, string, *gorm.DB) error { return nil }
+
 func fixture(t *testing.T) (*Store, *relayreg.Store, *turncred.Store, Service) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{Logger: logger.Discard})
@@ -33,6 +37,7 @@ func fixture(t *testing.T) (*Store, *relayreg.Store, *turncred.Store, Service) {
 	require.NoError(t, err)
 	store, err := NewStore(db)
 	require.NoError(t, err)
+	store.LifecycleAgents = compatibleAgents{}
 	p, err := ponor.Create(relayreg.WithAccount(context.Background(), "a"), relayreg.Entry{
 		Address: "203.0.113.1:443", TLSServerName: "relay.example.com",
 		IdentityKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, relayreg.IdentityKeySize)),

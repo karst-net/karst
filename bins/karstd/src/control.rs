@@ -1189,6 +1189,7 @@ impl Client {
             anchor_rtt: self.anchor_rtt.clone(),
             ephemeral_anchor_rtt: self.ephemeral_anchor_rtt.clone(),
             route_observations: self.route_observations.clone(),
+            relay_lifecycle_schema: 1,
         };
         let raw = self
             .request(conn, KIND_NETMAP, &req.encode_to_vec())
