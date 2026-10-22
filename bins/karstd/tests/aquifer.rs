@@ -23,7 +23,8 @@
 //!
 //! Each was invisible from inside a component and obvious from outside one.
 //!
-//! Needs `CAP_NET_ADMIN` and a Go toolchain, so it is `#[ignore]`d. Run it with:
+//! Needs root/network namespace privileges and a Go toolchain (unless a
+//! prebuilt fixture is supplied), so it is `#[ignore]`d. Run it with:
 //!
 //! ```text
 //! just test-aquifer
@@ -36,6 +37,11 @@
 //! dpkg-deb -x karst-client-linux_*.deb /tmp/karst-client
 //! KARST_AQUIFER_BIN_DIR=/tmp/karst-client/usr/bin just test-aquifer
 //! ```
+//!
+//! `scripts/test-aquifer-container.sh` builds products and the SQLite-enabled
+//! Go fixture on the host, then runs them in an isolated container. Only staged
+//! binaries are mounted, read-only. `KARST_AQUIFER_TESTSERVER` can explicitly
+//! name that prebuilt fixture; an invalid path fails instead of rebuilding.
 //!
 //! The override is deliberately all-or-nothing: `karstd`, `karst`, and
 //! `karst-relay` must all come from the same directory. A package drill that
@@ -244,6 +250,7 @@ fn missing_prerequisites() -> Vec<&'static str> {
         ("ip", "-Version"),
         ("nft", "--version"),
         ("go", "version"),
+        ("python3", "--version"),
         ("miniupnpd", "--help"),
         ("tayga", "--help"),
         ("dnsmasq", "--version"),
@@ -252,6 +259,9 @@ fn missing_prerequisites() -> Vec<&'static str> {
         // Shape::TurnOnly's real coturn server.
         ("turnserver", "--version"),
     ] {
+        if tool == "go" && std::env::var_os("KARST_AQUIFER_TESTSERVER").is_some() {
+            continue;
+        }
         // `miniupnpd --help` exits non-zero, as usage output usually does, so
         // the test is whether the program ran at all.
         if Command::new(tool).arg(probe).output().is_err() {
@@ -2160,22 +2170,32 @@ fn start_server_with_options(
     preload: usize,
     extra: &[String],
 ) -> Pins {
-    let server_bin = format!("{}/target/karst-testserver", repo());
-    let build = Command::new("go")
-        .args([
-            "build",
-            "-o",
-            &server_bin,
-            "./management/internals/karst/testserver/",
-        ])
-        .current_dir(format!("{}/server", repo()))
-        .output()
-        .expect("run `go build`");
-    assert!(
-        build.status.success(),
-        "go build failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    let server_bin = if let Some(prebuilt) = std::env::var_os("KARST_AQUIFER_TESTSERVER") {
+        let path = PathBuf::from(prebuilt);
+        assert!(
+            path.is_file(),
+            "KARST_AQUIFER_TESTSERVER must name a fixture binary"
+        );
+        path.to_string_lossy().into_owned()
+    } else {
+        let path = format!("{}/target/karst-testserver", repo());
+        let build = Command::new("go")
+            .args([
+                "build",
+                "-o",
+                &path,
+                "./management/internals/karst/testserver/",
+            ])
+            .current_dir(format!("{}/server", repo()))
+            .output()
+            .expect("run `go build`");
+        assert!(
+            build.status.success(),
+            "go build failed: {}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        path
+    };
 
     let listen = format!("{IP_PUB}:{SERVER_PORT}");
     let mut argv: Vec<String> = [
@@ -5368,4 +5388,111 @@ fn fixture_remove(handle: &str) -> bool {
         ])
         .output()
         .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
+}
+
+/// One enrolled Gateway must serve a specific prefix and a default route at
+/// once. Subnet access does not imply consent to default-route use, and
+/// withdrawing consent must preserve the subnet's established reachability.
+#[test]
+#[ignore = "needs root and network namespaces"]
+#[allow(clippy::too_many_lines)]
+fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
+    if !have_prerequisites() {
+        return;
+    }
+    let (mut net, _pins, _ca) = start_routing_topology("combined-gateway");
+    let gateway_handle = fixture_handle_for(&overlay_peer_address(&net, "b", NS_B));
+    let exit_destination = "10.99.0.3";
+    must(&nsr(
+        NS_DEST,
+        &["ip", "addr", "add", "10.99.0.3/24", "dev", "ktn-dest-a"],
+    ));
+    for (route_id, prefix) in [("subnet", "10.99.0.2/32"), ("internet", "0.0.0.0/0")] {
+        assert!(fixture_create_route(&RouteOfferBody {
+            route_id,
+            prefix,
+            gateway_handle: &gateway_handle,
+            metric: 100,
+            masquerade: true,
+            keep_route: false,
+            enabled: None,
+        }));
+    }
+    let listener = "import socket\ns=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\ns.bind(('0.0.0.0',22)); s.listen(5)\nwhile True:\n c,_=s.accept(); c.sendall(b'combined gateway'); c.close()\n";
+    net.spawn_service(NS_DEST, "python3", &["-c", listener], "listener.log");
+    let probe = |destination: &str| {
+        let script = format!("import socket,sys\ns=socket.create_connection(('{destination}',22),timeout=2)\nsys.exit(0 if s.recv(64)==b'combined gateway' else 1)\n");
+        Command::new("ip")
+            .args(["netns", "exec", NS_B, "python3", "-c", &script])
+            .output()
+            .is_ok_and(|out| out.status.success())
+    };
+    wait_for(
+        &net,
+        "subnet traffic through the combined gateway before exit consent",
+        Duration::from_secs(30),
+        || probe(DEST_HOST),
+    );
+    assert!(
+        !probe(exit_destination),
+        "a subnet grant must not activate the offered default route"
+    );
+    wait_for(
+        &net,
+        "both subnet and default offers in the recipient netmap",
+        Duration::from_secs(10),
+        || field(&status(&net, "b", NS_B), "offers").as_deref() == Some("2"),
+    );
+    let socket = net.dir.join("run").join("b.sock");
+    let consent = |action: &str| {
+        let mut command = Command::new("ip");
+        command.args([
+            "netns",
+            "exec",
+            NS_B,
+            &bin("karst"),
+            "gateway",
+            "exit",
+            action,
+        ]);
+        if action == "use" {
+            command.arg("internet");
+        }
+        let out = command
+            .args(["--socket", &socket.to_string_lossy()])
+            .output()
+            .expect("Gateway consent CLI");
+        assert!(
+            out.status.success(),
+            "Gateway consent failed: {} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    consent("use");
+    wait_for(
+        &net,
+        "default-route traffic through the same gateway after consent",
+        Duration::from_secs(20),
+        || probe(exit_destination),
+    );
+    assert!(
+        probe(DEST_HOST),
+        "specific-prefix access must survive default-route activation"
+    );
+    consent("disable");
+    wait_for(
+        &net,
+        "default-route withdrawal after consent removal",
+        Duration::from_secs(15),
+        || field(&status(&net, "b", NS_B), "exit_route_active").as_deref() == Some("false"),
+    );
+    assert!(
+        !probe(exit_destination),
+        "withdrawing consent must remove default-route reachability"
+    );
+    assert!(
+        probe(DEST_HOST),
+        "withdrawing exit consent must preserve subnet access"
+    );
 }
