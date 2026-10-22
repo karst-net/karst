@@ -173,6 +173,16 @@ message KarstRouteObservation {
   uint64 ingress_bytes = 4;
   // Same accounting, packet count instead of bytes.
   uint64 ingress_packets = 5;
+  // True if this route's forward-accept rule was actually installed and
+  // live in this node's own nftables table at observation time (issue
+  // #404's Gateway readiness gap — the inventory API previously had no
+  // health signal at all, only a hardcoded "unreported" placeholder).
+  // Reported for every route this node holds a GATEWAY role offer for,
+  // not only ones with nonzero traffic: a quiet-but-ready route and a
+  // route whose nftables apply failed must not look identical merely
+  // because neither has moved any bytes yet. `bytes`/`packets` above are
+  // always zero when this is false — there is no counter to read back.
+  bool forwarding_active = 6;
 }
 
 // KarstAnchorRtt is one region's measured anchor RTT, ADR-0045 §4b.

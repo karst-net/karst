@@ -15,13 +15,20 @@ export type GatewayOffer = {
     masquerade: boolean;
     metric: number;
     requires_client_consent: boolean;
+    /**
+     * Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
+     */
+    forwarding_readiness: 'unreported' | 'ready' | 'degraded';
 };
 
 export type GatewayNode = {
     node_id: string;
     name: string;
     control_connected: boolean;
-    forwarding_readiness: 'unreported';
+    /**
+     * Aggregated across this node's own offers, degraded-first.
+     */
+    forwarding_readiness: 'unreported' | 'ready' | 'degraded';
     offers: Array<GatewayOffer>;
 };
 

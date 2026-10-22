@@ -6238,38 +6238,69 @@ fn refresh_netmap(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         ));
-        // Issue #281. Read back fresh every tick, same as `sessions` above —
-        // these are the kernel's own live counters, not a buffer anything
-        // queues into between ticks. A node that is not currently a gateway
-        // for anything (`gateway.active()` false) has no table to read and
-        // reports nothing, the same empty-request shape as before this
-        // field existed.
+        // Issue #281 (bytes/packets); issue #404 (forwarding_active). Read
+        // back fresh every tick, same as `sessions` above — these are the
+        // kernel's own live counters, not a buffer anything queues into
+        // between ticks. One observation per `Role::Gateway` offer this
+        // node currently holds, not only ones with a live nftables rule:
+        // the control plane's Gateway inventory had no health signal at
+        // all before this (every row read a hardcoded "unreported"), and a
+        // quiet-but-ready route must not look identical to one whose
+        // nftables apply failed merely because neither has moved a byte
+        // yet. A node with no `Role::Gateway` offers reports nothing, the
+        // same empty-request shape as before this field existed.
         let route_observations = {
             let mut gateway = gateway
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if gateway.active() {
-                match gateway.route_bytes() {
-                    Ok(routes) => routes
-                        .into_iter()
-                        .map(|route| pb::KarstRouteObservation {
-                            route_id: route.route_id,
+            let current = engine.config();
+            let gateway_offers: Vec<&crate::route_offer::Offer> = current
+                .route_offers
+                .iter()
+                .filter(|offer| offer.role == crate::route_offer::Role::Gateway)
+                .collect();
+            if gateway_offers.is_empty() {
+                Vec::new()
+            } else {
+                let live: std::collections::HashMap<String, crate::gateway::RouteBytes> =
+                    if gateway.active() {
+                        match gateway.route_bytes() {
+                            Ok(routes) => routes
+                                .into_iter()
+                                .map(|r| (r.route_id.clone(), r))
+                                .collect(),
+                            Err(error) => {
+                                tracing::warn!(
+                                    %error,
+                                    "karstd: could not read back per-route forwarding counters"
+                                );
+                                std::collections::HashMap::new()
+                            }
+                        }
+                    } else {
+                        std::collections::HashMap::new()
+                    };
+                gateway_offers
+                    .into_iter()
+                    .map(|offer| match live.get(&offer.route_id) {
+                        Some(route) => pb::KarstRouteObservation {
+                            route_id: offer.route_id.clone(),
                             bytes: route.egress_bytes,
                             packets: route.egress_packets,
                             ingress_bytes: route.ingress_bytes,
                             ingress_packets: route.ingress_packets,
-                        })
-                        .collect(),
-                    Err(error) => {
-                        tracing::warn!(
-                            %error,
-                            "karstd: could not read back per-route forwarding counters"
-                        );
-                        Vec::new()
-                    }
-                }
-            } else {
-                Vec::new()
+                            forwarding_active: true,
+                        },
+                        None => pb::KarstRouteObservation {
+                            route_id: offer.route_id.clone(),
+                            bytes: 0,
+                            packets: 0,
+                            ingress_bytes: 0,
+                            ingress_packets: 0,
+                            forwarding_active: false,
+                        },
+                    })
+                    .collect()
             }
         };
         client.set_route_observations(route_observations);
