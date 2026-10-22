@@ -6,6 +6,38 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}/api/karst/v1` | (string & {});
 };
 
+export type GatewayOffer = {
+    id: string;
+    network_id: string;
+    prefix: string;
+    kind: 'subnet' | 'default_ipv4' | 'default_ipv6';
+    enabled: boolean;
+    masquerade: boolean;
+    metric: number;
+    requires_client_consent: boolean;
+};
+
+export type GatewayNode = {
+    node_id: string;
+    name: string;
+    control_connected: boolean;
+    forwarding_readiness: 'unreported';
+    offers: Array<GatewayOffer>;
+};
+
+export type GatewayInventory = {
+    schema_version: 1;
+    gateways: Array<GatewayNode>;
+    /**
+     * Configured routes without a visible eligible node, including empty or missing routing groups.
+     */
+    unresolved_routes: Array<string>;
+    /**
+     * Non-CIDR route declarations that cannot be projected as Karst Gateway offers.
+     */
+    unsupported_routes: Array<string>;
+};
+
 export type MeshDomainView = {
     /**
      * Stable domain identity.
@@ -1020,6 +1052,33 @@ export type ObservedSince = string;
 export type IfMatch = string;
 
 export type ExportFormat = 'json' | 'csv';
+
+export type GatewayInventoryData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/gateways';
+};
+
+export type GatewayInventoryErrors = {
+    /**
+     * Caller lacks source permissions
+     */
+    403: unknown;
+    /**
+     * Gateway inventory sources unavailable
+     */
+    412: unknown;
+};
+
+export type GatewayInventoryResponses = {
+    /**
+     * Unified subnet and default-route offers per enrolled node
+     */
+    200: GatewayInventory;
+};
+
+export type GatewayInventoryResponse = GatewayInventoryResponses[keyof GatewayInventoryResponses];
 
 export type SoftwareVersionsData = {
     body?: never;

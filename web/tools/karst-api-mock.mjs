@@ -394,6 +394,11 @@ const server = http.createServer((request, response) => {
   if (nsMatch && method === "PUT") return readBody(request).then((body) => replace(nameservers, nsMatch[1], body, response));
   if (nsMatch && method === "DELETE") return remove(nameservers, nsMatch[1], response);
 
+  if (path === "/api/karst/v1/gateways" && method === "GET") return json(response, 200, {
+    schema_version: 1,
+    gateways: [{ node_id: "gateway-fixture", name: "Gateway fixture", control_connected: true, forwarding_readiness: "unreported", offers: routes.filter((route) => route.peer_groups.includes("group-gateways")).map((route) => ({ id: route.id, network_id: route.network_id, prefix: route.network, kind: route.network === "0.0.0.0/0" ? "default_ipv4" : route.network === "::/0" ? "default_ipv6" : "subnet", enabled: route.enabled, masquerade: route.masquerade, metric: route.metric, requires_client_consent: route.network === "0.0.0.0/0" || route.network === "::/0" })) }],
+    unresolved_routes: [], unsupported_routes: [],
+  });
   if (path === "/api/routes" && method === "GET") return json(response, 200, routes);
   if (path === "/api/routes" && method === "POST") {
     return readBody(request).then((draft) => {

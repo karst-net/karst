@@ -372,6 +372,57 @@ func (e EnrollmentSettingsControlMinimumVersion) Valid() bool {
 	}
 }
 
+// Defines values for GatewayInventorySchemaVersion.
+const (
+	GatewayInventorySchemaVersionN1 GatewayInventorySchemaVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the GatewayInventorySchemaVersion enum.
+func (e GatewayInventorySchemaVersion) Valid() bool {
+	switch e {
+	case GatewayInventorySchemaVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GatewayNodeForwardingReadiness.
+const (
+	GatewayNodeForwardingReadinessUnreported GatewayNodeForwardingReadiness = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the GatewayNodeForwardingReadiness enum.
+func (e GatewayNodeForwardingReadiness) Valid() bool {
+	switch e {
+	case GatewayNodeForwardingReadinessUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GatewayOfferKind.
+const (
+	GatewayOfferKindDefaultIpv4 GatewayOfferKind = "default_ipv4"
+	GatewayOfferKindDefaultIpv6 GatewayOfferKind = "default_ipv6"
+	GatewayOfferKindSubnet      GatewayOfferKind = "subnet"
+)
+
+// Valid indicates whether the value is a known member of the GatewayOfferKind enum.
+func (e GatewayOfferKind) Valid() bool {
+	switch e {
+	case GatewayOfferKindDefaultIpv4:
+		return true
+	case GatewayOfferKindDefaultIpv6:
+		return true
+	case GatewayOfferKindSubnet:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InfrastructureConnectionMode.
 const (
 	InfrastructureConnectionModeReadOnly  InfrastructureConnectionMode = "read_only"
@@ -1563,6 +1614,48 @@ type Flow struct {
 	Protocol    string `json:"protocol"`
 	Source      string `json:"source"`
 }
+
+// GatewayInventory defines model for GatewayInventory.
+type GatewayInventory struct {
+	Gateways      []GatewayNode                 `json:"gateways"`
+	SchemaVersion GatewayInventorySchemaVersion `json:"schema_version"`
+
+	// UnresolvedRoutes Configured routes without a visible eligible node, including empty or missing routing groups.
+	UnresolvedRoutes []string `json:"unresolved_routes"`
+
+	// UnsupportedRoutes Non-CIDR route declarations that cannot be projected as Karst Gateway offers.
+	UnsupportedRoutes []string `json:"unsupported_routes"`
+}
+
+// GatewayInventorySchemaVersion defines model for GatewayInventory.SchemaVersion.
+type GatewayInventorySchemaVersion int
+
+// GatewayNode defines model for GatewayNode.
+type GatewayNode struct {
+	ControlConnected    bool                           `json:"control_connected"`
+	ForwardingReadiness GatewayNodeForwardingReadiness `json:"forwarding_readiness"`
+	Name                string                         `json:"name"`
+	NodeId              string                         `json:"node_id"`
+	Offers              []GatewayOffer                 `json:"offers"`
+}
+
+// GatewayNodeForwardingReadiness defines model for GatewayNode.ForwardingReadiness.
+type GatewayNodeForwardingReadiness string
+
+// GatewayOffer defines model for GatewayOffer.
+type GatewayOffer struct {
+	Enabled               bool             `json:"enabled"`
+	Id                    string           `json:"id"`
+	Kind                  GatewayOfferKind `json:"kind"`
+	Masquerade            bool             `json:"masquerade"`
+	Metric                int              `json:"metric"`
+	NetworkId             string           `json:"network_id"`
+	Prefix                string           `json:"prefix"`
+	RequiresClientConsent bool             `json:"requires_client_consent"`
+}
+
+// GatewayOfferKind defines model for GatewayOffer.Kind.
+type GatewayOfferKind string
 
 // GroupLocation defines model for GroupLocation.
 type GroupLocation struct {

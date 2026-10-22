@@ -34,10 +34,10 @@ type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "
 const nav: Array<[Route, string]> = [
   ["domains", "Domains"], ["machines", "Machines"], ["enroll", "Add device"], ["access", "Access controls"], ["keys", "Auth keys"],
   ["users", "Users"], ["groups", "Groups"], ["bedrock", "Network lock"], ["posture", "Crypto posture"],
-  ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
+  ["dns", "DNS"], ["routes", "Gateways"], ["audit", "Audit log"], ["relays", "Relays"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
 ];
 
-const routeFromHash = (): Route => location.hash === "#/turns" ? "turns" : (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
+const routeFromHash = (): Route => location.hash === "#/gateways" ? "routes" : location.hash === "#/turns" ? "turns" : (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
 
 /** True once GET /firstrun reports completed=true; undefined while that
  *  fetch is in flight. A deployment that fails to reach the endpoint (e.g.
@@ -54,7 +54,7 @@ function useFirstRunCompleted() {
 function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
   const [route, setRoute] = useState<Route>(routeFromHash());
   useEffect(() => { const change = () => setRoute(routeFromHash()); addEventListener("hashchange", change); return () => removeEventListener("hashchange", change); }, []);
-  const navigate = (next: string) => { location.hash = `/${next}`; };
+  const navigate = (next: string) => { location.hash = `/${next === "routes" ? "gateways" : next}`; };
   const firstRun = useFirstRunCompleted();
 
   // Everything else -- the sidebar included -- stays hidden until the
@@ -86,7 +86,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
     <aside>
       <h1>Karst</h1>
       <p>Administration console</p>
-      <nav aria-label="Primary">{nav.map(([key, label]) => <a key={key} aria-current={route === key ? "page" : undefined} href={`#/${key}`}>{label}</a>)}</nav>
+      <nav aria-label="Primary">{nav.map(([key, label]) => <a key={key} aria-current={route === key ? "page" : undefined} href={`#/${key === "routes" ? "gateways" : key}`}>{label}</a>)}</nav>
     </aside>
     <main id="main">
       <header><AccountSwitcher config={config} />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>

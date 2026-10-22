@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -337,6 +337,11 @@ export const api = {
   deleteNameserverGroup: (id: string) => management<void>(`/dns/nameservers/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── network routes ─────────────────────────────────────────────────────────
+  gateways: async () => {
+    const inventory = await request<GatewayInventory>("/gateways");
+    if (inventory.schema_version !== 1) throw new Error("Unsupported Gateway inventory schema; upgrade the console before using this view.");
+    return inventory;
+  },
   routes: () => management<NetworkRoute[]>("/routes"),
   createRoute: (draft: NetworkRouteDraft) => management<NetworkRoute>("/routes", { method: "POST", body: body(draft) }),
   updateRoute: (id: string, draft: NetworkRouteDraft) => management<NetworkRoute>(`/routes/${encodeURIComponent(id)}`, { method: "PUT", body: body(draft) }),

@@ -50,6 +50,11 @@ escape paths to prevent recursion. Removing an offer withdraws active routing
 and forwarding, not the client's durable consent record. Reusing route IDs
 for a different destination or trust context must not silently reuse consent.
 
+The [Gateway administration view](gateway-capability.md) resolves subnet and default
+route declarations into one inventory row per visible enrolled node. It preserves
+existing route persistence and APIs, while distinguishing recorded connectivity
+from unreported forwarding readiness.
+
 Current route offers already share `route_id`, prefix, gateway ID, metric,
 kind, masquerade, and role (`bins/karstd/src/route_offer.rs`). Linux forwarding
 uses `gateway.rs` and nftables; default-route consent/escape handling uses

@@ -598,6 +598,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	} else {
 		karstRouter.Use(karstAuthorization(permissionsManager))
 	}
+	karstRouter.HandleFunc("/gateways", h.gateways).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/invitations", h.invitations).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/invitations/{id}/revoke", h.revokeInvitation).Methods(http.MethodPost, http.MethodOptions)
 	// Mesh domains (ADR-0032). Deliberately exempted from the blanket
