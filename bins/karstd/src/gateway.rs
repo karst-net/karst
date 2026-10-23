@@ -579,7 +579,6 @@ mod tests {
             psk_epoch: 1,
             node_id: vec![7],
             relays: Vec::new(),
-            turn_servers: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::<(Prefix, usize)>::new())
                 .expect("empty routes"),
