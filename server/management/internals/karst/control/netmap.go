@@ -22,6 +22,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
+	"github.com/netbirdio/netbird/management/internals/karst/externalturn"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
@@ -145,6 +146,18 @@ type NetmapHandler struct {
 	// already has.
 	RouteTelemetry interface {
 		RecordRouteBytes(ctx context.Context, accountID, routeID string, report routetelemetry.RouteReport) error
+	}
+
+	// ExternalTurn is issue #420's admin-configured, account-wide list of
+	// externally-operated TURN servers. Nil means the deployment has not
+	// configured one — the projected KarstExternalTurnConfig is then
+	// absent, the same "nil store, no-op" posture every other optional
+	// store on this handler already has. Deliberately read with
+	// credentials decrypted here (NetmapServers, not the console-facing
+	// List) — this is the one place the plaintext is meant to flow to,
+	// forwarded unchanged to the node that asked.
+	ExternalTurn interface {
+		NetmapServers(ctx context.Context, accountID string) ([]externalturn.Server, error)
 	}
 
 	// Relays is the authenticated Ponor registry. Entries are static at this
@@ -417,6 +430,10 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	resp.EphemeralAnchors, err = h.ephemeralAnchors(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("project ephemeral anchors: %w", err)
+	}
+	resp.ExternalTurn, err = h.externalTurnConfig(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("project external turn config: %w", err)
 	}
 	if h.Routes != nil {
 		networkMap, routeErr := h.Routes.GetNetworkMap(ctx, selfPeer.ID)
@@ -955,6 +972,35 @@ func (h *NetmapHandler) ephemeralAnchors(ctx context.Context) (*proto.KarstEphem
 	}, nil
 }
 
+// externalTurnConfig projects issue #420's admin-configured, account-wide
+// external TURN server list. Nil ExternalTurn (no store configured), or a
+// configured store with no entries, produces a nil response field — the
+// same "feature not configured" shape ephemeralAnchors uses above, not an
+// error. Credentials are decrypted here (NetmapServers, not the
+// console-facing List) and forwarded exactly as the admin entered them —
+// this projection mints nothing and tracks no health.
+func (h *NetmapHandler) externalTurnConfig(ctx context.Context, accountID string) (*proto.KarstExternalTurnConfig, error) {
+	if h.ExternalTurn == nil {
+		return nil, nil
+	}
+	servers, err := h.ExternalTurn.NetmapServers(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if len(servers) == 0 {
+		return nil, nil
+	}
+	entries := make([]*proto.KarstExternalTurnServer, 0, len(servers))
+	for _, s := range servers {
+		entries = append(entries, &proto.KarstExternalTurnServer{
+			Uri:        s.URI,
+			Username:   s.Username,
+			Credential: s.Credential,
+		})
+	}
+	return &proto.KarstExternalTurnConfig{Servers: entries}, nil
+}
+
 // recordEphemeralAnchorRTT validates and records §4d's ephemeral-anchor RTT
 // reports — the identical defense-in-depth posture recordAnchorRTT
 // documents above, re-checking every entry's label against the deployment's
@@ -1204,6 +1250,18 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 	h.Write(buf[:4])
 	binary.BigEndian.PutUint32(buf[:4], resp.GetEphemeralAnchors().GetDutyCycleSeconds())
 	h.Write(buf[:4])
+
+	// Issue #420's admin-configured external TURN list. The credential is
+	// hashed even though it is never read back through the console/API:
+	// an admin who only rotates a stored credential (same uri/username)
+	// must still move the version, or a node would keep dialing the old
+	// one until some unrelated field happened to change.
+	writeField(h, []byte("karst-external-turn"))
+	for _, server := range resp.GetExternalTurn().GetServers() {
+		writeField(h, []byte(server.GetUri()))
+		writeField(h, []byte(server.GetUsername()))
+		writeField(h, []byte(server.GetCredential()))
+	}
 
 	sum := h.Sum(nil)
 	v := binary.BigEndian.Uint64(sum[:8])

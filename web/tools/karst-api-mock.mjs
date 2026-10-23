@@ -84,6 +84,9 @@ let allowedRegions = [
 ];
 let relayServices = [];
 let relayPublication = { mode: "legacy" };
+// Issue #420. Credential is intentionally never stored in a shape this
+// fixture could leak back through a GET -- see the route handlers below.
+let externalTurnServers = [];
 // Console first-run onboarding gate (GET/POST /firstrun). Defaults to true
 // so the existing e2e suite's direct navigation to any route keeps working
 // unchanged -- flip this to false (and restart the mock) to exercise the
@@ -577,6 +580,50 @@ const server = http.createServer((request, response) => {
   });
   const serviceMatch = karst.match(/^\/relay-services\/([^/]+)$/);
   if (serviceMatch && method === "DELETE") return remove(relayServices, serviceMatch[1], response);
+
+  // Issue #420. externalTurnServers rows never carry a "credential" key at
+  // all -- toExternalTurnResponse below is the only place a row becomes a
+  // response, and it is built field by field rather than by spreading the
+  // row, so an accidental future field addition to the row can't leak the
+  // same way a spread would.
+  const toExternalTurnResponse = (row) => ({ id: row.id, position: row.position, uri: row.uri, username: row.username, created_at: row.created_at, updated_at: row.updated_at });
+  if (method === "GET" && karst === "/external-turn-servers") return json(response, 200, externalTurnServers.map(toExternalTurnResponse));
+  if (method === "POST" && karst === "/external-turn-servers") {
+    return readBody(request).then((entry) => {
+      if (!entry.uri?.startsWith("turns:") || !entry.username || !entry.credential) return error(response, 422, "invalid_argument", "uri (turns:), username and credential are required");
+      const now = new Date().toISOString();
+      const row = { id: id("turn"), position: externalTurnServers.length, uri: entry.uri, username: entry.username, created_at: now, updated_at: now };
+      externalTurnServers.push(row);
+      return json(response, 201, toExternalTurnResponse(row));
+    });
+  }
+  if (method === "PUT" && karst === "/external-turn-servers/reorder") {
+    return readBody(request).then((body) => {
+      const ids = body.ids ?? [];
+      if (ids.length !== externalTurnServers.length || !ids.every((entryId) => externalTurnServers.some((row) => row.id === entryId))) {
+        return error(response, 422, "invalid_argument", "ids must name exactly the account's existing entries, each exactly once");
+      }
+      externalTurnServers = ids.map((entryId, position) => ({ ...externalTurnServers.find((row) => row.id === entryId), position }));
+      return json(response, 200, externalTurnServers.map(toExternalTurnResponse));
+    });
+  }
+  const externalTurnMatch = karst.match(/^\/external-turn-servers\/([^/]+)$/);
+  if (externalTurnMatch && method === "PUT") {
+    return readBody(request).then((entry) => {
+      const row = externalTurnServers.find((item) => item.id === externalTurnMatch[1]);
+      if (!row) return error(response, 404, "not_found", "external TURN server not found");
+      if (!entry.uri?.startsWith("turns:") || !entry.username) return error(response, 422, "invalid_argument", "uri (turns:) and username are required");
+      row.uri = entry.uri;
+      row.username = entry.username;
+      row.updated_at = new Date().toISOString();
+      return json(response, 200, toExternalTurnResponse(row));
+    });
+  }
+  if (externalTurnMatch && method === "DELETE") {
+    if (!externalTurnServers.some((row) => row.id === externalTurnMatch[1])) return error(response, 404, "not_found", "external TURN server not found");
+    externalTurnServers = externalTurnServers.filter((row) => row.id !== externalTurnMatch[1]).map((row, index) => ({ ...row, position: index }));
+    return noContent(response);
+  }
 
   if (method === "GET" && karst === "/relays") return json(response, 200, fixture.relays);
   if (method === "POST" && karst === "/relays") {

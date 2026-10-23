@@ -22,6 +22,7 @@ import { Dns } from "./views/dns";
 import { Routes } from "./views/routes";
 import { Audit } from "./views/audit";
 import { RelayServices } from "./views/relay-services";
+import { ExternalTurnServers } from "./views/external-turn";
 import { Locations } from "./views/locations";
 import { InfrastructureConnections } from "./views/infrastructure-connections";
 import { Settings } from "./views/settings";
@@ -29,12 +30,12 @@ import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
+type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "external-turn" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
 
 const nav: Array<[Route, string]> = [
   ["domains", "Domains"], ["machines", "Machines"], ["enroll", "Add device"], ["access", "Access controls"], ["keys", "Auth keys"],
   ["users", "Users"], ["groups", "Groups"], ["bedrock", "Network lock"], ["posture", "Crypto posture"],
-  ["dns", "DNS"], ["routes", "Gateways"], ["audit", "Audit log"], ["relays", "Relays"], ["connections", "Infrastructure connections"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
+  ["dns", "DNS"], ["routes", "Gateways"], ["audit", "Audit log"], ["relays", "Relays"], ["external-turn", "External TURN servers"], ["connections", "Infrastructure connections"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
 ];
 
 const routeFromHash = (): Route => location.hash === "#/gateways" ? "routes" : (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
@@ -103,6 +104,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "routes" && <Routes />}
       {route === "audit" && <Audit />}
       {route === "relays" && <RelayServices />}
+      {route === "external-turn" && <ExternalTurnServers />}
       {route === "connections" && <InfrastructureConnections />}
       {route === "locations" && <Locations />}
       {route === "noc" && <Noc />}
