@@ -108,7 +108,7 @@ fn node(
         exit_node_state_file: None,
         node_id: handle(&[own; 2592]).into_bytes(),
         relays: Vec::new(),
-        turn_servers: Vec::new(),
+        external_turn_servers: Vec::new(),
         peers,
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
         skipped: Vec::new(),
