@@ -406,7 +406,7 @@ mod run_embedded_tests {
             psk_epoch: 1,
             node_id: Vec::new(),
             relays: Vec::new(),
-            turn_servers: Vec::new(),
+            external_turn_servers: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
@@ -3374,37 +3374,28 @@ struct TurnCommon<'a> {
 /// is one more connection a node retries with exactly the same patience.
 const TURN_BACKOFF_MIN: Duration = Duration::from_secs(1);
 
-fn turn_now_secs() -> Option<u64> {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|elapsed| elapsed.as_secs())
-}
-
+/// The server this node should be dialing: the admin's first-listed entry.
+///
+/// Unlike the pre-#419 ephemeral-credential model this replaced, there is
+/// no expiry to filter on — issue #420's servers are static until the
+/// admin changes them, and that change is a full [`Engine::reconfigure`],
+/// not something this picks up mid-registry.
 fn turn_target(
-    registry: &[crate::netmap::TurnServer],
-    now: u64,
-) -> Option<&crate::netmap::TurnServer> {
-    registry.iter().find(|server| server.expires_at > now)
+    registry: &[crate::netmap::ExternalTurnServer],
+) -> Option<&crate::netmap::ExternalTurnServer> {
+    registry.first()
 }
 
+/// Whether the allocation this worker currently holds is still the one the
+/// admin's list wants — i.e. still the first entry, with the same
+/// username/credential. Anything else (removed, reordered behind another
+/// entry, or a rotated credential for the same URI) ends this allocation
+/// so the worker rebuilds it against whatever is now wanted.
 fn turn_allocation_current(
-    current: &crate::netmap::TurnServer,
-    wanted: Option<&crate::netmap::TurnServer>,
-    now: u64,
+    current: &crate::netmap::ExternalTurnServer,
+    wanted: Option<&crate::netmap::ExternalTurnServer>,
 ) -> bool {
-    let Some(wanted) = wanted else { return false };
-    if current.uri != wanted.uri || current.expires_at <= now {
-        return false;
-    }
-    if current.username == wanted.username && current.password == wanted.password {
-        return true;
-    }
-    // A replaced identity/secret takes effect immediately. Ordinary netmap
-    // renewal is adopted near expiry, avoiding a new allocation on every poll.
-    wanted.expires_at > current.expires_at
-        && current.username != wanted.username
-        && current.expires_at.saturating_sub(now) > 60
+    wanted == Some(current)
 }
 
 /// Hold this node's TURN allocation for the life of the daemon, reconnecting
@@ -3424,29 +3415,21 @@ fn turn_worker(common: &TurnCommon<'_>, mut ops: tokio::sync::mpsc::Receiver<Tur
         return;
     };
     let mut backoff = TURN_BACKOFF_MIN;
-    let mut warned_expired = false;
 
     while !common.shutdown.requested() {
         // Read fresh on every (re)connect attempt, never cached separately —
-        // `Engine::turn_servers`'s own doc comment is why: a credential is
-        // never staler than the netmap already is, because this is the same
-        // registry `refresh_netmap` replaces wholesale on every poll.
-        let registry = common.engine.turn_servers();
-        let Some(server) = turn_now_secs().and_then(|now| turn_target(&registry, now).cloned())
-        else {
-            if !registry.is_empty() && !warned_expired {
-                tracing::warn!(
-                    "karstd: no unexpired TURN credentials; waiting for a refreshed netmap"
-                );
-                warned_expired = true;
-            }
+        // `Engine::external_turn_servers`'s own doc comment is why: this is
+        // never staler than the netmap already is, because
+        // `Engine::reconfigure` is what replaces it, on the same cadence as
+        // everything else the netmap carries.
+        let registry = common.engine.external_turn_servers();
+        let Some(server) = turn_target(&registry).cloned() else {
             while ops.try_recv().is_ok() {}
             backoff = TURN_BACKOFF_MIN;
             let mut idle = TURN_BACKOFF_MIN;
             sleep_backoff(common.shutdown, &mut idle);
             continue;
         };
-        warned_expired = false;
         let connected = runtime.block_on(crate::turn::Allocation::connect(&server));
         let allocation = match connected {
             Ok(a) => a,
@@ -3497,12 +3480,12 @@ fn turn_worker(common: &TurnCommon<'_>, mut ops: tokio::sync::mpsc::Receiver<Tur
     }
 }
 
-/// Drive one allocation until it fails, the daemon shuts down, or the netmap
-/// withdraws/replaces its server, or its credential needs renewal.
+/// Drive one allocation until it fails, the daemon shuts down, or the admin's
+/// list withdraws/replaces/rotates its server.
 async fn turn_session(
     common: &TurnCommon<'_>,
     allocation: &crate::turn::Allocation,
-    server: &crate::netmap::TurnServer,
+    server: &crate::netmap::ExternalTurnServer,
     ops: &mut tokio::sync::mpsc::Receiver<TurnOp>,
 ) {
     let mut buf = vec![0u8; MAX_DATAGRAM];
@@ -3514,16 +3497,15 @@ async fn turn_session(
         if common.shutdown.requested() {
             return;
         }
-        // The selected server was withdrawn/replaced, or this allocation needs
-        // fresh credentials. Tearing this allocation down
-        // rather than holding it open is what keeps `Engine::turn_servers`
-        // meaning "what this node should be doing" rather than merely "what
-        // it once was told" — the same reason `moved_home` acts on a relay
-        // registry change instead of only a fresh dial.
-        let registry = common.engine.turn_servers();
-        if !turn_now_secs()
-            .is_some_and(|now| turn_allocation_current(server, turn_target(&registry, now), now))
-        {
+        // The selected server was withdrawn, reordered behind another
+        // entry, or had its credential rotated. Tearing this allocation
+        // down rather than holding it open is what keeps
+        // `Engine::external_turn_servers` meaning "what this node should
+        // be doing" rather than merely "what it once was told" — the same
+        // reason `moved_home` acts on a relay registry change instead of
+        // only a fresh dial.
+        let registry = common.engine.external_turn_servers();
+        if !turn_allocation_current(server, turn_target(&registry)) {
             return;
         }
         let received = tokio::time::timeout(TICK, async {
@@ -3673,73 +3655,71 @@ mod turn_tests {
     #![allow(clippy::expect_used)]
     use super::plausibly_reachable_via_turn;
 
-    fn server(uri: &str, expiry: u64, username: &str) -> crate::netmap::TurnServer {
-        crate::netmap::TurnServer {
+    fn server(uri: &str, username: &str, credential: &str) -> crate::netmap::ExternalTurnServer {
+        crate::netmap::ExternalTurnServer {
             uri: uri.to_owned(),
-            region: "default".to_owned(),
             username: username.to_owned(),
-            password: crate::netmap::TurnCredential::for_tests("test-password"),
-            expires_at: expiry,
+            credential: credential.to_owned(),
         }
     }
 
     #[test]
-    fn turn_withdrawal_replacement_and_expiry_end_the_old_allocation() {
-        let current = server("turn:first:3478", 200, "first");
-        let replacement = server("turn:second:3478", 300, "second");
-        assert!(!super::turn_allocation_current(&current, None, 100));
-        assert!(!super::turn_allocation_current(
-            &current,
-            Some(&replacement),
-            100
-        ));
-        assert!(!super::turn_allocation_current(
-            &current,
-            Some(&current),
-            200
-        ));
-        assert!(super::turn_target(std::slice::from_ref(&current), 200).is_none());
-        let registry = [current, replacement];
-        assert_eq!(
-            super::turn_target(&registry, 200).map(|entry| entry.uri.as_str()),
-            Some("turn:second:3478")
-        );
+    fn turn_target_picks_the_admins_first_entry() {
+        assert!(super::turn_target(&[]).is_none());
+        let first = server("turn:first:3478", "first", "secret");
+        let second = server("turn:second:3478", "second", "secret");
+        let registry = [first.clone(), second];
+        assert_eq!(super::turn_target(&registry), Some(&first));
     }
 
     #[test]
-    fn turn_credentials_renew_before_expiry_without_churn_on_every_netmap() {
-        let current = server("turn:backend:3478", 200, "old-expiry");
-        let fresh = server("turn:backend:3478", 300, "new-expiry");
-        assert!(super::turn_allocation_current(&current, Some(&fresh), 100));
-        assert!(!super::turn_allocation_current(&current, Some(&fresh), 140));
-        assert!(!super::turn_allocation_current(&current, Some(&fresh), 200));
+    fn turn_withdrawal_replacement_and_rotation_end_the_old_allocation() {
+        let current = server("turn:first:3478", "first", "secret");
+        let replacement = server("turn:second:3478", "second", "secret");
+        // Withdrawn entirely (empty registry): nothing is wanted any more.
+        assert!(!super::turn_allocation_current(&current, None));
+        // Reordered behind another entry: no longer the first-listed target.
+        assert!(!super::turn_allocation_current(
+            &current,
+            Some(&replacement)
+        ));
+        // Still the admin's first entry, byte-for-byte: stays current.
+        assert!(super::turn_allocation_current(&current, Some(&current)));
+        // Same URI/username, rotated credential: must not be treated as the
+        // same allocation -- a rotated secret takes effect immediately, not
+        // on whatever cadence the old allocation happened to need rebuilding.
         let mut rotated = current.clone();
-        rotated.password = crate::netmap::TurnCredential::for_tests("rotated-password");
-        assert!(!super::turn_allocation_current(
-            &current,
-            Some(&rotated),
-            100
-        ));
+        rotated.credential = "rotated-secret".to_owned();
+        assert!(!super::turn_allocation_current(&current, Some(&rotated)));
     }
 
     #[test]
-    fn credential_refresh_preserves_the_peer_roster_and_requires_reconciliation_for_endpoints() {
+    fn reconfigure_replaces_the_external_turn_list_wholesale() {
+        // Issue #420: unlike the pre-#419 ephemeral-credential model this
+        // replaced, there is no separate "credential-only refresh" path any
+        // more -- the list is part of the netmap content hash, so it only
+        // ever changes alongside a full Engine::reconfigure, which this
+        // proves end to end rather than through a since-removed dedicated
+        // method.
         let mut config = std::sync::Arc::try_unwrap(super::probe_tests::config(Vec::new()))
             .expect("unshared fixture");
-        config.turn_servers = vec![server("turn:backend:3478", 200, "first")];
+        config.external_turn_servers = vec![server("turn:backend:3478", "first", "secret")];
         let config = std::sync::Arc::new(config);
         let engine = super::Engine::new(&config);
-        let fresh = server("turn:backend:3478", 300, "renewed");
-        assert!(engine.refresh_turn_credentials(std::slice::from_ref(&fresh)));
         assert_eq!(
-            engine.turn_servers().first().map(|entry| entry.expires_at),
-            Some(300)
+            engine.external_turn_servers(),
+            vec![server("turn:backend:3478", "first", "secret")]
         );
-        assert!(std::sync::Arc::ptr_eq(&config, &engine.config()));
-        let replacement = server("turn:replacement:3478", 400, "replacement");
-        assert!(!engine.refresh_turn_credentials(&[replacement]));
-        assert!(!engine.refresh_turn_credentials(&[]));
-        assert_eq!(engine.turn_servers(), vec![fresh]);
+
+        let mut next = std::sync::Arc::try_unwrap(super::probe_tests::config(Vec::new()))
+            .expect("unshared fixture");
+        next.external_turn_servers = vec![server("turn:backend:3478", "first", "rotated-secret")];
+        let next = std::sync::Arc::new(next);
+        engine.reconfigure(&next);
+        assert_eq!(
+            engine.external_turn_servers(),
+            vec![server("turn:backend:3478", "first", "rotated-secret")]
+        );
     }
 
     fn v4(a: u8, b: u8, c: u8, d: u8) -> std::net::SocketAddr {
@@ -6349,11 +6329,11 @@ fn refresh_netmap(
                     );
                 }
                 control_backoff = RELAY_BACKOFF_MIN;
-                if engine.refresh_turn_credentials(&client.netmap().turn_servers) {
-                    continue;
-                }
-                // TURN endpoints are deliberately outside the peer-content
-                // hash. Reconcile underlay escapes before applying their change.
+                // Issue #420's external TURN list is part of the netmap
+                // content hash (unlike the pre-#419 ephemeral-credential
+                // model, which deliberately sat outside it and needed its
+                // own refresh here): `Unchanged` already means it, like
+                // everything else hashed, did not move.
                 crate::netmap::Outcome::Unchanged
             }
             Ok(outcome) => {
@@ -6816,7 +6796,7 @@ mod route_tests {
             psk_epoch: 1,
             node_id: Vec::new(),
             relays: Vec::new(),
-            turn_servers: Vec::new(),
+            external_turn_servers: Vec::new(),
             peers,
             routes: crate::routing::AllowedIps::build(pairs).expect("no conflicts"),
             skipped: Vec::new(),
@@ -7545,7 +7525,7 @@ mod probe_tests {
             psk_epoch: 1,
             node_id: Vec::new(),
             relays,
-            turn_servers: Vec::new(),
+            external_turn_servers: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
@@ -8418,7 +8398,7 @@ mod probe_tests {
             psk_epoch: 1,
             node_id: Vec::new(),
             relays,
-            turn_servers: Vec::new(),
+            external_turn_servers: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),

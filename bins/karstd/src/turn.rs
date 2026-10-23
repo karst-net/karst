@@ -37,7 +37,7 @@ use std::sync::Arc;
 use turn::client::{Client, ClientConfig};
 use util::Conn;
 
-use crate::netmap::TurnServer;
+use crate::netmap::ExternalTurnServer;
 
 /// A live RFC 8656 allocation on one TURN server.
 ///
@@ -72,11 +72,15 @@ pub enum Error {
     /// A failure surfaced through `util::Conn` — a send, a receive, or reading
     /// the relayed address back.
     Conn(util::Error),
-    /// `KarstTurnServer.uri` is not a `turn:` or `turns:` URI this client can
-    /// dial. Caught again here, on top of `crate::netmap::TurnServer`'s own
-    /// validation, because that check is about the *wire shape*; this one is
-    /// about whether the scheme is one this client actually implements.
+    /// The server's `uri` is not a `turn:` or `turns:` URI this client can
+    /// dial. Caught again here, on top of `externalturn.go`'s own
+    /// write-time validation (`turns:`-only), because that check is about
+    /// the *wire shape*; this one is about whether the scheme is one this
+    /// client actually implements.
     Scheme(String),
+    /// A `turns:` dial failed — DNS resolution, the TCP connect, or the TLS
+    /// handshake itself. See [`crate::turn_tls::Error`] for which.
+    Tls(crate::turn_tls::Error),
 }
 
 impl std::fmt::Display for Error {
@@ -86,6 +90,7 @@ impl std::fmt::Display for Error {
             Self::Turn(e) => write!(f, "turn: {e}"),
             Self::Conn(e) => write!(f, "turn: {e}"),
             Self::Scheme(uri) => write!(f, "turn: cannot dial {uri}"),
+            Self::Tls(e) => write!(f, "turn: {e}"),
         }
     }
 }
@@ -95,6 +100,12 @@ impl std::error::Error for Error {}
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
+    }
+}
+
+impl From<crate::turn_tls::Error> for Error {
+    fn from(e: crate::turn_tls::Error) -> Self {
+        Self::Tls(e)
     }
 }
 
@@ -110,22 +121,29 @@ impl From<util::Error> for Error {
     }
 }
 
-/// Strip a `turn:` or `turns:` scheme from a `KarstTurnServer.uri`, leaving
-/// the bare `host:port` `turn::client::ClientConfig` wants.
-///
-/// **`turns:` (TURN over TLS, RFC 7065) is accepted at the parse stage and
-/// refused here rather than earlier**, so a misconfigured registry entry
-/// fails with a specific reason instead of being silently treated as `turn:`.
-/// TLS to the TURN server itself is not implemented: `ClientConfig::conn` is
-/// a bare UDP socket, and layering TLS under a UDP-framed protocol is a
-/// different transport (DTLS) that RFC 7065's `turns:` does not even name —
-/// it is TCP+TLS. Nothing in this deployment's threat model needs it: the
-/// credential is already short-lived and per-response, and the relayed path
-/// carries AEAD-protected AVEN/PHREATIC payloads either way.
-fn dial_target(uri: &str) -> Result<String, Error> {
-    uri.strip_prefix("turn:")
-        .map(str::to_owned)
-        .ok_or_else(|| Error::Scheme(uri.to_owned()))
+/// Which transport a server's URI scheme names, plus the bare `host:port`
+/// (the scheme stripped) `turn::client::ClientConfig` wants.
+enum Target {
+    /// Plain UDP. Still accepted (not just for tests): a self-hosted,
+    /// non-TLS TURN server is a valid, if weaker, choice for a deployment
+    /// that accepts the exposure — `externalturn.go`'s write-time
+    /// validation is what actually enforces `turns:`-only for an
+    /// admin-configured server; this client itself has no opinion.
+    Udp(String),
+    /// TURN over TLS, RFC 7065 — see [`crate::turn_tls`].
+    Tls(String),
+}
+
+/// Parse a server's `uri` into the scheme it names and the bare
+/// `host:port` that scheme's prefix was stripped from.
+fn dial_target(uri: &str) -> Result<Target, Error> {
+    if let Some(rest) = uri.strip_prefix("turns:") {
+        return Ok(Target::Tls(rest.to_owned()));
+    }
+    if let Some(rest) = uri.strip_prefix("turn:") {
+        return Ok(Target::Udp(rest.to_owned()));
+    }
+    Err(Error::Scheme(uri.to_owned()))
 }
 
 impl Allocation {
@@ -148,32 +166,51 @@ impl Allocation {
     ///
     /// # Errors
     /// [`Error::Scheme`] for a URI this client cannot dial, [`Error::Io`] if
-    /// the base socket cannot be opened, and [`Error::Turn`] for anything the
-    /// Allocate exchange itself refuses — an unrecognized credential, a
-    /// server that is not there, or one that has run out of relay ports.
-    pub async fn connect(server: &TurnServer) -> Result<Self, Error> {
-        let target = dial_target(&server.uri)?;
-
-        // The base socket's family follows the server's, not this host's
-        // default route — a `[::1]`-literal TURN server needs a v6 socket to
-        // reach at all, and binding v4 unconditionally would fail every such
-        // deployment with an error that names the wrong layer.
-        let bind_addr = if target.starts_with('[') || target.contains("::") {
-            "[::]:0"
-        } else {
-            "0.0.0.0:0"
-        };
-        let base = tokio::net::UdpSocket::bind(bind_addr).await?;
+    /// a UDP base socket cannot be opened, [`Error::Tls`] if a `turns:`
+    /// dial's DNS resolution/TCP connect/TLS handshake fails, and
+    /// [`Error::Turn`] for anything the Allocate exchange itself refuses —
+    /// an unrecognized credential, a server that is not there, or one that
+    /// has run out of relay ports.
+    pub async fn connect(server: &ExternalTurnServer) -> Result<Self, Error> {
+        // `stun_serv_addr`/`turn_serv_addr` below, both set to this same
+        // string: for `turns:`, it is already the exact resolved
+        // SocketAddr crate::turn_tls::connect connected to, not the
+        // original host:port, so the crate's own (separate) resolution of
+        // it can never land on a different address than the one actually
+        // connected — see that function's own doc comment.
+        let (conn, target): (Arc<dyn util::Conn + Send + Sync>, String) =
+            match dial_target(&server.uri)? {
+                Target::Udp(target) => {
+                    // The base socket's family follows the server's, not this
+                    // host's default route — a `[::1]`-literal TURN server
+                    // needs a v6 socket to reach at all, and binding v4
+                    // unconditionally would fail every such deployment with
+                    // an error that names the wrong layer.
+                    let bind_addr = if target.starts_with('[') || target.contains("::") {
+                        "[::]:0"
+                    } else {
+                        "0.0.0.0:0"
+                    };
+                    let base = tokio::net::UdpSocket::bind(bind_addr).await?;
+                    (Arc::new(base), target)
+                }
+                Target::Tls(target) => {
+                    let tls_config = crate::turn_tls::client_config()?;
+                    let tls = crate::turn_tls::connect(&tls_config, &target).await?;
+                    let resolved = tls.remote().to_string();
+                    (Arc::new(tls), resolved)
+                }
+            };
 
         let config = ClientConfig {
             stun_serv_addr: target.clone(),
             turn_serv_addr: target,
             username: server.username.clone(),
-            password: server.password.as_str().to_owned(),
+            password: server.credential.clone(),
             realm: String::new(),
             software: String::new(),
             rto_in_ms: 0,
-            conn: Arc::new(base),
+            conn,
             vnet: None,
         };
         let client = Client::new(config).await?;
@@ -239,17 +276,17 @@ mod tests {
 
     #[test]
     fn dial_target_strips_the_turn_scheme() {
-        assert_eq!(
+        assert!(matches!(
             dial_target("turn:turn.example.com:3478").unwrap(),
-            "turn.example.com:3478"
-        );
+            Target::Udp(ref t) if t == "turn.example.com:3478"
+        ));
     }
 
     #[test]
-    fn dial_target_refuses_turns() {
+    fn dial_target_strips_the_turns_scheme() {
         assert!(matches!(
-            dial_target("turns:turn.example.com:5349"),
-            Err(Error::Scheme(_))
+            dial_target("turns:turn.example.com:5349").unwrap(),
+            Target::Tls(ref t) if t == "turn.example.com:5349"
         ));
     }
 
@@ -266,12 +303,10 @@ mod tests {
     /// or not.
     #[tokio::test]
     async fn connect_refuses_a_non_turn_scheme_without_touching_the_network() {
-        let server = TurnServer {
+        let server = ExternalTurnServer {
             uri: "https://turn.example.com".to_owned(),
-            region: "test".to_owned(),
-            username: "1700000000".to_owned(),
-            password: crate::netmap::TurnCredential::for_tests("secret"),
-            expires_at: 1_700_000_000,
+            username: "node".to_owned(),
+            credential: "secret".to_owned(),
         };
         let err = Allocation::connect(&server).await.unwrap_err();
         assert!(matches!(err, Error::Scheme(_)));
@@ -289,12 +324,10 @@ mod tests {
         // A TURN server that is not there — loopback, a port nothing binds.
         // The bound base socket still opens; the Allocate exchange is what
         // fails, and it must fail rather than hang.
-        let server = TurnServer {
+        let server = ExternalTurnServer {
             uri: "turn:127.0.0.1:1".to_owned(),
-            region: "test".to_owned(),
-            username: "1700000000".to_owned(),
-            password: crate::netmap::TurnCredential::for_tests("secret"),
-            expires_at: 1_700_000_000,
+            username: "node".to_owned(),
+            credential: "secret".to_owned(),
         };
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -306,6 +339,31 @@ mod tests {
         // silent `Ok`, since nothing is listening on port 1.
         match result {
             Ok(inner) => assert!(inner.is_err()),
+            Err(_timed_out) => {}
+        }
+    }
+
+    /// The `turns:` counterpart to the test above: a server that is not
+    /// there must fail the TCP connect (or the TLS handshake, if something
+    /// else happens to answer on this port) rather than hang or panic. This
+    /// does not reach the Allocate exchange at all -- `Error::Tls`, not
+    /// `Error::Turn` -- which is exactly the point: proving the `turns:`
+    /// path actually attempts a real dial instead of being rejected at the
+    /// scheme check the way it was before this client could speak TLS.
+    #[tokio::test]
+    async fn connect_over_turns_fails_cleanly_when_nothing_answers() {
+        let server = ExternalTurnServer {
+            uri: "turns:127.0.0.1:1".to_owned(),
+            username: "node".to_owned(),
+            credential: "secret".to_owned(),
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            Allocation::connect(&server),
+        )
+        .await;
+        match result {
+            Ok(inner) => assert!(matches!(inner, Err(Error::Tls(_)))),
             Err(_timed_out) => {}
         }
     }

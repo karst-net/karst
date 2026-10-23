@@ -150,7 +150,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str, own_at: &s
         exit_node_state_file: None,
         node_id: handle(&[own; 2592]).into_bytes(),
         relays: Vec::new(),
-        turn_servers: Vec::new(),
+        external_turn_servers: Vec::new(),
         peers,
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
         skipped: Vec::new(),
