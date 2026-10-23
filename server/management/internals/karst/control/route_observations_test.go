@@ -61,6 +61,39 @@ func TestRecordRouteObservationsStoresEgressAndIngress(t *testing.T) {
 	}
 }
 
+// Issue #404: forwarding_active is recorded alongside the byte counters,
+// not derived from them -- a zero-byte, newly-installed rule and a failed
+// apply must be distinguishable even though neither has moved traffic yet.
+func TestRecordRouteObservationsStoresForwardingActive(t *testing.T) {
+	store := newRouteTelemetryTestStore(t)
+	h := &NetmapHandler{RouteTelemetry: store}
+	route := effectiveRoute("route-a:selected-peer-id", "10.20.0.0/16", "gateway-a")
+	offers, err := projectRouteOffers(&types.NetworkMap{Routes: []*nbroute.Route{route}}, "gateway-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reports := []*proto.KarstRouteObservation{{RouteId: "route-a", ForwardingActive: false}}
+	h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", reports, offers)
+	byRoute, err := store.LatestByRoute(context.Background(), "acct-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byRoute["route-a"].ForwardingActive {
+		t.Fatalf("got %+v, want forwarding_active=false recorded as reported", byRoute["route-a"])
+	}
+
+	reports = []*proto.KarstRouteObservation{{RouteId: "route-a", ForwardingActive: true}}
+	h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", reports, offers)
+	byRoute, err = store.LatestByRoute(context.Background(), "acct-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !byRoute["route-a"].ForwardingActive {
+		t.Fatalf("got %+v, want the later true report to replace the earlier false one", byRoute["route-a"])
+	}
+}
+
 // self is route-a's recipient, not its gateway — the report must be
 // rejected outright, egress and ingress alike, rather than partially
 // recorded, or a node could pollute another gateway's NOC-visible

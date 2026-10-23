@@ -1131,7 +1131,7 @@ components:
   schemas:
     GatewayOffer:
       type: object
-      required: [id, network_id, prefix, kind, enabled, masquerade, metric, requires_client_consent]
+      required: [id, network_id, prefix, kind, enabled, masquerade, metric, requires_client_consent, forwarding_readiness]
       properties:
         id: { type: string }
         network_id: { type: string }
@@ -1141,6 +1141,7 @@ components:
         masquerade: { type: boolean }
         metric: { type: integer }
         requires_client_consent: { type: boolean }
+        forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone. }
     GatewayNode:
       type: object
       required: [node_id, name, control_connected, forwarding_readiness, offers]
@@ -1148,7 +1149,7 @@ components:
         node_id: { type: string }
         name: { type: string }
         control_connected: { type: boolean }
-        forwarding_readiness: { type: string, enum: [unreported] }
+        forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: "Aggregated across this node's own offers, degraded-first." }
         offers:
           type: array
           items: { $ref: '#/components/schemas/GatewayOffer' }

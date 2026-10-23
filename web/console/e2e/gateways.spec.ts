@@ -7,9 +7,9 @@ import { AxeBuilder } from "@axe-core/playwright";
 const inventory = {
   schema_version: 1,
   gateways: [{ node_id: "combined-node", name: "Combined Gateway", control_connected: true, forwarding_readiness: "unreported", offers: [
-    { id: "office", network_id: "office", prefix: "10.20.0.0/16", kind: "subnet", enabled: true, masquerade: true, metric: 100, requires_client_consent: false },
-    { id: "internet", network_id: "internet", prefix: "0.0.0.0/0", kind: "default_ipv4", enabled: true, masquerade: true, metric: 100, requires_client_consent: true },
-    { id: "internet-v6", network_id: "internet-v6", prefix: "::/0", kind: "default_ipv6", enabled: false, masquerade: true, metric: 100, requires_client_consent: true },
+    { id: "office", network_id: "office", prefix: "10.20.0.0/16", kind: "subnet", enabled: true, masquerade: true, metric: 100, requires_client_consent: false, forwarding_readiness: "unreported" },
+    { id: "internet", network_id: "internet", prefix: "0.0.0.0/0", kind: "default_ipv4", enabled: true, masquerade: true, metric: 100, requires_client_consent: true, forwarding_readiness: "unreported" },
+    { id: "internet-v6", network_id: "internet-v6", prefix: "::/0", kind: "default_ipv6", enabled: false, masquerade: true, metric: 100, requires_client_consent: true, forwarding_readiness: "unreported" },
   ] }], unresolved_routes: [], unsupported_routes: [],
 };
 
@@ -65,6 +65,25 @@ test("refresh preserves independent control connectivity and readiness", async (
   await expect(section).toContainText("Unreported");
 });
 
+
+test("real forwarding readiness is shown per offer and aggregated per node", async ({ page }) => {
+  await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: { ...inventory, gateways: [{
+    ...inventory.gateways[0],
+    forwarding_readiness: "degraded",
+    offers: [
+      { ...inventory.gateways[0].offers[0], forwarding_readiness: "ready" },
+      { ...inventory.gateways[0].offers[1], forwarding_readiness: "degraded" },
+      inventory.gateways[0].offers[2],
+    ],
+  }] } }));
+  await page.goto("/#/gateways");
+  const section = page.getByRole("region", { name: "Configured Gateway nodes" });
+  await expect(section).toContainText("10.20.0.0/16 · Subnet · enabled · ready");
+  await expect(section).toContainText("IPv4 default · enabled · client consent required · degraded");
+  await expect(section).toContainText("IPv6 default · disabled · client consent required · unreported");
+  await expect(section).toContainText("Degraded — check the node for an nftables apply failure.");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
 
 test("an unknown inventory schema fails explicitly while routes remain available", async ({ page }) => {
   await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: { ...inventory, schema_version: 2 } }));

@@ -389,13 +389,40 @@ func (e GatewayInventorySchemaVersion) Valid() bool {
 
 // Defines values for GatewayNodeForwardingReadiness.
 const (
+	GatewayNodeForwardingReadinessDegraded   GatewayNodeForwardingReadiness = "degraded"
+	GatewayNodeForwardingReadinessReady      GatewayNodeForwardingReadiness = "ready"
 	GatewayNodeForwardingReadinessUnreported GatewayNodeForwardingReadiness = "unreported"
 )
 
 // Valid indicates whether the value is a known member of the GatewayNodeForwardingReadiness enum.
 func (e GatewayNodeForwardingReadiness) Valid() bool {
 	switch e {
+	case GatewayNodeForwardingReadinessDegraded:
+		return true
+	case GatewayNodeForwardingReadinessReady:
+		return true
 	case GatewayNodeForwardingReadinessUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GatewayOfferForwardingReadiness.
+const (
+	GatewayOfferForwardingReadinessDegraded   GatewayOfferForwardingReadiness = "degraded"
+	GatewayOfferForwardingReadinessReady      GatewayOfferForwardingReadiness = "ready"
+	GatewayOfferForwardingReadinessUnreported GatewayOfferForwardingReadiness = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the GatewayOfferForwardingReadiness enum.
+func (e GatewayOfferForwardingReadiness) Valid() bool {
+	switch e {
+	case GatewayOfferForwardingReadinessDegraded:
+		return true
+	case GatewayOfferForwardingReadinessReady:
+		return true
+	case GatewayOfferForwardingReadinessUnreported:
 		return true
 	default:
 		return false
@@ -1533,27 +1560,35 @@ type GatewayInventorySchemaVersion int
 
 // GatewayNode defines model for GatewayNode.
 type GatewayNode struct {
-	ControlConnected    bool                           `json:"control_connected"`
+	ControlConnected bool `json:"control_connected"`
+
+	// ForwardingReadiness Aggregated across this node's own offers, degraded-first.
 	ForwardingReadiness GatewayNodeForwardingReadiness `json:"forwarding_readiness"`
 	Name                string                         `json:"name"`
 	NodeId              string                         `json:"node_id"`
 	Offers              []GatewayOffer                 `json:"offers"`
 }
 
-// GatewayNodeForwardingReadiness defines model for GatewayNode.ForwardingReadiness.
+// GatewayNodeForwardingReadiness Aggregated across this node's own offers, degraded-first.
 type GatewayNodeForwardingReadiness string
 
 // GatewayOffer defines model for GatewayOffer.
 type GatewayOffer struct {
-	Enabled               bool             `json:"enabled"`
-	Id                    string           `json:"id"`
-	Kind                  GatewayOfferKind `json:"kind"`
-	Masquerade            bool             `json:"masquerade"`
-	Metric                int              `json:"metric"`
-	NetworkId             string           `json:"network_id"`
-	Prefix                string           `json:"prefix"`
-	RequiresClientConsent bool             `json:"requires_client_consent"`
+	Enabled bool `json:"enabled"`
+
+	// ForwardingReadiness Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
+	ForwardingReadiness   GatewayOfferForwardingReadiness `json:"forwarding_readiness"`
+	Id                    string                          `json:"id"`
+	Kind                  GatewayOfferKind                `json:"kind"`
+	Masquerade            bool                            `json:"masquerade"`
+	Metric                int                             `json:"metric"`
+	NetworkId             string                          `json:"network_id"`
+	Prefix                string                          `json:"prefix"`
+	RequiresClientConsent bool                            `json:"requires_client_consent"`
 }
+
+// GatewayOfferForwardingReadiness Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
+type GatewayOfferForwardingReadiness string
 
 // GatewayOfferKind defines model for GatewayOffer.Kind.
 type GatewayOfferKind string

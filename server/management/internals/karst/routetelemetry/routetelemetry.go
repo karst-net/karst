@@ -39,7 +39,13 @@ type StoredRouteBytes struct {
 	Packets        uint64
 	IngressBytes   uint64
 	IngressPackets uint64
-	ReportedAt     time.Time
+	// ForwardingActive is issue #404's Gateway readiness signal: whether
+	// this route's forward-accept rule was actually installed and live in
+	// its gateway's own nftables table at the moment of the report, not
+	// merely whether any bytes have moved yet. See gateway.rs's
+	// `KarstRouteObservation.forwarding_active` doc comment.
+	ForwardingActive bool
+	ReportedAt       time.Time
 }
 
 func (StoredRouteBytes) TableName() string { return "karst_route_telemetry" }
@@ -60,10 +66,11 @@ func NewStore(db *gorm.DB) (*Store, error) {
 // one route — grouped rather than four positional uint64s, so a caller
 // cannot transpose egress and ingress by positional accident.
 type RouteReport struct {
-	Bytes          uint64
-	Packets        uint64
-	IngressBytes   uint64
-	IngressPackets uint64
+	Bytes            uint64
+	Packets          uint64
+	IngressBytes     uint64
+	IngressPackets   uint64
+	ForwardingActive bool
 }
 
 // RecordRouteBytes replaces the stored counters for one route. An upsert,
@@ -76,13 +83,14 @@ func (s *Store) RecordRouteBytes(ctx context.Context, accountID, routeID string,
 		return fmt.Errorf("route telemetry: account and route id must not be empty")
 	}
 	record := &StoredRouteBytes{
-		AccountID:      accountID,
-		RouteID:        routeID,
-		Bytes:          report.Bytes,
-		Packets:        report.Packets,
-		IngressBytes:   report.IngressBytes,
-		IngressPackets: report.IngressPackets,
-		ReportedAt:     time.Now(),
+		AccountID:        accountID,
+		RouteID:          routeID,
+		Bytes:            report.Bytes,
+		Packets:          report.Packets,
+		IngressBytes:     report.IngressBytes,
+		IngressPackets:   report.IngressPackets,
+		ForwardingActive: report.ForwardingActive,
+		ReportedAt:       time.Now(),
 	}
 	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "account_id"}, {Name: "route_id"}},

@@ -73,9 +73,9 @@ export function Routes() {
         {inventory.value?.gateways.length ? <Rows head={<><th>Node</th><th>Configured behaviors</th><th>Recorded control connection</th><th>Forwarding readiness</th></>}>
           {inventory.value.gateways.map((gateway) => <tr key={gateway.node_id}>
             <td><strong>{gateway.name}</strong><br /><code>{gateway.node_id}</code></td>
-            <td>{gateway.offers.map((offer) => <div key={offer.id}><code>{offer.prefix}</code> · {offer.kind === "subnet" ? "Subnet" : offer.kind === "default_ipv4" ? "IPv4 default" : "IPv6 default"} · {offer.enabled ? "enabled" : "disabled"}{offer.requires_client_consent && " · client consent required"}</div>)}</td>
+            <td>{gateway.offers.map((offer) => <div key={offer.id}><code>{offer.prefix}</code> · {offer.kind === "subnet" ? "Subnet" : offer.kind === "default_ipv4" ? "IPv4 default" : "IPv6 default"} · {offer.enabled ? "enabled" : "disabled"}{offer.requires_client_consent && " · client consent required"} · {offer.forwarding_readiness === "ready" ? "ready" : offer.forwarding_readiness === "degraded" ? "degraded" : "unreported"}</div>)}</td>
             <td>{gateway.control_connected ? "Connected" : "Disconnected"}</td>
-            <td>Unreported — inspect <code>karst gateway status</code> on the node.</td>
+            <td>{gateway.forwarding_readiness === "ready" ? "Ready" : gateway.forwarding_readiness === "degraded" ? "Degraded — check the node for an nftables apply failure." : <>Unreported — inspect <code>karst gateway status</code> on the node.</>}</td>
           </tr>)}
         </Rows> : <p>No Gateway nodes resolved from the configured route offers.</p>}
         {Boolean(inventory.value?.unresolved_routes.length) && <p role="status">Routes without a visible eligible node: {inventory.value?.unresolved_routes.join(", ")}. Check routing groups and enrolled machines.</p>}

@@ -47,10 +47,21 @@ forwarding privileges.
 `GET /api/karst/v1/gateways` returns schema version 1:
 
 - `gateways`: visible nodes with stable `node_id`, name, recorded
-  `control_connected`, `forwarding_readiness: "unreported"`, and route offers.
+  `control_connected`, `forwarding_readiness`, and route offers.
 - Each offer retains its route ID, identifier, canonical prefix, enabled flag,
-  metric and masquerade flag. `kind` is `subnet`, `default_ipv4` or
-  `default_ipv6`; default kinds declare `requires_client_consent: true`.
+  metric and masquerade flag, and its own `forwarding_readiness`. `kind` is
+  `subnet`, `default_ipv4` or `default_ipv6`; default kinds declare
+  `requires_client_consent: true`.
+- `forwarding_readiness` is `unreported`, `ready` or `degraded`, self-reported
+  by each offer's gateway over the existing authenticated control channel
+  (`KarstRouteObservation.forwarding_active`, alongside the per-route byte
+  counters issues #281/#371 already added) and never inferred from
+  connectivity or traffic alone: `ready` means the forward-accept rule was
+  live in the gateway's own nftables table as of its last report; `degraded`
+  means the gateway holds the offer but its last report said the rule was not
+  live (e.g. an nftables apply failure); `unreported` means no report has
+  ever been received (an older agent, or a grant never installed). A node's
+  own `forwarding_readiness` aggregates its offers degraded-first.
 - `unresolved_routes` and `unsupported_routes` contain declaration IDs needing
   operator attention. Hidden peer identities are not returned through group
   membership. Results are ordered by node/route ID for stable comparisons.
@@ -80,7 +91,7 @@ the console does not require a database conversion.
 | Forwarding/NAT | `gateway.rs` builds one owned nftables ruleset for both kinds, most-specific destination first, preserving operator tables and per-route attribution. Masquerade or explicit return routing remains necessary. |
 | Default-route handling | `exit_node.rs` preserves durable local selection; `exit_policy.rs` manages default policy/escape routes. DNS and dual-stack treatment are not collapsed into subnet defaults. |
 | Policy/trust | Agents retain packet enforcement and Bedrock verification. Control distribution does not confer membership signing authority or default-route consent. |
-| Readiness/failover | Local status reports Gateway readiness; connected candidate filtering and client selection preserve route failover. This inventory does not invent a health signal. |
+| Readiness/failover | Local status reports Gateway readiness; connected candidate filtering and client selection preserve route failover. The inventory's `forwarding_readiness` now self-reports that same local signal over the authenticated control channel (issue #404) — it does not invent one independently. |
 
 The combined namespace test in `aquifer.rs` verifies subnet traffic before exit
 consent, default traffic only after consent, and retained subnet reachability
@@ -89,6 +100,7 @@ after consent removal on the same Gateway. The
 failover, crash recovery and independent-family selection scenarios.
 
 Issue #404 still tracks full configuration/deployment migration, richer local
-capability configuration and diagnostics/metrics integration, production and
-mixed-version checks, IPv6/DNS forwarding and other platform verification. This
-inventory and the shared editor do not establish completion of those items.
+capability configuration, production and mixed-version checks, IPv6/DNS
+forwarding and other platform verification. This inventory, the shared
+editor, and the `forwarding_readiness` self-report above do not establish
+completion of those items.
