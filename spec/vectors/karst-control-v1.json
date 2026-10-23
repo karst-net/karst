@@ -198,7 +198,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 3947598303466698808
+        "version": 477123565397924119
       },
       {
         "psk_epoch": 9,
@@ -227,7 +227,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 10017923535522815850
+        "version": 17123702081389909887
       },
       {
         "psk_epoch": 9,
@@ -256,7 +256,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 10017923535522815850
+        "version": 17123702081389909887
       },
       {
         "psk_epoch": 9,
@@ -297,7 +297,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 9909853714554661586
+        "version": 14364961928994464629
       },
       {
         "psk_epoch": 9,
@@ -338,7 +338,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 16268322606264516696
+        "version": 13647232875334131384
       },
       {
         "psk_epoch": 9,
@@ -381,7 +381,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 6372673251859975860
+        "version": 5397411734216426379
       },
       {
         "psk_epoch": 9,
@@ -400,7 +400,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 4911500646264626448
+        "version": 4518954622798600610
       },
       {
         "psk_epoch": 9,
@@ -434,7 +434,7 @@
         },
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 10506282462351437346
+        "version": 7879266294339378548
       },
       {
         "psk_epoch": 9,
@@ -478,7 +478,7 @@
         },
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 7703126653883516616
+        "version": 14525505986873031679
       },
       {
         "psk_epoch": 9,
@@ -506,7 +506,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 16708049983538438955
+        "version": 16921626207036101990
       },
       {
         "psk_epoch": 9,
@@ -543,7 +543,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 9813435122751191800
+        "version": 3352841011003948060
       },
       {
         "psk_epoch": 9,
@@ -580,7 +580,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 2338856915381964031
+        "version": 6215848266683300519
       },
       {
         "psk_epoch": 9,
@@ -601,7 +601,7 @@
           "seq": 7
         },
         "ephemeral_anchor_schedule": {},
-        "version": 9410070443472693575
+        "version": 13679269223184740072
       },
       {
         "psk_epoch": 9,
@@ -623,7 +623,7 @@
           "mode": 2
         },
         "ephemeral_anchor_schedule": {},
-        "version": 14373587274710245574
+        "version": 6989454594342540578
       },
       {
         "psk_epoch": 9,
@@ -644,7 +644,7 @@
           "seq": 8
         },
         "ephemeral_anchor_schedule": {},
-        "version": 7490981517977252043
+        "version": 4673959116665248981
       },
       {
         "psk_epoch": 9,
@@ -676,7 +676,7 @@
         "dns": {},
         "bedrock": {},
         "ephemeral_anchor_schedule": {},
-        "version": 15302175674853142147
+        "version": 9045322902621877513
       },
       {
         "psk_epoch": 9,
@@ -708,7 +708,7 @@
           }
         ],
         "ephemeral_anchor_schedule": {},
-        "version": 12016645035190477590
+        "version": 11652502744710750087
       },
       {
         "psk_epoch": 9,
@@ -740,7 +740,7 @@
           "window_period_seconds": 900,
           "duty_cycle_seconds": 300
         },
-        "version": 13653230093635906662
+        "version": 7661253914829702934
       },
       {
         "psk_epoch": 9,
@@ -760,7 +760,7 @@
           "window_period_seconds": 900,
           "duty_cycle_seconds": 300
         },
-        "version": 13487217051261185115
+        "version": 14852762947429491736
       }
     ]
   }

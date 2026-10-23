@@ -1528,40 +1528,6 @@ type Error struct {
 	RequestId *string `json:"request_id,omitempty"`
 }
 
-// ExternalTurnServer defines model for ExternalTurnServer.
-type ExternalTurnServer struct {
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	Id        *string    `json:"id,omitempty"`
-
-	// Position Zero-based admin order; a node tries entries in this order. Set with PUT /external-turn-servers/reorder
-	Position  *int       `json:"position,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
-
-	// Uri Must use the turns: scheme -- a plain turn: entry is rejected.
-	Uri      string `json:"uri"`
-	Username string `json:"username"`
-}
-
-// ExternalTurnServerCreate defines model for ExternalTurnServerCreate.
-type ExternalTurnServerCreate struct {
-	// Credential The operator's own already-provisioned long-term TURN credential. Never returned by any later read.
-	Credential string `json:"credential"`
-
-	// Uri Must use the turns: scheme.
-	Uri      string `json:"uri"`
-	Username string `json:"username"`
-}
-
-// ExternalTurnServerUpdate defines model for ExternalTurnServerUpdate.
-type ExternalTurnServerUpdate struct {
-	// Credential Omit to leave the stored credential untouched -- there is nothing to redisplay to confirm
-	Credential *string `json:"credential,omitempty"`
-
-	// Uri Must use the turns: scheme.
-	Uri      string `json:"uri"`
-	Username string `json:"username"`
-}
-
 // FirstRunState defines model for FirstRunState.
 type FirstRunState struct {
 	// Completed Whether the account has finished the console's first-run setup wizard (default domain + initial groups). A brand-new account defaults to false; an account that existed before this feature shipped defaults to true.
@@ -2402,11 +2368,6 @@ type PreviewRootRenameJSONBody struct {
 	DnsSuffix string `json:"dns_suffix"`
 }
 
-// ReorderExternalTurnServersJSONBody defines parameters for ReorderExternalTurnServers.
-type ReorderExternalTurnServersJSONBody struct {
-	Ids []string `json:"ids"`
-}
-
 // ListNodesParams defines parameters for ListNodes.
 type ListNodesParams struct {
 	Tag      *Tag                     `form:"tag,omitempty" json:"tag,omitempty"`
@@ -2535,15 +2496,6 @@ type CommitRootRenameJSONRequestBody CommitRootRenameJSONBody
 
 // PreviewRootRenameJSONRequestBody defines body for PreviewRootRename for application/json ContentType.
 type PreviewRootRenameJSONRequestBody PreviewRootRenameJSONBody
-
-// CreateExternalTurnServerJSONRequestBody defines body for CreateExternalTurnServer for application/json ContentType.
-type CreateExternalTurnServerJSONRequestBody = ExternalTurnServerCreate
-
-// ReorderExternalTurnServersJSONRequestBody defines body for ReorderExternalTurnServers for application/json ContentType.
-type ReorderExternalTurnServersJSONRequestBody ReorderExternalTurnServersJSONBody
-
-// UpdateExternalTurnServerJSONRequestBody defines body for UpdateExternalTurnServer for application/json ContentType.
-type UpdateExternalTurnServerJSONRequestBody = ExternalTurnServerUpdate
 
 // SetGroupLocationJSONRequestBody defines body for SetGroupLocation for application/json ContentType.
 type SetGroupLocationJSONRequestBody = LocationCreate

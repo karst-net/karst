@@ -55,8 +55,6 @@ pub mod service_windows;
 pub mod setup;
 mod socks5;
 pub mod trace_export;
-pub mod turn;
-pub mod turn_tls;
 pub mod wake;
 
 pub use config::{Config, ConfigError};

@@ -38,7 +38,6 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
-	"github.com/netbirdio/netbird/management/internals/karst/externalturn"
 	"github.com/netbirdio/netbird/management/internals/karst/firstrun"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ha"
@@ -418,15 +417,6 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: infrastructure connection store: %w", err)
 	}
-	// Issue #420: admin-configured, account-wide external TURN servers.
-	// Shares infraConnectionStore's own encryption key and the identical
-	// "no key configured, Create refuses" posture -- a credential this
-	// long-lived and forwarded to every node is no less sensitive than a
-	// cloud credential.
-	externalTurnStore, err := externalturn.NewStore(db, infraConnectionEncrypt)
-	if err != nil {
-		return nil, fmt.Errorf("karst: external turn store: %w", err)
-	}
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.
 	// The configured document remains a read-only fallback for accounts that
@@ -453,7 +443,6 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, router)
 		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager()})
-		karstapi.RegisterExternalTurnEndpoints(router, s.PermissionsManager(), externalTurnStore, karstapi.ExternalTurnOptions{Accounts: s.AccountManager()})
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)
@@ -500,7 +489,6 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			RegionAllow:         regionAllowStore,
 			EphemeralAnchors:    ephemeralAnchorStore,
 			RouteTelemetry:      routeTelemetryStore,
-			ExternalTurn:        externalTurnStore,
 		},
 		bedrock: &control.BedrockHandler{Log: bedrockLog, Peers: peers},
 	}

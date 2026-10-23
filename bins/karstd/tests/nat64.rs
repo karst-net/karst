@@ -258,7 +258,6 @@ fn config() -> karstd::config::Config {
         psk_epoch: 1,
         node_id: Vec::new(),
         relays: Vec::new(),
-        external_turn_servers: Vec::new(),
         relay_ca_file: None,
         prefer_quic_relay: false,
         metrics_listen: None,

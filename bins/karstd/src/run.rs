@@ -27,7 +27,7 @@ use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
 use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
-use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM, MAX_GRO_READ};
+use karst_transport::{Received, UdpTransport, BATCH, MAX_GRO_READ};
 use karst_tun::{Tun, TunConfig, Userspace};
 
 use crate::config::Config;
@@ -406,7 +406,6 @@ mod run_embedded_tests {
             psk_epoch: 1,
             node_id: Vec::new(),
             relays: Vec::new(),
-            external_turn_servers: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
@@ -743,21 +742,6 @@ fn run_engine(
     // worker connects to rather than recomputed from the registry.
     engine.set_home_relay(relay.as_ref().map(|r| r.relay_id));
 
-    // Keep the worker and bounded queue available when a managed netmap
-    // starts with no TURN endpoints, so later enablement needs no restart.
-    let turn_dropped = Arc::new(AtomicU64::new(0));
-    let (turn_out, turn_in) = {
-        let (tx, rx) = tokio::sync::mpsc::channel(TURN_QUEUE);
-        (
-            Some(TurnSender {
-                queue: tx,
-                dropped: Arc::clone(&turn_dropped),
-            }),
-            Some(rx),
-        )
-    };
-    let turn_out = turn_out.as_ref();
-
     // §9.1. The probes are per-connection state and the selector is the node's;
     // both are held here so every relay worker and the timer thread see the same
     // ones, and so a reconnection clears one relay's probes without clearing the
@@ -771,14 +755,6 @@ fn run_engine(
     // worker (the home connection and whichever on-demand ones are live)
     // writes into the one map a report reads from.
     let relay_health: Mutex<HashMap<String, Reachability>> = Mutex::new(HashMap::new());
-    // No longer read by anything (issue #418 removed its own [[turn]]
-    // bugreport section) — still written by the TURN worker below, which
-    // this issue's remaining, on-hold steps 1-2 would also remove or
-    // repoint (pending #420's decision). Left as dead tracking state
-    // rather than touched here, since deleting it requires touching the
-    // TURN worker/session subsystem this cleanup pass is explicitly not
-    // scoped to.
-    let turn_health: Mutex<HashMap<String, Reachability>> = Mutex::new(HashMap::new());
     // §9.2. Which alternative is being measured, and when the next one's turn
     // comes. Only the timer thread touches it.
     let mut rotation = crate::home::Rotation::default();
@@ -821,7 +797,6 @@ fn run_engine(
         &socket,
         &tun,
         relay_out,
-        turn_out,
     );
 
     // The local settings the netmap does not supply. Cloned once here because
@@ -884,22 +859,6 @@ fn run_engine(
             relay_health: &relay_health,
         });
 
-    // Built the same way `relay_common` is, and for the same reason: the
-    // worker needs `disco`/`engine`/`socket`/`tun` for the whole daemon
-    // lifetime, so this is constructed before the scope rather than inside
-    // the closure that spawns it.
-    let turn_common = turn_out.map(|turned| TurnCommon {
-        shutdown,
-        disco: &disco,
-        engine: &engine,
-        socket: &socket,
-        tun: &tun,
-        relayed: relay_out,
-        turned,
-        started,
-        turn_health: &turn_health,
-    });
-
     std::thread::scope(|scope| {
         if let Some(listen) = config.metrics_listen {
             // Loopback-only is already enforced at config load time
@@ -944,10 +903,7 @@ fn run_engine(
         // holds the rest. Each gets both directions, on its own two threads,
         // exactly as worker 0 always did — see `host_to_tunnel_worker`'s doc
         // comment for why running N of these is what karst-net/karst#118 is.
-        let egress = Egress {
-            relay: relay_out,
-            turn: turn_out,
-        };
+        let egress = Egress { relay: relay_out };
         let engine_host = &engine;
         let socket_host = &socket;
         let tun_host = &tun;
@@ -1005,14 +961,6 @@ fn run_engine(
             // connection must not be stalled behind a handshake with a relay
             // this node has never spoken to.
             scope.spawn(move || on_demand_hub(scope, common, on_demand_in));
-        }
-
-        // ── TURN ──────────────────────────────────────────────────────────
-        // §7.8's last resort. Its own thread and its own dedicated socket —
-        // see `crate::turn`'s module doc for why this must not share the
-        // datapath socket's demultiplexing.
-        if let (Some(common), Some(turn_in)) = (turn_common.as_ref(), turn_in) {
-            scope.spawn(move || turn_worker(common, turn_in));
         }
 
         // ── tunnel → host ──────────────────────────────────────────────────
@@ -1171,8 +1119,7 @@ fn run_engine(
                                     | ipc::Command::FileReceipts
                             ) {
                                 return file_transfer_command(
-                                    &command, engine_ctl, socket_ctl, tun_ctl, relay_out, turn_out,
-                                    started,
+                                    &command, engine_ctl, socket_ctl, tun_ctl, relay_out, started,
                                 );
                             }
                             if matches!(
@@ -1460,7 +1407,6 @@ fn run_engine(
                     gateway_refresh,
                     gateway_error_refresh,
                     relay_out,
-                    turn_out,
                     last_push_refresh,
                     control_synchronized_refresh,
                     allowed_regions_refresh,
@@ -1570,13 +1516,7 @@ fn run_engine(
                     next_probe = Instant::now();
                 }
             }
-            dispatch(
-                engine.poll(now, random_seed),
-                &socket,
-                &tun,
-                relay_out,
-                turn_out,
-            );
+            dispatch(engine.poll(now, random_seed), &socket, &tun, relay_out);
             if Instant::now() >= next_probe {
                 probe_relays(
                     &rtt_probes,
@@ -1598,7 +1538,6 @@ fn run_engine(
                 &socket,
                 &tun,
                 relay_out,
-                turn_out,
             );
             if apply_disco_paths(&disco, &engine) {
                 let current = engine.config();
@@ -1623,12 +1562,6 @@ fn run_engine(
                     );
                 }
             }
-            // §7.8's priming rule — every tick, regardless of whether the
-            // path changes above fired. Not driven from `Disco::inbound`
-            // itself: that runs on the receive thread, and priming an
-            // allocation is `crate::turn`'s I/O, not something a
-            // demultiplexer should block on.
-            prime_turn_permissions(&disco, turn_out);
         }
     });
 
@@ -2153,11 +2086,8 @@ fn first_eight(seed: &[u8; 32]) -> [u8; 8] {
     out
 }
 
-/// One relay's (or, still internally, one TURN server's) most recently
-/// observed reachability — `bugreport`'s [[relay]] section (plans/phase-6
-/// /08-observability.md §5 W6 item 3). TURN's own `[[turn]]` section was
-/// removed (issue #418); its tracking Mutex is still written but no longer
-/// read into a report.
+/// One relay's most recently observed reachability — `bugreport`'s [[relay]]
+/// section (plans/phase-6/08-observability.md §5 W6 item 3).
 ///
 /// Only a transition is recorded (see [`Reachability::record`]), not every
 /// attempt: `since` is when the current state started, which is the number
@@ -2223,8 +2153,8 @@ mod reachability_tests {
         assert!(map.lock().expect("lock")["relay-a"].reachable);
     }
 
-    /// Two different keys (two relays, or a relay and a TURN server) do not
-    /// interfere with each other's recorded state.
+    /// Two different keys (two relays) do not interfere with each other's
+    /// recorded state.
     #[test]
     fn independent_keys_are_recorded_independently() {
         let map = Mutex::new(HashMap::new());
@@ -3072,12 +3002,6 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
         context.common.socket,
         context.common.tun,
         Some(context.common.relayed),
-        // `Engine::inbound_from_relay`'s own replies are always tagged
-        // `Via::Relay`, back onto the connection the request arrived on —
-        // never `Via::Turn`, which only ever answers a datagram that arrived
-        // through this node's *own* allocation. `None` here costs nothing a
-        // relay-delivered reply could ever need.
-        None,
     );
 }
 
@@ -3237,545 +3161,6 @@ fn on_demand_hub<'scope>(
         if queue.try_send(item).is_err() {
             common.relayed.dropped.fetch_add(1, Ordering::Relaxed);
         }
-    }
-}
-
-// ── TURN — `spec/aven-v1.md` §7.8 ───────────────────────────────────────────
-
-/// How many operations may wait for the TURN worker.
-///
-/// `RELAY_QUEUE`'s reasoning, unchanged: this is a last-resort fallback path,
-/// and an operation lost to a full queue costs a retry rather than
-/// correctness — PHREATIC retransmits, and §7.8's priming rule fires again on
-/// the next `CallMeMaybe`.
-const TURN_QUEUE: usize = 256;
-
-/// Whether `addr` is the kind of address a real TURN server, sitting on the
-/// public internet, could plausibly have a route to at all.
-///
-/// Used only to filter §7.8's permission-priming targets before they reach a
-/// real socket — see the call site in `turn_session`'s `TurnOp::Prime`
-/// handling for why skipping these is not an optimization but a correctness
-/// fix. Deliberately conservative (private, loopback, link-local, unique
-/// local, unspecified, multicast, and IPv4 broadcast are all excluded): a
-/// false negative here costs one un-primed candidate that was never going to
-/// answer anyway, while a false positive risks the exact session-ending
-/// server error this filter exists to avoid.
-fn plausibly_reachable_via_turn(addr: std::net::SocketAddr) -> bool {
-    match addr.ip() {
-        std::net::IpAddr::V4(v4) => {
-            !(v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.is_multicast())
-        }
-        std::net::IpAddr::V6(v6) => {
-            !(v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                // Unique local, fc00::/7 — std's `is_unique_local` is not yet
-                // stable.
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
-                // Link-local unicast, fe80::/10.
-                || (v6.segments()[0] & 0xffc0) == 0xfe80)
-        }
-    }
-}
-
-/// One thing the TURN worker should do with its allocation.
-#[derive(Debug)]
-enum TurnOp {
-    /// Send a datagram to a peer through the allocation — `Via::Turn`'s
-    /// dispatch.
-    Send {
-        to: std::net::SocketAddr,
-        payload: Vec<u8>,
-    },
-    /// Prime a permission for every named address — §7.8's one new protocol
-    /// rule. Carries a whole `CallMeMaybe`'s worth of addresses so one
-    /// advertisement costs one queue slot rather than up to sixteen.
-    Prime(Vec<std::net::SocketAddr>),
-}
-
-/// The datapath's handle on the TURN worker.
-///
-/// `RelaySender`'s shape and the same reasoning: these calls happen on the
-/// threads that carry the tunnel and AVEN's own timers, and must never block
-/// on an allocation this node may not even hold.
-#[derive(Debug)]
-struct TurnSender {
-    queue: tokio::sync::mpsc::Sender<TurnOp>,
-    dropped: Arc<AtomicU64>,
-}
-
-impl TurnSender {
-    /// Queue a datagram for `Via::Turn`'s dispatch.
-    fn send_to(&self, to: std::net::SocketAddr, payload: &[u8]) {
-        let queued = self
-            .queue
-            .try_send(TurnOp::Send {
-                to,
-                payload: payload.to_vec(),
-            })
-            .is_ok();
-        if !queued {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    /// Queue §7.8's permission priming for every address a `CallMeMaybe` just
-    /// named. A no-op when nothing was named, so a peer's advertisement with
-    /// no TURN-relevant content — most of them, on a node with no TURN
-    /// allocation at all — costs nothing here.
-    fn prime(&self, addrs: Vec<std::net::SocketAddr>) {
-        if addrs.is_empty() {
-            return;
-        }
-        if self.queue.try_send(TurnOp::Prime(addrs)).is_err() {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-}
-
-/// Everything the TURN worker needs from the rest of the daemon.
-///
-/// `RelayCommon`'s shape, trimmed to what one unauthenticated-server
-/// allocation needs: no home-relay selection and no on-demand pool, because
-/// RFC 8656 has neither concept — a node holds at most one allocation, on the
-/// first server the netmap names, for as long as it can reach it.
-struct TurnCommon<'a> {
-    shutdown: &'a Shutdown,
-    disco: &'a Mutex<disco::Disco>,
-    engine: &'a Engine,
-    socket: &'a UdpTransport,
-    tun: &'a NetworkDevice,
-    /// Where a reply to a relay-delivered datagram would go if this worker's
-    /// own inbound processing ever produced one — see `dispatch`'s own
-    /// exhaustive `Via` match. In practice a datagram arriving through this
-    /// node's own allocation only ever produces a `Via::Turn` reply, so this
-    /// is here for the same reason `dispatch` takes it at every call site:
-    /// completeness the compiler enforces rather than a case this path
-    /// exercises.
-    relayed: Option<&'a RelaySender>,
-    /// This worker's own sender, so a reply this node's own inbound
-    /// processing decides to send `Via::Turn` reaches the same allocation it
-    /// arrived on rather than needing a second code path. `relay_worker`'s
-    /// home connection does the identical thing with `RelayCommon::relayed`.
-    turned: &'a TurnSender,
-    started: Instant,
-    /// See [`Reachability`]. Keyed by the server's URI.
-    turn_health: &'a Mutex<HashMap<String, Reachability>>,
-}
-
-/// Reconnect delay floor for the TURN worker, shared with `sleep_backoff`'s
-/// growth curve (`RELAY_BACKOFF_MIN`/`_MAX`) rather than duplicating it: this
-/// is one more connection a node retries with exactly the same patience.
-const TURN_BACKOFF_MIN: Duration = Duration::from_secs(1);
-
-/// The server this node should be dialing: the admin's first-listed entry.
-///
-/// Unlike the pre-#419 ephemeral-credential model this replaced, there is
-/// no expiry to filter on — issue #420's servers are static until the
-/// admin changes them, and that change is a full [`Engine::reconfigure`],
-/// not something this picks up mid-registry.
-fn turn_target(
-    registry: &[crate::netmap::ExternalTurnServer],
-) -> Option<&crate::netmap::ExternalTurnServer> {
-    registry.first()
-}
-
-/// Whether the allocation this worker currently holds is still the one the
-/// admin's list wants — i.e. still the first entry, with the same
-/// username/credential. Anything else (removed, reordered behind another
-/// entry, or a rotated credential for the same URI) ends this allocation
-/// so the worker rebuilds it against whatever is now wanted.
-fn turn_allocation_current(
-    current: &crate::netmap::ExternalTurnServer,
-    wanted: Option<&crate::netmap::ExternalTurnServer>,
-) -> bool {
-    wanted == Some(current)
-}
-
-/// Hold this node's TURN allocation for the life of the daemon, reconnecting
-/// with backoff, and feed the shared dispatch pipeline from its own read loop
-/// — `spec/aven-v1.md` §7.8.
-///
-/// A dedicated current-thread runtime, mirroring `relay_worker`: this
-/// allocation's control traffic and the datagrams it relays must not share a
-/// thread with the shared UDP socket's own reads, or a slow TURN server would
-/// add its latency to every packet on the direct path too.
-fn turn_worker(common: &TurnCommon<'_>, mut ops: tokio::sync::mpsc::Receiver<TurnOp>) {
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    else {
-        tracing::warn!("karstd: cannot start the turn runtime; the turn fallback is disabled");
-        return;
-    };
-    let mut backoff = TURN_BACKOFF_MIN;
-
-    while !common.shutdown.requested() {
-        // Read fresh on every (re)connect attempt, never cached separately —
-        // `Engine::external_turn_servers`'s own doc comment is why: this is
-        // never staler than the netmap already is, because
-        // `Engine::reconfigure` is what replaces it, on the same cadence as
-        // everything else the netmap carries.
-        let registry = common.engine.external_turn_servers();
-        let Some(server) = turn_target(&registry).cloned() else {
-            while ops.try_recv().is_ok() {}
-            backoff = TURN_BACKOFF_MIN;
-            let mut idle = TURN_BACKOFF_MIN;
-            sleep_backoff(common.shutdown, &mut idle);
-            continue;
-        };
-        let connected = runtime.block_on(crate::turn::Allocation::connect(&server));
-        let allocation = match connected {
-            Ok(a) => a,
-            Err(e) => {
-                Reachability::record(common.turn_health, &server.uri, false);
-                // Once per outage, not once per attempt — `relay_worker`'s own
-                // argument for the identical line.
-                if backoff == TURN_BACKOFF_MIN {
-                    tracing::warn!(
-                        "karstd: cannot reach turn server {} ({e}); retrying",
-                        server.uri
-                    );
-                }
-                sleep_backoff(common.shutdown, &mut backoff);
-                continue;
-            }
-        };
-        Reachability::record(common.turn_health, &server.uri, true);
-        if backoff != TURN_BACKOFF_MIN {
-            tracing::info!(server = %server.uri, "TURN server reachable again");
-        }
-        backoff = TURN_BACKOFF_MIN;
-
-        let relayed_addr = allocation.relayed_addr();
-        tracing::warn!(
-            "karstd: turn allocation on {} is {relayed_addr}",
-            server.uri
-        );
-        common.engine.set_turn_relay(Some(relayed_addr));
-        common
-            .disco
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .set_turn_candidate(Some(relayed_addr));
-
-        runtime.block_on(turn_session(common, &allocation, &server, &mut ops));
-        runtime.block_on(allocation.close());
-
-        // The allocation is gone — withdraw the candidate and the fallback
-        // both, so neither AVEN nor `Engine::via` goes on offering an address
-        // nothing is listening on any more.
-        common.engine.set_turn_relay(None);
-        common
-            .disco
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .set_turn_candidate(None);
-    }
-}
-
-/// Drive one allocation until it fails, the daemon shuts down, or the admin's
-/// list withdraws/replaces/rotates its server.
-async fn turn_session(
-    common: &TurnCommon<'_>,
-    allocation: &crate::turn::Allocation,
-    server: &crate::netmap::ExternalTurnServer,
-    ops: &mut tokio::sync::mpsc::Receiver<TurnOp>,
-) {
-    let mut buf = vec![0u8; MAX_DATAGRAM];
-    // This allocation's own reassembler — see `relay_worker`'s identical
-    // comment. One TURN allocation is one thread's worth of reads, so it
-    // gets a private one rather than the direct path's.
-    let mut reasm = Reassembler::new(ReasmConfig::default());
-    loop {
-        if common.shutdown.requested() {
-            return;
-        }
-        // The selected server was withdrawn, reordered behind another
-        // entry, or had its credential rotated. Tearing this allocation
-        // down rather than holding it open is what keeps
-        // `Engine::external_turn_servers` meaning "what this node should
-        // be doing" rather than merely "what it once was told" — the same
-        // reason `moved_home` acts on a relay registry change instead of
-        // only a fresh dial.
-        let registry = common.engine.external_turn_servers();
-        if !turn_allocation_current(server, turn_target(&registry)) {
-            return;
-        }
-        let received = tokio::time::timeout(TICK, async {
-            tokio::select! {
-                op = ops.recv() => Ok(op),
-                read = allocation.recv_from(&mut buf) => Err(read),
-            }
-        })
-        .await;
-        // A timeout is normal — it is what lets this loop notice a shutdown
-        // or changed TURN configuration on an otherwise quiet allocation.
-        let Ok(branch) = received else {
-            continue;
-        };
-        match branch {
-            Ok(op) => {
-                let Some(op) = op else {
-                    // The sender half is gone, which happens only at process
-                    // teardown — nothing left to serve.
-                    return;
-                };
-                match op {
-                    TurnOp::Send { to, payload } => {
-                        if let Err(e) = allocation.send_to(&payload, to).await {
-                            tracing::warn!(
-                                "karstd: turn send to {to} failed ({e}); rebuilding the allocation"
-                            );
-                            return;
-                        }
-                    }
-                    TurnOp::Prime(addrs) => {
-                        for addr in addrs {
-                            // **Never toward an address a real TURN server has
-                            // no route to.** §7.2's interface tier puts a
-                            // node's private/RFC 1918 addresses in every
-                            // `CallMeMaybe` right alongside the ones that
-                            // matter, and §7.8's priming rule primes every
-                            // address unconditionally — correctly, for
-                            // `disco.rs`'s own sans-io purposes. But this is
-                            // the boundary where that rule meets a real
-                            // socket, and priming toward one is not merely
-                            // wasted: confirmed against a real `coturn` while
-                            // wiring this up, asking it to relay a Send
-                            // indication toward an unroutable private address
-                            // tears down the *entire* session — every
-                            // permission this allocation holds, not just the
-                            // one doomed destination — with "udp send: Network
-                            // is unreachable". `plausibly_reachable_via_turn`
-                            // is the filter that keeps priming from ever
-                            // trying.
-                            if !plausibly_reachable_via_turn(addr) {
-                                continue;
-                            }
-                            // A harmless one-byte payload. This is what both
-                            // creates the RFC 8656 permission (the crate's
-                            // `RelayConn::send_to` does that on any first send
-                            // to a new address — see this module's own doc
-                            // comment) and, on arrival, is silently dropped by
-                            // whichever protocol receives it: it matches
-                            // neither AVEN's four-byte magic nor a PHREATIC
-                            // fragment header, so `spec/aven-v1.md` §10 and
-                            // `phreatic-v1.md`'s own malformed-input handling
-                            // both discard it without a log line.
-                            let _ = allocation.send_to(&[0u8], addr).await;
-                        }
-                    }
-                }
-            }
-            Err(Ok((n, from))) => {
-                let Some(datagram) = buf.get(..n) else {
-                    continue;
-                };
-                let now = now_ms(common.started);
-                let out = demultiplex_via_turn(
-                    &mut reasm,
-                    datagram,
-                    from,
-                    now,
-                    common.disco,
-                    common.engine,
-                );
-                dispatch(
-                    out,
-                    common.socket,
-                    common.tun,
-                    common.relayed,
-                    Some(common.turned),
-                );
-            }
-            Err(Err(e)) => {
-                tracing::warn!("karstd: turn allocation on this node failed ({e}); rebuilding it");
-                return;
-            }
-        }
-    }
-}
-
-/// Like [`demultiplex`], for a datagram that arrived through this node's own
-/// TURN allocation rather than the shared UDP socket — `spec/aven-v1.md` §7.8.
-///
-/// **Every reply `demultiplex`'s ordinary tagging produces answers the exact
-/// address the request arrived from** — a `Pong` answers the address a `Ping`
-/// came from, a handshake response answers the address its `HandshakeInit`
-/// came from, and neither AVEN nor PHREATIC ever redirects a reply elsewhere.
-/// So the one thing this needs to change is *how* such a reply leaves this
-/// node: through the allocation it arrived on, because the shared socket
-/// cannot reach a peer that could only be reached this way in the first
-/// place. Rather than threading a second, TURN-aware reply path through
-/// `karst_node::Session` and `karst_disco::Engine` — which would duplicate
-/// `Engine::inbound`'s handshake and cookie logic a third time, beside
-/// `inbound` and `inbound_from_relay` — this reuses `demultiplex` unchanged
-/// and rewrites the one `Via` value the rewrite rule above guarantees is safe
-/// to rewrite.
-fn demultiplex_via_turn(
-    reasm: &mut Reassembler,
-    datagram: &[u8],
-    from: std::net::SocketAddr,
-    now_ms: u64,
-    disco: &Mutex<disco::Disco>,
-    engine: &Engine,
-) -> Output {
-    let mut out = demultiplex(reasm, datagram, from, now_ms, disco, engine);
-    for (_, via) in &mut out.datagrams {
-        if *via == Via::Direct(from) {
-            *via = Via::Turn(from);
-        }
-    }
-    out
-}
-
-/// Prime a permission on this node's own TURN allocation for every address a
-/// peer's `CallMeMaybe` has named since this was last asked — §7.8's one new
-/// protocol rule.
-fn prime_turn_permissions(disco: &Mutex<disco::Disco>, turn: Option<&TurnSender>) {
-    let Some(turn) = turn else {
-        return;
-    };
-    let addrs = disco
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take_turn_primes();
-    turn.prime(addrs);
-}
-
-#[cfg(test)]
-mod turn_tests {
-    #![allow(clippy::expect_used)]
-    use super::plausibly_reachable_via_turn;
-
-    fn server(uri: &str, username: &str, credential: &str) -> crate::netmap::ExternalTurnServer {
-        crate::netmap::ExternalTurnServer {
-            uri: uri.to_owned(),
-            username: username.to_owned(),
-            credential: credential.to_owned(),
-        }
-    }
-
-    #[test]
-    fn turn_target_picks_the_admins_first_entry() {
-        assert!(super::turn_target(&[]).is_none());
-        let first = server("turn:first:3478", "first", "secret");
-        let second = server("turn:second:3478", "second", "secret");
-        let registry = [first.clone(), second];
-        assert_eq!(super::turn_target(&registry), Some(&first));
-    }
-
-    #[test]
-    fn turn_withdrawal_replacement_and_rotation_end_the_old_allocation() {
-        let current = server("turn:first:3478", "first", "secret");
-        let replacement = server("turn:second:3478", "second", "secret");
-        // Withdrawn entirely (empty registry): nothing is wanted any more.
-        assert!(!super::turn_allocation_current(&current, None));
-        // Reordered behind another entry: no longer the first-listed target.
-        assert!(!super::turn_allocation_current(
-            &current,
-            Some(&replacement)
-        ));
-        // Still the admin's first entry, byte-for-byte: stays current.
-        assert!(super::turn_allocation_current(&current, Some(&current)));
-        // Same URI/username, rotated credential: must not be treated as the
-        // same allocation -- a rotated secret takes effect immediately, not
-        // on whatever cadence the old allocation happened to need rebuilding.
-        let mut rotated = current.clone();
-        rotated.credential = "rotated-secret".to_owned();
-        assert!(!super::turn_allocation_current(&current, Some(&rotated)));
-    }
-
-    #[test]
-    fn reconfigure_replaces_the_external_turn_list_wholesale() {
-        // Issue #420: unlike the pre-#419 ephemeral-credential model this
-        // replaced, there is no separate "credential-only refresh" path any
-        // more -- the list is part of the netmap content hash, so it only
-        // ever changes alongside a full Engine::reconfigure, which this
-        // proves end to end rather than through a since-removed dedicated
-        // method.
-        let mut config = std::sync::Arc::try_unwrap(super::probe_tests::config(Vec::new()))
-            .expect("unshared fixture");
-        config.external_turn_servers = vec![server("turn:backend:3478", "first", "secret")];
-        let config = std::sync::Arc::new(config);
-        let engine = super::Engine::new(&config);
-        assert_eq!(
-            engine.external_turn_servers(),
-            vec![server("turn:backend:3478", "first", "secret")]
-        );
-
-        let mut next = std::sync::Arc::try_unwrap(super::probe_tests::config(Vec::new()))
-            .expect("unshared fixture");
-        next.external_turn_servers = vec![server("turn:backend:3478", "first", "rotated-secret")];
-        let next = std::sync::Arc::new(next);
-        engine.reconfigure(&next);
-        assert_eq!(
-            engine.external_turn_servers(),
-            vec![server("turn:backend:3478", "first", "rotated-secret")]
-        );
-    }
-
-    fn v4(a: u8, b: u8, c: u8, d: u8) -> std::net::SocketAddr {
-        std::net::SocketAddr::from(([a, b, c, d], 51820))
-    }
-
-    fn v6(a: u16) -> std::net::SocketAddr {
-        std::net::SocketAddr::from((std::net::Ipv6Addr::new(a, 0, 0, 0, 0, 0, 0, 1), 51820))
-    }
-
-    /// The exact regression this filter exists for: a real `coturn` tore
-    /// down the whole allocation, not merely refused the one send, when
-    /// asked to prime a permission toward a private candidate address —
-    /// `spec/aven-v1.md` §7.2's interface tier puts one in every
-    /// `CallMeMaybe` a node with a private address sends.
-    #[test]
-    fn private_v4_is_refused() {
-        assert!(!plausibly_reachable_via_turn(v4(10, 98, 1, 2)));
-        assert!(!plausibly_reachable_via_turn(v4(192, 168, 1, 1)));
-        assert!(!plausibly_reachable_via_turn(v4(172, 16, 0, 1)));
-    }
-
-    #[test]
-    fn loopback_link_local_and_unspecified_v4_are_refused() {
-        assert!(!plausibly_reachable_via_turn(v4(127, 0, 0, 1)));
-        assert!(!plausibly_reachable_via_turn(v4(169, 254, 1, 1)));
-        assert!(!plausibly_reachable_via_turn(v4(0, 0, 0, 0)));
-        assert!(!plausibly_reachable_via_turn(v4(255, 255, 255, 255)));
-        assert!(!plausibly_reachable_via_turn(v4(224, 0, 0, 1)));
-    }
-
-    /// A reflexive or TURN-relayed address — exactly what priming exists to
-    /// reach — must not be caught by the same filter.
-    #[test]
-    fn a_public_v4_address_is_accepted() {
-        assert!(plausibly_reachable_via_turn(v4(51, 75, 10, 2)));
-    }
-
-    #[test]
-    fn unique_local_link_local_loopback_and_unspecified_v6_are_refused() {
-        assert!(!plausibly_reachable_via_turn(v6(0xfc00)));
-        assert!(!plausibly_reachable_via_turn(v6(0xfd12)));
-        assert!(!plausibly_reachable_via_turn(v6(0xfe80)));
-        assert!(!plausibly_reachable_via_turn(std::net::SocketAddr::from((
-            std::net::Ipv6Addr::LOCALHOST,
-            51820
-        ))));
-        assert!(!plausibly_reachable_via_turn(std::net::SocketAddr::from((
-            std::net::Ipv6Addr::UNSPECIFIED,
-            51820
-        ))));
-    }
-
-    #[test]
-    fn a_global_v6_address_is_accepted() {
-        assert!(plausibly_reachable_via_turn(v6(0x2001)));
     }
 }
 
@@ -5355,9 +4740,9 @@ struct PeerJson {
     rekeying: bool,
     allowed_ips: Vec<String>,
     psk_fallback: bool,
-    /// `Transport`'s own `Display` — "direct" | "relay" | "turn" | "none" —
-    /// reused rather than re-matched, so a transport this struct doesn't know
-    /// about yet cannot compile without also updating this string.
+    /// `Transport`'s own `Display` — "direct" | "relay" | "none" — reused
+    /// rather than re-matched, so a transport this struct doesn't know about
+    /// yet cannot compile without also updating this string.
     transport: String,
     tx_bytes: u64,
     rx_bytes: u64,
@@ -5692,13 +5077,7 @@ fn demultiplex(
 /// `Output` is entirely direct or entirely relayed, so the batch is built from
 /// the direct ones in place and a separate pass only runs when a relayed
 /// datagram is actually present.
-fn dispatch(
-    out: Output,
-    socket: &UdpTransport,
-    tun: &NetworkDevice,
-    relay: Option<&RelaySender>,
-    turn: Option<&TurnSender>,
-) {
+fn dispatch(out: Output, socket: &UdpTransport, tun: &NetworkDevice, relay: Option<&RelaySender>) {
     let mut direct: Vec<(&[u8], std::net::SocketAddr)> = Vec::with_capacity(out.datagrams.len());
     for (datagram, via) in &out.datagrams {
         match via {
@@ -5709,11 +5088,6 @@ fn dispatch(
             } => {
                 if let Some(relay) = relay {
                     relay.send_via(*on, *destination, datagram);
-                }
-            }
-            Via::Turn(to) => {
-                if let Some(turn) = turn {
-                    turn.send_to(*to, datagram);
                 }
             }
         }
@@ -5815,7 +5189,6 @@ fn file_transfer_command(
     socket: &UdpTransport,
     tun: &NetworkDevice,
     relay: Option<&RelaySender>,
-    turn: Option<&TurnSender>,
     started: Instant,
 ) -> String {
     use std::fmt::Write as _;
@@ -5843,7 +5216,7 @@ fn file_transfer_command(
                 .map_or_else(|| path.clone(), |n| n.to_string_lossy().into_owned());
             match engine.offer_file(index, name, data, now) {
                 Ok((id, out)) => {
-                    dispatch(out, socket, tun, relay, turn);
+                    dispatch(out, socket, tun, relay);
                     format!(
                         "transfer_id = \"{}\"\nstatus = \"offered\"\n",
                         filetransfer::id_to_hex(&id)
@@ -5861,7 +5234,7 @@ fn file_transfer_command(
             };
             match engine.accept_transfer(index, id, now) {
                 Ok(out) => {
-                    dispatch(out, socket, tun, relay, turn);
+                    dispatch(out, socket, tun, relay);
                     "status = \"accepted\"\n".to_owned()
                 }
                 Err(error) => format!("error = \"{error}\"\n"),
@@ -5877,7 +5250,7 @@ fn file_transfer_command(
             match engine.reject_transfer(index, id, filetransfer::RejectReason::parse(reason), now)
             {
                 Ok(out) => {
-                    dispatch(out, socket, tun, relay, turn);
+                    dispatch(out, socket, tun, relay);
                     "status = \"rejected\"\n".to_owned()
                 }
                 Err(error) => format!("error = \"{error}\"\n"),
@@ -5951,7 +5324,7 @@ fn host_to_tunnel_worker(
             out.datagrams.extend(o.datagrams);
             out.packets.extend(o.packets);
         }
-        dispatch(out, socket, tun, egress.relay, egress.turn);
+        dispatch(out, socket, tun, egress.relay);
     }
 }
 
@@ -5963,7 +5336,6 @@ fn host_to_tunnel_worker(
 #[derive(Clone, Copy)]
 struct Egress<'a> {
     relay: Option<&'a RelaySender>,
-    turn: Option<&'a TurnSender>,
 }
 
 /// The tunnel→host half of one datapath worker: read inbound datagrams off
@@ -6012,7 +5384,7 @@ fn tunnel_to_host_worker(
                 continue;
             };
             let out = demultiplex(&mut reasm, datagram, m.from, now_ms(started), disco, engine);
-            dispatch(out, socket, tun, egress.relay, egress.turn);
+            dispatch(out, socket, tun, egress.relay);
         }
     }
 }
@@ -6049,7 +5421,6 @@ fn refresh_netmap(
     gateway: &Mutex<crate::gateway::Manager>,
     gateway_error: &Mutex<Option<String>>,
     relayed: Option<&RelaySender>,
-    turned: Option<&TurnSender>,
     last_push: &Mutex<Option<Instant>>,
     control_synchronized: &std::sync::atomic::AtomicBool,
     allowed_regions: &Mutex<crate::netmap::AllowedRegions>,
@@ -6180,7 +5551,6 @@ fn refresh_netmap(
                 path: match status.transport {
                     crate::engine::Transport::Direct => "direct",
                     crate::engine::Transport::Relay => "relay",
-                    crate::engine::Transport::Turn => "turn",
                     crate::engine::Transport::Unreachable => "unreachable",
                 }
                 .to_owned(),
@@ -6329,11 +5699,6 @@ fn refresh_netmap(
                     );
                 }
                 control_backoff = RELAY_BACKOFF_MIN;
-                // Issue #420's external TURN list is part of the netmap
-                // content hash (unlike the pre-#419 ephemeral-credential
-                // model, which deliberately sat outside it and needed its
-                // own refresh here): `Unchanged` already means it, like
-                // everything else hashed, did not move.
                 crate::netmap::Outcome::Unchanged
             }
             Ok(outcome) => {
@@ -6455,7 +5820,6 @@ fn refresh_netmap(
             socket,
             tun,
             relayed,
-            turned,
         );
     }
 }
@@ -6796,7 +6160,6 @@ mod route_tests {
             psk_epoch: 1,
             node_id: Vec::new(),
             relays: Vec::new(),
-            external_turn_servers: Vec::new(),
             peers,
             routes: crate::routing::AllowedIps::build(pairs).expect("no conflicts"),
             skipped: Vec::new(),
@@ -7525,7 +6888,6 @@ mod probe_tests {
             psk_epoch: 1,
             node_id: Vec::new(),
             relays,
-            external_turn_servers: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
@@ -8398,7 +7760,6 @@ mod probe_tests {
             psk_epoch: 1,
             node_id: Vec::new(),
             relays,
-            external_turn_servers: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),

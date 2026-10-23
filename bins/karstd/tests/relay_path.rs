@@ -179,7 +179,6 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         } else {
             Vec::new()
         },
-        external_turn_servers: Vec::new(),
         peers,
         routes: AllowedIps::build(pairs).expect("no conflicts"),
         skipped: Vec::new(),
@@ -625,12 +624,6 @@ fn route(from: &Node, now: u64) -> Route {
         )) => Route::Published(*id),
         Some((_, Via::Direct(addr))) => {
             panic!("a peer with no endpoint was sent directly to {addr}")
-        }
-        // This fixture never configures a TURN server (`node`'s
-        // `external_turn_servers: Vec::new()`), so `Engine::via`'s §7.8
-        // fallback has nothing to fall back to and must not produce this.
-        Some((_, Via::Turn(addr))) => {
-            panic!("no turn server is configured in this fixture, but a peer was sent via turn to {addr}")
         }
     }
 }

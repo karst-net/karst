@@ -920,11 +920,6 @@ pub struct Config {
     pub node_id: Vec<u8>,
     /// Authenticated relay choices from the netmap.
     pub relays: Vec<crate::netmap::Relay>,
-    /// Issue #420's admin-configured, account-wide external TURN server
-    /// list from the netmap, in admin order — `spec/aven-v1.md` §7.8's
-    /// fallback. Empty for a deployment that has not configured one, and
-    /// for a static TOML roster, which has no netmap to carry one.
-    pub external_turn_servers: Vec<crate::netmap::ExternalTurnServer>,
     /// Extra trust anchors for relay TLS, from `[control] relay_ca_file`.
     ///
     /// Local configuration rather than netmap content, deliberately: which
@@ -1102,7 +1097,6 @@ impl Config {
             psk_epoch: file.node.psk_epoch,
             node_id: Vec::new(),
             relays: Vec::new(),
-            external_turn_servers: Vec::new(),
             relay_ca_file: None,
             prefer_quic_relay: false,
             route_offers: Vec::new(),
@@ -1311,14 +1305,6 @@ impl Config {
                     relay
                 })
                 .collect(),
-            // **Not NAT64-rewritten, unlike `relays` above.** A `turn:` or
-            // `turns:` URI is not the bare `address:port` `rewrite_authority`
-            // expects, and no row in this tree yet pairs a NAT64 node with a
-            // configured TURN server. A NAT64 node that is handed one will
-            // fail to reach it the same way it would fail to reach any other
-            // unrewritten IPv4 literal — a known gap, not a silent one, since
-            // `crate::turn`'s connect failure is logged like any other.
-            external_turn_servers: netmap.external_turn.servers().to_vec(),
             relay_ca_file: local.relay_ca_file,
             prefer_quic_relay: local.prefer_quic_relay,
             peers,
