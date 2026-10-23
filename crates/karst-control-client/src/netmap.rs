@@ -292,6 +292,20 @@ pub struct NetmapContent<'a> {
     /// seconds — the "duty cycle." Hashed for the identical reason as
     /// `ephemeral_anchor_window_period_seconds` above.
     pub ephemeral_anchor_duty_cycle_seconds: u32,
+    /// Issue #420's admin-configured, account-wide external TURN server
+    /// list, in admin order. The credential is hashed even though it is
+    /// never exposed to the console: an admin who only rotates a stored
+    /// credential (same uri/username) must still move the version.
+    pub external_turn: &'a [ExternalTurnServerView<'a>],
+}
+
+/// One admin-configured external TURN server — issue #420 — as the
+/// version hash sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExternalTurnServerView<'a> {
+    pub uri: &'a str,
+    pub username: &'a str,
+    pub credential: &'a str,
 }
 
 /// The Bedrock log tip as the version hash sees it — `bedrock-v1.md` §5.
@@ -462,6 +476,14 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     }
     h.update(content.ephemeral_anchor_window_period_seconds.to_be_bytes());
     h.update(content.ephemeral_anchor_duty_cycle_seconds.to_be_bytes());
+
+    // Issue #420's admin-configured external TURN list.
+    push(&mut h, b"karst-external-turn");
+    for server in content.external_turn {
+        push(&mut h, server.uri.as_bytes());
+        push(&mut h, server.username.as_bytes());
+        push(&mut h, server.credential.as_bytes());
+    }
 
     let v = leading_u64(&h.finalize());
     // Zero means "I hold no netmap" on the request side, so it must never be a

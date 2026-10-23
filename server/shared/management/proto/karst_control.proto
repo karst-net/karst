@@ -471,6 +471,31 @@ message KarstEphemeralAnchors {
   uint32 duty_cycle_seconds = 3;
 }
 
+// KarstExternalTurnConfig is issue #420's admin-configured, account-wide
+// list of externally-operated TURN servers — distinct from and never
+// reusing field 16's reserved, Karst-managed `turn_servers`. See
+// KarstNetmapResponse.external_turn's own doc comment for the distinction.
+message KarstExternalTurnConfig {
+  // Ordered: a node tries entries in this order, same semantics as the
+  // pre-#419 roster's own fallback ordering.
+  repeated KarstExternalTurnServer servers = 1;
+}
+
+// KarstExternalTurnServer is one admin-entered entry: a URI and the
+// operator's own already-provisioned long-term credential for it (RFC
+// 5389/8656's long-term credential mechanism). Karst mints nothing here —
+// `credential` is exactly what the admin typed into the console, sent
+// unchanged to every node. `uri` MUST use the `turns:` scheme; a plain
+// `turn:` entry is rejected at write time (see externalturn.validate),
+// never silently accepted and then simply not encrypted in transit --
+// a credential this long-lived, shared across every node, is the one
+// real exposure this feature carries.
+message KarstExternalTurnServer {
+  string uri = 1;
+  string username = 2;
+  string credential = 3;
+}
+
 // KarstBedrockMode is the operator-selected enforcement level — bedrock-v1.md
 // §6. Ordered: each level is strictly stronger than the one before, which is
 // what lets a node take the maximum of this and its local floor.
@@ -641,6 +666,16 @@ message KarstNetmapResponse {
   // or present with an empty `anchors` list, means no ephemeral anchor is
   // ever probed by any node — see KarstEphemeralAnchors's own doc comment.
   KarstEphemeralAnchors ephemeral_anchors = 21;
+
+  // Issue #420: admin-configured, account-wide external TURN servers —
+  // deliberately not the same field this message once called
+  // `turn_servers` (reserved above, field 16, never reused). That field
+  // carried Karst-minted ephemeral credentials for a Karst-managed
+  // registry; this one carries the operator's own static, long-term
+  // credential for a server Karst neither manages nor probes. Absent, or
+  // present with an empty `servers` list, means no node dials an external
+  // TURN server at all. Ordered: a node tries entries in list order.
+  KarstExternalTurnConfig external_turn = 23;
 
   // True when `peers` contains only entries that changed, and `removed_peers`
   // names those to drop. False means `peers` is the complete set and anything

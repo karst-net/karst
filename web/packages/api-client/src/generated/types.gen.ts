@@ -523,6 +523,45 @@ export type RelayServiceView = RelayService & {
     ponor_present: boolean;
 };
 
+export type ExternalTurnServer = {
+    readonly id: string;
+    /**
+     * Zero-based admin order; a node tries entries in this order. Set with PUT /external-turn-servers/reorder
+     */
+    readonly position: number;
+    /**
+     * Must use the turns: scheme -- a plain turn: entry is rejected.
+     */
+    uri: string;
+    username: string;
+    readonly created_at: string;
+    readonly updated_at: string;
+};
+
+export type ExternalTurnServerCreate = {
+    /**
+     * Must use the turns: scheme.
+     */
+    uri: string;
+    username: string;
+    /**
+     * The operator's own already-provisioned long-term TURN credential. Never returned by any later read.
+     */
+    credential: string;
+};
+
+export type ExternalTurnServerUpdate = {
+    /**
+     * Must use the turns: scheme.
+     */
+    uri: string;
+    username: string;
+    /**
+     * Omit to leave the stored credential untouched -- there is nothing to redisplay to confirm
+     */
+    credential?: string;
+};
+
 export type RelayCreate = {
     address: string;
     identity_key: string;
@@ -937,6 +976,14 @@ export type DeviceEnrollmentWritable = {
 
 export type NodePageWritable = Page & {
     items: Array<NodeWritable>;
+};
+
+export type ExternalTurnServerWritable = {
+    /**
+     * Must use the turns: scheme -- a plain turn: entry is rejected.
+     */
+    uri: string;
+    username: string;
 };
 
 export type RelayWritable = RelayCreate & {
@@ -2336,6 +2383,149 @@ export type SetRelayServiceModesResponses = {
 };
 
 export type SetRelayServiceModesResponse = SetRelayServiceModesResponses[keyof SetRelayServiceModesResponses];
+
+export type ListExternalTurnServersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/external-turn-servers';
+};
+
+export type ListExternalTurnServersErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListExternalTurnServersError = ListExternalTurnServersErrors[keyof ListExternalTurnServersErrors];
+
+export type ListExternalTurnServersResponses = {
+    /**
+     * External TURN servers
+     */
+    200: Array<ExternalTurnServer>;
+};
+
+export type ListExternalTurnServersResponse = ListExternalTurnServersResponses[keyof ListExternalTurnServersResponses];
+
+export type CreateExternalTurnServerData = {
+    body: ExternalTurnServerCreate;
+    path?: never;
+    query?: never;
+    url: '/external-turn-servers';
+};
+
+export type CreateExternalTurnServerErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateExternalTurnServerError = CreateExternalTurnServerErrors[keyof CreateExternalTurnServerErrors];
+
+export type CreateExternalTurnServerResponses = {
+    /**
+     * External TURN server created
+     */
+    201: ExternalTurnServer;
+};
+
+export type CreateExternalTurnServerResponse = CreateExternalTurnServerResponses[keyof CreateExternalTurnServerResponses];
+
+export type ReorderExternalTurnServersData = {
+    body: {
+        ids: Array<string>;
+    };
+    path?: never;
+    query?: never;
+    url: '/external-turn-servers/reorder';
+};
+
+export type ReorderExternalTurnServersErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ReorderExternalTurnServersError = ReorderExternalTurnServersErrors[keyof ReorderExternalTurnServersErrors];
+
+export type ReorderExternalTurnServersResponses = {
+    /**
+     * Reordered external TURN servers
+     */
+    200: Array<ExternalTurnServer>;
+};
+
+export type ReorderExternalTurnServersResponse = ReorderExternalTurnServersResponses[keyof ReorderExternalTurnServersResponses];
+
+export type DeleteExternalTurnServerData = {
+    body?: never;
+    path: {
+        serverId: string;
+    };
+    query?: never;
+    url: '/external-turn-servers/{serverId}';
+};
+
+export type DeleteExternalTurnServerErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteExternalTurnServerError = DeleteExternalTurnServerErrors[keyof DeleteExternalTurnServerErrors];
+
+export type DeleteExternalTurnServerResponses = {
+    /**
+     * External TURN server removed
+     */
+    204: void;
+};
+
+export type DeleteExternalTurnServerResponse = DeleteExternalTurnServerResponses[keyof DeleteExternalTurnServerResponses];
+
+export type UpdateExternalTurnServerData = {
+    body: ExternalTurnServerUpdate;
+    path: {
+        serverId: string;
+    };
+    query?: never;
+    url: '/external-turn-servers/{serverId}';
+};
+
+export type UpdateExternalTurnServerErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type UpdateExternalTurnServerError = UpdateExternalTurnServerErrors[keyof UpdateExternalTurnServerErrors];
+
+export type UpdateExternalTurnServerResponses = {
+    /**
+     * External TURN server updated
+     */
+    200: ExternalTurnServer;
+};
+
+export type UpdateExternalTurnServerResponse = UpdateExternalTurnServerResponses[keyof UpdateExternalTurnServerResponses];
 
 export type ListRelaysData = {
     body?: never;

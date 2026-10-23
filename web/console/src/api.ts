@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, ExternalTurnServer, ExternalTurnServerCreate, ExternalTurnServerUpdate, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -371,4 +371,13 @@ export const api = {
   // obtained from the infrastructureConnections* calls above.
   enableInfrastructureConnectionRegion: (id: string, code: string, parentRegion: string) =>
     request<DiscoveredResource>(`/cloud-accounts/${encodeURIComponent(id)}/regions/${encodeURIComponent(code)}/enable`, { method: "POST", body: body({ parent_region: parentRegion }) }),
+
+  // ── external TURN servers (issue #420) ──────────────────────────────────
+  // The credential is write-only -- see externalturn.Response -- never
+  // returned by any of these calls once set.
+  externalTurnServers: () => request<ExternalTurnServer[]>("/external-turn-servers"),
+  createExternalTurnServer: (entry: ExternalTurnServerCreate) => request<ExternalTurnServer>("/external-turn-servers", { method: "POST", body: body(entry) }),
+  updateExternalTurnServer: (id: string, entry: ExternalTurnServerUpdate) => request<ExternalTurnServer>(`/external-turn-servers/${encodeURIComponent(id)}`, { method: "PUT", body: body(entry) }),
+  deleteExternalTurnServer: (id: string) => request<void>(`/external-turn-servers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  reorderExternalTurnServers: (ids: string[]) => request<ExternalTurnServer[]>("/external-turn-servers/reorder", { method: "PUT", body: body({ ids }) }),
 };

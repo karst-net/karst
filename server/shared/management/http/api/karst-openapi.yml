@@ -579,6 +579,60 @@ paths:
       responses:
         '200': {description: Updated mode configuration, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /external-turn-servers:
+    get:
+      operationId: listExternalTurnServers
+      tags: [settings]
+      description: Admin-configured, account-wide external TURN servers (issue #420). The credential is never returned -- write-only, set on create or replace on update.
+      responses:
+        '200': {description: External TURN servers, in admin order, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/ExternalTurnServer'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createExternalTurnServer
+      tags: [settings]
+      description: 'Add a new entry at the end of the current order. uri must use the turns: scheme.'
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ExternalTurnServerCreate'}}}}
+      responses:
+        '201': {description: External TURN server created, content: {application/json: {schema: {$ref: '#/components/schemas/ExternalTurnServer'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /external-turn-servers/reorder:
+    put:
+      operationId: reorderExternalTurnServers
+      tags: [settings]
+      description: Set a new admin order. ids must name exactly the account's current entries, each exactly once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ids]
+              properties:
+                ids: {type: array, items: {type: string}}
+      responses:
+        '200': {description: Reordered external TURN servers, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/ExternalTurnServer'}}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /external-turn-servers/{serverId}:
+    parameters:
+      - {name: serverId, in: path, required: true, schema: {type: string}}
+    put:
+      operationId: updateExternalTurnServer
+      tags: [settings]
+      description: Replace uri/username unconditionally. credential is left untouched when omitted (write-only -- there is nothing to redisplay to confirm).
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ExternalTurnServerUpdate'}}}}
+      responses:
+        '200': {description: External TURN server updated, content: {application/json: {schema: {$ref: '#/components/schemas/ExternalTurnServer'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteExternalTurnServer
+      tags: [settings]
+      responses:
+        '204': {description: External TURN server removed}
+        default: {$ref: '#/components/responses/Error'}
   /relays:
     get:
       operationId: listRelays
@@ -1528,6 +1582,33 @@ components:
           required: [ponor_present]
           properties:
             ponor_present: {type: boolean, description: Referenced Ponor registry entry exists in this account; not a health result.}
+    ExternalTurnServer:
+      type: object
+      required: [id, position, uri, username, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id: {type: string, readOnly: true}
+        position: {type: integer, readOnly: true, description: Zero-based admin order; a node tries entries in this order. Set with PUT /external-turn-servers/reorder, never directly.}
+        uri: {type: string, description: 'Must use the turns: scheme -- a plain turn: entry is rejected.'}
+        username: {type: string}
+        created_at: {type: string, format: date-time, readOnly: true}
+        updated_at: {type: string, format: date-time, readOnly: true}
+    ExternalTurnServerCreate:
+      type: object
+      required: [uri, username, credential]
+      additionalProperties: false
+      properties:
+        uri: {type: string, description: 'Must use the turns: scheme.'}
+        username: {type: string}
+        credential: {type: string, description: The operator's own already-provisioned long-term TURN credential. Never returned by any later read.}
+    ExternalTurnServerUpdate:
+      type: object
+      required: [uri, username]
+      additionalProperties: false
+      properties:
+        uri: {type: string, description: 'Must use the turns: scheme.'}
+        username: {type: string}
+        credential: {type: string, description: Omit to leave the stored credential untouched -- there is nothing to redisplay to confirm, so a present value always replaces rather than merges.}
     RelayCreate:
       type: object
       required: [address, identity_key, region]

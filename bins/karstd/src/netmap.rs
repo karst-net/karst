@@ -32,8 +32,8 @@ use std::fmt;
 
 use karst_control_client::netmap::{
     netmap_version, peer_digest, AllowedRegionsEntryView, BedrockHeadView, DNSConfigView,
-    DNSRouteView, DNSUpstreamView, EphemeralAnchorsEntryView, FilterRuleView, NetmapContent,
-    PeerEntry, RelayView,
+    DNSRouteView, DNSUpstreamView, EphemeralAnchorsEntryView, ExternalTurnServerView,
+    FilterRuleView, NetmapContent, PeerEntry, RelayView,
 };
 use karst_control_client::transport::pb;
 use sha2::{Digest as _, Sha256};
@@ -334,6 +334,94 @@ impl EphemeralAnchors {
     #[must_use]
     pub fn duty_cycle_seconds(&self) -> u32 {
         self.duty_cycle_seconds
+    }
+}
+
+/// One admin-configured external TURN server — issue #420. Deliberately a
+/// distinct type from [`TurnServer`]: that one is the pre-#419 model's
+/// server-minted, short-lived TURN-REST credential (`region`/`expires_at`
+/// and all), carried by a field (`turn_servers`, proto field 16) that is
+/// now permanently reserved and empty. This one carries exactly what an
+/// admin typed into the console -- a static, long-term credential with no
+/// region selection or expiry -- over a different wire field entirely
+/// (`external_turn`). Nothing here mints or rotates anything.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct ExternalTurnServer {
+    /// A `turns:` URI. The control plane rejects a plain `turn:` entry at
+    /// write time (issue #418 §5's risk note on a long-lived, shared
+    /// credential), so a well-formed response never carries one, but this
+    /// is not re-validated here -- see this field's own call site.
+    pub uri: String,
+    pub username: String,
+    /// The operator's own already-provisioned long-term TURN credential,
+    /// exactly as entered in the console. Not a [`TurnCredential`] -- that
+    /// type exists for the ephemeral, HMAC-derived TURN-REST scheme this
+    /// is deliberately not using. A plain `String`, not a type that refuses
+    /// to print the way [`TurnCredential`] does, so this struct's own
+    /// `Debug` impl below is what has to keep it out of logs/traces
+    /// instead.
+    pub credential: String,
+}
+
+impl fmt::Debug for ExternalTurnServer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExternalTurnServer")
+            .field("uri", &self.uri)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Issue #420's admin-configured, account-wide external TURN server list,
+/// in admin order -- a node tries entries in this order. Absent, or
+/// present with an empty list, means no node dials an external TURN
+/// server at all.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExternalTurnConfig {
+    servers: Vec<ExternalTurnServer>,
+}
+
+impl ExternalTurnConfig {
+    fn from_wire(msg: Option<pb::KarstExternalTurnConfig>) -> Self {
+        let Some(msg) = msg else {
+            return Self::default();
+        };
+        Self {
+            servers: msg
+                .servers
+                .into_iter()
+                .map(|s| ExternalTurnServer {
+                    uri: s.uri,
+                    username: s.username,
+                    credential: s.credential,
+                })
+                .collect(),
+        }
+    }
+
+    /// `None` when `servers` is empty, so re-encoding into the on-disk
+    /// cache reproduces the bytes the server sent -- the same reasoning
+    /// [`EphemeralAnchors::to_wire`] documents.
+    fn to_wire(&self) -> Option<pb::KarstExternalTurnConfig> {
+        if self.servers.is_empty() {
+            return None;
+        }
+        Some(pb::KarstExternalTurnConfig {
+            servers: self
+                .servers
+                .iter()
+                .map(|s| pb::KarstExternalTurnServer {
+                    uri: s.uri.clone(),
+                    username: s.username.clone(),
+                    credential: s.credential.clone(),
+                })
+                .collect(),
+        })
+    }
+
+    /// Every configured server, in admin order.
+    #[must_use]
+    pub fn servers(&self) -> &[ExternalTurnServer] {
+        &self.servers
     }
 }
 
@@ -875,6 +963,14 @@ pub struct Netmap {
     /// the netmap content hash, so a changed anchor list or duty cycle
     /// reaches this node on its next poll.
     pub ephemeral_anchors: EphemeralAnchors,
+    /// Issue #420's admin-configured, account-wide external TURN server
+    /// list. Part of the netmap content hash, so a changed list reaches
+    /// this node on its next poll. Not yet consumed by anything that
+    /// dials a TURN server -- that repointing is tracked separately; this
+    /// field exists so the content hash agrees with the server's as soon
+    /// as the control plane can send it, which must hold regardless of
+    /// whether anything downstream reads it yet.
+    pub external_turn: ExternalTurnConfig,
     /// Peers, keyed by handle. Ordered, so digests and the re-encoded form are
     /// deterministic rather than dependent on hash iteration order.
     peers: BTreeMap<Vec<u8>, Peer>,
@@ -962,6 +1058,7 @@ impl Netmap {
             bedrock_head: BedrockHead::default(),
             allowed_regions: AllowedRegions::default(),
             ephemeral_anchors: EphemeralAnchors::default(),
+            external_turn: ExternalTurnConfig::default(),
             packet_filter: Vec::new(),
             egress_filter: Vec::new(),
             ssh_filter: Vec::new(),
@@ -1053,6 +1150,7 @@ impl Netmap {
         self.bedrock_head = BedrockHead::from_wire(resp.bedrock_head.as_ref());
         self.allowed_regions = AllowedRegions::from_wire(resp.allowed_regions);
         self.ephemeral_anchors = EphemeralAnchors::from_wire(resp.ephemeral_anchors);
+        self.external_turn = ExternalTurnConfig::from_wire(resp.external_turn);
         // The filter is shipped whole even in a delta — it is small, and a rule
         // set assembled from fragments would be a second thing to keep in step.
         // If that ever changes, replacing wholesale here would empty the filter
@@ -1231,6 +1329,16 @@ impl Netmap {
                 port: a.port,
             })
             .collect();
+        let external_turn: Vec<ExternalTurnServerView<'_>> = self
+            .external_turn
+            .servers
+            .iter()
+            .map(|s| ExternalTurnServerView {
+                uri: &s.uri,
+                username: &s.username,
+                credential: &s.credential,
+            })
+            .collect();
 
         netmap_version(&NetmapContent {
             psk_epoch: self.psk_epoch,
@@ -1261,6 +1369,7 @@ impl Netmap {
             ephemeral_anchors: &ephemeral_anchors,
             ephemeral_anchor_window_period_seconds: self.ephemeral_anchors.window_period_seconds,
             ephemeral_anchor_duty_cycle_seconds: self.ephemeral_anchors.duty_cycle_seconds,
+            external_turn: &external_turn,
         })
     }
 
@@ -1307,6 +1416,7 @@ impl Netmap {
             bedrock_head: self.bedrock_head.to_wire(),
             allowed_regions: self.allowed_regions.to_wire(),
             ephemeral_anchors: self.ephemeral_anchors.to_wire(),
+            external_turn: self.external_turn.to_wire(),
             peers: self.peers.values().map(Peer::to_wire).collect(),
             packet_filter: self.packet_filter.clone(),
             egress_filter: self.egress_filter.clone(),
@@ -1365,6 +1475,7 @@ mod tests {
         projected.bedrock_head = BedrockHead::from_wire(resp.bedrock_head.as_ref());
         projected.allowed_regions = AllowedRegions::from_wire(resp.allowed_regions.clone());
         projected.ephemeral_anchors = EphemeralAnchors::from_wire(resp.ephemeral_anchors.clone());
+        projected.external_turn = ExternalTurnConfig::from_wire(resp.external_turn.clone());
         projected.packet_filter = resp.packet_filter.clone();
         projected.egress_filter = resp.egress_filter.clone();
         projected.ssh_filter = resp.ssh_filter.clone();
@@ -1533,6 +1644,22 @@ mod tests {
     fn turn_credential_does_not_print() {
         let cred = TurnCredential::for_tests("super-secret-password");
         assert_eq!(format!("{cred:?}"), "turn_password(redacted)");
+    }
+
+    #[test]
+    fn external_turn_server_debug_omits_the_credential() {
+        // Issue #420. Unlike TurnCredential, this credential is a plain
+        // String -- ExternalTurnServer's own manual Debug impl is what has
+        // to keep it (and username) out of logs/traces instead.
+        let server = ExternalTurnServer {
+            uri: "turns:turn.example:5349".to_owned(),
+            username: "node".to_owned(),
+            credential: "super-secret-password".to_owned(),
+        };
+        let rendered = format!("{server:?}");
+        assert!(rendered.contains("turns:turn.example:5349"));
+        assert!(!rendered.contains("super-secret-password"));
+        assert!(!rendered.contains("node"));
     }
 
     #[test]
@@ -1892,6 +2019,73 @@ mod tests {
             duty_cycle_seconds: 300,
         };
         assert_eq!(map.to_wire_full().ephemeral_anchors, None);
+    }
+
+    #[test]
+    fn changing_only_external_turn_changes_the_version_and_replaces_it() {
+        // Issue #420.
+        let mut without = Netmap::new();
+        without
+            .apply(sealed(full(vec![wire_peer("aaa", "100.64.0.2")]), &without))
+            .expect("apply");
+
+        let mut with = Netmap::new();
+        let mut response = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        response.external_turn = Some(pb::KarstExternalTurnConfig {
+            servers: vec![pb::KarstExternalTurnServer {
+                uri: "turns:turn.example:5349".to_owned(),
+                username: "node".to_owned(),
+                credential: "s3cret".to_owned(),
+            }],
+        });
+        with.apply(sealed(response, &with)).expect("apply");
+        assert_ne!(without.version, with.version);
+        let servers = with.external_turn.servers();
+        assert_eq!(servers.len(), 1);
+        let server = servers.first().expect("one");
+        assert_eq!(server.uri, "turns:turn.example:5349");
+        assert_eq!(server.username, "node");
+        assert_eq!(server.credential, "s3cret");
+    }
+
+    #[test]
+    fn changing_only_the_external_turn_credential_changes_the_version() {
+        // The credential is never shown back to the console, but it still
+        // has to move the version on its own -- an admin who only rotates
+        // a stored credential (same uri/username) must still reach nodes.
+        let same_shape = |credential: &str| pb::KarstExternalTurnConfig {
+            servers: vec![pb::KarstExternalTurnServer {
+                uri: "turns:turn.example:5349".to_owned(),
+                username: "node".to_owned(),
+                credential: credential.to_owned(),
+            }],
+        };
+        let mut first = Netmap::new();
+        let mut first_response = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        first_response.external_turn = Some(same_shape("old-secret"));
+        first.apply(sealed(first_response, &first)).expect("apply");
+
+        let mut second = Netmap::new();
+        let mut second_response = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        second_response.external_turn = Some(same_shape("new-secret"));
+        second
+            .apply(sealed(second_response, &second))
+            .expect("apply");
+
+        assert_ne!(first.version, second.version);
+    }
+
+    #[test]
+    fn an_absent_external_turn_round_trips_through_the_cache_encoding() {
+        // Same reasoning as an_absent_ephemeral_anchors_round_trips_through_the_cache_encoding
+        // above, for issue #420 instead of ADR-0045 §4d.
+        let map = loaded();
+        assert_eq!(map.external_turn, ExternalTurnConfig::default());
+        let mut round_tripped = Netmap::new();
+        round_tripped
+            .apply(sealed(map.to_wire_full(), &round_tripped))
+            .expect("apply");
+        assert_eq!(round_tripped.external_turn, ExternalTurnConfig::default());
     }
 
     // ── digests ─────────────────────────────────────────────────────────────

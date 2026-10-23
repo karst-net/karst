@@ -767,6 +767,11 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         ephemeral_anchors: &ephemeral_anchors,
         ephemeral_anchor_window_period_seconds: c.ephemeral_anchor_schedule.window_period_seconds,
         ephemeral_anchor_duty_cycle_seconds: c.ephemeral_anchor_schedule.duty_cycle_seconds,
+        // No vector case varies this yet (issue #420) -- the Go side hashes
+        // the same constant "karst-external-turn" separator with nothing
+        // after it for every case here too, so an empty slice reproduces
+        // the committed hash exactly.
+        external_turn: &[],
     })
 }
 
