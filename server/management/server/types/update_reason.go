@@ -12,7 +12,6 @@ type UpdateResource string
 const (
 	UpdateResourceAccountSettings UpdateResource = "account_settings"
 	UpdateResourceDNSSettings     UpdateResource = "dns_settings"
-	UpdateResourceExternalTurn    UpdateResource = "external_turn"
 	UpdateResourceGroup           UpdateResource = "group"
 	UpdateResourceNameServerGroup UpdateResource = "nameserver_group"
 	UpdateResourcePolicy          UpdateResource = "policy"
