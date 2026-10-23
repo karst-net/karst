@@ -764,14 +764,20 @@ fn run_engine(
     // choice or anything another relay is waiting on.
     let rtt_probes = Mutex::new(crate::home::Probes::default());
     let home_selector = Mutex::new(crate::home::Selector::new());
-    // Per-relay/TURN-server reachability, keyed by address/URI —
-    // `bugreport`'s [[relay]]/[[turn]] sections
-    // (plans/phase-6/08-observability.md §5 W6 item 3), beyond the aggregate
-    // relay_dropped counter: which specific one, and since when. Shared for
-    // the same reason rtt_probes/home_selector are: every relay worker
-    // (the home connection and whichever on-demand ones are live) writes
-    // into the one map a report reads from.
+    // Per-relay reachability, keyed by address — `bugreport`'s [[relay]]
+    // section (plans/phase-6/08-observability.md §5 W6 item 3), beyond the
+    // aggregate relay_dropped counter: which specific one, and since when.
+    // Shared for the same reason rtt_probes/home_selector are: every relay
+    // worker (the home connection and whichever on-demand ones are live)
+    // writes into the one map a report reads from.
     let relay_health: Mutex<HashMap<String, Reachability>> = Mutex::new(HashMap::new());
+    // No longer read by anything (issue #418 removed its own [[turn]]
+    // bugreport section) — still written by the TURN worker below, which
+    // this issue's remaining, on-hold steps 1-2 would also remove or
+    // repoint (pending #420's decision). Left as dead tracking state
+    // rather than touched here, since deleting it requires touching the
+    // TURN worker/session subsystem this cleanup pass is explicitly not
+    // scoped to.
     let turn_health: Mutex<HashMap<String, Reachability>> = Mutex::new(HashMap::new());
     // §9.2. Which alternative is being measured, and when the next one's turn
     // comes. Only the timer thread touches it.
@@ -1051,7 +1057,6 @@ fn run_engine(
         let last_push_ctl = &last_push;
         let control_synchronized_ctl = &control_synchronized;
         let relay_health_ctl = &relay_health;
-        let turn_health_ctl = &turn_health;
         let home_sweeps_started_ctl = &home_sweeps_started;
         let home_sweeps_changed_ctl = &home_sweeps_changed;
         let home_sweep_duration_ms_sum_ctl = &home_sweep_duration_ms_sum;
@@ -1265,12 +1270,6 @@ fn run_engine(
                                         .iter()
                                         .map(|(k, v)| (k.clone(), *v))
                                         .collect(),
-                                    turn_health: turn_health_ctl
-                                        .lock()
-                                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                        .iter()
-                                        .map(|(k, v)| (k.clone(), *v))
-                                        .collect(),
                                 },
                             );
                             if command == ipc::Command::Status {
@@ -1399,12 +1398,6 @@ fn run_engine(
                                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                                             .map(|at| at.elapsed()),
                                         relay_health: relay_health_ctl
-                                            .lock()
-                                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                            .iter()
-                                            .map(|(k, v)| (k.clone(), *v))
-                                            .collect(),
-                                        turn_health: turn_health_ctl
                                             .lock()
                                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                                             .iter()
@@ -2160,9 +2153,11 @@ fn first_eight(seed: &[u8; 32]) -> [u8; 8] {
     out
 }
 
-/// One relay or TURN server's most recently observed reachability —
-/// `bugreport`'s [[relay]]/[[turn]] sections (plans/phase-6
-/// /08-observability.md §5 W6 item 3).
+/// One relay's (or, still internally, one TURN server's) most recently
+/// observed reachability — `bugreport`'s [[relay]] section (plans/phase-6
+/// /08-observability.md §5 W6 item 3). TURN's own `[[turn]]` section was
+/// removed (issue #418); its tracking Mutex is still written but no longer
+/// read into a report.
 ///
 /// Only a transition is recorded (see [`Reachability::record`]), not every
 /// attempt: `since` is when the current state started, which is the number
@@ -5042,9 +5037,8 @@ struct BugReportExtras {
     since_last_push: Option<Duration>,
     /// See [`Reachability`]. A snapshot (not the live `Mutex`) taken once at
     /// the point a report is requested, so rendering it never holds a lock a
-    /// relay/TURN worker might also want.
+    /// relay worker might also want.
     relay_health: Vec<(String, Reachability)>,
-    turn_health: Vec<(String, Reachability)>,
 }
 
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -6710,23 +6704,18 @@ fn bug_report(
         relay_dropped.load(Ordering::Relaxed)
     );
 
-    // Per-relay/per-TURN-server reachability, beyond the aggregate counter
-    // above: which specific one, and since when — plans/phase-6
-    // /08-observability.md §5 W6 item 3. Sorted so the report is
-    // deterministic rather than reflecting HashMap iteration order.
+    // Per-relay reachability, beyond the aggregate counter above: which
+    // specific one, and since when — plans/phase-6/08-observability.md §5
+    // W6 item 3. Sorted so the report is deterministic rather than
+    // reflecting HashMap iteration order. TURN had its own `[[turn]]`
+    // section here; removed with the rest of its now-unreachable
+    // client-side datapath (issue #418) rather than kept as a section that
+    // could never again have anything to report.
     let mut relay_health = extras.relay_health;
     relay_health.sort_by(|a, b| a.0.cmp(&b.0));
     for (address, health) in relay_health {
         let _ = writeln!(out, "\n[[relay]]");
         let _ = writeln!(out, "address = \"{address}\"");
-        let _ = writeln!(out, "reachable = {}", health.reachable);
-        let _ = writeln!(out, "since_seconds = {}", health.since.elapsed().as_secs());
-    }
-    let mut turn_health = extras.turn_health;
-    turn_health.sort_by(|a, b| a.0.cmp(&b.0));
-    for (uri, health) in turn_health {
-        let _ = writeln!(out, "\n[[turn]]");
-        let _ = writeln!(out, "uri = \"{uri}\"");
         let _ = writeln!(out, "reachable = {}", health.reachable);
         let _ = writeln!(out, "since_seconds = {}", health.since.elapsed().as_secs());
     }
@@ -7330,13 +7319,15 @@ mod route_tests {
         assert_eq!(engine.endpoint(0), Some(addr(1)));
     }
 
-    // ── bugreport: control-session health, per-relay/TURN reachability ────
+    // ── bugreport: control-session health, per-relay reachability ─────────
 
     /// §5 W6 items 3a/3c of the observability plan: `[control]`'s
-    /// `since_last_push_seconds` and the `[[relay]]`/`[[turn]]` sections
-    /// actually render what `BugReportExtras` was given.
+    /// `since_last_push_seconds` and the `[[relay]]` section actually
+    /// render what `BugReportExtras` was given. `[[turn]]` is gone (issue
+    /// #418) — asserted absent so a future `BugReportExtras` field
+    /// resurrecting it under another name would be caught here too.
     #[test]
-    fn bug_report_lists_relay_and_turn_reachability() {
+    fn bug_report_lists_relay_reachability() {
         let engine = one_peer_engine(None);
         let cfg = config(&["100.64.0.1/16"], &[]);
         let device = super::Attachment {
@@ -7351,13 +7342,6 @@ mod route_tests {
                 "relay.example:443".to_owned(),
                 super::Reachability {
                     reachable: true,
-                    since: std::time::Instant::now(),
-                },
-            )],
-            turn_health: vec![(
-                "turn:turn.example:3478".to_owned(),
-                super::Reachability {
-                    reachable: false,
                     since: std::time::Instant::now(),
                 },
             )],
@@ -7380,11 +7364,7 @@ mod route_tests {
             report.contains("address = \"relay.example:443\""),
             "{report}"
         );
-        assert!(report.contains("[[turn]]"), "{report}");
-        assert!(
-            report.contains("uri = \"turn:turn.example:3478\""),
-            "{report}"
-        );
+        assert!(!report.contains("[[turn]]"), "{report}");
     }
 
     /// The three states `[ssh_policy]` must distinguish, mirroring the

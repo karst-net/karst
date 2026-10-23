@@ -340,59 +340,6 @@ fn a_peer_with_no_endpoint_and_no_relay_is_still_undeliverable() {
     assert_eq!(a.engine.stats().tx_dropped_no_session, 1);
 }
 
-/// §7.8's last resort: with no relay at all, a live TURN allocation is what
-/// gets the very first handshake datagram out — the same peer and topology as
-/// the test above, with `Engine::set_turn_relay` the only thing that changed.
-#[test]
-fn a_peer_with_no_endpoint_and_no_relay_is_reachable_through_this_nodes_own_turn_allocation() {
-    let a = pair(0x01, 0x02, "100.64.0.2/32", "100.64.0.1/24", false);
-    let turn_relayed: SocketAddr = "203.0.113.9:3478".parse().expect("addr");
-    a.engine.set_turn_relay(Some(turn_relayed));
-
-    let out = a.engine.connect_all(0, seed(0x31));
-    let Some((_, via)) = out.datagrams.first() else {
-        panic!("a node with a live turn allocation and no relay did not dial its peer at all");
-    };
-    assert_eq!(*via, Via::Turn(turn_relayed));
-}
-
-/// **The relay still wins.** §7.8 puts TURN strictly after the relay branch —
-/// never before it and never instead of it, because the relay connection is
-/// already up where an allocation is not attempted until it is needed.
-#[test]
-fn a_configured_relay_is_preferred_over_a_live_turn_allocation() {
-    let a = pair(0x01, 0x02, "100.64.0.2/32", "100.64.0.1/24", true);
-    a.engine
-        .set_turn_relay(Some("203.0.113.9:3478".parse().expect("addr")));
-
-    let out = a.engine.connect_all(0, seed(0x31));
-    let Some((_, via)) = out.datagrams.first() else {
-        panic!("no datagram at all, though a relay was configured");
-    };
-    assert!(
-        matches!(via, Via::Relay { .. }),
-        "turn was used even though a relay was configured: {via:?}"
-    );
-}
-
-/// Losing the TURN allocation must withdraw the fallback exactly like losing
-/// the relay does — `Engine::via` must not go on naming an address nothing is
-/// listening on any more.
-#[test]
-fn losing_the_turn_allocation_withdraws_the_fallback() {
-    let a = pair(0x01, 0x02, "100.64.0.2/32", "100.64.0.1/24", false);
-    a.engine
-        .set_turn_relay(Some("203.0.113.9:3478".parse().expect("addr")));
-    assert!(!a.engine.connect_all(0, seed(0x31)).datagrams.is_empty());
-
-    a.engine.set_turn_relay(None);
-    let out = a.engine.connect_all(1_000, seed(0x32));
-    assert!(
-        out.datagrams.is_empty(),
-        "a node with no relay and no turn allocation dialled a peer anyway"
-    );
-}
-
 /// **The upgrade, and the part that has to be seamless: the session survives
 /// it.** A relay→direct transition that rehandshaked would be a visible stall
 /// on every path change, and path changes are exactly what AVEN produces.
