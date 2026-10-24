@@ -139,6 +139,9 @@ type handler struct {
 	// controlPlaneLocation is this account's declared NOC-map position for
 	// the control plane -- see package cplocation's own doc comment.
 	controlPlaneLocation cpLocationReader
+	// invitationAssignees is who each device invitation is for -- nil in a
+	// deployment that has not configured a node store, see invitations.go.
+	invitationAssignees invitationAssigneeStore
 	// routes backs the "route" kind in nocComponents: which gateway groups
 	// are actually in use by an enabled exit or subnet route, and what to
 	// call that route. A narrow slice of the fork's own AccountManager, the
@@ -559,8 +562,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, invitationAssignees invitationAssigneeStore, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections, invitationAssignees: invitationAssignees}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)

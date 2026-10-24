@@ -441,7 +441,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, router)
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, nodes, router)
 		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager()})
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)

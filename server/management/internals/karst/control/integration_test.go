@@ -152,7 +152,7 @@ func TestRegistrationAgainstTheRealAccountManager(t *testing.T) {
 	}
 	router := mux.NewRouter()
 	router.UseEncodedPath()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nodes, router)
 	portalRequest := func(method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: accountID, UserId: userID})
@@ -309,7 +309,7 @@ func TestDeviceInvitationLabelReachesTheWireAgainstTheRealAccountManager(t *test
 		groupID   = "cfefqs706sqkneg59g3g"                 // fixture group: AwesomeGroup1
 	)
 
-	invitation, err := am.CreateDeviceInvitation(ctx, accountID, userID, "Adrian's MacBook Pro!", []string{groupID}, "")
+	invitation, err := am.CreateDeviceInvitation(ctx, accountID, userID, "Adrian's MacBook Pro!", []string{groupID}, "", userID, false, 0)
 	if err != nil {
 		t.Fatalf("create device invitation: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestServerPushesOnPeerDeletion(t *testing.T) {
 	}
 	router := mux.NewRouter()
 	router.UseEncodedPath()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nodes, router)
 	portalRequest := func(method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: accountID, UserId: userID})

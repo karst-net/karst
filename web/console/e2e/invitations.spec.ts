@@ -9,7 +9,8 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
 });
 
-test("administrator creates one complete invitation, dismisses its secret, and revokes it", async ({ page }) => {
+for (const reusable of [false, true]) {
+test(`administrator creates an assigned ${reusable ? "reusable" : "one-off"} invitation, dismisses its secret, and revokes it`, async ({ page }) => {
   // Exercise browser HTTPS-origin behavior while serving local app fixtures.
   // Server-side permission and redemption tests use the real account manager.
   // Keep invitation state local to this browser: other suites deliberately
@@ -20,10 +21,15 @@ test("administrator creates one complete invitation, dismisses its secret, and r
     if (url.pathname === "/api/groups") {
       await route.fulfill({ json: [{ id: "group-sre", name: "sre" }] }); return;
     }
+    if (url.pathname === "/api/karst/v1/nodes") {
+      await route.fulfill({ json: url.searchParams.has("cursor")
+        ? { items: [{ handle: "assigned-node", name: "SRE laptop", platform: "linux", user_id: "user-sre" }], next_cursor: null }
+        : { items: [], next_cursor: "second-page" } }); return;
+    }
     if (url.pathname === "/api/karst/v1/invitations") {
       if (route.request().method() === "POST") {
-        expect(route.request().postDataJSON()).toEqual({ name: "invitation-browser-laptop", groups: ["group-sre"] });
-        const item = { id: "invitation-browser", name: "invitation-browser-laptop", groups: ["group-sre"], state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString() };
+        expect(route.request().postDataJSON()).toEqual({ name: "invitation-browser-laptop", groups: ["group-sre"], for_user_id: "user-sre", reusable, usage_limit: reusable ? 2 : 0 });
+        const item = { assigned_user_id: "user-sre", reusable, usage_limit: reusable ? 2 : 1, used_times: 0, id: "invitation-browser", name: "invitation-browser-laptop", groups: ["group-sre"], state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString() };
         invitations.push(item);
         await route.fulfill({ json: { ...item, credential: "invitation-fixture-secret" } }); return;
       }
@@ -38,6 +44,11 @@ test("administrator creates one complete invitation, dismisses its secret, and r
     await route.fulfill({ response });
   });
   await page.goto("https://console.example.test/#/enroll");
+  await page.getByLabel("Assign to user").selectOption("user-sre");
+  if (reusable) {
+    await page.getByRole("checkbox", { name: "Reusable — many devices" }).check();
+    await page.getByLabel("Usage limit (0 means unlimited)").fill("2");
+  }
   await page.getByLabel("Device name").fill("invitation-browser-laptop");
   await page.getByRole("checkbox", { name: "sre", exact: true }).check();
   await page.getByRole("button", { name: "Create invitation", exact: true }).click();
@@ -50,9 +61,20 @@ test("administrator creates one complete invitation, dismisses its secret, and r
   expect(storage).not.toContain(value);
   await page.getByRole("button", { name: "Dismiss invitation" }).click();
   await expect(page.getByLabel("Enrollment invitation", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Auth keys", exact: true })).toHaveCount(0);
+  await page.goto("https://console.example.test/#/users");
+  await page.getByLabel("Search users").fill("sre@example.test");
+  await expect(page.getByRole("cell", { name: "it@example.test", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("invitation-browser-laptop");
+  await expect(page.getByRole("dialog")).toContainText("SRE laptop");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.goto("https://console.example.test/#/enroll");
   await page.getByRole("button", { name: "Revoke invitation-browser-laptop", exact: true }).click();
   await expect(page.locator("li").filter({ hasText: "invitation-browser-laptop" })).toContainText("revoked");
   await page.reload();
   await expect(page.locator("li").filter({ hasText: "invitation-browser-laptop" })).toContainText("revoked");
   await expect(page.getByLabel("Enrollment invitation", { exact: true })).toHaveCount(0);
 });
+
+}

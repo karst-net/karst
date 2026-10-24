@@ -464,9 +464,9 @@ const server = http.createServer((request, response) => {
   if (method === "GET" && karst === "/me/devices") return json(response, 200, memberDevices);
   if (method === "GET" && karst === "/invitations") return json(response, 200, invitations);
   if (method === "POST" && karst === "/invitations") return readBody(request).then(draft => {
-    if (!draft.name?.trim() || !draft.groups?.length) return error(response, 400, "invalid_argument", "Device label and groups are required");
+    if (!draft.for_user_id || !draft.name?.trim() || !draft.groups?.length) return error(response, 400, "invalid_argument", "Device label and groups are required");
     if (draft.domain_id && !domains.some(d => d.id === draft.domain_id)) return error(response, 400, "invalid_argument", "unknown domain_id");
-    const item = { id: id("invitation"), name: draft.name, groups: draft.groups, state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString(), ...(draft.domain_id ? { domain_id: draft.domain_id } : {}) };
+    const item = { assigned_user_id: draft.for_user_id, reusable: !!draft.reusable, usage_limit: draft.reusable ? draft.usage_limit ?? 0 : 1, used_times: 0, id: id("invitation"), name: draft.name, groups: draft.groups, state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString(), ...(draft.domain_id ? { domain_id: draft.domain_id } : {}) };
     invitations.push(item);
     return json(response, 200, { ...item, credential: "invitation-fixture-secret" });
   });

@@ -120,7 +120,7 @@ func consoleMutations() []consoleCase {
 	return []consoleCase{
 		{
 			name: "issue a device invitation", method: http.MethodPost,
-			path: "/karst/v1/invitations", body: `{"name":"Laptop","groups":["console-invited"]}`,
+			path: "/karst/v1/invitations", body: `{"name":"Laptop","groups":["console-invited"],"for_user_id":"` + consoleAdminID + `"}`,
 			want: []int{http.StatusOK}, template: "/karst/v1/invitations",
 		},
 		{
@@ -570,7 +570,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore,
 		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore,
-		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, router)
+		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, nodes, router)
 	return router
 }
 

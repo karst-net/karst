@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-import { StrictMode, useEffect, useState } from "react";
+import { Fragment, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "@karst-net/tokens/theme.css";
 import "./styles.css";
@@ -13,7 +13,6 @@ import { FirstRunWizard } from "./views/firstrun";
 import { Domains } from "./views/domains";
 import { Machines } from "./views/machines";
 import { Access } from "./views/access";
-import { Keys } from "./views/keys";
 import { Users } from "./views/users";
 import { Groups } from "./views/groups";
 import { Bedrock } from "./views/bedrock";
@@ -29,15 +28,73 @@ import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
+type Route = "enroll" | "domains" | "machines" | "access" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
+type Mode = "configure" | "observe";
+type NavItem = { route: Route; label: string; hash: string; group?: string };
 
-const nav: Array<[Route, string]> = [
-  ["domains", "Domains"], ["machines", "Machines"], ["enroll", "Add device"], ["access", "Access controls"], ["keys", "Auth keys"],
-  ["users", "Users"], ["groups", "Groups"], ["bedrock", "Network lock"], ["posture", "Crypto posture"],
-  ["dns", "DNS"], ["routes", "Gateways"], ["audit", "Audit log"], ["relays", "Relays"], ["connections", "Infrastructure connections"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
+// Machines and Gateways are each both a config surface (enroll/edit) and a
+// status surface (health/metrics) -- rather than duplicate the nav entry,
+// each view itself splits into a "Manage"/"Status" (or "Metrics") tab (see
+// machines.tsx, routes.tsx), and the two modes link to the same route at a
+// different sub-path so each lands on the tab that mode actually wants.
+//
+// Grouped (and pre-sorted by group) so the sidebar can render a static
+// section header whenever `group` changes between consecutive items --
+// Observe's list stays flat (no `group`) since it's short enough on its own.
+const navConfigure: NavItem[] = [
+  { route: "machines", label: "Machines", hash: "/machines", group: "Identity & Access" },
+  { route: "enroll", label: "Add device", hash: "/enroll", group: "Identity & Access" },
+  { route: "access", label: "Access controls", hash: "/access", group: "Identity & Access" },
+  { route: "users", label: "Users", hash: "/users", group: "Identity & Access" },
+  { route: "groups", label: "Groups", hash: "/groups", group: "Identity & Access" },
+  { route: "bedrock", label: "Network lock", hash: "/bedrock", group: "Identity & Access" },
+  { route: "domains", label: "Domains", hash: "/domains", group: "Network" },
+  { route: "dns", label: "DNS", hash: "/dns", group: "Network" },
+  { route: "routes", label: "Gateways", hash: "/gateways", group: "Network" },
+  { route: "relays", label: "Relays", hash: "/relays", group: "Infrastructure" },
+  { route: "connections", label: "Infrastructure connections", hash: "/connections", group: "Infrastructure" },
+  { route: "locations", label: "Authorized locations", hash: "/locations", group: "Infrastructure" },
+  { route: "scaler", label: "Scaler Advisor", hash: "/scaler", group: "Infrastructure" },
+  { route: "settings", label: "Settings", hash: "/settings", group: "Account" },
+  { route: "billing", label: "Billing", hash: "/billing", group: "Account" },
 ];
 
-const routeFromHash = (): Route => location.hash === "#/gateways" ? "routes" : (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
+const navObserve: NavItem[] = [
+  { route: "noc", label: "NOC view", hash: "/noc" },
+  { route: "posture", label: "Crypto posture", hash: "/posture" },
+  { route: "audit", label: "Audit log", hash: "/audit" },
+  { route: "machines", label: "Machines", hash: "/machines/status" },
+  { route: "routes", label: "Gateways", hash: "/gateways/metrics" },
+];
+
+const navByMode: Record<Mode, NavItem[]> = { configure: navConfigure, observe: navObserve };
+
+/** Collapses consecutive same-`group` items into one section, and leaves
+ *  ungrouped items (Observe's whole list) as a single ungrouped section --
+ *  so only Configure, which actually has groups, renders as an accordion. */
+function groupNav(items: NavItem[]): Array<{ group?: string; items: NavItem[] }> {
+  const sections: Array<{ group?: string; items: NavItem[] }> = [];
+  for (const item of items) {
+    const last = sections[sections.length - 1];
+    if (last && last.group === item.group) last.items.push(item);
+    else sections.push({ group: item.group, items: [item] });
+  }
+  return sections;
+}
+
+/** Mode and route both come from one hash: each mode's `hash` strings are
+ *  disjoint (even for the two routes they share), so matching the whole
+ *  path against both lists recovers mode and route together, and an
+ *  unrecognized path always falls back to Configure/Domains rather than a
+ *  blank page. */
+function parseHash(): { route: Route; mode: Mode } {
+  const path = (location.hash || "#/domains").slice(1);
+  for (const mode of ["configure", "observe"] as const) {
+    const match = navByMode[mode].find((item) => item.hash === path);
+    if (match) return { route: match.route, mode };
+  }
+  return { route: "domains", mode: "configure" };
+}
 
 /** True once GET /firstrun reports completed=true; undefined while that
  *  fetch is in flight. A deployment that fails to reach the endpoint (e.g.
@@ -52,9 +109,13 @@ function useFirstRunCompleted() {
 }
 
 function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
-  const [route, setRoute] = useState<Route>(routeFromHash());
-  useEffect(() => { const change = () => setRoute(routeFromHash()); addEventListener("hashchange", change); return () => removeEventListener("hashchange", change); }, []);
+  const [{ route, mode }, setState] = useState(parseHash());
+  useEffect(() => { const change = () => setState(parseHash()); addEventListener("hashchange", change); return () => removeEventListener("hashchange", change); }, []);
+  // Bare route names, as Setup's `go` prop and machines.tsx's "Add machine"
+  // button already pass them -- always lands on Configure's hash for that
+  // route (its default/management tab), same as before this mode split.
   const navigate = (next: string) => { location.hash = `/${next === "routes" ? "gateways" : next}`; };
+  const switchMode = (next: Mode) => { location.hash = navByMode[next][0].hash; };
   const firstRun = useFirstRunCompleted();
 
   // Everything else -- the sidebar included -- stays hidden until the
@@ -86,21 +147,34 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
     <aside>
       <h1>Karst</h1>
       <p>Administration console</p>
-      <nav aria-label="Primary">{nav.map(([key, label]) => <a key={key} aria-current={route === key ? "page" : undefined} href={`#/${key === "routes" ? "gateways" : key}`}>{label}</a>)}</nav>
+      <nav aria-label="Mode" className="actions">
+        <button aria-pressed={mode === "configure"} onClick={() => switchMode("configure")}>Configure</button>
+        <button aria-pressed={mode === "observe"} onClick={() => switchMode("observe")}>Observe</button>
+      </nav>
+      <nav aria-label="Primary">{groupNav(navByMode[mode]).map((section, index) => {
+        const links = section.items.map((item) => <a key={item.hash} aria-current={route === item.route ? "page" : undefined} href={`#${item.hash}`}>{item.label}</a>);
+        // Collapsed by default; a section that already contains the active
+        // route opens so navigating here never hides where you landed.
+        return section.group
+          ? <details key={section.group} open={section.items.some((item) => item.route === route)}>
+            <summary>{section.group}</summary>
+            {links}
+          </details>
+          : <Fragment key={`flat-${index}`}>{links}</Fragment>;
+      })}</nav>
     </aside>
     <main id="main">
       <header><AccountSwitcher config={config} />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
       {route === "enroll" && <Setup go={navigate} />}
       {route === "domains" && <Domains />}
-      {route === "machines" && <Machines />}
+      {route === "machines" && <Machines key={mode} defaultTab={mode === "observe" ? "status" : "manage"} />}
       {route === "access" && <Access />}
-      {route === "keys" && <Keys />}
       {route === "users" && <Users />}
       {route === "groups" && <Groups />}
       {route === "bedrock" && <Bedrock />}
       {route === "posture" && <Posture />}
       {route === "dns" && <Dns />}
-      {route === "routes" && <Routes />}
+      {route === "routes" && <Routes key={mode} defaultTab={mode === "observe" ? "metrics" : "manage"} />}
       {route === "audit" && <Audit />}
       {route === "relays" && <RelayServices />}
       {route === "connections" && <InfrastructureConnections />}
