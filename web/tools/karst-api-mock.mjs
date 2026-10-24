@@ -109,7 +109,8 @@ let infraConnections = [];
 // endpoint below against; a read_only connection never sees it at all
 // (filtered where the regions/resources routes are handled, matching
 // infraconnections' ModeReadOnly discovery behavior). Kubernetes
-// namespaces have no enabled/opt-in concept at all.
+// namespaces, Nomad datacenters, and LXD cluster members have no
+// enabled/opt-in concept at all.
 const discoveryFixtures = {
   aws: [
     { code: "us-east-1", name: "US East (N. Virginia)", kind: "region", lat: 38.9519, lon: -77.4480, enabled: true },
@@ -135,6 +136,10 @@ const discoveryFixtures = {
   nomad: [
     { code: "dc1", kind: "datacenter" },
     { code: "dc2", kind: "datacenter" },
+  ],
+  lxd: [
+    { code: "node1", kind: "cluster_member" },
+    { code: "node2", kind: "cluster_member" },
   ],
 };
 let tokens = seedTokens();
@@ -390,7 +395,7 @@ const server = http.createServer((request, response) => {
 
   if (path === "/api/karst/v1/gateways" && method === "GET") return json(response, 200, {
     schema_version: 1,
-    gateways: [{ node_id: "gateway-fixture", name: "Gateway fixture", control_connected: true, forwarding_readiness: "unreported", offers: routes.filter((route) => route.peer_groups.includes("group-gateways")).map((route) => ({ id: route.id, network_id: route.network_id, prefix: route.network, kind: route.network === "0.0.0.0/0" ? "default_ipv4" : route.network === "::/0" ? "default_ipv6" : "subnet", enabled: route.enabled, masquerade: route.masquerade, metric: route.metric, requires_client_consent: route.network === "0.0.0.0/0" || route.network === "::/0" })) }],
+    gateways: [{ node_id: "gateway-fixture", name: "Gateway fixture", control_connected: true, forwarding_readiness: "unreported", offers: routes.filter((route) => route.peer_groups.includes("group-gateways")).map((route) => ({ id: route.id, network_id: route.network_id, prefix: route.network, kind: route.network === "0.0.0.0/0" ? "default_ipv4" : route.network === "::/0" ? "default_ipv6" : "subnet", enabled: route.enabled, masquerade: route.masquerade, metric: route.metric, requires_client_consent: route.network === "0.0.0.0/0" || route.network === "::/0", forwarding_readiness: "unreported" })) }],
     unresolved_routes: [], unsupported_routes: [],
   });
   if (path === "/api/routes" && method === "GET") return json(response, 200, routes);
@@ -731,10 +736,12 @@ const server = http.createServer((request, response) => {
   }
 
   // Deprecated, preserved /cloud-accounts surface (ADR-0045 §6 addendum):
-  // still only ever sees aws/azure/gcp, filtering out any kubernetes-typed
-  // connection -- same compatibility posture as the real server's handlers.
+  // still only ever sees aws/azure/gcp, filtering out any non-legacy-typed
+  // (kubernetes/nomad/lxd) connection -- same compatibility posture as the
+  // real server's handlers.
+  const isLegacyType = (type) => ["aws", "azure", "gcp"].includes(type);
   if (method === "GET" && karst === "/cloud-accounts") {
-    return json(response, 200, infraConnections.filter((item) => item.type !== "kubernetes").map(({ secret, type, ...rest }) => ({ ...rest, provider: type })));
+    return json(response, 200, infraConnections.filter((item) => isLegacyType(item.type)).map(({ secret, type, ...rest }) => ({ ...rest, provider: type })));
   }
   if (method === "POST" && karst === "/cloud-accounts") {
     return readBody(request).then((entry) => {
@@ -751,7 +758,7 @@ const server = http.createServer((request, response) => {
   if (cloudAccountMatch && method === "DELETE") return remove(infraConnections, cloudAccountMatch[1], response);
   const cloudAccountRegionsMatch = karst.match(/^\/cloud-accounts\/([^/]+)\/regions$/);
   if (cloudAccountRegionsMatch && method === "GET") {
-    const connection = infraConnections.find((item) => item.id === cloudAccountRegionsMatch[1] && item.type !== "kubernetes");
+    const connection = infraConnections.find((item) => item.id === cloudAccountRegionsMatch[1] && isLegacyType(item.type));
     if (!connection) return error(response, 404, "not_found", "cloud account not found");
     const regions = (discoveryFixtures[connection.type] ?? []).filter((r) => r.enabled || connection.mode === "read_write");
     return json(response, 200, regions);
@@ -770,18 +777,19 @@ const server = http.createServer((request, response) => {
   }
 
   // Generalized /infrastructure-connections surface (AWS/Azure/GCP/
-  // Kubernetes) backing the console's Infrastructure Connections Settings
-  // section and the Authorized Locations picker.
+  // Kubernetes/Nomad/LXD) backing the console's Infrastructure Connections
+  // Settings section and the Authorized Locations picker.
   if (method === "GET" && karst === "/infrastructure-connections") {
     return json(response, 200, infraConnections.map(({ secret, ...rest }) => rest));
   }
   if (method === "POST" && karst === "/infrastructure-connections") {
     return readBody(request).then((entry) => {
-      if (!["aws", "azure", "gcp", "kubernetes", "nomad"].includes(entry.type)) return error(response, 422, "invalid_argument", "type must be aws, azure, gcp, kubernetes, or nomad");
+      if (!["aws", "azure", "gcp", "kubernetes", "nomad", "lxd"].includes(entry.type)) return error(response, 422, "invalid_argument", "type must be aws, azure, gcp, kubernetes, nomad, or lxd");
       if (!["read_only", "read_write"].includes(entry.mode)) return error(response, 422, "invalid_argument", "mode must be read_only or read_write");
       if (!entry.secret) return error(response, 422, "invalid_argument", "secret is required");
       if (entry.type === "kubernetes" && !entry.secret.kubeconfig) return error(response, 422, "invalid_argument", "secret.kubeconfig is required");
       if (entry.type === "nomad" && !entry.secret.address) return error(response, 422, "invalid_argument", "secret.address is required");
+      if (entry.type === "lxd" && !entry.secret.address) return error(response, 422, "invalid_argument", "secret.address is required");
       const connection = {
         id: id("infra-connection"), type: entry.type, mode: entry.mode, label: entry.label ?? undefined, created_at: new Date().toISOString(),
         secret: entry.secret, lat: entry.lat, lon: entry.lon, location_label: entry.location_label,

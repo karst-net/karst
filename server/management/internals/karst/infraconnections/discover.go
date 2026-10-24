@@ -39,11 +39,12 @@ type DiscoveredRegion struct {
 
 // DiscoveredResource is the generalized /infrastructure-connections/{id}/
 // resources shape -- a region/local zone/zone for a cloud connection, a
-// namespace for a Kubernetes one, or a datacenter for a Nomad one.
-// Namespace and datacenter entries never carry coordinates (no cloudcatalog
-// entry exists for them) or a meaningful Enabled/ParentRegion (neither
-// Kubernetes nor Nomad has an opt-in-zone concept); the console falls back
-// to the connection's own declared Lat/Lon/LocationLabel instead.
+// namespace for a Kubernetes one, a datacenter for a Nomad one, or a
+// cluster member for a clustered LXD one. Namespace/datacenter/cluster-
+// member entries never carry coordinates (no cloudcatalog entry exists for
+// them) or a meaningful Enabled/ParentRegion (none of Kubernetes, Nomad, or
+// LXD has an opt-in-zone concept); the console falls back to the
+// connection's own declared Lat/Lon/LocationLabel instead.
 type DiscoveredResource struct {
 	Code         string            `json:"code"`
 	Name         string            `json:"name,omitempty"`
@@ -88,6 +89,8 @@ func validateSecretShape(typ Type, raw []byte) error {
 		return validateKubernetesSecret(raw)
 	case TypeNomad:
 		return validateNomadSecret(raw)
+	case TypeLXD:
+		return validateLXDSecret(raw)
 	default:
 		return fmt.Errorf("unknown type %q", typ)
 	}
@@ -120,7 +123,7 @@ func (s *Store) DiscoverLegacy(ctx context.Context, id string) ([]DiscoveredRegi
 	if err != nil {
 		return nil, err
 	}
-	if !account.Type.isLegacy() {
+	if !account.Type.IsLegacy() {
 		return nil, ErrNotFound
 	}
 	out, discoverErr := discoverCloudRegions(ctx, account.Type, account.Secret, account.Mode)
@@ -130,8 +133,9 @@ func (s *Store) DiscoverLegacy(ctx context.Context, id string) ([]DiscoveredRegi
 
 // Discover calls out to the connection's own type and lists the resources
 // it reports -- regions/local zones/zones for AWS/Azure/GCP, namespaces for
-// Kubernetes -- enriched with coordinates where a static catalog or the
-// provider's own API supplies them. Kubernetes namespace entries never
+// Kubernetes, datacenters for Nomad, cluster members for a clustered LXD
+// server -- enriched with coordinates where a static catalog or the
+// provider's own API supplies them. The non-cloud types' entries never
 // carry coordinates; see DiscoveredResource's own doc comment.
 func (s *Store) Discover(ctx context.Context, id string) ([]DiscoveredResource, error) {
 	account, err := s.get(ctx, id)
@@ -149,6 +153,8 @@ func (s *Store) Discover(ctx context.Context, id string) ([]DiscoveredResource, 
 		out, discoverErr = discoverKubernetes(ctx, account.Secret)
 	case TypeNomad:
 		out, discoverErr = discoverNomad(ctx, account.Secret)
+	case TypeLXD:
+		out, discoverErr = discoverLXD(ctx, account.Secret)
 	default:
 		discoverErr = fmt.Errorf("infra connections: unknown type %q", account.Type)
 	}

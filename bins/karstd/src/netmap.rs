@@ -474,67 +474,6 @@ impl Relay {
     }
 }
 
-/// A TURN (RFC 8656) fallback server, with the ephemeral credential minted for
-/// this netmap response — `spec/aven-v1.md` §7.8, ADR-0008 §4.
-///
-/// **Not pinned, unlike [`Relay`].** A TURN server authenticates the *client*
-/// by a shared credential; there is no server identity for this node to check,
-/// so validation here is limited to the wire shape being usable at all.
-#[derive(Clone, PartialEq, Eq)]
-pub struct TurnServer {
-    /// A `turn:` or `turns:` URI (RFC 8656 / RFC 7065), e.g.
-    /// `turn:turn.example.com:3478`.
-    pub uri: String,
-    pub region: String,
-    /// A unix expiry timestamp, per the TURN-REST scheme.
-    pub username: String,
-    /// `base64(HMAC-SHA1(shared_secret, username))`. A real secret, like a PSK,
-    /// even though it is short-lived — see [`Credential`].
-    pub password: TurnCredential,
-    /// Unix seconds. Redundant with `username` but explicit.
-    pub expires_at: u64,
-}
-
-impl fmt::Debug for TurnServer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TurnServer")
-            .field("uri", &self.uri)
-            .field("region", &self.region)
-            .field("expires_at", &self.expires_at)
-            .finish_non_exhaustive()
-    }
-}
-
-/// A minted TURN password. Like [`Psk`], a real secret that does not print —
-/// `turncred.Credential`'s doc comment on the Go side explains why: Phase 3's
-/// exit criterion is an automated scan for secret bytes in logs, traces and
-/// bugreports, and that only reliably holds if the type refuses to render
-/// rather than every call site remembering to redact it.
-#[derive(Clone, PartialEq, Eq)]
-pub struct TurnCredential(String);
-
-impl TurnCredential {
-    /// The password, for building a `turn::client::ClientConfig`.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Build one directly, for a test that needs a [`TurnServer`] but is not
-    /// itself testing decode from the wire (`crate::turn`'s unit tests, and
-    /// this module's own).
-    #[cfg(test)]
-    pub(crate) fn for_tests(s: &str) -> Self {
-        Self(s.to_owned())
-    }
-}
-
-impl fmt::Debug for TurnCredential {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("turn_password(redacted)")
-    }
-}
-
 /// Why a netmap could not be applied or decoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -555,8 +494,6 @@ pub enum Error {
         len: usize,
     },
     Relay(String),
-    /// A `KarstTurnServer` entry could not be used — `spec/aven-v1.md` §7.8.
-    Turn(String),
     /// A route offer was malformed or contradicted this node's role.
     Route(String),
     /// The assembled state does not hash to the version the server reported.
@@ -585,7 +522,6 @@ impl fmt::Display for Error {
                 )
             }
             Self::Relay(message) => write!(f, "invalid relay: {message}"),
-            Self::Turn(message) => write!(f, "invalid turn server: {message}"),
             Self::Route(message) => write!(f, "invalid route offer: {message}"),
             Self::VersionMismatch { server, local } => write!(
                 f,
@@ -847,18 +783,6 @@ pub struct Netmap {
     pub ssh_filter_present: bool,
     /// Pinned relay choices, replaced wholesale with every netmap.
     pub relays: Vec<Relay>,
-    /// TURN fallback servers, each with a credential minted fresh for the
-    /// response that carried it — `spec/aven-v1.md` §7.8, ADR-0008 §4.
-    ///
-    /// **Updated on every response, including an `unchanged` one.** Unlike
-    /// every other field here, the server mints a fresh credential regardless
-    /// of whether anything else moved (`karst_control.proto`'s doc comment on
-    /// `turn_servers`: "Never `unchanged`-cached: a stale minted credential is
-    /// an expired one, not a reusable one") — and confirmed on the Go side,
-    /// `NetmapVersion` never reads this field, so it is not part of what
-    /// `unchanged` even means. [`Netmap::apply`] applies it before the
-    /// `unchanged` early return for exactly this reason.
-    pub turn_servers: Vec<TurnServer>,
     /// Authenticated subnet and exit-route offers for this node.
     pub routes: Vec<crate::route_offer::Offer>,
     /// The tip of the Bedrock log the server reported — `bedrock-v1.md` §5.
@@ -904,7 +828,6 @@ impl fmt::Debug for Netmap {
                     "absent".to_owned()
                 },
             )
-            .field("turn_servers", &self.turn_servers.len())
             .finish_non_exhaustive()
     }
 }
@@ -967,7 +890,6 @@ impl Netmap {
             ssh_filter: Vec::new(),
             ssh_filter_present: false,
             relays: Vec::new(),
-            turn_servers: Vec::new(),
             routes: Vec::new(),
             peers: BTreeMap::new(),
         }
@@ -1029,12 +951,6 @@ impl Netmap {
     /// [`Error::PskLength`] for a malformed PSK, and [`Error::VersionMismatch`]
     /// if the assembled state does not reproduce the server's version.
     pub fn apply(&mut self, resp: pb::KarstNetmapResponse) -> Result<Outcome, Error> {
-        // karst_control.proto's turn_servers field (16) is reserved, never
-        // sent: Karst dropped standalone TURN support in favor of Relay-only
-        // transport fallback. self.turn_servers stays permanently empty,
-        // same as new()'s own default -- nothing populates it from the wire
-        // anymore.
-
         // Read the flags before anything else is mutated. `unchanged` wins over
         // `delta`: the server sets only one, and treating an unchanged response
         // as an empty delta would be harmless while treating it as a full
@@ -1517,22 +1433,6 @@ mod tests {
         assert_eq!(map.addresses, vec!["100.64.0.1".to_owned()]);
         assert_eq!(map.node_id, b"self");
         assert_eq!(map.psk_epoch, 7);
-    }
-
-    // ── TURN — `spec/aven-v1.md` §7.8 ───────────────────────────────────────
-    //
-    // Karst dropped standalone TURN support (Relay-only transport
-    // fallback): karst_control.proto's turn_servers field (16) is reserved,
-    // never sent, so there is no wire shape left to decode and no
-    // from_wire-rejection behavior left to test here. TurnCredential's own
-    // redaction still matters -- it is the client-local type
-    // `crate::turn`'s connectivity client (unrelated to this removal) still
-    // builds a credential as -- so that property stays covered below.
-
-    #[test]
-    fn turn_credential_does_not_print() {
-        let cred = TurnCredential::for_tests("super-secret-password");
-        assert_eq!(format!("{cred:?}"), "turn_password(redacted)");
     }
 
     #[test]
@@ -2024,6 +1924,18 @@ mod tests {
     }
 
     // ── the cache round trip ────────────────────────────────────────────────
+
+    #[test]
+    fn old_control_turn_field_is_ignored_without_changing_the_netmap() {
+        let map = loaded();
+        let mut bytes = map.encode();
+        // Removed field 16: length-delimited, containing an empty legacy entry.
+        bytes.extend_from_slice(&[0x82, 0x01, 0x00]);
+        let restored = Netmap::decode(&bytes).expect("old control's reserved TURN field");
+        assert_eq!(restored.version, map.version);
+        assert_eq!(restored.peers().len(), map.peers().len());
+        assert_eq!(restored.encode(), map.encode());
+    }
 
     /// The cache stores the *assembled* state, because the last response is
     /// usually a delta and is meaningless without what it was applied to.

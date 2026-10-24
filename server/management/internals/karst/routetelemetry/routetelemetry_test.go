@@ -70,6 +70,37 @@ func TestRecordTwiceReplacesRatherThanAccumulates(t *testing.T) {
 	}
 }
 
+func TestForwardingActiveReplacesOnEachReportIncludingToFalse(t *testing.T) {
+	// Issue #404: the gateway reports this every tick for as long as it
+	// holds the offer, including a transition from active to inactive
+	// (e.g. an nftables apply failure after a previously-healthy report).
+	// The replace-not-accumulate contract above must hold for this bool
+	// field too -- a stale "true" surviving a later "false" report would
+	// show an operator a route as ready when it no longer is.
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{ForwardingActive: true}); err != nil {
+		t.Fatalf("record active: %v", err)
+	}
+	byRoute, err := s.LatestByRoute(ctx, "acct-a")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !byRoute["route-1"].ForwardingActive {
+		t.Fatalf("got %+v, want ForwardingActive=true", byRoute["route-1"])
+	}
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{ForwardingActive: false}); err != nil {
+		t.Fatalf("record inactive: %v", err)
+	}
+	byRoute, err = s.LatestByRoute(ctx, "acct-a")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if byRoute["route-1"].ForwardingActive {
+		t.Fatalf("got %+v, want the later false report to replace the earlier true one", byRoute["route-1"])
+	}
+}
+
 func TestLatestByRouteIsScopedToOneAccount(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -97,5 +128,40 @@ func TestRecordRejectsEmptyFields(t *testing.T) {
 	}
 	if err := s.RecordRouteBytes(ctx, "acct-a", "", report); err == nil {
 		t.Fatal("empty route id: want an error, got nil")
+	}
+}
+
+func TestGatewayHealthKeepsCandidatesAndAccountsIndependent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, r := range []struct {
+		account, node string
+		active        bool
+	}{
+		{"a", "primary", true}, {"a", "standby", false}, {"b", "primary", false},
+	} {
+		if err := s.RecordRouteBytes(ctx, r.account, "shared-route", RouteReport{GatewayID: r.node, ForwardingActive: r.active}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := s.LatestByGateway(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || !rows["primary"]["shared-route"].ForwardingActive || rows["standby"]["shared-route"].ForwardingActive {
+		t.Fatalf("candidate/account health mixed: %+v", rows)
+	}
+	if rows["primary"]["shared-route"].ReportedAt.IsZero() {
+		t.Fatal("missing report time")
+	}
+	if err := s.RecordRouteBytes(ctx, "a", "legacy-route", RouteReport{ForwardingActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.LatestByGateway(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows["primary"]) != 1 || len(rows["standby"]) != 1 {
+		t.Fatalf("unattributed legacy report became gateway health: %+v", rows)
 	}
 }

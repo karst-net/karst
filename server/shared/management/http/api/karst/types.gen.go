@@ -332,16 +332,19 @@ func (e DiscoveredRegionKind) Valid() bool {
 
 // Defines values for DiscoveredResourceKind.
 const (
-	DiscoveredResourceKindDatacenter DiscoveredResourceKind = "datacenter"
-	DiscoveredResourceKindLocalZone  DiscoveredResourceKind = "local_zone"
-	DiscoveredResourceKindNamespace  DiscoveredResourceKind = "namespace"
-	DiscoveredResourceKindRegion     DiscoveredResourceKind = "region"
-	DiscoveredResourceKindZone       DiscoveredResourceKind = "zone"
+	DiscoveredResourceKindClusterMember DiscoveredResourceKind = "cluster_member"
+	DiscoveredResourceKindDatacenter    DiscoveredResourceKind = "datacenter"
+	DiscoveredResourceKindLocalZone     DiscoveredResourceKind = "local_zone"
+	DiscoveredResourceKindNamespace     DiscoveredResourceKind = "namespace"
+	DiscoveredResourceKindRegion        DiscoveredResourceKind = "region"
+	DiscoveredResourceKindZone          DiscoveredResourceKind = "zone"
 )
 
 // Valid indicates whether the value is a known member of the DiscoveredResourceKind enum.
 func (e DiscoveredResourceKind) Valid() bool {
 	switch e {
+	case DiscoveredResourceKindClusterMember:
+		return true
 	case DiscoveredResourceKindDatacenter:
 		return true
 	case DiscoveredResourceKindLocalZone:
@@ -389,13 +392,40 @@ func (e GatewayInventorySchemaVersion) Valid() bool {
 
 // Defines values for GatewayNodeForwardingReadiness.
 const (
+	GatewayNodeForwardingReadinessDegraded   GatewayNodeForwardingReadiness = "degraded"
+	GatewayNodeForwardingReadinessReady      GatewayNodeForwardingReadiness = "ready"
 	GatewayNodeForwardingReadinessUnreported GatewayNodeForwardingReadiness = "unreported"
 )
 
 // Valid indicates whether the value is a known member of the GatewayNodeForwardingReadiness enum.
 func (e GatewayNodeForwardingReadiness) Valid() bool {
 	switch e {
+	case GatewayNodeForwardingReadinessDegraded:
+		return true
+	case GatewayNodeForwardingReadinessReady:
+		return true
 	case GatewayNodeForwardingReadinessUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GatewayOfferForwardingReadiness.
+const (
+	GatewayOfferForwardingReadinessDegraded   GatewayOfferForwardingReadiness = "degraded"
+	GatewayOfferForwardingReadinessReady      GatewayOfferForwardingReadiness = "ready"
+	GatewayOfferForwardingReadinessUnreported GatewayOfferForwardingReadiness = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the GatewayOfferForwardingReadiness enum.
+func (e GatewayOfferForwardingReadiness) Valid() bool {
+	switch e {
+	case GatewayOfferForwardingReadinessDegraded:
+		return true
+	case GatewayOfferForwardingReadinessReady:
+		return true
+	case GatewayOfferForwardingReadinessUnreported:
 		return true
 	default:
 		return false
@@ -465,6 +495,7 @@ const (
 	InfrastructureConnectionTypeAzure      InfrastructureConnectionType = "azure"
 	InfrastructureConnectionTypeGcp        InfrastructureConnectionType = "gcp"
 	InfrastructureConnectionTypeKubernetes InfrastructureConnectionType = "kubernetes"
+	InfrastructureConnectionTypeLxd        InfrastructureConnectionType = "lxd"
 	InfrastructureConnectionTypeNomad      InfrastructureConnectionType = "nomad"
 )
 
@@ -478,6 +509,8 @@ func (e InfrastructureConnectionType) Valid() bool {
 	case InfrastructureConnectionTypeGcp:
 		return true
 	case InfrastructureConnectionTypeKubernetes:
+		return true
+	case InfrastructureConnectionTypeLxd:
 		return true
 	case InfrastructureConnectionTypeNomad:
 		return true
@@ -510,6 +543,7 @@ const (
 	InfrastructureConnectionCreateTypeAzure      InfrastructureConnectionCreateType = "azure"
 	InfrastructureConnectionCreateTypeGcp        InfrastructureConnectionCreateType = "gcp"
 	InfrastructureConnectionCreateTypeKubernetes InfrastructureConnectionCreateType = "kubernetes"
+	InfrastructureConnectionCreateTypeLxd        InfrastructureConnectionCreateType = "lxd"
 	InfrastructureConnectionCreateTypeNomad      InfrastructureConnectionCreateType = "nomad"
 )
 
@@ -523,6 +557,8 @@ func (e InfrastructureConnectionCreateType) Valid() bool {
 	case InfrastructureConnectionCreateTypeGcp:
 		return true
 	case InfrastructureConnectionCreateTypeKubernetes:
+		return true
+	case InfrastructureConnectionCreateTypeLxd:
 		return true
 	case InfrastructureConnectionCreateTypeNomad:
 		return true
@@ -1466,14 +1502,14 @@ type DiscoveredRegionKind string
 type DiscoveredResource struct {
 	Code string `json:"code"`
 
-	// Enabled True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace or a Nomad datacenter, neither of which has an opt-in concept.
+	// Enabled True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace, a Nomad datacenter, or an LXD cluster member, none of which has an opt-in concept.
 	Enabled *bool                  `json:"enabled,omitempty"`
 	Kind    DiscoveredResourceKind `json:"kind"`
 	Lat     *float32               `json:"lat,omitempty"`
 	Lon     *float32               `json:"lon,omitempty"`
 	Name    *string                `json:"name,omitempty"`
 
-	// ParentRegion Set for a kind other than region/namespace/datacenter -- the region to call the enable endpoint against.
+	// ParentRegion Set for a kind other than region/namespace/datacenter/cluster_member -- the region to call the enable endpoint against.
 	ParentRegion *string `json:"parent_region,omitempty"`
 }
 
@@ -1533,27 +1569,35 @@ type GatewayInventorySchemaVersion int
 
 // GatewayNode defines model for GatewayNode.
 type GatewayNode struct {
-	ControlConnected    bool                           `json:"control_connected"`
+	ControlConnected bool `json:"control_connected"`
+
+	// ForwardingReadiness Aggregated across this node's own offers, degraded-first.
 	ForwardingReadiness GatewayNodeForwardingReadiness `json:"forwarding_readiness"`
 	Name                string                         `json:"name"`
 	NodeId              string                         `json:"node_id"`
 	Offers              []GatewayOffer                 `json:"offers"`
 }
 
-// GatewayNodeForwardingReadiness defines model for GatewayNode.ForwardingReadiness.
+// GatewayNodeForwardingReadiness Aggregated across this node's own offers, degraded-first.
 type GatewayNodeForwardingReadiness string
 
 // GatewayOffer defines model for GatewayOffer.
 type GatewayOffer struct {
-	Enabled               bool             `json:"enabled"`
-	Id                    string           `json:"id"`
-	Kind                  GatewayOfferKind `json:"kind"`
-	Masquerade            bool             `json:"masquerade"`
-	Metric                int              `json:"metric"`
-	NetworkId             string           `json:"network_id"`
-	Prefix                string           `json:"prefix"`
-	RequiresClientConsent bool             `json:"requires_client_consent"`
+	Enabled bool `json:"enabled"`
+
+	// ForwardingReadiness Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
+	ForwardingReadiness   GatewayOfferForwardingReadiness `json:"forwarding_readiness"`
+	Id                    string                          `json:"id"`
+	Kind                  GatewayOfferKind                `json:"kind"`
+	Masquerade            bool                            `json:"masquerade"`
+	Metric                int                             `json:"metric"`
+	NetworkId             string                          `json:"network_id"`
+	Prefix                string                          `json:"prefix"`
+	RequiresClientConsent bool                            `json:"requires_client_consent"`
 }
+
+// GatewayOfferForwardingReadiness Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
+type GatewayOfferForwardingReadiness string
 
 // GatewayOfferKind defines model for GatewayOffer.Kind.
 type GatewayOfferKind string
@@ -1600,7 +1644,7 @@ type InfrastructureConnectionCreate struct {
 	Lon           *float32                           `json:"lon,omitempty"`
 	Mode          InfrastructureConnectionCreateMode `json:"mode"`
 
-	// Secret Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}. Nomad: {address, region?, namespace?, token?, ca_cert?, client_cert?, client_key?} -- ca_cert/client_cert/client_key are PEM contents, not file paths.
+	// Secret Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}. Nomad: {address, region?, namespace?, token?, ca_cert?, client_cert?, client_key?} -- ca_cert/client_cert/client_key are PEM contents, not file paths. LXD: {address, project?, server_cert?, client_cert?, client_key?} -- server_cert pins the server's own (typically self-signed) certificate rather than naming a real CA; client_cert/client_key are PEM contents, not file paths.
 	Secret map[string]interface{}             `json:"secret"`
 	Type   InfrastructureConnectionCreateType `json:"type"`
 }

@@ -126,14 +126,14 @@ recursively capture the tunnel's own transport.
 
 Consent is local and durable (§3.2 of the plan): the control server can
 *offer* `0.0.0.0/0`/`::/0`, never activate it. A route ID accepted with
-`karst exit-node use <route-id>` survives config reload, daemon restart, and
+`karst gateway exit use <route-id>` survives config reload, daemon restart, and
 a missed netmap push; the console can report an offered or active exit route
 but cannot manufacture consent on a client's behalf. Nothing this section
 describes bypasses that gate — routing and privacy exposure begin only after
 the local operator has explicitly opted in.
 
 On macOS (ADR-0036) the local operator is the Mac's administrator, with two
-equivalent ways to give or withdraw consent: `sudo karst exit-node use
+equivalent ways to give or withdraw consent: `sudo karst gateway exit use
 <route-id>` / `disable` (the CLI ships with the package and talks to the
 Network Extension's root-only socket), or Karst.app's **Exit node** menu,
 which shows this section's disclosure and asks for an administrator's
@@ -144,38 +144,40 @@ anything. A non-administrator can see the current exit but cannot change it.
 
 | Situation | What restores it |
 |---|---|
-| A client no longer wants its exit route active | `karst exit-node disable` — withdraws the kernel default route immediately and clears the durable consent record. Re-selecting the same or a different route needs `exit-node use` again. |
-| An operator disables or deletes a route in the console | The next pushed netmap withdraws the kernel route on every affected recipient and the forwarding grant on the gateway — no restart needed on either side. Both leave dormant consent in place for that route ID: the wire carries no distinction between "temporarily disabled" and "gone for good" (a disabled route is simply absent from the offer list, the same as a deleted one), and a recipient cannot safely treat "the server stopped mentioning this ID" as authorization to discard its own durable consent record — §3.2's client-owned-consent boundary cuts both ways. Re-enabling a disabled route never needs re-consent, by construction. Clearing consent for an ID that is gone for good is always available locally: `karst exit-node disable`. |
+| A client no longer wants its exit route active | `karst gateway exit disable` — withdraws the kernel default route immediately and clears the durable consent record. Re-selecting the same or a different route needs `exit-node use` again. |
+| An operator disables or deletes a route in the console | The next pushed netmap withdraws the kernel route on every affected recipient and the forwarding grant on the gateway — no restart needed on either side. Both leave dormant consent in place for that route ID: the wire carries no distinction between "temporarily disabled" and "gone for good" (a disabled route is simply absent from the offer list, the same as a deleted one), and a recipient cannot safely treat "the server stopped mentioning this ID" as authorization to discard its own durable consent record — §3.2's client-owned-consent boundary cuts both ways. Re-enabling a disabled route never needs re-consent, by construction. Clearing consent for an ID that is gone for good is always available locally: `karst gateway exit disable`. |
 | The gateway's `karstd` crashes or is restarted | Reconciliation is idempotent at every layer that installs anything, tolerating exactly what a crashed prior instance would have left behind (`Drop` does not run under `SIGKILL`): `nft add table` tolerates the table already existing, a recipient's kernel route is installed with replace semantics, and the exit-policy `ip route`/`ip rule` installs each delete the same spec first. The fresh process rebuilds everything from the current netmap on its own, with no operator action — but see the row below for how long a *recipient already connected to that gateway* takes to notice. |
-| A recipient's `karstd` crashes or is restarted | Exit-route consent is read back from `exit_node_state_file` at startup and re-applied without re-running `exit-node use`; subnet routes reappear from the next netmap fetch, the same as any other cryptokey route. |
+| A recipient's `karstd` crashes or is restarted | Exit-route consent is read back from the configured Gateway consent file at startup and re-applied without re-running `exit-node use`; subnet routes reappear from the next netmap fetch, the same as any other cryptokey route. |
 | A gateway crashes and restarts while a recipient's own session stays up | Slower than every other row in this table, and not a routing-layer property: the recipient's session with the gateway looks established right up until the crash, and PHREATIC's own rule that only the initiator rekeys (`spec/phreatic-v1.md` §7) means the surviving recipient has no reason to dial a fresh handshake until its session reaches `REKEY_AFTER_TIME` (120s). Measured in practice at a little over two minutes end to end. A route or policy change on an already-live session reaches it in seconds (the row above); a peer's own process dying is a session-liveness question, not a route-push one. |
 | `karstd` is uninstalled or stopped for good | Only state Karst itself changed is undone: the `karst_routes` nftables table is removed, and a forwarding sysctl Karst flipped from `0` is restored to `0` — one it found already enabled is left alone. Any operator firewall rules and any forwarding sysctl already on before Karst ran are untouched. |
 | A route's gateway *group* has more than one member and the currently-effective one goes offline | The server excludes an offline gateway from the route's candidate set entirely once its control-channel session ends (not the row above's `REKEY_AFTER_TIME`, which is a *recipient's own* data-plane session-liveness question, not this one) — the next netmap push carries only the remaining, connected candidate(s), and every recipient's local HA selection (lowest metric, tied by gateway ID) converges on the same one deterministically. Recovery is bounded by netmap refresh latency, typically seconds, not the ~2-minute figure above. If every member of the group is offline, the route is withdrawn entirely rather than offered pointing at nothing reachable. This governs which gateway a route is offered through; it is not liveness-aware selection *within* an already-accepted netmap — a recipient does not re-run selection on its own between pushes. |
 
 ### Gateway consent configuration migration
 
-Server-managed nodes accept `node.gateway_exit_state_file` as the canonical
-name for local durable exit consent. `node.exit_node_state_file` remains a
-supported compatibility alias. Both names resolve relative paths against the
-configuration directory and use the same protected file and route-ID format.
-Omitting the setting retains the existing platform default. This setting
-chooses storage only: it neither enables forwarding nor grants exit consent.
-Static rosters do not receive managed route offers and do not use this setting.
+The canonical local capability surface is `[gateway]`: `forwarding` controls
+specific-prefix and default-route forwarding together, and `exit_state_file`
+chooses durable client consent storage. The historical
+`node.gateway_exit_state_file` and `node.exit_node_state_file` keys remain
+supported for compatibility. Paths resolve against the configuration directory;
+omitting the path retains the existing platform default. Storage configuration
+never grants exit consent. See the [migration audit](gateway-migration-verification.md)
+for diagnostics, rollback constraints and verification results.
 
 Before changing a deployed configuration:
 
 1. Back up the configuration and existing consent file with their owner-only
    permissions intact. Record the resolved path; do not change it.
-2. In the existing `[node]` table, replace only the key
-   `exit_node_state_file` with `gateway_exit_state_file`, keeping its value.
-   Do not add both: the daemon rejects duplicate spellings, even if equal.
-3. Upgrade the daemon before using the new spelling. Older daemons reject it
-   as an unknown field; the legacy spelling works on both versions.
+2. Move the existing node exit-state setting to `[gateway].exit_state_file`,
+   keeping its value. Remove the old key; setting both is an error even if equal.
+   Omit `forwarding` to retain existing behavior, or set it to `false` to refuse
+   both forwarding behaviors locally without withdrawing client consent.
+3. Upgrade the daemon before using `[gateway]`. Older daemons reject unknown
+   tables; the legacy node key works on both versions.
 4. After restarting, inspect `karst gateway exit list` and
    `karst gateway status`. Existing selection is retained; actual exit use
    still requires an eligible authenticated offer and the usual policy checks.
 
-For rollback, restore the legacy key spelling and keep the **current** consent
+For rollback, remove `[gateway]`, restore the legacy node key and keep the **current** consent
 file at the same path. Do not restore an old consent backup over a later
 `gateway exit disable`, which would resurrect withdrawn consent. No file move,
 route-ID conversion, permission change, or default-path change is required.
@@ -216,11 +218,11 @@ Unified configuration, APIs/UI and Relay lifecycle remain pending in #404.
   if any; each `[[route]]` entry shows the route's role for this node
   (`gateway` or `recipient`), its kind (`subnet` or `exit`), and whether it
   is currently active.
-- **`karst exit-node list`** — every currently offered exit route and
+- **`karst gateway exit list`** — every currently offered exit route and
   whether it is the one this device has consented to. `selected_offered`
   reports whether the selected route ID is still among them — `false` is
   the operator-visible sign of the dormant, dangling consent described in
-  the Recovery table above (§4), clearable with `karst exit-node disable`.
+  the Recovery table above (§4), clearable with `karst gateway exit disable`.
 - **`nft list table inet karst_routes`** (root) — the gateway's own live
   forwarding and NAT rules, including per-rule packet/byte counters. A table
   that is empty or missing on a node whose own `karst status` reports it as

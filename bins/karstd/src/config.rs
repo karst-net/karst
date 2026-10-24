@@ -174,6 +174,9 @@ impl std::error::Error for ConfigError {}
 pub struct File {
     /// This node.
     pub node: NodeSection,
+    /// Local policy shared by specific-prefix and default-route forwarding.
+    #[serde(default)]
+    pub gateway: GatewaySection,
     /// The roster. `#[serde(default)]` so a node with no peers still loads —
     /// that is a valid, if lonely, state and a clearer error comes later.
     #[serde(default, rename = "peer")]
@@ -199,6 +202,52 @@ pub struct File {
     /// The opt-in ADR-0045 §4b anchor-RTT prober.
     #[serde(default)]
     pub probe: ProbeSection,
+}
+
+/// Local Gateway policy. Control offers cannot override this host's choice.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GatewaySection {
+    /// Permit forwarding for authenticated Gateway offers of either kind.
+    /// Defaults to true to preserve existing deployments; this grants no routes.
+    pub forwarding: bool,
+    /// Durable client consent storage; independent of the forwarding switch.
+    pub exit_state_file: Option<PathBuf>,
+}
+
+impl Default for GatewaySection {
+    fn default() -> Self {
+        Self {
+            forwarding: true,
+            exit_state_file: None,
+        }
+    }
+}
+
+impl File {
+    /// Resolve Gateway consent storage without moving existing state.
+    ///
+    /// # Errors
+    /// Returns an error when both the Gateway table and a legacy node key
+    /// configure consent storage, even if they name the same path.
+    pub fn gateway_exit_state_path(&self, dir: &Path) -> Result<PathBuf, ConfigError> {
+        if self.gateway.exit_state_file.is_some() && self.node.exit_node_state_file.is_some() {
+            return Err(ConfigError::Unusable(
+                "configure gateway.exit_state_file or the legacy node exit-state setting, not both"
+                    .into(),
+            ));
+        }
+        Ok(self.gateway.exit_state_file.as_ref().map_or_else(
+            || self.node.gateway_exit_state_path(dir),
+            |path| {
+                if path.is_absolute() {
+                    path.clone()
+                } else {
+                    dir.join(path)
+                }
+            },
+        ))
+    }
 }
 
 /// The `[tracing]` TOML table.
@@ -437,8 +486,9 @@ pub struct NodeSection {
     /// on the same host, such as an integration test running several nodes in
     /// separate network namespaces, which would otherwise all share one root's
     /// worth of exit-route state.
-    /// The canonical TOML spelling is `gateway_exit_state_file`; the legacy
-    /// `exit_node_state_file` alias reads the same file. Serde rejects both
+    /// Prefer `[gateway].exit_state_file`. The historical node spellings
+    /// `gateway_exit_state_file` and `exit_node_state_file` read the same file.
+    /// Serde rejects both
     /// spellings together, even with equal values, rather than choosing one.
     #[serde(
         default,
@@ -875,6 +925,8 @@ impl fmt::Debug for Peer {
 }
 
 /// A loaded, validated configuration.
+// These booleans are independent host policy switches, not lifecycle states.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Config {
     /// This node's long-term keys.
     ///
@@ -920,11 +972,6 @@ pub struct Config {
     pub node_id: Vec<u8>,
     /// Authenticated relay choices from the netmap.
     pub relays: Vec<crate::netmap::Relay>,
-    /// TURN fallback servers from the netmap, each carrying a credential
-    /// minted for the response that supplied it — `spec/aven-v1.md` §7.8.
-    /// Empty for a deployment that has not configured TURN, and for a static
-    /// TOML roster, which has no netmap to carry one.
-    pub turn_servers: Vec<crate::netmap::TurnServer>,
     /// Extra trust anchors for relay TLS, from `[control] relay_ca_file`.
     ///
     /// Local configuration rather than netmap content, deliberately: which
@@ -939,9 +986,11 @@ pub struct Config {
     pub prefer_quic_relay: bool,
     /// Authenticated route offers retained for local consent and diagnostics.
     pub route_offers: Vec<crate::route_offer::Offer>,
-    /// Root-owned local state selecting one exit route. None for static
-    /// rosters, which have no server route offers.
+    /// Root-owned local state selecting one exit route. Static rosters have
+    /// no server route offers; configuring storage does not grant consent.
     pub exit_node_state_file: Option<PathBuf>,
+    /// Host permission shared by both Gateway forwarding behaviors.
+    pub gateway_forwarding: bool,
 
     /// The roster.
     pub peers: Vec<Peer>,
@@ -1028,6 +1077,8 @@ impl Config {
                     .to_owned(),
             ));
         }
+        let exit_state_path =
+            file.gateway_exit_state_path(config_path.parent().unwrap_or(Path::new(".")))?;
         let key_path = resolve(&file.node.private_key_file, config_path);
         check_permissions(&key_path)?;
         let seed = std::fs::read_to_string(&key_path).map_err(|source| ConfigError::Read {
@@ -1102,11 +1153,11 @@ impl Config {
             psk_epoch: file.node.psk_epoch,
             node_id: Vec::new(),
             relays: Vec::new(),
-            turn_servers: Vec::new(),
             relay_ca_file: None,
             prefer_quic_relay: false,
             route_offers: Vec::new(),
-            exit_node_state_file: None,
+            exit_node_state_file: Some(exit_state_path),
+            gateway_forwarding: file.gateway.forwarding,
             peers,
             routes,
             skipped: Vec::new(),
@@ -1311,14 +1362,6 @@ impl Config {
                     relay
                 })
                 .collect(),
-            // **Not NAT64-rewritten, unlike `relays` above.** A `turn:` or
-            // `turns:` URI is not the bare `address:port` `rewrite_authority`
-            // expects, and no row in this tree yet pairs a NAT64 node with a
-            // configured TURN server. A NAT64 node that is handed one will
-            // fail to reach it the same way it would fail to reach any other
-            // unrewritten IPv4 literal — a known gap, not a silent one, since
-            // `crate::turn`'s connect failure is logged like any other.
-            turn_servers: netmap.turn_servers.clone(),
             relay_ca_file: local.relay_ca_file,
             prefer_quic_relay: local.prefer_quic_relay,
             peers,
@@ -1327,6 +1370,7 @@ impl Config {
             // row per route, not one per gateway-group candidate.
             route_offers: effective_routes,
             exit_node_state_file: local.exit_node_state_file,
+            gateway_forwarding: local.gateway_forwarding,
             routes,
             skipped,
             filter,
@@ -1364,6 +1408,8 @@ impl fmt::Display for SkippedPeer {
 /// Deliberately small. Everything here is something the coordination server has
 /// no business deciding — a UDP port, an interface name, and private key
 /// material that must never leave the node.
+// Independent host policy switches must survive every control refresh.
+#[allow(clippy::struct_excessive_bools)]
 pub struct LocalSettings {
     /// This node's PHREATIC long-term keys.
     pub keys: Arc<StaticKeys>,
@@ -1404,6 +1450,8 @@ pub struct LocalSettings {
     pub prefer_quic_relay: bool,
     /// Root-owned durable exit-route selection.
     pub exit_node_state_file: Option<PathBuf>,
+    /// Host permission to forward both specific and default prefixes.
+    pub gateway_forwarding: bool,
     /// See [`NodeSection::datapath_workers`] — a local performance tuning
     /// knob, not something the coordination server has any business
     /// deciding.
@@ -1994,6 +2042,43 @@ host_integration = "resolvconf"
         assert_eq!(dns.host_integration, HostIntegration::Resolvconf);
     }
 
+    #[test]
+    fn gateway_table_resolves_paths_and_refuses_ambiguous_migration() {
+        let parse = |settings: &str| {
+            toml::from_str::<File>(&format!(
+                "[node]\nlisten = \"0.0.0.0:51820\"\nprivate_key_file = \"key\"\n{settings}"
+            ))
+        };
+        let dir = Path::new("/tmp/karst-config");
+        let config =
+            parse("[gateway]\nforwarding = false\nexit_state_file = \"state/consent\"").unwrap();
+        assert!(!config.gateway.forwarding);
+        assert_eq!(
+            config.gateway_exit_state_path(dir).unwrap(),
+            dir.join("state/consent")
+        );
+        let config = parse("[gateway]\nexit_state_file = \"/tmp/consent\"").unwrap();
+        assert_eq!(
+            config.gateway_exit_state_path(dir).unwrap(),
+            Path::new("/tmp/consent")
+        );
+        for key in ["gateway_exit_state_file", "exit_node_state_file"] {
+            let config = parse(&format!(
+                "{key} = \"same\"\n[gateway]\nexit_state_file = \"same\""
+            ))
+            .unwrap();
+            assert!(config.gateway_exit_state_path(dir).is_err());
+        }
+        let config = parse("").unwrap();
+        assert!(config.gateway.forwarding);
+        assert_eq!(
+            config.gateway_exit_state_path(dir).unwrap(),
+            Path::new(crate::exit_node::DEFAULT_STATE_FILE)
+        );
+        assert!(parse("[gateway]\nforwarding = \"false\"").is_err());
+        assert!(parse("[gateway]\nunknown = true").is_err());
+    }
+
     fn gateway_node(settings: &str) -> Result<NodeSection, toml::de::Error> {
         toml::from_str(&format!(
             "listen = \"0.0.0.0:51820\"\nprivate_key_file = \"missing.key\"\n{settings}"
@@ -2041,9 +2126,13 @@ host_integration = "resolvconf"
     fn gateway_consent_config_migration_and_rollback_preserve_selection() {
         let dir = Scratch::new("gateway-migration");
         let legacy = gateway_node("exit_node_state_file = \"state/selected\"").expect("legacy");
-        let modern = gateway_node("gateway_exit_state_file = \"state/selected\"").expect("modern");
+        let modern: File = toml::from_str(
+            "[node]\nlisten = \"0.0.0.0:51820\"\nprivate_key_file = \"key\"\n[gateway]\nexit_state_file = \"state/selected\"",
+        ).expect("Gateway table");
         let old_path = legacy.gateway_exit_state_path(dir.path());
-        let new_path = modern.gateway_exit_state_path(dir.path());
+        let new_path = modern
+            .gateway_exit_state_path(dir.path())
+            .expect("unambiguous path");
         let mut selection = crate::exit_node::Selection::load(&old_path).expect("load");
         assert_eq!(selection.active(), None);
         selection.select("internet").expect("consent");
@@ -2612,6 +2701,7 @@ mod netmap_tests {
             tracing_collector_server_name: None,
             tracing_collector_pin_hex: None,
             exit_node_state_file: None,
+            gateway_forwarding: true,
             keys: Arc::new(StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,

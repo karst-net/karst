@@ -39,10 +39,29 @@ type StoredRouteBytes struct {
 	Packets        uint64
 	IngressBytes   uint64
 	IngressPackets uint64
-	ReportedAt     time.Time
+	// ForwardingActive is issue #404's Gateway readiness signal: whether
+	// this route's forward-accept rule was actually installed and live in
+	// its gateway's own nftables table at the moment of the report, not
+	// merely whether any bytes have moved yet. See gateway.rs's
+	// `KarstRouteObservation.forwarding_active` doc comment.
+	ForwardingActive bool
+	ReportedAt       time.Time
 }
 
 func (StoredRouteBytes) TableName() string { return "karst_route_telemetry" }
+
+// StoredGatewayHealth keeps candidate health independent of route-wide counters.
+// Legacy route rows cannot be attributed to a node and are never backfilled.
+type StoredGatewayHealth struct {
+	ReadinessReported bool
+	AccountID         string `gorm:"primaryKey;size:64"`
+	GatewayID         string `gorm:"primaryKey"`
+	RouteID           string `gorm:"primaryKey"`
+	ForwardingActive  bool
+	ReportedAt        time.Time
+}
+
+func (StoredGatewayHealth) TableName() string { return "karst_gateway_health" }
 
 type Store struct{ db *gorm.DB }
 
@@ -50,7 +69,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("route telemetry: nil database")
 	}
-	if err := db.AutoMigrate(&StoredRouteBytes{}); err != nil {
+	if err := db.AutoMigrate(&StoredRouteBytes{}, &StoredGatewayHealth{}); err != nil {
 		return nil, fmt.Errorf("route telemetry: migrate: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -60,10 +79,14 @@ func NewStore(db *gorm.DB) (*Store, error) {
 // one route — grouped rather than four positional uint64s, so a caller
 // cannot transpose egress and ingress by positional accident.
 type RouteReport struct {
-	Bytes          uint64
-	Packets        uint64
-	IngressBytes   uint64
-	IngressPackets uint64
+	ReadinessReported bool
+	// GatewayID comes from the authenticated session, never the report payload.
+	GatewayID        string
+	Bytes            uint64
+	Packets          uint64
+	IngressBytes     uint64
+	IngressPackets   uint64
+	ForwardingActive bool
 }
 
 // RecordRouteBytes replaces the stored counters for one route. An upsert,
@@ -76,13 +99,14 @@ func (s *Store) RecordRouteBytes(ctx context.Context, accountID, routeID string,
 		return fmt.Errorf("route telemetry: account and route id must not be empty")
 	}
 	record := &StoredRouteBytes{
-		AccountID:      accountID,
-		RouteID:        routeID,
-		Bytes:          report.Bytes,
-		Packets:        report.Packets,
-		IngressBytes:   report.IngressBytes,
-		IngressPackets: report.IngressPackets,
-		ReportedAt:     time.Now(),
+		AccountID:        accountID,
+		RouteID:          routeID,
+		Bytes:            report.Bytes,
+		Packets:          report.Packets,
+		IngressBytes:     report.IngressBytes,
+		IngressPackets:   report.IngressPackets,
+		ForwardingActive: report.ForwardingActive,
+		ReportedAt:       time.Now(),
 	}
 	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "account_id"}, {Name: "route_id"}},
@@ -91,7 +115,34 @@ func (s *Store) RecordRouteBytes(ctx context.Context, accountID, routeID string,
 	if err != nil {
 		return fmt.Errorf("route telemetry: record %s: %w", routeID, err)
 	}
+	if report.GatewayID != "" {
+		health := StoredGatewayHealth{AccountID: accountID, GatewayID: report.GatewayID,
+			RouteID: routeID, ForwardingActive: report.ForwardingActive, ReportedAt: record.ReportedAt,
+			ReadinessReported: report.ReadinessReported || report.ForwardingActive}
+		if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "account_id"}, {Name: "gateway_id"}, {Name: "route_id"}},
+			UpdateAll: true,
+		}).Create(&health).Error; err != nil {
+			return fmt.Errorf("gateway health: record: %w", err)
+		}
+	}
 	return nil
+}
+
+// LatestByGateway returns account-scoped reports keyed first by node, then resource.
+func (s *Store) LatestByGateway(ctx context.Context, accountID string) (map[string]map[string]StoredGatewayHealth, error) {
+	var rows []StoredGatewayHealth
+	if err := s.db.WithContext(ctx).Where("account_id = ?", accountID).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("gateway health: list: %w", err)
+	}
+	result := make(map[string]map[string]StoredGatewayHealth)
+	for _, row := range rows {
+		if result[row.GatewayID] == nil {
+			result[row.GatewayID] = make(map[string]StoredGatewayHealth)
+		}
+		result[row.GatewayID][row.RouteID] = row
+	}
+	return result, nil
 }
 
 // LatestByRoute reads back every route this account has a stored report

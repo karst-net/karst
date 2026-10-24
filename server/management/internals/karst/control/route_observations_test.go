@@ -61,6 +61,39 @@ func TestRecordRouteObservationsStoresEgressAndIngress(t *testing.T) {
 	}
 }
 
+// Issue #404: forwarding_active is recorded alongside the byte counters,
+// not derived from them -- a zero-byte, newly-installed rule and a failed
+// apply must be distinguishable even though neither has moved traffic yet.
+func TestRecordRouteObservationsStoresForwardingActive(t *testing.T) {
+	store := newRouteTelemetryTestStore(t)
+	h := &NetmapHandler{RouteTelemetry: store}
+	route := effectiveRoute("route-a:selected-peer-id", "10.20.0.0/16", "gateway-a")
+	offers, err := projectRouteOffers(&types.NetworkMap{Routes: []*nbroute.Route{route}}, "gateway-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reports := []*proto.KarstRouteObservation{{RouteId: "route-a", ForwardingActive: false}}
+	h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", reports, offers)
+	byRoute, err := store.LatestByRoute(context.Background(), "acct-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byRoute["route-a"].ForwardingActive {
+		t.Fatalf("got %+v, want forwarding_active=false recorded as reported", byRoute["route-a"])
+	}
+
+	reports = []*proto.KarstRouteObservation{{RouteId: "route-a", ForwardingActive: true}}
+	h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", reports, offers)
+	byRoute, err = store.LatestByRoute(context.Background(), "acct-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !byRoute["route-a"].ForwardingActive {
+		t.Fatalf("got %+v, want the later true report to replace the earlier false one", byRoute["route-a"])
+	}
+}
+
 // self is route-a's recipient, not its gateway — the report must be
 // rejected outright, egress and ingress alike, rather than partially
 // recorded, or a node could pollute another gateway's NOC-visible
@@ -85,5 +118,38 @@ func TestRecordRouteObservationsRejectsNonGatewayReportsEvenWithIngress(t *testi
 	}
 	if len(byRoute) != 0 {
 		t.Fatalf("got %+v, want nothing recorded for a non-gateway report", byRoute)
+	}
+}
+
+// A pre-readiness binary has only counters. The proto3 default false must
+// remain unknown; #422's true is useful even without the newer presence bit.
+func TestGatewayReadinessMixedVersionReports(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		observation   *proto.KarstRouteObservation
+		known, active bool
+	}{
+		{"counter-only", &proto.KarstRouteObservation{RouteId: "route-a", Bytes: 42}, false, false},
+		{"422-ready", &proto.KarstRouteObservation{RouteId: "route-a", ForwardingActive: true}, true, true},
+		{"422-false-ambiguous", &proto.KarstRouteObservation{RouteId: "route-a"}, false, false},
+		{"explicit-degraded", &proto.KarstRouteObservation{RouteId: "route-a", ForwardingReadinessReported: true}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newRouteTelemetryTestStore(t)
+			h := &NetmapHandler{RouteTelemetry: store}
+			offers, err := projectRouteOffers(&types.NetworkMap{Routes: []*nbroute.Route{effectiveRoute("route-a:gateway-a", "10.20.0.0/16", "gateway-a")}}, "gateway-a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", []*proto.KarstRouteObservation{tc.observation}, offers)
+			rows, err := store.LatestByGateway(context.Background(), "acct-a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := rows["gateway-a"]["route-a"]
+			if got.ReadinessReported != tc.known || got.ForwardingActive != tc.active {
+				t.Fatalf("got %+v, want known=%v active=%v", got, tc.known, tc.active)
+			}
+		})
 	}
 }

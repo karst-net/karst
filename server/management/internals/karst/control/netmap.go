@@ -863,7 +863,8 @@ func (h *NetmapHandler) recordAnchorRTT(ctx context.Context, self string, report
 }
 
 // recordRouteObservations validates and records issues #281 and #371's
-// per-route egress and ingress telemetry.
+// per-route egress and ingress telemetry, plus #404's forwarding_active
+// readiness flag.
 //
 // **Defense in depth, not trust.** `offers` is the same, just-computed
 // response this request is about to send self — so checking a reported
@@ -892,10 +893,13 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 			continue
 		}
 		if err := h.RouteTelemetry.RecordRouteBytes(ctx, accountID, routeID, routetelemetry.RouteReport{
-			Bytes:          report.GetBytes(),
-			Packets:        report.GetPackets(),
-			IngressBytes:   report.GetIngressBytes(),
-			IngressPackets: report.GetIngressPackets(),
+			GatewayID:         self,
+			ReadinessReported: report.GetForwardingReadinessReported(),
+			Bytes:             report.GetBytes(),
+			Packets:           report.GetPackets(),
+			IngressBytes:      report.GetIngressBytes(),
+			IngressPackets:    report.GetIngressPackets(),
+			ForwardingActive:  report.GetForwardingActive(),
 		}); err != nil {
 			// Advisory, like session/anchor-RTT telemetry above: a database
 			// failure here must not cost the node its netmap.

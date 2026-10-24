@@ -14,7 +14,12 @@ import (
 func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompleteness(t *testing.T) {
 	db, store, key, relayID, mapping := ingestionFixture(t)
 	ctx := context.Background()
-	ingestNow := time.Now().UTC()
+	// Fixed rather than time.Now(): the 10-minute window below must not
+	// straddle a UTC day boundary, or report.Days (bucketed by day) would
+	// have 2 entries instead of the 1 this test asserts. A real-clock
+	// anchor flakes whenever CI happens to run within 10 minutes of
+	// midnight UTC.
+	ingestNow := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
 	end := ingestNow.Truncate(time.Minute)
 	start := end.Add(-10 * time.Minute)
 	windowStart := start.Add(time.Minute)

@@ -15,13 +15,20 @@ export type GatewayOffer = {
     masquerade: boolean;
     metric: number;
     requires_client_consent: boolean;
+    /**
+     * Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
+     */
+    forwarding_readiness: 'unreported' | 'ready' | 'degraded';
 };
 
 export type GatewayNode = {
     node_id: string;
     name: string;
     control_connected: boolean;
-    forwarding_readiness: 'unreported';
+    /**
+     * Aggregated across this node's own offers, degraded-first.
+     */
+    forwarding_readiness: 'unreported' | 'ready' | 'degraded';
     offers: Array<GatewayOffer>;
 };
 
@@ -685,11 +692,11 @@ export type DiscoveredRegion = {
 };
 
 export type InfrastructureConnectionCreate = {
-    type: 'aws' | 'azure' | 'gcp' | 'kubernetes' | 'nomad';
+    type: 'aws' | 'azure' | 'gcp' | 'kubernetes' | 'nomad' | 'lxd';
     mode: 'read_only' | 'read_write';
     label?: string;
     /**
-     * Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}. Nomad: {address, region?, namespace?, token?, ca_cert?, client_cert?, client_key?} -- ca_cert/client_cert/client_key are PEM contents, not file paths.
+     * Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}. Nomad: {address, region?, namespace?, token?, ca_cert?, client_cert?, client_key?} -- ca_cert/client_cert/client_key are PEM contents, not file paths. LXD: {address, project?, server_cert?, client_cert?, client_key?} -- server_cert pins the server's own (typically self-signed) certificate rather than naming a real CA; client_cert/client_key are PEM contents, not file paths.
      */
     secret: {
         [key: string]: unknown;
@@ -701,7 +708,7 @@ export type InfrastructureConnectionCreate = {
 
 export type InfrastructureConnection = {
     readonly id: string;
-    type: 'aws' | 'azure' | 'gcp' | 'kubernetes' | 'nomad';
+    type: 'aws' | 'azure' | 'gcp' | 'kubernetes' | 'nomad' | 'lxd';
     mode: 'read_only' | 'read_write';
     label?: string;
     readonly created_at: string;
@@ -719,15 +726,15 @@ export type InfrastructureConnection = {
 export type DiscoveredResource = {
     code: string;
     name?: string;
-    kind: 'region' | 'local_zone' | 'zone' | 'namespace' | 'datacenter';
+    kind: 'region' | 'local_zone' | 'zone' | 'namespace' | 'datacenter' | 'cluster_member';
     lat?: number;
     lon?: number;
     /**
-     * Set for a kind other than region/namespace/datacenter -- the region to call the enable endpoint against.
+     * Set for a kind other than region/namespace/datacenter/cluster_member -- the region to call the enable endpoint against.
      */
     parent_region?: string;
     /**
-     * True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace or a Nomad datacenter, neither of which has an opt-in concept.
+     * True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace, a Nomad datacenter, or an LXD cluster member, none of which has an opt-in concept.
      */
     enabled?: boolean;
 };
@@ -946,7 +953,7 @@ export type CloudAccountWritable = {
 };
 
 export type InfrastructureConnectionWritable = {
-    type: 'aws' | 'azure' | 'gcp' | 'kubernetes' | 'nomad';
+    type: 'aws' | 'azure' | 'gcp' | 'kubernetes' | 'nomad' | 'lxd';
     mode: 'read_only' | 'read_write';
     label?: string;
     lat?: number;

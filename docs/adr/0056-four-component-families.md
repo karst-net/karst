@@ -107,6 +107,36 @@ disclosure, and failover diagnostics under the shared Relay view.
 > left to reconsider. [Component architecture](../COMPONENT-ARCHITECTURE.md)
 > and [Relay service associations](../relay-services.md) describe the
 > resulting Ponor-only shape.
+>
+> **Addendum, 2026-10-23 — evaluated and reverted BYO external TURN
+> (#420).** Issue #420 proposed one narrow exception to the addendum above:
+> let a node *use*, without Karst *managing*, an admin-configured external
+> TURN server — the control plane would distribute an operator-entered URI
+> and long-term credential over the existing authenticated channel, the
+> same shape as the Relay roster or DNS resolvers, minting no credentials
+> and probing no health itself. PRs #424 (control-plane config/console) and
+> #425 (karstd's `turns:` TLS dial path) implemented this.
+>
+> Reverted on the same trip, before reaching a release: `turns:` (RFC 7065)
+> has no post-quantum-safe TLS suite in any real-world TURN server
+> implementation, so that one hop would deliberately fall back to a
+> classical (non-PQ) key exchange — unlike every other transport Karst
+> uses, direct and Ponor alike, which hold a strict PQ bar. A
+> harvest-now-decrypt-later break of that hop would expose the long-term
+> TURN credential and the server's metadata (the relayed AVEN/PHREATIC
+> payload itself stays independently PQ-encrypted end-to-end regardless,
+> but credential/metadata exposure alone is enough to fail Karst's own
+> bar). PR #427 reverted #424/#425 and went on to delete the client-side
+> TURN datapath #418 had left as dead code, the same removal #418 and this
+> addendum's own paragraph above already described — `turn_servers` field
+> 16 is joined by `karst_control.proto`'s `external_turn` field 23, now
+> also permanently `reserved`.
+>
+> This addendum's own claim that "there is no TURN backend, embedded or
+> external, left to reconsider" held again as soon as #427 merged; #420's
+> narrow exception did not survive long enough to need its own correction
+> here beyond this note. Revisit BYO external TURN only if a real-world
+> TURN server implementation ships a PQ/hybrid TLS suite.
 
 ### Ownership and trust
 

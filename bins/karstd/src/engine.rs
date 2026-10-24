@@ -66,19 +66,6 @@ pub enum Via {
         /// The peer, as the relay knows it.
         destination: [u8; karst_relay_proto::consts::ID_LEN],
     },
-    /// Through this node's own TURN (RFC 8656) allocation — `spec/aven-v1.md`
-    /// §7.8.
-    ///
-    /// **Two cases, not one.** [`Self::via`] produces this both when a
-    /// confirmed endpoint shares a host with this node's own live TURN
-    /// allocation — in practice, the peer's own TURN candidate, reached this
-    /// way rather than over the shared socket so the packet's observed source
-    /// matches what the peer recorded as this node's confirmed endpoint (a
-    /// send over the shared socket instead is silently dropped at the peer's
-    /// end for exactly that reason) — and, narrower, as a genuine last resort
-    /// when this node has no other way to reach a peer at all: no confirmed
-    /// endpoint, and no relay configured or willing.
-    Turn(SocketAddr),
 }
 
 /// How long this node believes its own relay when it says a peer is not there.
@@ -112,15 +99,6 @@ pub enum Transport {
     Direct,
     /// Through the relay: working, slower, and visible to a third party.
     Relay,
-    /// Through this node's own TURN allocation — `spec/aven-v1.md` §7.8.
-    ///
-    /// Mirrors [`Via::Turn`] for the same reason [`Self::Relay`] exists apart
-    /// from [`Via::Relay`]: `karst status` needs its own way to answer "is
-    /// *this node* paying TURN's relay-equivalent privacy cost". Reaching a
-    /// peer's own TURN candidate reports this, not [`Self::Direct`] — see
-    /// [`Via::Turn`]'s doc comment for why routing it through this node's own
-    /// allocation is a correctness fix, not merely a reporting nicety.
-    Turn,
     /// Nowhere. No address is known and no relay is configured, so the peer is
     /// known about and cannot be sent to.
     Unreachable,
@@ -131,7 +109,6 @@ impl std::fmt::Display for Transport {
         f.write_str(match self {
             Self::Direct => "direct",
             Self::Relay => "relay",
-            Self::Turn => "turn",
             Self::Unreachable => "none",
         })
     }
@@ -429,8 +406,6 @@ struct Roster {
 pub struct Engine {
     /// The peer set, replaceable while the daemon runs.
     roster: RwLock<Arc<Roster>>,
-    /// Ephemeral transport credentials refresh even when peer content is unchanged.
-    turn_servers: RwLock<Vec<crate::netmap::TurnServer>>,
     /// This node's verified Bedrock log, for peer head comparison (§5 layer 3).
     ///
     /// `None` until the control client has verified one. Held here rather than
@@ -459,13 +434,6 @@ pub struct Engine {
     /// place that can disagree — at which point this node would route a peer
     /// onto an on-demand connection to the relay it is already sitting on.
     home_relay: RwLock<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
-    /// This node's own live TURN allocation's relayed address, when it holds
-    /// one — `spec/aven-v1.md` §7.8.
-    ///
-    /// `None` until `crate::turn`'s worker thread has completed an Allocate,
-    /// and `None` again the moment that allocation is lost — [`Self::via`]
-    /// must not name a `Via::Turn` destination nothing can currently reach.
-    turn_relay: RwLock<Option<SocketAddr>>,
     /// Resolved file transfers, most recent last — GitHub issue #212. Local
     /// audit trail, in the same spirit as
     /// `server/management/internals/karst/node/node.go`'s
@@ -497,13 +465,11 @@ impl Engine {
         let roster = build_roster(config, &HashMap::new());
         Self {
             roster: RwLock::new(Arc::new(roster)),
-            turn_servers: RwLock::new(config.turn_servers.clone()),
             bedrock: RwLock::new(None),
             in_mac_key,
             cookie: Mutex::new(None),
             stats: Counters::default(),
             home_relay: RwLock::new(None),
-            turn_relay: RwLock::new(None),
             file_transfer_receipts: Mutex::new(VecDeque::new()),
         }
     }
@@ -549,72 +515,11 @@ impl Engine {
         self.roster().config.relays.clone()
     }
 
-    /// The TURN fallback registry the netmap currently carries —
-    /// `spec/aven-v1.md` §7.8.
-    ///
-    /// Refreshed independently of the peer roster: a fresh
-    /// credential arrives with every netmap poll (`crate::netmap::Netmap`'s
-    /// own doc comment on `turn_servers`), and `crate::turn`'s worker rereads
-    /// this on every (re)connect attempt rather than being separately told to
-    /// refresh — the credential it picks up is never staler than the netmap
-    /// already is.
-    #[must_use]
-    pub fn turn_servers(&self) -> Vec<crate::netmap::TurnServer> {
-        self.turn_servers
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
-    /// Apply credential-only updates without clearing peer flows or rebuilding
-    /// the roster. Endpoint changes require full route/escape reconciliation.
-    pub(crate) fn refresh_turn_credentials(&self, servers: &[crate::netmap::TurnServer]) -> bool {
-        let mut current = self
-            .turn_servers
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if current.len() != servers.len()
-            || current
-                .iter()
-                .zip(servers)
-                .any(|(old, new)| old.uri != new.uri)
-        {
-            return false;
-        }
-        *current = servers.to_vec();
-        true
-    }
-
     /// The relay this node holds — §9.1.
     #[must_use]
     pub fn home_relay(&self) -> Option<[u8; karst_relay_proto::consts::ID_LEN]> {
         *self
             .home_relay
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Tell the engine this node's own TURN allocation's relayed address, or
-    /// that it no longer holds one — `spec/aven-v1.md` §7.8.
-    ///
-    /// [`crate::turn`]'s worker thread calls this on every allocate and every
-    /// loss, mirroring [`Self::set_home_relay`]: `Via::Turn` is only ever
-    /// produced from what is told here, never derived from configuration,
-    /// because whether an allocation is actually live is that thread's fact to
-    /// know.
-    pub fn set_turn_relay(&self, relayed: Option<SocketAddr>) {
-        *self
-            .turn_relay
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = relayed;
-    }
-
-    /// This node's own TURN-relayed address, if it currently holds a live
-    /// allocation.
-    #[must_use]
-    pub fn turn_relay(&self) -> Option<SocketAddr> {
-        *self
-            .turn_relay
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -801,10 +706,6 @@ impl Engine {
             .roster
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(next);
-        self.turn_servers
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone_from(&config.turn_servers);
 
         Reconfigured {
             added,
@@ -864,14 +765,6 @@ impl Engine {
     /// The upgrade and the fallback are the same decision read at different
     /// moments.
     ///
-    /// **A third fallback, TURN, exists too** — `spec/aven-v1.md` §7.8 — in
-    /// two shapes: reached below, strictly after both of the above, when a
-    /// peer has no confirmed direct endpoint *and* the relay logic returns
-    /// nothing at all; and reached right here, ahead of both, when the
-    /// confirmed endpoint itself is on this node's own TURN server — see
-    /// [`Via::Turn`]'s own doc comment for why that one is not ordinary
-    /// [`Via::Direct`] despite being confirmed the identical way.
-    ///
     /// **That includes the endpoint the netmap supplied.** Discovery adopts it
     /// at reconcile and can withdraw it, which is what stops a published
     /// address that has gone stale from pre-empting the relay forever — it did,
@@ -892,43 +785,9 @@ impl Engine {
     /// it is one this node could dial and is not the relay it already holds.
     fn via(&self, roster: &Roster, peer: PeerIndex) -> Option<Via> {
         if let Some(addr) = self.endpoint(peer) {
-            // §7.8: a confirmed endpoint on the *same host* as this node's own
-            // TURN allocation is, in practice, that peer's own TURN candidate
-            // — the co-located relay, the reflector and `coturn` all share one
-            // public address in every deployment this project ships, so no
-            // ordinary direct or reflexive address collides with it by
-            // accident. It must be reached through *this node's own*
-            // allocation, not the shared socket: sending it over the shared
-            // socket puts this node's own raw NAT-mapped address on the wire
-            // as the packet's source, which will not match what the peer
-            // recorded as this node's confirmed endpoint when that is *also*
-            // a TURN address on the same server — the peer's own
-            // `peer_at(from)` then finds no peer at all, and silently drops
-            // the datagram (confirmed against a real `coturn` while wiring
-            // this up: the session established fine, real application data
-            // never arrived). `Endpoint` carries no kind tag (§7.8's own
-            // accepted gap), so this same-host check is the best available
-            // signal without a wire change — it can misfire only if a
-            // deployment runs multiple TURN servers on different hosts and a
-            // peer's ordinary address happens to collide with one of them,
-            // which costs an unneeded TURN hop, not a dropped datagram.
-            if let Some(turn) = self.turn_relay() {
-                if turn.ip() == addr.ip() {
-                    return Some(Via::Turn(addr));
-                }
-            }
             return Some(Via::Direct(addr));
         }
-        if let Some(via) = self.via_relay(roster, peer) {
-            return Some(via);
-        }
-        // §7.8's last resort. Reached only when the relay branch above had
-        // nothing to offer — no relay configured, or this peer has no relay
-        // destination at all — never before it and never instead of it: the
-        // co-located relay's connection is already up, where an allocation is
-        // not attempted until it is needed, so it stays preferred whenever
-        // both exist.
-        self.turn_relay().map(Via::Turn)
+        self.via_relay(roster, peer)
     }
 
     /// The relay half of [`Self::via`], split out so the TURN fallback above
@@ -2070,6 +1929,22 @@ impl Engine {
         packet: &[u8],
         now_ms: u64,
     ) -> bool {
+        // Local refusal must hold even when host forwarding was already on,
+        // or a crashed daemon left nftables rules behind. Apply before the
+        // flow table too, so an established transit flow cannot bypass it.
+        if dir == Direction::In
+            && !roster.config.gateway_forwarding
+            && ip::destination(packet).is_some_and(|destination| {
+                !roster
+                    .config
+                    .addresses
+                    .iter()
+                    .any(|address| address.addr == destination)
+            })
+        {
+            self.stats.acl_denied_in.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
         let verdict = match dir {
             Direction::In => roster.config.filter.ingress(peer, packet),
             Direction::Out => {
@@ -2206,7 +2081,6 @@ impl Engine {
                 transport: match self.via(&roster, index) {
                     Some(Via::Direct(_)) => Transport::Direct,
                     Some(Via::Relay { .. }) => Transport::Relay,
-                    Some(Via::Turn(_)) => Transport::Turn,
                     None => Transport::Unreachable,
                 },
                 tx_bytes: roster

@@ -38,7 +38,7 @@ impl Ruleset {
         for offer in config
             .route_offers
             .iter()
-            .filter(|offer| offer.role == Role::Gateway)
+            .filter(|offer| config.gateway_forwarding && offer.role == Role::Gateway)
         {
             let family = offer.prefix.base().is_ipv4();
             let sources: Vec<Prefix> = config
@@ -327,13 +327,18 @@ impl<B: Backend> State<B> {
         self.restore_one(IPV6_FORWARD, false);
     }
 
+    fn remove_owned_table(&mut self) -> std::io::Result<()> {
+        match self.backend.nft(&["delete", "table", "inet", TABLE], None) {
+            Ok(()) => self.table = false,
+            Err(error) if error.to_string().contains("No such file") => self.table = false,
+            Err(error) => return Err(error),
+        }
+        Ok(())
+    }
+
     fn clear(&mut self) -> std::io::Result<()> {
         if self.table {
-            match self.backend.nft(&["delete", "table", "inet", TABLE], None) {
-                Ok(()) => self.table = false,
-                Err(error) if error.to_string().contains("No such file") => self.table = false,
-                Err(error) => return Err(error),
-            }
+            self.remove_owned_table()?;
         }
         self.restore_forwarding();
         Ok(())
@@ -364,6 +369,11 @@ impl Manager {
     /// If nftables or a required forwarding sysctl cannot be applied.
     pub fn reconcile(&mut self, config: &Config) -> std::io::Result<Ruleset> {
         let rules = Ruleset::from_config(config);
+        if !config.gateway_forwarding && cfg!(target_os = "linux") {
+            // Explicit refusal also removes our table left by a prior crash.
+            // Never reset host sysctls whose ownership this process cannot know.
+            self.0.remove_owned_table()?;
+        }
         if let Err(error) = self.0.reconcile(&rules, &config.interface) {
             // Retaining the previous grant after an authorization-changing
             // netmap would be a security failure. Best-effort removal is safer
@@ -562,6 +572,7 @@ mod tests {
             tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
+            gateway_forwarding: true,
             keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().unwrap(),
             port_mapping: false,
@@ -579,7 +590,6 @@ mod tests {
             psk_epoch: 1,
             node_id: vec![7],
             relays: Vec::new(),
-            turn_servers: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::<(Prefix, usize)>::new())
                 .expect("empty routes"),
@@ -608,6 +618,26 @@ mod tests {
         assert_eq!(rules.grants.len(), 2);
         assert!(rules.ipv4 && rules.ipv6);
         assert_eq!(rules.grants[0].sources.len(), 1);
+    }
+
+    #[test]
+    fn local_forwarding_switch_gates_both_behaviors_and_families() {
+        let mut config = config();
+        config.route_offers = vec![
+            offer("lan", "192.168.50.0/24", pb::KarstRouteRole::Gateway, true),
+            offer("internet", "0.0.0.0/0", pb::KarstRouteRole::Gateway, true),
+            offer("internet-v6", "::/0", pb::KarstRouteRole::Gateway, true),
+        ];
+        assert_eq!(Ruleset::from_config(&config).grants.len(), 3);
+        config.gateway_forwarding = false;
+        let rules = Ruleset::from_config(&config);
+        assert!(rules.is_empty());
+        assert!(!rules.ipv4 && !rules.ipv6);
+        assert_eq!(
+            config.route_offers.len(),
+            3,
+            "offers remain visible for diagnostics"
+        );
     }
 
     #[test]
@@ -856,6 +886,25 @@ mod tests {
             changed_v4: false,
             changed_v6: false,
         }
+    }
+
+    #[test]
+    fn explicit_disable_removes_an_owned_table_without_in_memory_ownership() {
+        let mut runtime = state(Mock {
+            v4: true,
+            ..Mock::default()
+        });
+        assert!(!runtime.table);
+        runtime.remove_owned_table().unwrap();
+        assert!(runtime
+            .backend
+            .nft
+            .iter()
+            .any(|(args, _)| args == &["delete", "table", "inet", TABLE]));
+        assert!(
+            runtime.backend.writes.is_empty(),
+            "pre-existing host forwarding is not ours to reset"
+        );
     }
 
     #[test]
