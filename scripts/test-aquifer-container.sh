@@ -11,6 +11,7 @@ cargo build --locked -p karstd -p karst-cli -p karst-relay
 cargo test --locked -p karstd --test aquifer --no-run --message-format=json > "$products/artifacts.jsonl"
 python3 - "$products" <<'PY'
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -26,11 +27,20 @@ shutil.copy2(executables[0], products / "aquifer")
 profile = Path(executables[0]).parent.parent
 for name in ("karstd", "karst", "karst-relay"):
     shutil.copy2(profile / name, products / name)
+for node in ("A", "B"):
+    source = Path(os.environ.get(f"KARST_AQUIFER_NODE_{node}_BIN", profile / "karstd"))
+    if not source.is_file():
+        raise SystemExit(f"node {node} executable not found: {source}")
+    shutil.copy2(source, products / f"karstd-{node.lower()}")
 (products / "artifacts.jsonl").unlink()
 PY
 # SQLite's inherited driver needs CGO; building outside the runtime image also
 # avoids mounting the repository, Go module cache or deployment credentials.
-(cd server && CGO_ENABLED=1 go build -o "$products/karst-testserver" ./management/internals/karst/testserver/)
+if [ -n "${KARST_AQUIFER_TESTSERVER_BIN:-}" ]; then
+    cp -- "$KARST_AQUIFER_TESTSERVER_BIN" "$products/karst-testserver"
+else
+    (cd server && CGO_ENABLED=1 go build -o "$products/karst-testserver" ./management/internals/karst/testserver/)
+fi
 image=${KARST_AQUIFER_TEST_IMAGE:-karst-aquifer-test:local}
 docker build -t "$image" deploy/lab/aquifer
 docker run --rm --network none \
@@ -40,6 +50,8 @@ docker run --rm --network none \
     --mount "type=bind,src=$products,dst=/products,readonly" \
     -e KARST_AQUIFER_BIN_DIR=/products \
     -e KARST_AQUIFER_TESTSERVER=/products/karst-testserver \
+    -e KARST_AQUIFER_NODE_A_BIN=/products/karstd-a \
+    -e KARST_AQUIFER_NODE_B_BIN=/products/karstd-b \
     -e KARST_REQUIRE_PREREQUISITES=1 \
     "$image" sh -ec '
         # Docker masks sysctls read-only. Only expose network sysctls; these

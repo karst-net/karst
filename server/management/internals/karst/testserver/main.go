@@ -96,7 +96,7 @@ func main() {
 
 	var netmapRouter *router
 	if n, ok := netmapMode(); ok {
-		r, err := buildNetmapServer(n, dnsZone(), sshPolicyMode())
+		r, err := buildNetmapServer(n, dnsZone(), sshPolicyMode(), gatewayVerificationMode())
 		if err != nil {
 			fail("netmap fixture: %v", err)
 		}
@@ -351,6 +351,17 @@ func bedrockMode() (int, proto.KarstBedrockMode, bool, bool) {
 		return n, mode, coverEnrolling, true
 	}
 	return 0, proto.KarstBedrockMode_KARST_BEDROCK_MODE_OFF, true, false
+}
+
+// gatewayVerificationMode opts into dual-stack overlay and isolated DNS/LAN
+// policy. Existing fixtures retain their original IPv4-only addresses and ACL.
+func gatewayVerificationMode() bool {
+	for _, arg := range os.Args[1:] {
+		if arg == "--gateway-verification" {
+			return true
+		}
+	}
+	return false
 }
 
 // dnsZone reads `--dns-zone ZONE` from the command line. Empty (the default)

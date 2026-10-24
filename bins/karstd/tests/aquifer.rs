@@ -2161,6 +2161,15 @@ fn write_node_config(
 }
 
 fn start_node(net: &mut Aquifer, tag: &str, ns: &str) {
+    let executable = std::env::var(format!(
+        "KARST_AQUIFER_NODE_{}_BIN",
+        tag.to_ascii_uppercase()
+    ))
+    .unwrap_or_else(|_| bin("karstd"));
+    start_node_with_executable(net, tag, ns, &executable);
+}
+
+fn start_node_with_executable(net: &mut Aquifer, tag: &str, ns: &str, executable: &str) {
     let conf = net.dir.join(tag).join("karstd.toml");
     // Shared `run/` subdirectory under `net.dir`, not `net.dir` itself:
     // `net.dir` already exists by the time any node starts, and
@@ -2172,7 +2181,7 @@ fn start_node(net: &mut Aquifer, tag: &str, ns: &str) {
     let _ = std::fs::remove_file(&sock);
     let child = net.launch(
         ns,
-        &bin("karstd"),
+        executable,
         &[
             "--config",
             &conf.to_string_lossy(),
@@ -3699,6 +3708,14 @@ fn a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget() {
 /// that needs to bring up a further node afterward — the failover row's
 /// standby gateway is the one caller that does.
 fn start_routing_topology(suffix: &str) -> (Aquifer, Pins, PathBuf) {
+    start_routing_topology_with(suffix, "", &[])
+}
+
+fn start_routing_topology_with(
+    suffix: &str,
+    node_extra: &str,
+    server_extra: &[String],
+) -> (Aquifer, Pins, PathBuf) {
     let mut net = Aquifer {
         dir: std::env::temp_dir().join(format!("karst-aquifer-{suffix}-{}", std::process::id())),
         services: Vec::new(),
@@ -3709,14 +3726,16 @@ fn start_routing_topology(suffix: &str) -> (Aquifer, Pins, PathBuf) {
     let ips = build_topology(&mut net, Shape::Flat);
     attach_destination_lan();
     let (ca, relay_pk) = start_relay(&mut net);
+    let mut options = vec!["--control".to_owned(), format!("{IP_PUB}:{CONTROL_PORT}")];
+    options.extend_from_slice(server_extra);
     let pins = start_server_with_options(
         &mut net,
         &[(format!("{IP_PUB}:{RELAY_PORT}"), relay_pk)],
         "",
         0,
-        &["--control".to_owned(), format!("{IP_PUB}:{CONTROL_PORT}")],
+        &options,
     );
-    write_node_configs(&net, &pins, &ca, ips);
+    write_node_configs_with(&net, &pins, &ca, ips, node_extra);
 
     start_node(&mut net, "a", NS_A);
     wait_for(&net, "node A to come up", Duration::from_secs(30), || {
@@ -4303,7 +4322,9 @@ fn exit_node_consent_survives_a_daemon_crash_and_restart() {
     // across the restart (see `write_node_config`) — that durability is the
     // entire point being tested.
     net.stop_node("b", NS_B);
-    start_node(&mut net, "b", NS_B);
+    // Promote to the current binary when a legacy node-B override is used.
+    // Persisted consent and the configuration remain unchanged.
+    start_node_with_executable(&mut net, "b", NS_B, &bin("karstd"));
     wait_for(
         &net,
         "node B to re-establish after the crash",
@@ -5256,5 +5277,257 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
     assert!(
         !probe(exit_destination),
         "local refusal must block default egress"
+    );
+}
+
+// IPv6 destination LAN uses a different prefix from both overlay and underlay.
+// Only karstd enables forwarding/NAT; the fixture supplies host addresses/routes.
+fn attach_ipv6_gateway_lan() {
+    for (ns, dev, address) in [
+        (NS_A, "ktn-a-dest", "fd99::1/64"),
+        (NS_DEST, "ktn-dest-a", "fd99::2/64"),
+        (NS_DEST, "ktn-dest-a", "fd99::3/64"),
+    ] {
+        must(&nsr(
+            ns,
+            &["ip", "-6", "addr", "add", address, "dev", dev, "nodad"],
+        ));
+    }
+    must(&nsr(
+        NS_DEST,
+        &["ip", "-6", "route", "add", "default", "via", "fd99::1"],
+    ));
+}
+
+fn gateway_exit_action(net: &Aquifer, action: &str, route_id: Option<&str>) {
+    let socket = net.dir.join("run/b.sock");
+    let mut command = Command::new("ip");
+    command.args([
+        "netns",
+        "exec",
+        NS_B,
+        &bin("karst"),
+        "gateway",
+        "exit",
+        action,
+    ]);
+    if let Some(id) = route_id {
+        command.arg(id);
+    }
+    let out = command
+        .args(["--socket", &socket.to_string_lossy()])
+        .output()
+        .expect("Gateway exit CLI");
+    assert!(
+        out.status.success(),
+        "exit action failed: {} {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn ipv6_gateway_probe(destination: &str) -> Option<String> {
+    let script = format!("import socket\ns=socket.create_connection(('{destination}',22),timeout=1)\nprint(s.recv(128).decode())\n");
+    let out = Command::new("ip")
+        .args(["netns", "exec", NS_B, "python3", "-c", &script])
+        .output()
+        .expect("IPv6 TCP probe");
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn ipv6_gateway_forwards_specific_and_default_prefixes_with_independent_consent() {
+    if !have_prerequisites() {
+        return;
+    }
+    let (mut net, _, _) =
+        start_routing_topology_with("ipv6-gateway", "", &["--gateway-verification".to_owned()]);
+    attach_ipv6_gateway_lan();
+    let handle = fixture_handle_for(&overlay_peer_address(&net, "b", NS_B));
+    for (route_id, prefix) in [("lan-v6", "fd99::2/128"), ("exit-v6", "::/0")] {
+        assert!(fixture_create_route(&RouteOfferBody {
+            route_id,
+            prefix,
+            gateway_handle: &handle,
+            metric: 100,
+            masquerade: true,
+            keep_route: false,
+            enabled: None
+        }));
+    }
+    let listener = "import socket\ns=socket.socket(socket.AF_INET6); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\ns.bind(('::',22)); s.listen(16)\nwhile True:\n c,a=s.accept(); c.sendall(a[0].encode()); c.close()\n";
+    net.spawn_service(NS_DEST, "python3", &["-c", listener], "ipv6-listener.log");
+    wait_for(
+        &net,
+        "IPv6 subnet through Gateway with NAT66",
+        Duration::from_secs(30),
+        || ipv6_gateway_probe("fd99::2").as_deref() == Some("fd99::1"),
+    );
+    assert!(
+        ipv6_gateway_probe("fd99::3").is_none(),
+        "specific-prefix access must not activate IPv6 default egress"
+    );
+    gateway_exit_action(&net, "use", Some("exit-v6"));
+    wait_for(
+        &net,
+        "IPv6 default egress after consent",
+        Duration::from_secs(20),
+        || ipv6_gateway_probe("fd99::3").as_deref() == Some("fd99::1"),
+    );
+    gateway_exit_action(&net, "disable", None);
+    wait_for(
+        &net,
+        "IPv6 default withdrawal",
+        Duration::from_secs(10),
+        || field(&status(&net, "b", NS_B), "exit_route_active").as_deref() == Some("false"),
+    );
+    assert!(ipv6_gateway_probe("fd99::3").is_none());
+    assert_eq!(ipv6_gateway_probe("fd99::2").as_deref(), Some("fd99::1"));
+
+    // Also prove the supported alternative to NAT66: a real return route.
+    must(&nsr(
+        NS_DEST,
+        &[
+            "ip",
+            "-6",
+            "route",
+            "add",
+            "fd42:6b61:7273::/64",
+            "via",
+            "fd99::1",
+        ],
+    ));
+    assert!(fixture_create_route(&RouteOfferBody {
+        route_id: "lan-v6",
+        prefix: "fd99::2/128",
+        gateway_handle: &handle,
+        metric: 100,
+        masquerade: false,
+        keep_route: false,
+        enabled: None
+    }));
+    wait_for(
+        &net,
+        "IPv6 explicit return routing without NAT",
+        Duration::from_secs(20),
+        || {
+            ipv6_gateway_probe("fd99::2")
+                .is_some_and(|source| source.starts_with("fd42:6b61:7273::"))
+        },
+    );
+}
+
+fn gateway_dns_probe(tcp: bool) -> bool {
+    // Unique names and zero-TTL fixture answers prevent cached success after
+    // consent withdrawal. Query the actual stub socket, not `dns query` (explain).
+    let script = format!(
+        r"import socket,struct,time
+name='q'+str(time.monotonic_ns())+'.egress.test'
+question=b''.join(bytes([len(label)])+label.encode() for label in name.split('.'))+b'\0'+struct.pack('!HH',1,1)
+query=struct.pack('!HHHHHH',1234,256,1,0,0,0)+question
+s=socket.socket(socket.AF_INET,socket.SOCK_STREAM if {tcp} else socket.SOCK_DGRAM)
+s.settimeout(3)
+s.connect(('100.100.100.100',53))
+if {tcp}:
+ s.sendall(struct.pack('!H',len(query))+query)
+ def read(n):
+  data=b''
+  while len(data)<n:
+   chunk=s.recv(n-len(data))
+   if not chunk: raise RuntimeError('short DNS response')
+   data+=chunk
+  return data
+ reply=read(struct.unpack('!H',read(2))[0])
+else:
+ s.send(query); reply=s.recv(4096)
+ident,flags,_,answers,_,_=struct.unpack('!HHHHHH',reply[:12])
+assert ident==1234 and flags&32768 and flags&15==0 and answers>0 and bytes([198,51,100,7]) in reply
+",
+        tcp = if tcp { "True" } else { "False" }
+    );
+    Command::new("ip")
+        .args(["netns", "exec", NS_B, "python3", "-c", &script])
+        .output()
+        .is_ok_and(|out| out.status.success())
+}
+
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn ipv6_gateway_dns_upstream_requires_consent_and_stops_after_withdrawal() {
+    if !have_prerequisites() {
+        return;
+    }
+    let (mut net, _, _) = start_routing_topology_with(
+        "gateway-dns",
+        "[dns]\nhost_integration = \"none\"\nupstream = [\"[fd99::3]:53\"]\n",
+        &[
+            "--gateway-verification".to_owned(),
+            "--dns-zone".to_owned(),
+            "aquifer.test".to_owned(),
+        ],
+    );
+    attach_ipv6_gateway_lan();
+    net.spawn_service(
+        NS_DEST,
+        "dnsmasq",
+        &[
+            "--no-daemon",
+            "--no-resolv",
+            "--no-hosts",
+            "--bind-interfaces",
+            "--listen-address=fd99::3",
+            "--address=/egress.test/198.51.100.7",
+            "--local-ttl=0",
+        ],
+        "gateway-dns.log",
+    );
+    let handle = fixture_handle_for(&overlay_peer_address(&net, "b", NS_B));
+    assert!(fixture_create_route(&RouteOfferBody {
+        route_id: "dns-exit-v6",
+        prefix: "::/0",
+        gateway_handle: &handle,
+        metric: 100,
+        masquerade: true,
+        keep_route: false,
+        enabled: None
+    }));
+    wait_for(
+        &net,
+        "IPv6 DNS exit offered",
+        Duration::from_secs(20),
+        || field(&status(&net, "b", NS_B), "offers").as_deref() == Some("1"),
+    );
+    assert!(
+        !gateway_dns_probe(false),
+        "DNS must not reach the exit-only upstream before consent"
+    );
+    gateway_exit_action(&net, "use", Some("dns-exit-v6"));
+    wait_for(
+        &net,
+        "UDP stub query through IPv6 Gateway DNS upstream",
+        Duration::from_secs(20),
+        || gateway_dns_probe(false),
+    );
+    assert!(
+        gateway_dns_probe(true),
+        "TCP stub queries must use the same Gateway DNS path"
+    );
+    gateway_exit_action(&net, "disable", None);
+    wait_for(
+        &net,
+        "IPv6 DNS exit withdrawal",
+        Duration::from_secs(10),
+        || field(&status(&net, "b", NS_B), "exit_route_active").as_deref() == Some("false"),
+    );
+    assert!(
+        !gateway_dns_probe(false),
+        "a fresh DNS name must fail after exit withdrawal"
+    );
+    assert!(
+        !gateway_dns_probe(true),
+        "TCP stub must not bypass exit withdrawal"
     );
 }

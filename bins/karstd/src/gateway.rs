@@ -112,14 +112,19 @@ impl Ruleset {
                     grant.destination,
                     nft_string(&grant.route_id),
                 );
-                if grant.masquerade {
-                    let _ = writeln!(
-                        out,
-                        "add rule inet {TABLE} postrouting iifname {interface} oifname != {interface} {family} saddr {source} {family} daddr {} counter masquerade comment {}",
-                        grant.destination,
-                        nft_string(&grant.route_id),
-                    );
-                }
+                // A specific non-NAT grant must terminate our NAT chain;
+                // otherwise an overlapping default grant masquerades it.
+                let verdict = if grant.masquerade {
+                    "masquerade"
+                } else {
+                    "return"
+                };
+                let _ = writeln!(
+                    out,
+                    "add rule inet {TABLE} postrouting iifname {interface} oifname != {interface} {family} saddr {source} {family} daddr {} counter {verdict} comment {}",
+                    grant.destination,
+                    nft_string(&grant.route_id),
+                );
             }
         }
         // Return-leg rules, one per (grant, source), mirroring the forward
@@ -669,6 +674,30 @@ mod tests {
         );
         assert!(batch.ends_with("iifname \"karst0\" counter drop\n"));
         assert!(!batch.contains("flush ruleset"));
+    }
+
+    #[test]
+    fn specific_non_nat_prefixes_bypass_overlapping_default_nat_in_both_families() {
+        let mut config = config();
+        config.route_offers = vec![
+            offer("v4-exit", "0.0.0.0/0", pb::KarstRouteRole::Gateway, true),
+            offer("v6-exit", "::/0", pb::KarstRouteRole::Gateway, true),
+            offer("v4-lan", "10.99.0.0/24", pb::KarstRouteRole::Gateway, false),
+            offer("v6-lan", "fd99::/64", pb::KarstRouteRole::Gateway, false),
+        ];
+        let batch = Ruleset::from_config(&config).nft_batch("karst0");
+        for (specific, default) in [
+            (
+                "ip daddr 10.99.0.0/24 counter return",
+                "ip daddr 0.0.0.0/0 counter masquerade",
+            ),
+            (
+                "ip6 daddr fd99::/64 counter return",
+                "ip6 daddr ::/0 counter masquerade",
+            ),
+        ] {
+            assert!(batch.find(specific).unwrap() < batch.find(default).unwrap());
+        }
     }
 
     #[test]
