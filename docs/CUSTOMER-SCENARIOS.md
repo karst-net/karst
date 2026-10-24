@@ -309,7 +309,7 @@ separates two roles this scenario conflates: the *enrolled Karst user* of a
 device, and the *local operator* who holds administrator rights on it. A
 parent who sets up and administers a child's computer already **is** its
 local operator, distinct from the child's enrolled-user identity. The parent
-runs `karst exit-node use <route-id>` once, as the machine's administrator,
+runs `karst gateway exit use <route-id>` once, as the machine's administrator,
 pointing at an exit node they run — durable across restarts
 (`docs/subnet-routers-and-exit-nodes.md` §4) — and the child's own
 unprivileged OS account cannot reach the root-only control socket

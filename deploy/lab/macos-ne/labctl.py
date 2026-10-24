@@ -231,7 +231,9 @@ def cmd_init(_args):
             'listen = "0.0.0.0:51820"\n'
             'interface = "karst0"\n'
             'private_key_file = "/etc/karst/node.key"\n'
-            'exit_node_state_file = "/etc/karst/exit-node.json"\n'
+            '\n[gateway]\n'
+            'forwarding = true\n'
+            'exit_state_file = "/etc/karst/exit-node.json"\n'
             "\n[control]\n"
             f'server = "{CONTROL}"\n'
             f'server_kem_pin = "{metadata["server_kem_pin"]}"\n'

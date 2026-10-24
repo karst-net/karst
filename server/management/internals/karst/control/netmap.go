@@ -893,11 +893,13 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 			continue
 		}
 		if err := h.RouteTelemetry.RecordRouteBytes(ctx, accountID, routeID, routetelemetry.RouteReport{
-			Bytes:            report.GetBytes(),
-			Packets:          report.GetPackets(),
-			IngressBytes:     report.GetIngressBytes(),
-			IngressPackets:   report.GetIngressPackets(),
-			ForwardingActive: report.GetForwardingActive(),
+			GatewayID:         self,
+			ReadinessReported: report.GetForwardingReadinessReported(),
+			Bytes:             report.GetBytes(),
+			Packets:           report.GetPackets(),
+			IngressBytes:      report.GetIngressBytes(),
+			IngressPackets:    report.GetIngressPackets(),
+			ForwardingActive:  report.GetForwardingActive(),
 		}); err != nil {
 			// Advisory, like session/anchor-RTT telemetry above: a database
 			// failure here must not cost the node its netmap.

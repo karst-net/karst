@@ -91,3 +91,39 @@ test("an unknown inventory schema fails explicitly while routes remain available
   await expect(page.getByText(/Unsupported Gateway inventory schema/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Add subnet route" })).toBeVisible();
 });
+
+test("one Gateway behavior editor switches prefix and default-route behaviors", async ({ page }) => {
+  await page.goto("/#/gateways");
+  await page.getByRole("button", { name: "Add Gateway behavior", exact: true }).click();
+  const behavior = page.getByLabel("Gateway behavior", { exact: true });
+  await expect(behavior).toHaveValue("subnet");
+  await behavior.selectOption("::/0");
+  await expect(page.getByLabel("Route network (CIDR)")).toHaveValue("::/0");
+  await expect(page.getByText("karst gateway exit use <route-id>")).toBeVisible();
+  await behavior.selectOption("0.0.0.0/0");
+  await expect(page.getByLabel("Route network (CIDR)")).toHaveValue("0.0.0.0/0");
+  await behavior.selectOption("subnet");
+  await expect(page.getByLabel("Route network (CIDR)")).toHaveValue("");
+  await expect(page.getByText("karst gateway exit use <route-id>")).toHaveCount(0);
+});
+
+test("default behavior keeps explicit client consent and existing route writes", async ({ page }) => {
+  let submitted: Record<string, unknown> | undefined;
+  await page.route("**/api/routes", async (route) => {
+    if (route.request().method() !== "POST") { await route.continue(); return; }
+    submitted = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ status: 201, json: { ...submitted, id: "new-default" } });
+  });
+  await page.goto("/#/gateways");
+  await page.getByRole("button", { name: "Add Gateway behavior", exact: true }).click();
+  await page.getByLabel("Gateway behavior", { exact: true }).selectOption("::/0");
+  await page.getByLabel("Route identifier", { exact: true }).fill("ipv6-egress");
+  await page.getByLabel("Routing groups", { exact: true }).selectOption(["group-gateways"]);
+  await page.getByLabel("Distribution groups", { exact: true }).selectOption(["group-all"]);
+  await page.getByLabel("Access-control groups", { exact: true }).selectOption(["group-sre"]);
+  await page.getByRole("button", { name: "Add route", exact: true }).click();
+  await expect.poll(() => submitted).toMatchObject({
+    network: "::/0", network_id: "ipv6-egress", skip_auto_apply: true,
+    peer_groups: ["group-gateways"], groups: ["group-all"], access_control_groups: ["group-sre"],
+  });
+});

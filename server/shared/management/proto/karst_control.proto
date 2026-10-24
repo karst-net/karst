@@ -183,6 +183,10 @@ message KarstRouteObservation {
   // because neither has moved any bytes yet. `bytes`/`packets` above are
   // always zero when this is false — there is no counter to read back.
   bool forwarding_active = 6;
+  // Presence marker: pre-readiness agents also report counters, with field 6
+  // absent (false). Without this marker they would be mistaken for failures.
+  // A true field 6 remains evidence of readiness from #422-era agents.
+  bool forwarding_readiness_reported = 7;
 }
 
 // KarstAnchorRtt is one region's measured anchor RTT, ADR-0045 §4b.

@@ -5225,4 +5225,36 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
         probe(DEST_HOST),
         "withdrawing exit consent must preserve subnet access"
     );
+
+    // A crash leaves the old nftables table and forwarding sysctl behind.
+    // Local refusal must survive that state, while leaving client consent alone.
+    consent("use");
+    net.stop_node("a", NS_A);
+    let config_path = net.dir.join("a/karstd.toml");
+    let mut config = std::fs::read_to_string(&config_path).expect("Gateway config");
+    config.push_str("\n[gateway]\nforwarding = false\n");
+    std::fs::write(&config_path, config).expect("disable local forwarding");
+    start_node(&mut net, "a", NS_A);
+    wait_for(
+        &net,
+        "Gateway local refusal after crash",
+        Duration::from_secs(30),
+        || {
+            let report = status(&net, "a", NS_A);
+            field(&report, "gateway_forwarding").as_deref() == Some("false")
+                && field(&report, "state").as_deref() == Some("established")
+        },
+    );
+    assert!(
+        !sh(&nsr(
+            NS_A,
+            &["nft", "list", "table", "inet", "karst_routes"]
+        )),
+        "explicit refusal must remove the crashed daemon's owned table"
+    );
+    assert!(!probe(DEST_HOST), "local refusal must block subnet traffic");
+    assert!(
+        !probe(exit_destination),
+        "local refusal must block default egress"
+    );
 }

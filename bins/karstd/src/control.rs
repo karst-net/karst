@@ -1378,7 +1378,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
     let mut client = Client::new(section, dir, &keys)?;
     client.reach_via_nat64(nat64);
 
-    let gateway_exit_state_path = file.node.gateway_exit_state_path(dir);
+    let gateway_exit_state_path = file.gateway_exit_state_path(dir).map_err(Error::Config)?;
     let local = LocalSettings {
         keys,
         listen: file.node.listen,
@@ -1400,6 +1400,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),
         prefer_quic_relay: section.prefer_quic_relay,
         exit_node_state_file: Some(gateway_exit_state_path),
+        gateway_forwarding: file.gateway.forwarding,
     };
 
     // A current-thread runtime, created and dropped here. The datapath is

@@ -1925,6 +1925,18 @@ mod tests {
 
     // ── the cache round trip ────────────────────────────────────────────────
 
+    #[test]
+    fn old_control_turn_field_is_ignored_without_changing_the_netmap() {
+        let map = loaded();
+        let mut bytes = map.encode();
+        // Removed field 16: length-delimited, containing an empty legacy entry.
+        bytes.extend_from_slice(&[0x82, 0x01, 0x00]);
+        let restored = Netmap::decode(&bytes).expect("old control's reserved TURN field");
+        assert_eq!(restored.version, map.version);
+        assert_eq!(restored.peers().len(), map.peers().len());
+        assert_eq!(restored.encode(), map.encode());
+    }
+
     /// The cache stores the *assembled* state, because the last response is
     /// usually a delta and is meaningless without what it was applied to.
     #[test]

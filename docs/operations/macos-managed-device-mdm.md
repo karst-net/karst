@@ -64,7 +64,7 @@ follows that offer if the server recreates it under a new route ID. With
 several offered it chooses none and Karst.app's **Exit node** menu says so.
 While the key is set, the menu shows the exit as "Managed by your
 organization" and offers no change, and the extension refuses the menu's
-change requests. A local administrator's `sudo karst exit-node disable` still
+change requests. A local administrator's `sudo karst gateway exit disable` still
 works, but the extension re-consents on its next health-poll tick.
 
 ## The one problem this does not solve: initial enrollment

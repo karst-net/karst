@@ -108,6 +108,7 @@ fn server_config(filter: PacketFilter, ssh_filter: SshFilter) -> Arc<Config> {
     Arc::new(Config {
         route_offers: Vec::new(),
         exit_node_state_file: None,
+        gateway_forwarding: true,
         keys: keys(0x02),
         listen: "0.0.0.0:0".parse().expect("listen"),
         port_mapping: true,

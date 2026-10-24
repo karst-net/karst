@@ -117,7 +117,7 @@ reachable from the Mac only through its default route (off-link), or the
 check proves nothing.
 
 After `mutate --route exit --state active`, the job consents as the Mac's
-local administrator (`sudo karst exit-node use`, ADR-0036), verifies the
+local administrator (`sudo karst gateway exit use`, ADR-0036), verifies the
 active default route, and transfers the exit probe with no proxy. With the
 exit active, other apps' traffic to the control and relay hosts goes through
 the exit (no `excludedRoutes`, ADR-0036 §2): the job logs which interface they
@@ -125,5 +125,5 @@ now use, requires their probes to stay reachable, and requires the
 extension's own control session to stay synchronized and its peer
 established for 45 seconds. It then withdraws the offer while still
 consented, waits for live status to report the route's absence, and clears
-the dormant consent with `karst exit-node disable`. The controller must make
+the dormant consent with `karst gateway exit disable`. The controller must make
 both exit mutations idempotent.

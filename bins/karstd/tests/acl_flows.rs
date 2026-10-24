@@ -68,6 +68,7 @@ fn config_for(
     let config = Config {
         route_offers: Vec::new(),
         exit_node_state_file: None,
+        gateway_forwarding: true,
         keys: keys(own),
         listen: "0.0.0.0:0".parse().expect("listen"),
         port_mapping: true,
@@ -301,4 +302,36 @@ fn a_policy_change_revokes_flows_it_opened() {
         !client.permits_for_test(Direction::In, 0, &reply, 2),
         "a connection kept working after the policy that allowed it was withdrawn"
     );
+}
+
+#[test]
+fn disabled_gateway_refuses_transit_but_preserves_local_mesh_and_client_replies() {
+    let mut cfg = config_for(
+        1,
+        2,
+        "100.64.0.2/24",
+        "100.64.0.3/32",
+        PacketFilter::unrestricted(),
+    );
+    Arc::get_mut(&mut cfg)
+        .expect("unique config")
+        .gateway_forwarding = false;
+    let engine = Engine::new(&cfg);
+    assert!(engine.permits_for_test(Direction::In, 0, &tcp(B_IP, EPHEMERAL, A_IP, 443), 0));
+    for destination in [[10, 99, 0, 2], [1, 1, 1, 1], [100, 64, 0, 9]] {
+        assert!(!engine.permits_for_test(
+            Direction::In,
+            0,
+            &tcp(B_IP, EPHEMERAL, destination, 443),
+            0
+        ));
+    }
+    let request = tcp(A_IP, EPHEMERAL, [1, 1, 1, 1], 443);
+    assert!(engine.permits_for_test(Direction::Out, 0, &request, 0));
+    assert!(engine.permits_for_test(
+        Direction::In,
+        0,
+        &tcp([1, 1, 1, 1], 443, A_IP, EPHEMERAL),
+        1
+    ));
 }

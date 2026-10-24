@@ -1929,6 +1929,22 @@ impl Engine {
         packet: &[u8],
         now_ms: u64,
     ) -> bool {
+        // Local refusal must hold even when host forwarding was already on,
+        // or a crashed daemon left nftables rules behind. Apply before the
+        // flow table too, so an established transit flow cannot bypass it.
+        if dir == Direction::In
+            && !roster.config.gateway_forwarding
+            && ip::destination(packet).is_some_and(|destination| {
+                !roster
+                    .config
+                    .addresses
+                    .iter()
+                    .any(|address| address.addr == destination)
+            })
+        {
+            self.stats.acl_denied_in.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
         let verdict = match dir {
             Direction::In => roster.config.filter.ingress(peer, packet),
             Direction::Out => {

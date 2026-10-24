@@ -392,6 +392,7 @@ mod run_embedded_tests {
             tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
+            gateway_forwarding: true,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
@@ -826,6 +827,7 @@ fn run_engine(
         relay_ca_file: config.relay_ca_file.clone(),
         prefer_quic_relay: config.prefer_quic_relay,
         exit_node_state_file: config.exit_node_state_file.clone(),
+        gateway_forwarding: config.gateway_forwarding,
         datapath_workers: config.datapath_workers,
         anchor_probe_enabled: config.anchor_probe_enabled,
     };
@@ -1094,7 +1096,7 @@ fn run_engine(
                                     selected.as_deref(),
                                     exit_route_active,
                                 );
-                                return metrics_report(
+                                let mut report = metrics_report(
                                     &engine_ctl.stats(),
                                     relay_dropped.load(Ordering::Relaxed),
                                     current.route_offers.len(),
@@ -1109,6 +1111,8 @@ fn run_engine(
                                             .load(Ordering::Relaxed),
                                     },
                                 );
+                                report.push_str(&gateway_health_metrics(&current, gateway_active));
+                                return report;
                             }
                             if matches!(
                                 command,
@@ -4085,6 +4089,32 @@ struct HomeSweepMetrics {
     duration_ms_count: u64,
 }
 
+/// Aggregate local health suitable for alerting without per-route label cardinality.
+fn gateway_health_metrics(config: &Config, active: bool) -> String {
+    use std::fmt::Write as _;
+    let offers = config
+        .route_offers
+        .iter()
+        .filter(|offer| offer.role == crate::route_offer::Role::Gateway)
+        .count();
+    let disabled = if config.gateway_forwarding { 0 } else { offers };
+    let ready = if active && config.gateway_forwarding {
+        crate::gateway::Ruleset::from_config(config).grants.len()
+    } else {
+        0
+    };
+    let degraded = offers.saturating_sub(ready + disabled);
+    let mut out = String::from("# HELP karst_gateway_offers Gateway grants by local forwarding health.\n# TYPE karst_gateway_offers gauge\n");
+    for (label, value) in [
+        ("ready", ready),
+        ("degraded", degraded),
+        ("disabled", disabled),
+    ] {
+        let _ = writeln!(out, "karst_gateway_offers{{state=\"{label}\"}} {value}");
+    }
+    out
+}
+
 /// Render `Engine::Stats` and route/gateway state as Prometheus text —
 /// `Command::Metrics`'s payload (plans/phase-6/08-observability.md §3.1,
 /// §5 W6 item 1).
@@ -4365,6 +4395,7 @@ fn routing_report(
     let _ = writeln!(out, "offers = {}", config.route_offers.len());
     let _ = writeln!(out, "selected_exit = {selected_exit:?}");
     let _ = writeln!(out, "exit_route_active = {}", active_exit.is_some());
+    let _ = writeln!(out, "gateway_forwarding = {}", config.gateway_forwarding);
     let _ = writeln!(out, "gateway_active = {gateway_active}");
     let _ = writeln!(out, "gateway_error = {gateway_error:?}");
 
@@ -4764,6 +4795,7 @@ struct RoutingJson {
     selected_exit: Option<String>,
     exit_route_active: bool,
     gateway_active: bool,
+    gateway_forwarding: bool,
     gateway_error: Option<String>,
     routes: Vec<RouteJson>,
 }
@@ -4821,6 +4853,7 @@ fn routing_json(
         selected_exit: selected_exit.map(str::to_owned),
         exit_route_active: active_exit.is_some(),
         gateway_active,
+        gateway_forwarding: config.gateway_forwarding,
         gateway_error: gateway_error.map(str::to_owned),
         routes,
     }
@@ -5634,6 +5667,7 @@ fn refresh_netmap(
                             ingress_bytes: route.ingress_bytes,
                             ingress_packets: route.ingress_packets,
                             forwarding_active: true,
+                            forwarding_readiness_reported: true,
                         },
                         None => pb::KarstRouteObservation {
                             route_id: offer.route_id.clone(),
@@ -5642,6 +5676,7 @@ fn refresh_netmap(
                             ingress_bytes: 0,
                             ingress_packets: 0,
                             forwarding_active: false,
+                            forwarding_readiness_reported: true,
                         },
                     })
                     .collect()
@@ -6143,6 +6178,7 @@ mod route_tests {
             tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
+            gateway_forwarding: true,
             keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
@@ -6335,7 +6371,11 @@ mod route_tests {
                 prefix: prefix.to_owned(),
                 gateway_id: vec![1],
                 metric: 100,
-                kind: pb::KarstRouteKind::Subnet as i32,
+                kind: if prefix.ends_with("/0") {
+                    pb::KarstRouteKind::Exit
+                } else {
+                    pb::KarstRouteKind::Subnet
+                } as i32,
                 masquerade: true,
                 keep_route: false,
                 role: pb::KarstRouteRole::Gateway as i32,
@@ -6406,6 +6446,28 @@ mod route_tests {
         assert!(active.contains("kind = \"exit\""));
         assert!(active.contains("role = \"recipient\""));
         assert!(active.contains("active = true"));
+    }
+
+    #[test]
+    fn gateway_health_metrics_distinguish_disabled_from_failed_forwarding() {
+        let mut cfg = config(&["100.64.0.1/24"], &[]);
+        cfg.route_offers
+            .push(gateway_offer("office", "10.20.0.0/16"));
+        cfg.route_offers
+            .push(gateway_offer("internet", "0.0.0.0/0"));
+        assert!(super::gateway_health_metrics(&cfg, false).contains("state=\"degraded\"} 2"));
+        assert!(super::gateway_health_metrics(&cfg, true).contains("state=\"ready\"} 2"));
+        cfg.route_offers.push(gateway_offer("v6", "::/0"));
+        let partial = super::gateway_health_metrics(&cfg, true);
+        assert!(partial.contains("state=\"ready\"} 2"));
+        assert!(
+            partial.contains("state=\"degraded\"} 1"),
+            "a family without source addresses has no forwarding grant"
+        );
+        cfg.gateway_forwarding = false;
+        let metrics = super::gateway_health_metrics(&cfg, false);
+        assert!(metrics.contains("state=\"disabled\"} 3"));
+        assert!(metrics.contains("state=\"degraded\"} 0"));
     }
 
     #[test]
@@ -6874,6 +6936,7 @@ mod probe_tests {
             tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
+            gateway_forwarding: true,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:0".parse().expect("addr"),
             port_mapping: false,
@@ -7746,6 +7809,7 @@ mod probe_tests {
             tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
+            gateway_forwarding: true,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:0".parse().expect("addr"),
             port_mapping: false,

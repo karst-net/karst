@@ -130,3 +130,38 @@ func TestRecordRejectsEmptyFields(t *testing.T) {
 		t.Fatal("empty route id: want an error, got nil")
 	}
 }
+
+func TestGatewayHealthKeepsCandidatesAndAccountsIndependent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, r := range []struct {
+		account, node string
+		active        bool
+	}{
+		{"a", "primary", true}, {"a", "standby", false}, {"b", "primary", false},
+	} {
+		if err := s.RecordRouteBytes(ctx, r.account, "shared-route", RouteReport{GatewayID: r.node, ForwardingActive: r.active}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := s.LatestByGateway(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || !rows["primary"]["shared-route"].ForwardingActive || rows["standby"]["shared-route"].ForwardingActive {
+		t.Fatalf("candidate/account health mixed: %+v", rows)
+	}
+	if rows["primary"]["shared-route"].ReportedAt.IsZero() {
+		t.Fatal("missing report time")
+	}
+	if err := s.RecordRouteBytes(ctx, "a", "legacy-route", RouteReport{ForwardingActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.LatestByGateway(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows["primary"]) != 1 || len(rows["standby"]) != 1 {
+		t.Fatalf("unattributed legacy report became gateway health: %+v", rows)
+	}
+}
