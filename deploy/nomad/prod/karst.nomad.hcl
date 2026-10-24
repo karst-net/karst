@@ -83,6 +83,12 @@ variable "relay_image_digest" {
   default     = "sha256:45a72850a7f3864c5200f3d147998f8e291c0ceb8aaa5f81e045a3eba93c1404"
 }
 
+variable "console_image" {
+  type        = string
+  default     = "local/karst-console:0996bc9"
+  description = "Not yet a published, cosign-verified artefact like control/relay above -- built locally from deploy/images/karst-console.Dockerfile (web/ as context) against whatever web/console revision was current. Rebuild and bump this for a newer admin console."
+}
+
 variable "karst_console_host" {
   type        = string
   description = "Public hostname or IP, no scheme/port -- Caddy's TLS SNI identity and Keycloak's issuer URL both depend on this."
@@ -210,6 +216,30 @@ job "karst" {
     }
   }
 
+  group "console" {
+    count = 1
+
+    constraint {
+      attribute = "${attr.unique.hostname}"
+      value     = var.node_name
+    }
+
+    task "console" {
+      driver = "docker"
+
+      config {
+        image           = var.console_image
+        network_mode    = var.docker_network
+        network_aliases = ["console"]
+      }
+
+      resources {
+        cpu    = 200
+        memory = 128
+      }
+    }
+  }
+
   group "caddy" {
     count = 1
 
@@ -233,7 +263,6 @@ job "karst" {
         ports        = ["https"]
         volumes = [
           "${var.jobspec_dir}/Caddyfile:/etc/caddy/Caddyfile:ro",
-          "${var.repo_root}/web/console/dist:/srv/console:ro",
           "${var.repo_root}/web/portal/dist:/srv/portal:ro",
           "${var.prod_dir}/release:/srv/releases:ro",
           "${var.prod_dir}/state/caddy:/data",
