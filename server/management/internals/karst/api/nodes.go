@@ -3118,12 +3118,14 @@ func (h *handler) cloudAccountsList(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]infraconnections.LegacyResponse, 0, len(rows))
 	for i := range rows {
-		// A kubernetes-typed row can only be created through
-		// /infrastructure-connections, but List itself is unfiltered (see
-		// Store.List's own doc comment) -- filter here so an old typed
-		// client polling this route can never see a provider value outside
-		// its known aws/azure/gcp enum.
-		if rows[i].Type == infraconnections.TypeKubernetes {
+		// A non-legacy-typed row (Kubernetes, Nomad, LXD, ...) can only be
+		// created through /infrastructure-connections, but List itself is
+		// unfiltered (see Store.List's own doc comment) -- filter here so
+		// an old typed client polling this route can never see a provider
+		// value outside its known aws/azure/gcp enum. IsLegacy, not a
+		// hardcoded type check, so a future non-legacy type is excluded
+		// automatically rather than needing this call site remembered too.
+		if !rows[i].Type.IsLegacy() {
 			continue
 		}
 		resp = append(resp, rows[i].ToLegacyResponse())

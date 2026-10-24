@@ -876,6 +876,50 @@ whatever the operator already trusts.
 >   independent semver tags) rather than a heavier framework; a connection
 >   discovery call does not need the full `nomad` server/client binary's
 >   dependency surface, only this thin API client.
+>
+> **Addendum, 2026-10-24 — an LXD connection type.** A third
+> self-hosted/private connection type, following Kubernetes's and Nomad's
+> own precedent:
+>
+> - **Credential shape.** Like Nomad (no single "config file"), LXD's
+>   client config is a handful of discrete fields:
+>   `lxdSecret{address, project?, server_cert?, client_cert?, client_key?}`
+>   (PEM contents, not file paths). `server_cert` is deliberately not named
+>   `ca_cert` the way Nomad's and Kubernetes's equivalent fields are: an
+>   LXD server's default certificate is self-signed with no real CA behind
+>   it, so what this field actually pins is the server's own certificate
+>   (accepted as its own trust root), the same property LXD's own CLI gets
+>   from fingerprint-pinning on first connect.
+> - **Discovery.** `discoverLXD` proves reachability with `GET /1.0` and,
+>   only for a clustered server, lists **cluster members** via
+>   `GET /1.0/cluster/members`. A standalone (non-clustered) LXD server —
+>   the common case for a self-hoster, and the reason this type exists at
+>   all — has no second-level grouping to discover, so it returns an empty
+>   resource list rather than an error; the connection's own declared
+>   `lat`/`lon`/`location_label` is the only location such a connection
+>   ever offers Authorized Locations, the same fallback a Kubernetes or
+>   Nomad connection with nothing clustered/multi-datacenter already uses.
+>   No instance, volume, network, image, or event/websocket access —
+>   discovery-only, the same posture as every other connection type above.
+> - **Declared location, status fields, package/route wiring.** Mostly
+>   unchanged from the Kubernetes/Nomad work, with one real fix along the
+>   way: `nodes.go`'s legacy `/cloud-accounts` list handler filtered out
+>   `TypeKubernetes` rows by name but was never updated when Nomad was
+>   added, so a Nomad-typed row has been silently leaking into that
+>   deprecated, aws/azure/gcp-only surface since the previous addendum.
+>   Adding a third non-legacy type without the same gap meant fixing it
+>   properly instead of extending the same hardcoded list again: `Type`
+>   gained an exported `IsLegacy()` (promoting the package's existing
+>   private `isLegacy()`), and `nodes.go` now calls it instead of naming
+>   Kubernetes specifically — correct for Nomad and LXD alike, and for
+>   whatever comes next.
+> - **Dependency.** None. Unlike Kubernetes's `client-go` and Nomad's
+>   `github.com/hashicorp/nomad/api`, LXD's REST API is plain JSON over
+>   HTTPS with no SDK call this package otherwise needs, so `discoverLXD`
+>   is a small hand-rolled client (`net/http` plus `encoding/json`) rather
+>   than a new dependency — the same reasoning `trace_export.rs`'s own doc
+>   comment gives for its hand-rolled OTLP/HTTP client on the node-agent
+>   side of this codebase.
 
 ### 7. Phasing
 

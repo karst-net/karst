@@ -62,7 +62,7 @@ test("an infrastructure connection feeds the Authorized Locations region picker"
   await page.goto("/#/locations");
   await page.getByRole("button", { name: "Add authorized location" }).click();
   await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-aws (AWS)" });
-  await page.getByRole("combobox", { name: "Region, zone, namespace, or datacenter" }).selectOption({ label: "US East (N. Virginia) (us-east-1)" });
+  await page.getByRole("combobox", { name: "Region, zone, namespace, datacenter, or cluster member" }).selectOption({ label: "US East (N. Virginia) (us-east-1)" });
   await page.getByRole("button", { name: "Add location" }).click();
   await expect(page.getByText("was added to the authorized locations registry.", { exact: false })).toBeVisible();
   // The dialog deliberately stays open after a successful add (so several
@@ -92,7 +92,7 @@ test("a Kubernetes connection's namespaces require inline coordinates in the Aut
   await page.goto("/#/locations");
   await page.getByRole("button", { name: "Add authorized location" }).click();
   await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-k8s (KUBERNETES)" });
-  const namespaceSelect = page.getByRole("combobox", { name: "Region, zone, namespace, or datacenter" });
+  const namespaceSelect = page.getByRole("combobox", { name: "Region, zone, namespace, datacenter, or cluster member" });
   await expect(namespaceSelect.locator("option", { hasText: "default" })).toHaveCount(1);
   await namespaceSelect.selectOption({ label: "default" });
   // Kubernetes has no provider-supplied geography and this connection never
@@ -125,7 +125,7 @@ test("a Nomad connection's datacenters require inline coordinates in the Authori
   await page.goto("/#/locations");
   await page.getByRole("button", { name: "Add authorized location" }).click();
   await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-nomad (NOMAD)" });
-  const datacenterSelect = page.getByRole("combobox", { name: "Region, zone, namespace, or datacenter" });
+  const datacenterSelect = page.getByRole("combobox", { name: "Region, zone, namespace, datacenter, or cluster member" });
   await expect(datacenterSelect.locator("option", { hasText: "dc1" })).toHaveCount(1);
   await datacenterSelect.selectOption({ label: "dc1" });
   // Nomad has no provider-supplied geography and this connection never
@@ -143,4 +143,37 @@ test("a Nomad connection's datacenters require inline coordinates in the Authori
   await page.getByRole("row", { name: /dc1/ }).getByRole("button", { name: "Remove" }).click();
   await page.goto("/#/connections");
   await page.getByRole("row", { name: /e2e-nomad/ }).getByRole("button", { name: "Remove" }).click();
+});
+
+test("an LXD connection's cluster members require inline coordinates in the Authorized Locations picker", async ({ page }) => {
+  await page.goto("/#/connections");
+  await page.getByRole("button", { name: "Add infrastructure connection" }).click();
+  await page.getByLabel("Connection type").selectOption("lxd");
+  await page.getByLabel("LXD address").fill("https://lxd.internal:8443");
+  await page.getByLabel("Connection label").fill("e2e-lxd");
+  await page.getByRole("button", { name: "Add connection" }).click();
+  await expect(page.getByText("e2e-lxd was added.")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "e2e-lxd" })).toBeVisible();
+
+  await page.goto("/#/locations");
+  await page.getByRole("button", { name: "Add authorized location" }).click();
+  await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-lxd (LXD)" });
+  const memberSelect = page.getByRole("combobox", { name: "Region, zone, namespace, datacenter, or cluster member" });
+  await expect(memberSelect.locator("option", { hasText: "node1" })).toHaveCount(1);
+  await memberSelect.selectOption({ label: "node1" });
+  // LXD has no provider-supplied geography and this connection never
+  // declared one in Settings -- the dialog should ask for coordinates
+  // inline rather than blocking the add.
+  await expect(page.getByText("LXD servers have no provider-supplied geography", { exact: false })).toBeVisible();
+  await page.getByLabel("Location latitude").fill("47.6062");
+  await page.getByLabel("Location longitude").fill("-122.3321");
+  await page.getByRole("button", { name: "Add location" }).click();
+  await expect(page.getByText("was added to the authorized locations registry.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("cell", { name: "node1" })).toBeVisible();
+
+  page.on("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("row", { name: /node1/ }).getByRole("button", { name: "Remove" }).click();
+  await page.goto("/#/connections");
+  await page.getByRole("row", { name: /e2e-lxd/ }).getByRole("button", { name: "Remove" }).click();
 });

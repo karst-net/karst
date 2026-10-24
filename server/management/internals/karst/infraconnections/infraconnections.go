@@ -2,13 +2,13 @@
 // Copyright the Karst contributors.
 
 // Package infraconnections stores admin-entered AWS/Azure/GCP/Kubernetes/
-// Nomad credentials for the console's Settings page, and uses them to
-// discover an account's enabled regions/local-zones/namespaces/datacenters
-// for the Authorized Locations picker (cloudcatalog supplies the
-// coordinates the cloud providers' own APIs don't return; a Kubernetes or
-// Nomad connection may instead carry an operator-declared point, since a
-// private cluster/scheduler environment has no provider-supplied
-// geography).
+// Nomad/LXD credentials for the console's Settings page, and uses them to
+// discover an account's enabled regions/local-zones/namespaces/datacenters/
+// cluster-members for the Authorized Locations picker (cloudcatalog
+// supplies the coordinates the cloud providers' own APIs don't return; a
+// Kubernetes, Nomad, or LXD connection may instead carry an
+// operator-declared point, since a private cluster/scheduler/hypervisor
+// environment has no provider-supplied geography).
 //
 // This package was, until the "Infrastructure Connections" rename (issue
 // #406), named cloudaccounts and covered only the three cloud providers. The
@@ -26,8 +26,8 @@
 // docs/adr/0045-cost-aware-geographic-scaling-across-providers.md's
 // addenda: 2026-10-19 for AWS/Azure/GCP, 2026-10-20 for AWS's
 // EnableLocalZone, 2026-10-21 (two addenda) for the Infrastructure
-// Connections rename plus Kubernetes, then Nomad. Three consequences
-// follow directly from the ADR text:
+// Connections rename plus Kubernetes, then Nomad, and 2026-10-24 for LXD.
+// Three consequences follow directly from the ADR text:
 //
 //   - Mode exists so an operator can hand over read-only (status/discovery
 //     only, can never place an order or create a workload) credentials and
@@ -54,8 +54,9 @@
 // The issue that drove this generalization (#406) also asks to stay within
 // ADR-0056's four component families: this package belongs to "control
 // services" in that ADR's terms (it explicitly names "transport
-// discovery/credentials" there), and Kubernetes/Nomad/Compose adapters are
-// integrations, not new component families -- see the ADR-0045 addendum.
+// discovery/credentials" there), and Kubernetes/Nomad/LXD/Compose adapters
+// are integrations, not new component families -- see the ADR-0045
+// addendum.
 package infraconnections
 
 import (
@@ -80,14 +81,15 @@ var (
 
 // Type identifies what kind of infrastructure a connection authenticates
 // to. The legacy /cloud-accounts surface only ever sees the first three --
-// TypeKubernetes/TypeNomad can only be created/listed/discovered through
+// every later type can only be created/listed/discovered through
 // /infrastructure-connections (see LegacyCreateRequest.toCreateRequest and
-// the handler-level filtering in package karstapi).
+// IsLegacy, which the handler-level filtering in package karstapi calls
+// rather than naming each non-legacy type itself).
 //
 // Kept as an explicit case list (here, in Valid, and in every switch over
 // Type in this package) rather than a set, so adding a type is a small,
-// local diff rather than a design change -- TypeNomad is the second time
-// this has paid off.
+// local diff rather than a design change -- TypeNomad was the second time
+// this paid off, TypeLXD the third.
 type Type string
 
 const (
@@ -96,15 +98,18 @@ const (
 	TypeGCP        Type = "gcp"
 	TypeKubernetes Type = "kubernetes"
 	TypeNomad      Type = "nomad"
+	TypeLXD        Type = "lxd"
 )
 
 func (t Type) Valid() bool {
-	return t == TypeAWS || t == TypeAzure || t == TypeGCP || t == TypeKubernetes || t == TypeNomad
+	return t == TypeAWS || t == TypeAzure || t == TypeGCP || t == TypeKubernetes || t == TypeNomad || t == TypeLXD
 }
 
-// isLegacy reports whether t is one of the three types the /cloud-accounts
-// surface understands.
-func (t Type) isLegacy() bool {
+// IsLegacy reports whether t is one of the three types the /cloud-accounts
+// surface understands. Exported so callers outside this package (the
+// handler-level filtering in package karstapi) can exclude every
+// non-legacy type without naming each one -- see Type's own doc comment.
+func (t Type) IsLegacy() bool {
 	return t == TypeAWS || t == TypeAzure || t == TypeGCP
 }
 
@@ -227,7 +232,7 @@ type LegacyCreateRequest struct {
 // be created through the legacy surface -- it can only ever come from
 // /infrastructure-connections.
 func (r LegacyCreateRequest) toCreateRequest() (CreateRequest, error) {
-	if !r.Provider.isLegacy() {
+	if !r.Provider.IsLegacy() {
 		return CreateRequest{}, fmt.Errorf("provider must be one of %q, %q, %q", TypeAWS, TypeAzure, TypeGCP)
 	}
 	return CreateRequest{Type: r.Provider, Mode: r.Mode, Label: r.Label, Secret: r.Secret}, nil

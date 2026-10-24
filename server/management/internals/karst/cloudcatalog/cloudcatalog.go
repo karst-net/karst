@@ -6,11 +6,11 @@
 // providers' own "list regions" APIs return a latitude/longitude -- that is
 // the gap this package fills, joined against whatever
 // infraconnections.Discover returns live from the provider. There are no
-// entries for KindNamespace or KindDatacenter: a Kubernetes namespace or a
-// Nomad datacenter has no catalog-knowable coordinates, so
-// infraconnections.Discover never calls this package's Lookup for either --
-// the console falls back to the connection's own operator-declared
-// location instead.
+// entries for KindNamespace, KindDatacenter, or KindClusterMember: a
+// Kubernetes namespace, a Nomad datacenter, or an LXD cluster member has no
+// catalog-knowable coordinates, so infraconnections.Discover never calls
+// this package's Lookup for any of them -- the console falls back to the
+// connection's own operator-declared location instead.
 //
 // Coordinates are approximate (the metro area the region/zone is marketed
 // as being in, not a facility address) and this table is not claimed to be
@@ -37,6 +37,11 @@ const (
 	// which is a scheduler/control concept Nomad connections configure
 	// directly rather than discover a list of.
 	KindDatacenter Kind = "datacenter"
+	// KindClusterMember is one member of a clustered LXD server -- see the
+	// package doc comment for why it never has a catalog entry. A
+	// standalone (non-clustered) LXD server has no members to discover at
+	// all; see discoverLXD's own doc comment.
+	KindClusterMember Kind = "cluster_member"
 )
 
 // Region is one catalog entry: a region or zone code with its approximate

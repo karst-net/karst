@@ -332,16 +332,19 @@ func (e DiscoveredRegionKind) Valid() bool {
 
 // Defines values for DiscoveredResourceKind.
 const (
-	DiscoveredResourceKindDatacenter DiscoveredResourceKind = "datacenter"
-	DiscoveredResourceKindLocalZone  DiscoveredResourceKind = "local_zone"
-	DiscoveredResourceKindNamespace  DiscoveredResourceKind = "namespace"
-	DiscoveredResourceKindRegion     DiscoveredResourceKind = "region"
-	DiscoveredResourceKindZone       DiscoveredResourceKind = "zone"
+	DiscoveredResourceKindClusterMember DiscoveredResourceKind = "cluster_member"
+	DiscoveredResourceKindDatacenter    DiscoveredResourceKind = "datacenter"
+	DiscoveredResourceKindLocalZone     DiscoveredResourceKind = "local_zone"
+	DiscoveredResourceKindNamespace     DiscoveredResourceKind = "namespace"
+	DiscoveredResourceKindRegion        DiscoveredResourceKind = "region"
+	DiscoveredResourceKindZone          DiscoveredResourceKind = "zone"
 )
 
 // Valid indicates whether the value is a known member of the DiscoveredResourceKind enum.
 func (e DiscoveredResourceKind) Valid() bool {
 	switch e {
+	case DiscoveredResourceKindClusterMember:
+		return true
 	case DiscoveredResourceKindDatacenter:
 		return true
 	case DiscoveredResourceKindLocalZone:
@@ -492,6 +495,7 @@ const (
 	InfrastructureConnectionTypeAzure      InfrastructureConnectionType = "azure"
 	InfrastructureConnectionTypeGcp        InfrastructureConnectionType = "gcp"
 	InfrastructureConnectionTypeKubernetes InfrastructureConnectionType = "kubernetes"
+	InfrastructureConnectionTypeLxd        InfrastructureConnectionType = "lxd"
 	InfrastructureConnectionTypeNomad      InfrastructureConnectionType = "nomad"
 )
 
@@ -505,6 +509,8 @@ func (e InfrastructureConnectionType) Valid() bool {
 	case InfrastructureConnectionTypeGcp:
 		return true
 	case InfrastructureConnectionTypeKubernetes:
+		return true
+	case InfrastructureConnectionTypeLxd:
 		return true
 	case InfrastructureConnectionTypeNomad:
 		return true
@@ -537,6 +543,7 @@ const (
 	InfrastructureConnectionCreateTypeAzure      InfrastructureConnectionCreateType = "azure"
 	InfrastructureConnectionCreateTypeGcp        InfrastructureConnectionCreateType = "gcp"
 	InfrastructureConnectionCreateTypeKubernetes InfrastructureConnectionCreateType = "kubernetes"
+	InfrastructureConnectionCreateTypeLxd        InfrastructureConnectionCreateType = "lxd"
 	InfrastructureConnectionCreateTypeNomad      InfrastructureConnectionCreateType = "nomad"
 )
 
@@ -550,6 +557,8 @@ func (e InfrastructureConnectionCreateType) Valid() bool {
 	case InfrastructureConnectionCreateTypeGcp:
 		return true
 	case InfrastructureConnectionCreateTypeKubernetes:
+		return true
+	case InfrastructureConnectionCreateTypeLxd:
 		return true
 	case InfrastructureConnectionCreateTypeNomad:
 		return true
@@ -1493,14 +1502,14 @@ type DiscoveredRegionKind string
 type DiscoveredResource struct {
 	Code string `json:"code"`
 
-	// Enabled True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace or a Nomad datacenter, neither of which has an opt-in concept.
+	// Enabled True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace, a Nomad datacenter, or an LXD cluster member, none of which has an opt-in concept.
 	Enabled *bool                  `json:"enabled,omitempty"`
 	Kind    DiscoveredResourceKind `json:"kind"`
 	Lat     *float32               `json:"lat,omitempty"`
 	Lon     *float32               `json:"lon,omitempty"`
 	Name    *string                `json:"name,omitempty"`
 
-	// ParentRegion Set for a kind other than region/namespace/datacenter -- the region to call the enable endpoint against.
+	// ParentRegion Set for a kind other than region/namespace/datacenter/cluster_member -- the region to call the enable endpoint against.
 	ParentRegion *string `json:"parent_region,omitempty"`
 }
 
@@ -1635,7 +1644,7 @@ type InfrastructureConnectionCreate struct {
 	Lon           *float32                           `json:"lon,omitempty"`
 	Mode          InfrastructureConnectionCreateMode `json:"mode"`
 
-	// Secret Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}. Nomad: {address, region?, namespace?, token?, ca_cert?, client_cert?, client_key?} -- ca_cert/client_cert/client_key are PEM contents, not file paths.
+	// Secret Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}. Nomad: {address, region?, namespace?, token?, ca_cert?, client_cert?, client_key?} -- ca_cert/client_cert/client_key are PEM contents, not file paths. LXD: {address, project?, server_cert?, client_cert?, client_key?} -- server_cert pins the server's own (typically self-signed) certificate rather than naming a real CA; client_cert/client_key are PEM contents, not file paths.
 	Secret map[string]interface{}             `json:"secret"`
 	Type   InfrastructureConnectionCreateType `json:"type"`
 }
