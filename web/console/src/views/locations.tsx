@@ -39,10 +39,11 @@ export function Locations() {
   // rather than a generic falsy check keeps this from misfiring on either.
   const needsEnable = Boolean(selectedResource && selectedResource.kind === "local_zone" && !selectedResource.enabled && !enabledOverrides[selectedResource.code]);
   // Cloud provider (AWS/Azure/GCP) coordinates always come from the cloud
-  // catalog -- never hand-entered. Kubernetes and Nomad clusters have no
-  // catalog-knowable geography, so they fall back to whatever the connection
-  // itself declared (see Settings) and, failing that, need it typed in here.
-  const isClusterType = selectedConnection?.type === "kubernetes" || selectedConnection?.type === "nomad";
+  // catalog -- never hand-entered. Kubernetes, Nomad, and LXD clusters have
+  // no catalog-knowable geography, so they fall back to whatever the
+  // connection itself declared (see Settings) and, failing that, need it
+  // typed in here.
+  const isClusterType = selectedConnection?.type === "kubernetes" || selectedConnection?.type === "nomad" || selectedConnection?.type === "lxd";
   const catalogLat = selectedResource?.lat ?? selectedConnection?.lat;
   const catalogLon = selectedResource?.lon ?? selectedConnection?.lon;
   const needsManualCoords = Boolean(isClusterType && selectedResource && catalogLat === undefined);
@@ -101,7 +102,7 @@ export function Locations() {
 
   return <section>
     <h2>Authorized locations</h2>
-    <TutorialHint>Sites this deployment is authorized to place infrastructure at, each derived from an infrastructure connection: an AWS, Azure, or GCP region/zone, a Kubernetes cluster, or a Nomad cluster. The NOC map draws every one of these as a hollow marker, whether or not anything is deployed there yet. This registry does not restrict where a relay or other component may actually declare its own location — it is informational, not an enforcement gate. A location is a logical entry here, not a running component: it only becomes "occupied" once something else (a relay) declares the same place.</TutorialHint>
+    <TutorialHint>Sites this deployment is authorized to place infrastructure at, each derived from an infrastructure connection: an AWS, Azure, or GCP region/zone, a Kubernetes cluster, a Nomad cluster, or an LXD server. The NOC map draws every one of these as a hollow marker, whether or not anything is deployed there yet. This registry does not restrict where a relay or other component may actually declare its own location — it is informational, not an enforcement gate. A location is a logical entry here, not a running component: it only becomes "occupied" once something else (a relay) declares the same place.</TutorialHint>
     <div className="actions"><button className="primary" onClick={openDialog}>Add authorized location</button></div>
     <Notice message={message} />
     {locations.length === 0
@@ -121,13 +122,13 @@ export function Locations() {
           <option value="">Choose one…</option>
           {(infraConnections.value ?? []).map((c) => <option key={c.id} value={c.id}>{c.label || c.type} ({c.type.toUpperCase()})</option>)}
         </select></label>
-        {!connectionsAvailable && <p className="lede">Add an infrastructure connection in Settings first — every authorized location is derived from one, whether it's a cloud provider region, a Kubernetes cluster, or a Nomad cluster.</p>}
+        {!connectionsAvailable && <p className="lede">Add an infrastructure connection in Settings first — every authorized location is derived from one, whether it's a cloud provider region, a Kubernetes cluster, a Nomad cluster, or an LXD server.</p>}
 
         {connectionId && (resources.loading
           ? <p>Loading regions/zones/namespaces…</p>
           : resources.error
             ? <Failure message={resources.error} retry={resources.reload} />
-            : <label>Region, zone, namespace, or datacenter<select aria-label="Region, zone, namespace, or datacenter" value={resourceCode} onChange={(event) => { setResourceCode(event.target.value); setManualLat(""); setManualLon(""); }}>
+            : <label>Region, zone, namespace, datacenter, or cluster member<select aria-label="Region, zone, namespace, datacenter, or cluster member" value={resourceCode} onChange={(event) => { setResourceCode(event.target.value); setManualLat(""); setManualLon(""); }}>
               <option value="">Choose one…</option>
               {(resources.value ?? []).map((r) => <option key={r.code} value={r.code}>
                 {r.name ? `${r.name} (${r.code})` : r.code}
@@ -141,7 +142,7 @@ export function Locations() {
 
         {selectedResource && !needsEnable && (needsManualCoords
           ? <>
-            <p className="lede">{selectedConnection?.type === "kubernetes" ? "Kubernetes clusters" : "Nomad clusters"} have no provider-supplied geography — enter this cluster's coordinates.</p>
+            <p className="lede">{selectedConnection?.type === "kubernetes" ? "Kubernetes clusters" : selectedConnection?.type === "nomad" ? "Nomad clusters" : "LXD servers"} have no provider-supplied geography — enter this cluster's coordinates.</p>
             <label>Latitude<input aria-label="Location latitude" placeholder="51.5072" required value={manualLat} onChange={(event) => setManualLat(event.target.value)} /></label>
             <label>Longitude<input aria-label="Location longitude" placeholder="-0.1276" required value={manualLon} onChange={(event) => setManualLon(event.target.value)} /></label>
           </>

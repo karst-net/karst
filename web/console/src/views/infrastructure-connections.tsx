@@ -21,6 +21,8 @@ type ConnectionDraft = {
   kubeconfig: string;
   nomadAddress: string; nomadRegion: string; nomadNamespace: string; nomadToken: string;
   nomadCaCert: string; nomadClientCert: string; nomadClientKey: string;
+  lxdAddress: string; lxdProject: string;
+  lxdServerCert: string; lxdClientCert: string; lxdClientKey: string;
   lat: string; lon: string; locationLabel: string;
 };
 const blankConnectionDraft: ConnectionDraft = {
@@ -31,12 +33,14 @@ const blankConnectionDraft: ConnectionDraft = {
   kubeconfig: "",
   nomadAddress: "", nomadRegion: "", nomadNamespace: "", nomadToken: "",
   nomadCaCert: "", nomadClientCert: "", nomadClientKey: "",
+  lxdAddress: "", lxdProject: "",
+  lxdServerCert: "", lxdClientCert: "", lxdClientKey: "",
   lat: "", lon: "", locationLabel: "",
 };
 
 /** Builds the type-shaped secret object infraconnections.CreateRequest
  *  expects -- see server/management/internals/karst/infraconnections/
- *  {aws,azure,gcp,kubernetes,nomad}.go for the exact field names each
+ *  {aws,azure,gcp,kubernetes,nomad,lxd}.go for the exact field names each
  *  type's validator requires. Throws a plain Error with user-facing text
  *  on a malformed GCP key, since that is the one field a paste error is
  *  likely in. */
@@ -57,6 +61,12 @@ function connectionSecretFor(draft: ConnectionDraft): Record<string, unknown> {
         token: draft.nomadToken.trim() || undefined, ca_cert: draft.nomadCaCert.trim() || undefined,
         client_cert: draft.nomadClientCert.trim() || undefined, client_key: draft.nomadClientKey.trim() || undefined,
       };
+    case "lxd":
+      return {
+        address: draft.lxdAddress.trim(), project: draft.lxdProject.trim() || undefined,
+        server_cert: draft.lxdServerCert.trim() || undefined,
+        client_cert: draft.lxdClientCert.trim() || undefined, client_key: draft.lxdClientKey.trim() || undefined,
+      };
     default:
       throw new Error(`Unknown connection type ${draft.type}`);
   }
@@ -73,7 +83,7 @@ export function InfrastructureConnections() {
     try { secret = connectionSecretFor(connectionDraft); }
     catch (e) { setMessage(e instanceof Error ? e.message : "Invalid credential."); return; }
     let lat: number | undefined, lon: number | undefined;
-    if ((connectionDraft.type === "kubernetes" || connectionDraft.type === "nomad") && (connectionDraft.lat.trim() || connectionDraft.lon.trim())) {
+    if ((connectionDraft.type === "kubernetes" || connectionDraft.type === "nomad" || connectionDraft.type === "lxd") && (connectionDraft.lat.trim() || connectionDraft.lon.trim())) {
       lat = Number(connectionDraft.lat); lon = Number(connectionDraft.lon);
       if (!Number.isFinite(lat) || lat < -90 || lat > 90) { setMessage("Latitude must be a number between -90 and 90."); return; }
       if (!Number.isFinite(lon) || lon < -180 || lon > 180) { setMessage("Longitude must be a number between -180 and 180."); return; }
@@ -91,13 +101,13 @@ export function InfrastructureConnections() {
 
   return <section>
     <h2>Infrastructure connections</h2>
-    <TutorialHint>Lets Authorized Locations offer real regions, local zones, Kubernetes namespaces, and Nomad datacenters instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces/datacenters) — they cannot place an order or create a workload. "Read-write" connections may make one further live change — enabling an AWS Local Zone that exists but isn't opted into use yet — and can incur costs; nothing else in Karst uses them to create or change infrastructure yet. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</TutorialHint>
+    <TutorialHint>Lets Authorized Locations offer real regions, local zones, Kubernetes namespaces, Nomad datacenters, and LXD cluster members instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces/datacenters/cluster-members) — they cannot place an order or create a workload. "Read-write" connections may make one further live change — enabling an AWS Local Zone that exists but isn't opted into use yet — and can incur costs; nothing else in Karst uses them to create or change infrastructure yet. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</TutorialHint>
     <div className="actions"><button className="primary" onClick={() => setConnectionDraft(blankConnectionDraft)}>Add infrastructure connection</button></div>
     <Notice message={message} />
     {infraConnections.loading ? <p>Loading infrastructure connections…</p> : infraConnections.error
       ? <Failure message={infraConnections.error} retry={infraConnections.reload} />
       : (infraConnections.value ?? []).length === 0
-        ? <EmptyState title="No infrastructure connections configured">Add one to pick real regions, namespaces, or datacenters in Authorized Locations.</EmptyState>
+        ? <EmptyState title="No infrastructure connections configured">Add one to pick real regions, namespaces, datacenters, or cluster members in Authorized Locations.</EmptyState>
         : <Rows head={<><th>Type</th><th>Mode</th><th>Label</th><th>Status</th><th>Added</th><th>Actions</th></>}>
           {(infraConnections.value ?? []).map((connection) => <tr key={connection.id}>
             <td>{connection.type.toUpperCase()}</td>
@@ -117,6 +127,7 @@ export function InfrastructureConnections() {
           <option value="gcp">GCP</option>
           <option value="kubernetes">Kubernetes</option>
           <option value="nomad">Nomad</option>
+          <option value="lxd">LXD</option>
         </select></label>
         <label>Mode<select aria-label="Connection mode" value={connectionDraft?.mode ?? "read_only"} onChange={(event) => setConnectionDraft((current) => current && { ...current, mode: event.target.value as ConnectionMode })}>
           <option value="read_only">Read-only (status/discovery only)</option>
@@ -152,8 +163,17 @@ export function InfrastructureConnections() {
           <label>Client certificate (optional, PEM)<textarea aria-label="Nomad client certificate" rows={4} value={connectionDraft.nomadClientCert} onChange={(event) => setConnectionDraft((current) => current && { ...current, nomadClientCert: event.target.value })} placeholder={"-----BEGIN CERTIFICATE-----\n..."} /></label>
           <label>Client key (optional, PEM)<textarea aria-label="Nomad client key" rows={4} value={connectionDraft.nomadClientKey} onChange={(event) => setConnectionDraft((current) => current && { ...current, nomadClientKey: event.target.value })} placeholder={"-----BEGIN PRIVATE KEY-----\n..."} /></label>
         </>}
-        {(connectionDraft?.type === "kubernetes" || connectionDraft?.type === "nomad") && <>
-          <p className="lede">A private cluster or scheduler environment has no provider-supplied location — declare one below if you'd like it to appear on the NOC map and feed Authorized Locations.</p>
+        {connectionDraft?.type === "lxd" && <>
+          <label>Address<input aria-label="LXD address" placeholder="https://lxd.internal:8443" value={connectionDraft.lxdAddress} onChange={(event) => setConnectionDraft((current) => current && { ...current, lxdAddress: event.target.value })} /></label>
+          <label>Project (optional)<input aria-label="LXD project" placeholder="default" value={connectionDraft.lxdProject} onChange={(event) => setConnectionDraft((current) => current && { ...current, lxdProject: event.target.value })} /></label>
+          <label>Server certificate (optional, PEM)<textarea aria-label="LXD server certificate" rows={4} value={connectionDraft.lxdServerCert} onChange={(event) => setConnectionDraft((current) => current && { ...current, lxdServerCert: event.target.value })} placeholder={"-----BEGIN CERTIFICATE-----\n..."} /></label>
+          <p className="lede">Pins this LXD server's own certificate, since its default is self-signed with no real CA behind it — paste the server's own cert here rather than a CA's.</p>
+          <label>Client certificate (PEM)<textarea aria-label="LXD client certificate" rows={4} value={connectionDraft.lxdClientCert} onChange={(event) => setConnectionDraft((current) => current && { ...current, lxdClientCert: event.target.value })} placeholder={"-----BEGIN CERTIFICATE-----\n..."} /></label>
+          <label>Client key (PEM)<textarea aria-label="LXD client key" rows={4} value={connectionDraft.lxdClientKey} onChange={(event) => setConnectionDraft((current) => current && { ...current, lxdClientKey: event.target.value })} placeholder={"-----BEGIN PRIVATE KEY-----\n..."} /></label>
+          <p className="lede">LXD authenticates the client by certificate (<code>lxc config trust add</code>) rather than a token.</p>
+        </>}
+        {(connectionDraft?.type === "kubernetes" || connectionDraft?.type === "nomad" || connectionDraft?.type === "lxd") && <>
+          <p className="lede">A private cluster, scheduler, or hypervisor environment has no provider-supplied location — declare one below if you'd like it to appear on the NOC map and feed Authorized Locations.</p>
           <label>Latitude (optional)<input aria-label="Connection latitude" placeholder="37.7749" value={connectionDraft.lat} onChange={(event) => setConnectionDraft((current) => current && { ...current, lat: event.target.value })} /></label>
           <label>Longitude (optional)<input aria-label="Connection longitude" placeholder="-122.4194" value={connectionDraft.lon} onChange={(event) => setConnectionDraft((current) => current && { ...current, lon: event.target.value })} /></label>
           <label>Location label (optional)<input aria-label="Connection location label" placeholder="homelab" value={connectionDraft.locationLabel} onChange={(event) => setConnectionDraft((current) => current && { ...current, locationLabel: event.target.value })} /></label>
