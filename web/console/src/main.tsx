@@ -88,7 +88,8 @@ function groupNav(items: NavItem[]): Array<{ group?: string; items: NavItem[] }>
  *  unrecognized path always falls back to Configure/Domains rather than a
  *  blank page. */
 function parseHash(): { route: Route; mode: Mode } {
-  const path = (location.hash || "#/domains").slice(1);
+  const rawPath = (location.hash || "#/domains").slice(1);
+  const path = rawPath === "/routes" ? "/gateways" : rawPath;
   for (const mode of ["configure", "observe"] as const) {
     const match = navByMode[mode].find((item) => item.hash === path);
     if (match) return { route: match.route, mode };
