@@ -67,7 +67,9 @@ that cannot report. This signal proves neither destination reachability nor DNS.
 | Candidate/account isolation | Store and inventory regressions keep ready primary and unreported/degraded standby independent. |
 | Console compatibility | Gateway browser tests cover old route links, missing inventory endpoint, unknown schema, combined inventory and unified behavior selection. |
 | Linux namespace integration | All 27 existing scenarios passed (685.80 seconds). The updated combined-Gateway scenario separately passed, including subnet/default coexistence, consent removal and local forwarding refusal after a crash. The runner uses disposable namespaces and a fixture control server, not production management. |
-| Real rolling binaries, production control, macOS/Windows, IPv6 Gateway egress and exit-DNS policy | Not established by schema fixtures or current Linux scenarios. These remain release verification work for #421; do not claim the issue complete based on this table. |
+| IPv6 Gateway forwarding | Two new namespace scenarios passed: NAT66 specific/default-prefix forwarding, independent consent, retained subnet access after withdrawal, and non-NAT explicit return routing under an overlapping default offer. |
+| DNS through IPv6 Gateway | Real UDP/TCP stub queries forward to an exit-only IPv6 DNS upstream after consent and fresh names fail after withdrawal. Upstream traffic is UDP; TCP upstream fallback and DoT are not established. |
+| Production control and native platforms | Production management deployment/database upgrade, macOS/Windows routing/resolver integration and broader exit-DNS policy remain release verification work for #421. Do not claim the issue complete based on fixture results. |
 
 Schema compatibility is deliberately narrower than a real two-release rolling
 deployment. No production configuration or control service was changed by this work.
@@ -84,3 +86,40 @@ deployment. No production configuration or control service was changed by this w
 - `just check` could not start because `just` is not installed; the checks above
   were invoked directly. This is not a claim that the entire workspace test
   suite or every CI job ran.
+
+### Follow-up: IPv6 forwarding and mixed-version execution
+
+The IPv6 explicit-return-route scenario exposed NAT fallthrough: a specific
+route with `masquerade = false` still matched a broader default route's NAT rule.
+Non-NAT grants now emit a terminating `return` in Karst's postrouting chain,
+ordered before broader prefixes. Unit coverage covers both IP families; the
+namespace scenario observes the recipient's real IPv6 address on the destination
+instead of the gateway's masquerade address. Operator-owned NAT tables retain
+their existing authority.
+
+The [container runner](../deploy/lab/aquifer/README.md) documents executable
+overrides for old/new agents and control fixtures, including a real client
+upgrade across the persisted-consent restart boundary. Execution results below
+use the pre-#429 revision `cb649849438ca1b25d4bea81ac9d4bf234709888` and this
+follow-up to merged revision `532dda0`.
+
+| Actual binary combination | Scenarios | Result |
+|---|---|---|
+| Old gateway, current recipient, current control fixture | IPv4 subnet and consent-gated exit | 2 passed |
+| Current gateway, old recipient, current control fixture | IPv4 subnet and consent-gated exit | 2 passed |
+| Old recipient replaced by current binary, same identity/config/consent file | Exit consent and egress survive the binary upgrade without re-consent | 1 passed |
+| Current agents, old control fixture | IPv4 subnet and consent-gated exit | 2 passed |
+| Current agents/control, dual-stack verification fixture | IPv6 specific/default forwarding and DNS over IPv6 | 2 passed |
+
+The seven mixed-version executions use actual binaries built from the stated
+revisions. The old control binary still uses the fixture's account manager and
+SQLite database; production management rollout/database migration is not tested.
+The earlier schema tests retain their separate readiness-presence and removed
+TURN-field coverage. Native-platform runner details are still required.
+
+Follow-up validation: all 530 daemon unit tests passed, as did strict daemon
+clippy (including integration-test targets), formatting, shell syntax and
+changed-source SPDX checks. Go testserver, control and policy package tests
+passed. The seven mixed-version and two IPv6/DNS namespace executions above
+passed; the entire 29-scenario namespace suite was not rerun for this follow-up.
+`just` remains unavailable, so this does not claim a complete `just check` run.

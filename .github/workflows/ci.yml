@@ -544,7 +544,7 @@ jobs:
             ${{ steps.build.outputs.gateway_bin }}
             target/debug/examples/pmprobe
           if-no-files-found: error
-      # The single source of truth for how the 27 tests are divided — and the
+      # The single source of truth for how the 29 tests are divided — and the
       # only place that division needs to change when a test is added, removed
       # or renamed. `tests` below is validated against the binary's own
       # `--list` before it is ever used to build the matrix `aquifer` reads,
@@ -557,14 +557,14 @@ jobs:
           bin="${{ steps.build.outputs.aquifer_bin }}"
 
           # Balanced by real per-test wall-clock time from a CI run (PR #217),
-          # not by count — the slowest of these 27 tests took 1000x longer
+          # not by count — the slowest of the original 27 tests took 1000x longer
           # than the fastest. Each shard lands at roughly the same total.
           declare -A shards
           shards[1]="one_gateway_serves_a_subnet_and_exit_without_combining_client_consent overlapping_pushes_under_control_plane_load_still_converge_to_the_final_state a_subscriber_behind_carrier_grade_nat_reaches_a_public_peer a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_offer"
           shards[2]="a_node_resolves_its_peer_by_mesh_name_before_connecting a_symmetric_nat_reaches_a_port_restricted_peer_that_can_map_a_port exit_node_consent_survives_a_daemon_crash_and_restart an_ssh_policy_denies_what_the_acl_alone_would_permit a_recipients_route_follows_its_effective_gateway_to_a_standby route_changes_converge_through_push_not_restart two_nodes_on_one_home_network_go_direct_over_the_lan an_offline_ceremony_excludes_an_uncovered_peer_from_a_running_aquifer"
           shards[3]="a_node_with_no_udp_at_all_still_carries_traffic_over_the_relay a_symmetric_nat_reaches_an_address_restricted_peer_directly a_symmetric_nat_reaches_a_reachable_peer_directly a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding a_symmetric_nat_with_an_explicit_mapping_reaches_another_symmetric_nat_directly two_nodes_meet_on_the_relay_and_end_up_direct"
-          shards[4]="an_ipv6_only_node_behind_nat64_reaches_an_ipv4_mesh selecting_one_ip_familys_exit_route_does_not_activate_the_other two_nodes_on_two_relays_reach_each_other two_symmetric_nats_stay_on_the_relay_until_port_prediction_lands"
-          shards[5]="a_symmetric_nat_and_a_port_restricted_peer_stay_on_the_relay gateway_forwarding_survives_a_daemon_crash_and_restart two_nodes_behind_nats_punch_through_with_a_reflector two_nodes_punch_through_a_port_restricted_cone"
+          shards[4]="an_ipv6_only_node_behind_nat64_reaches_an_ipv4_mesh selecting_one_ip_familys_exit_route_does_not_activate_the_other two_nodes_on_two_relays_reach_each_other two_symmetric_nats_stay_on_the_relay_until_port_prediction_lands ipv6_gateway_forwards_specific_and_default_prefixes_with_independent_consent"
+          shards[5]="a_symmetric_nat_and_a_port_restricted_peer_stay_on_the_relay gateway_forwarding_survives_a_daemon_crash_and_restart two_nodes_behind_nats_punch_through_with_a_reflector two_nodes_punch_through_a_port_restricted_cone ipv6_gateway_dns_upstream_requires_consent_and_stops_after_withdrawal"
 
           live=$(mktemp)
           "$bin" --list --format terse | sed -n 's/: test$//p' | sort > "$live"
