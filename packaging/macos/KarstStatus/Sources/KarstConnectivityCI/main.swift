@@ -250,10 +250,15 @@ private func waitForRoute(
         // is the provider having applied it: the kernel routes the prefix
         // through the tunnel. The offer alone is not enough — the provider
         // applies it on its next health-poll tick, and a traffic probe sent
-        // in between fails although nothing is wrong.
+        // in between fails although nothing is wrong. Selected exit routes
+        // have the same delay: engine consent is not proof that the provider
+        // has installed the default route in the kernel yet.
         let present = routes.contains { candidate in
             guard candidate["prefix"] as? String == route else { return false }
-            if candidate["kind"] as? String == "subnet", candidate["role"] as? String == "recipient" {
+            if candidate["role"] as? String == "recipient" {
+                if candidate["kind"] as? String == "exit", candidate["active"] as? Bool != true {
+                    return false
+                }
                 return kernelRoutesThroughTunnel(route)
             }
             return candidate["active"] as? Bool == true
