@@ -919,6 +919,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $msi = (Get-ChildItem "dist/windows/karst-*-x64.msi" | Select-Object -First 1).FullName
+          # Match a downloaded artifact: no build-directory cabinet beside it.
+          $downloadDir = Join-Path $env:RUNNER_TEMP "karst-msi-download"
+          New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
+          Copy-Item $msi $downloadDir
+          $msi = Join-Path $downloadDir (Split-Path -Leaf $msi)
           Write-Host "installing $msi"
           $proc = Start-Process msiexec.exe -ArgumentList "/i", $msi, "/quiet", "/norestart", "/l*v", "install.log" -Wait -PassThru
           if ($proc.ExitCode -ne 0) {
