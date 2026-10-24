@@ -15,7 +15,7 @@ const inventory = {
 
 test("one Gateway shows both behaviors without claiming forwarding readiness", async ({ page }) => {
   await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: inventory }));
-  await page.goto("/#/gateways");
+  await page.goto("/#/gateways/metrics");
   const section = page.getByRole("region", { name: "Configured Gateway nodes" });
   await expect(section.locator("tbody tr")).toHaveCount(1);
   await expect(section).toContainText("10.20.0.0/16 · Subnet · enabled");
@@ -38,8 +38,9 @@ test("legacy route links and canonical Gateway navigation remain usable", async 
 
 test("older control inventory errors do not remove route administration", async ({ page }) => {
   await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ status: 404, json: { message: "not supported" } }));
-  await page.goto("/#/gateways");
+  await page.goto("/#/gateways/metrics");
   await expect(page.getByText(/Gateway inventory unavailable:/)).toBeVisible();
+  await page.getByRole("button", { name: "Manage", exact: true }).click();
   await page.getByRole("button", { name: "Add IPv4 exit route" }).click();
   await expect(page.getByLabel("Route network (CIDR)")).toHaveValue("0.0.0.0/0");
   await expect(page.getByText("karst gateway exit use <route-id>")).toBeVisible();
@@ -48,7 +49,7 @@ test("older control inventory errors do not remove route administration", async 
 
 test("unresolved and unsupported declarations remain visible", async ({ page }) => {
   await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: { ...inventory, gateways: [], unresolved_routes: ["empty-routing-group"], unsupported_routes: ["legacy-domain-route"] } }));
-  await page.goto("/#/gateways");
+  await page.goto("/#/gateways/metrics");
   await expect(page.getByText(/Routes without a visible eligible node: empty-routing-group/)).toBeVisible();
   await expect(page.getByText(/Routes outside the CIDR Gateway model: legacy-domain-route/)).toBeVisible();
 });
@@ -56,7 +57,7 @@ test("unresolved and unsupported declarations remain visible", async ({ page }) 
 test("refresh preserves independent control connectivity and readiness", async ({ page }) => {
   let connected = true;
   await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: { ...inventory, gateways: inventory.gateways.map((node) => ({ ...node, control_connected: connected })) } }));
-  await page.goto("/#/gateways");
+  await page.goto("/#/gateways/metrics");
   const section = page.getByRole("region", { name: "Configured Gateway nodes" });
   await expect(section).toContainText("Connected");
   connected = false;
@@ -76,7 +77,7 @@ test("real forwarding readiness is shown per offer and aggregated per node", asy
       inventory.gateways[0].offers[2],
     ],
   }] } }));
-  await page.goto("/#/gateways");
+  await page.goto("/#/gateways/metrics");
   const section = page.getByRole("region", { name: "Configured Gateway nodes" });
   await expect(section).toContainText("10.20.0.0/16 · Subnet · enabled · ready");
   await expect(section).toContainText("IPv4 default · enabled · client consent required · degraded");
@@ -87,8 +88,9 @@ test("real forwarding readiness is shown per offer and aggregated per node", asy
 
 test("an unknown inventory schema fails explicitly while routes remain available", async ({ page }) => {
   await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: { ...inventory, schema_version: 2 } }));
-  await page.goto("/#/gateways");
+  await page.goto("/#/gateways/metrics");
   await expect(page.getByText(/Unsupported Gateway inventory schema/)).toBeVisible();
+  await page.getByRole("button", { name: "Manage", exact: true }).click();
   await expect(page.getByRole("button", { name: "Add subnet route" })).toBeVisible();
 });
 

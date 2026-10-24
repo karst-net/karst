@@ -2,9 +2,13 @@
 // Copyright the Karst contributors.
 import { useEffect, useState } from "react";
 import { domainDNSName } from "../domains";
-import { api, type DeviceInvitation, type Group, type MeshDomain } from "../api";
+import { api, type AccountUser, type DeviceInvitation, type Group, type MeshDomain } from "../api";
 
 export function Setup({ go }: { go: (route: string) => void }) {
+  const [users, setUsers] = useState<AccountUser[]>([]);
+  const [forUserId, setForUserId] = useState("");
+  const [reusable, setReusable] = useState(false);
+  const [usageLimit, setUsageLimit] = useState(0);
   const [groups, setGroups] = useState<Group[]>([]);
   const [domains, setDomains] = useState<MeshDomain[]>([]);
   const [invitations, setInvitations] = useState<DeviceInvitation[]>([]);
@@ -18,8 +22,8 @@ export function Setup({ go }: { go: (route: string) => void }) {
   const refresh = async () => setInvitations(await api.invitations());
   useEffect(() => {
     let active = true;
-    Promise.all([api.groups(), api.invitations()]).then(([allGroups, allInvitations]) => {
-      if (active) { setGroups(allGroups.filter(group => group.name !== "All")); setInvitations(allInvitations); }
+    Promise.all([api.groups(), api.invitations(), api.users()]).then(([allGroups, allInvitations, allUsers]) => {
+      if (active) { setGroups(allGroups.filter(group => group.name !== "All")); setInvitations(allInvitations); setUsers(allUsers); }
     }).catch(() => { if (active) setError("Could not load invitations. Refresh to try again."); });
     // Best-effort and separate from the load above: a user delegated
     // admin of one subdomain (ADR-0032) can still issue invitations
@@ -35,7 +39,7 @@ export function Setup({ go }: { go: (route: string) => void }) {
     try {
       if (location.protocol !== "https:") throw new Error("Open the administrative console over HTTPS before creating an invitation.");
       const metadata = await api.enrollmentMetadata();
-      const grant = await api.createInvitation(name.trim(), selected, domainId);
+      const grant = await api.createInvitation(name.trim(), selected, domainId, forUserId, { reusable, usageLimit });
       if (!grant.credential) throw new Error("The server did not return an invitation credential.");
       const payload = JSON.stringify({ server: location.origin, ...metadata, setup_key: grant.credential });
       const bytes = new TextEncoder().encode(payload);
@@ -56,9 +60,15 @@ export function Setup({ go }: { go: (route: string) => void }) {
   const chosenName = domainDNSName(chosenDomain);
   const rootName = domainDNSName(domains.find((domain) => domain.is_root));
   return <section><h2>Add device</h2>
-    <p>Create an invitation for one device. The recipient installs Karst and pastes it into setup. No account or identity-provider login is needed.</p>
+    <p>Create an invitation and assign its devices to a user. The recipient installs Karst and pastes it into setup. No identity-provider login is needed to enroll.</p>
     {error && <p role="alert">{error}</p>}
     <form onSubmit={event => { event.preventDefault(); void create(); }}>
+      <label>Assign to user<select required value={forUserId} onChange={event => setForUserId(event.target.value)}>
+        <option value="">Select a user</option>
+        {users.filter(user => !user.is_blocked).map(user => <option key={user.id} value={user.id}>{user.name} ({user.email})</option>)}
+      </select></label>
+      <label><input type="checkbox" checked={reusable} onChange={event => setReusable(event.target.checked)} /> Reusable — many devices</label>
+      {reusable && <label>Usage limit (0 means unlimited)<input type="number" min={0} step={1} required value={usageLimit} onChange={event => setUsageLimit(Number(event.target.value))} /></label>}
       <label>Device name<input value={name} maxLength={100} required onChange={event => setName(event.target.value)} /></label>
       <p className="lede">This becomes the device's real name on the mesh — how other devices address it — not just a label in this list.{chosenName && <> It will resolve as <code>{name.trim() || "…"}.{chosenName}</code>.</>}</p>
       {domains.length > 0 && <label>Domain<select aria-label="Domain" value={domainId} onChange={event => setDomainId(event.target.value)}>
@@ -69,8 +79,8 @@ export function Setup({ go }: { go: (route: string) => void }) {
         {groups.map(group => <label key={group.id}><input type="checkbox" checked={selected.includes(group.id)} onChange={event => setSelected(previous => event.target.checked ? [...previous, group.id] : previous.filter(id => id !== group.id))} />{group.name}</label>)}
         {groups.length === 0 && <p>Create an access group before issuing an invitation. <button type="button" onClick={() => go("groups")}>Manage groups</button></p>}
       </fieldset>
-      <p>The invitation expires in 24 hours and can enroll one device. Its access groups cannot be changed after issuance.</p>
-      <button disabled={busy || !name.trim() || selected.length === 0}>Create invitation</button>
+      <p>The invitation expires in 24 hours and can enroll {reusable ? usageLimit > 0 ? `up to ${usageLimit} devices` : "unlimited devices" : "one device"}. Its access groups cannot be changed after issuance.</p>
+      <button disabled={busy || !forUserId || !name.trim() || selected.length === 0}>Create invitation</button>
     </form>
     {invitation && <section aria-label="New invitation">
       <p>Share this invitation privately with the recipient. It is displayed only now.</p>
@@ -80,7 +90,7 @@ export function Setup({ go }: { go: (route: string) => void }) {
     </section>}
     <h3>Invitations</h3>
     <button disabled={busy} onClick={() => { void refresh().catch(() => setError("Could not refresh invitations.")); }}>Refresh status</button>
-    <ul>{invitations.map(item => <li key={item.id}>{item.name}{item.domain_id && (() => { const d = domains.find(x => x.id === item.domain_id); return domainDNSName(d) ? <>.{domainDNSName(d)}</> : null; })()} — {item.state} — expires {new Date(item.expires_at).toLocaleString()}
+    <ul>{invitations.map(item => <li key={item.id}>{item.name}{item.domain_id && (() => { const d = domains.find(x => x.id === item.domain_id); return domainDNSName(d) ? <>.{domainDNSName(d)}</> : null; })()} — {users.find(user => user.id === item.assigned_user_id)?.name || item.assigned_user_id || "Unassigned"} — {item.state}{item.reusable && <> — {item.used_times ?? 0} / {item.usage_limit || "∞"} uses</>} — expires {new Date(item.expires_at).toLocaleString()}
       {item.state === "pending" && <button disabled={busy} onClick={() => { void revoke(item.id); }}>Revoke {item.name}</button>}
     </li>)}</ul>
     <p>Network policy and any required Bedrock approval determine when a registered device can connect.</p>

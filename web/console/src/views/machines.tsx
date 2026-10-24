@@ -19,7 +19,8 @@ const PATH_STATUS: Record<Paths["paths"][number]["kind"], StatusState> = {
   unreachable: "warning",
 };
 
-export function Machines() {
+export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "status" }) {
+  const [tab, setTab] = useState(defaultTab);
   const resource = useResource(api.nodes);
   const { message, setMessage, run } = useMutation(resource.reload);
   const [filter, setFilter] = useState("");
@@ -70,33 +71,53 @@ export function Machines() {
   };
   return <section>
     <h2>Machines</h2>
-    <p className="lede">Connection state always includes its last observation time. Add a device by creating an enrollment invitation.</p>
-    <div className="actions">
-      <button className="primary" onClick={() => { location.hash = "/enroll"; }}>Add machine</button>
-      <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
-    </div>
-    <Notice message={message} />
-    {nodes.length === 0
-      ? <EmptyState title="No machines yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
-      : shown.length === 0
-        ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
-        : <Rows head={<><th>Name</th><th>Domain</th><th>Owner</th><th>Tags</th><th>Crypto posture</th><th>Observed</th><th>Actions</th></>}>
-          {shown.map((node) => <tr key={node.handle}>
-            <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
-            <td>{domainPath(node.domain_id) ?? (node.domain_id ? <span className="lede">Unknown domain</span> : <span className="lede">Account root</span>)}</td>
-            <td>{node.user_id}</td>
-            <td>{node.tags.join(", ") || "—"}</td>
-            <td><Status state={statusFor(node.posture.status)} label={node.posture.status.replaceAll("_", " ")} /></td>
-            <td><Observed at={node.last_seen_at} /></td>
-            <td><div className="actions">
-              <button onClick={() => setRenaming({ node, name: node.name })}>Rename</button>
-              <button onClick={() => setMoving({ node, domainId: node.domain_id ?? "" })}>Move</button>
-              <button onClick={() => void showPaths(node)}>Paths</button>
-              <button className="danger" onClick={() => deprovision(node)}>Deprovision</button>
-            </div></td>
-          </tr>)}
-        </Rows>}
-    <p className="lede">Tags, expiry and the enabled flag are set by the coordination server and are not editable here — the contract accepts a name and a domain and nothing else on a node, so a form offering the rest would fail on save.</p>
+    <nav aria-label="Machines view" className="actions">
+      <button aria-pressed={tab === "manage"} onClick={() => setTab("manage")}>Manage</button>
+      <button aria-pressed={tab === "status"} onClick={() => setTab("status")}>Status</button>
+    </nav>
+    {tab === "manage" ? <>
+      <p className="lede">Add a device by creating an enrollment invitation.</p>
+      <div className="actions">
+        <button className="primary" onClick={() => { location.hash = "/enroll"; }}>Add machine</button>
+        <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
+      </div>
+      <Notice message={message} />
+      {nodes.length === 0
+        ? <EmptyState title="No machines yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
+        : shown.length === 0
+          ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
+          : <Rows head={<><th>Name</th><th>Domain</th><th>Owner</th><th>Tags</th><th>Actions</th></>}>
+            {shown.map((node) => <tr key={node.handle}>
+              <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
+              <td>{domainPath(node.domain_id) ?? (node.domain_id ? <span className="lede">Unknown domain</span> : <span className="lede">Account root</span>)}</td>
+              <td>{node.user_id}</td>
+              <td>{node.tags.join(", ") || "—"}</td>
+              <td><div className="actions">
+                <button onClick={() => setRenaming({ node, name: node.name })}>Rename</button>
+                <button onClick={() => setMoving({ node, domainId: node.domain_id ?? "" })}>Move</button>
+                <button className="danger" onClick={() => deprovision(node)}>Deprovision</button>
+              </div></td>
+            </tr>)}
+          </Rows>}
+      <p className="lede">Tags, expiry and the enabled flag are set by the coordination server and are not editable here — the contract accepts a name and a domain and nothing else on a node, so a form offering the rest would fail on save.</p>
+    </> : <>
+      <p className="lede">Connection state always includes its last observation time.</p>
+      <div className="actions">
+        <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
+      </div>
+      {nodes.length === 0
+        ? <EmptyState title="No machines yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
+        : shown.length === 0
+          ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
+          : <Rows head={<><th>Name</th><th>Crypto posture</th><th>Observed</th><th>Actions</th></>}>
+            {shown.map((node) => <tr key={node.handle}>
+              <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
+              <td><Status state={statusFor(node.posture.status)} label={node.posture.status.replaceAll("_", " ")} /></td>
+              <td><Observed at={node.last_seen_at} /></td>
+              <td><button onClick={() => void showPaths(node)}>Paths</button></td>
+            </tr>)}
+          </Rows>}
+    </>}
 
     <Dialog open={Boolean(renaming)} title="Rename machine" onClose={() => setRenaming(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void rename(); }}>
