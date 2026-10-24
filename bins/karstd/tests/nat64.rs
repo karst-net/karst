@@ -244,6 +244,7 @@ fn config() -> karstd::config::Config {
     karstd::config::Config {
         route_offers: Vec::new(),
         exit_node_state_file: None,
+        gateway_forwarding: true,
         keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[7u8; 64])),
         listen: "0.0.0.0:51820".parse().expect("listen"),
         port_mapping: false,

@@ -34,9 +34,9 @@ type gatewayOffer struct {
 	// self-reported by this offer's gateway over the existing
 	// authenticated control channel (karst_control.proto's
 	// KarstRouteObservation.forwarding_active) and joined here by this
-	// route's resource ID -- never invented from connectivity or traffic
-	// alone. "unreported": no report has ever been received (older agent,
-	// or the grant was never installed). "ready": the forward-accept rule
+	// route's resource ID and authenticated node -- never inferred from
+	// connectivity or traffic. "unreported": no attributable readiness
+	// report (including older counter-only agents). "ready": the forward-accept rule
 	// was live as of the gateway's last report. "degraded": the gateway
 	// holds this offer but its last report said the rule was not live
 	// (e.g. an nftables apply failure).
@@ -93,9 +93,11 @@ func (h *handler) gateways(w http.ResponseWriter, r *http.Request) {
 	// already uses -- a nil h.routeTelemetry (not configured at all) is
 	// the "feature not enabled" case and reports unreported throughout;
 	// a configured store that fails to read is a real backend error.
-	var telemetry map[string]routetelemetry.StoredRouteBytes
-	if h.routeTelemetry != nil {
-		telemetry, err = h.routeTelemetry.LatestByRoute(r.Context(), user.AccountId)
+	var telemetry map[string]map[string]routetelemetry.StoredGatewayHealth
+	if reader, ok := h.routeTelemetry.(interface {
+		LatestByGateway(context.Context, string) (map[string]map[string]routetelemetry.StoredGatewayHealth, error)
+	}); ok {
+		telemetry, err = reader.LatestByGateway(r.Context(), user.AccountId)
 		if err != nil {
 			util.WriteError(r.Context(), err, w)
 			return
@@ -131,7 +133,7 @@ func (h *handler) gateways(w http.ResponseWriter, r *http.Request) {
 				kind = "default_ipv6"
 			}
 		}
-		view := gatewayOffer{ID: string(offer.ID), NetworkID: string(offer.NetID), Prefix: offer.Network.Masked().String(), Kind: kind, Enabled: offer.Enabled, Masquerade: offer.Masquerade, Metric: offer.Metric, RequiresClientConsent: offer.Network.Bits() == 0, ForwardingReadiness: offerForwardingReadiness(telemetry, string(offer.GetResourceID()))}
+		view := gatewayOffer{ID: string(offer.ID), NetworkID: string(offer.NetID), Prefix: offer.Network.Masked().String(), Kind: kind, Enabled: offer.Enabled, Masquerade: offer.Masquerade, Metric: offer.Metric, RequiresClientConsent: offer.Network.Bits() == 0, ForwardingReadiness: "unreported"}
 		candidates := map[string]bool{}
 		if offer.Peer != "" {
 			candidates[offer.Peer] = true
@@ -144,7 +146,9 @@ func (h *handler) gateways(w http.ResponseWriter, r *http.Request) {
 		resolved := false
 		for id := range candidates {
 			if current, ok := nodes[id]; ok {
-				current.Offers = append(current.Offers, view)
+				candidateView := view
+				candidateView.ForwardingReadiness = offerForwardingReadiness(telemetry[id], string(offer.GetResourceID()))
+				current.Offers = append(current.Offers, candidateView)
 				nodes[id] = current
 				resolved = true
 			}
@@ -171,9 +175,9 @@ func (h *handler) gateways(w http.ResponseWriter, r *http.Request) {
 // nodes.go's throughput join already uses, since route_observations are
 // reported per resource (one record may expand into several per-candidate
 // route rows sharing it), not per route row.
-func offerForwardingReadiness(telemetry map[string]routetelemetry.StoredRouteBytes, resourceID string) string {
+func offerForwardingReadiness(telemetry map[string]routetelemetry.StoredGatewayHealth, resourceID string) string {
 	report, ok := telemetry[resourceID]
-	if !ok {
+	if !ok || !report.ReadinessReported {
 		return "unreported"
 	}
 	if report.ForwardingActive {
@@ -183,12 +187,15 @@ func offerForwardingReadiness(telemetry map[string]routetelemetry.StoredRouteByt
 }
 
 // aggregateForwardingReadiness rolls one node's offers into a single
-// summary, degraded-first: an operator checking a node's own row should
+// summary of enabled offers, degraded-first: an operator checking a node's row should
 // see a problem on any of its routes before an unrelated healthy route
 // masks it.
 func aggregateForwardingReadiness(offers []gatewayOffer) string {
 	reported := false
 	for _, offer := range offers {
+		if !offer.Enabled {
+			continue
+		}
 		switch offer.ForwardingReadiness {
 		case "degraded":
 			return "degraded"

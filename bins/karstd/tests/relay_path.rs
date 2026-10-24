@@ -158,6 +158,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         tracing_collector: None,
         route_offers: Vec::new(),
         exit_node_state_file: None,
+        gateway_forwarding: true,
         keys: keys(own),
         listen: "0.0.0.0:0".parse().expect("listen"),
         port_mapping: true,

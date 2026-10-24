@@ -197,6 +197,7 @@ fn local() -> LocalSettings {
         userspace_publish: Vec::new(),
         nat64: None,
         exit_node_state_file: None,
+        gateway_forwarding: true,
         datapath_workers: 1,
         anchor_probe_enabled: false,
     }

@@ -58,6 +58,7 @@ export function Routes() {
     const { id, ...rest } = route;
     void run(() => api.updateRoute(id, { ...rest, enabled: !route.enabled }), `Route ${route.network_id} was ${route.enabled ? "disabled" : "enabled"}.`);
   };
+  const addBehavior = (peer_groups: string[] = []) => setDraft({ value: { ...fresh(), peer_groups } });
   const edit = (route: NetworkRoute) => {
     const { id, ...rest } = route;
     setDraft({ id, value: { ...rest, access_control_groups: rest.access_control_groups ?? [], skip_auto_apply: isExit(rest.network) } });
@@ -72,20 +73,21 @@ export function Routes() {
       {inventory.loading ? <p>Loading Gateway inventory…</p> : inventory.error ? <><Failure message={`Gateway inventory unavailable: ${inventory.error}`} retry={inventory.reload} /><p>Route administration remains available below.</p></> : <>
         {inventory.value?.gateways.length ? <Rows head={<><th>Node</th><th>Configured behaviors</th><th>Recorded control connection</th><th>Forwarding readiness</th></>}>
           {inventory.value.gateways.map((gateway) => <tr key={gateway.node_id}>
-            <td><strong>{gateway.name}</strong><br /><code>{gateway.node_id}</code></td>
+            <td><strong>{gateway.name}</strong><br /><code>{gateway.node_id}</code><br /><button onClick={() => addBehavior([...new Set(routes.filter((route) => gateway.offers.some((offer) => offer.id === route.id)).flatMap((route) => route.peer_groups))])}>Add behavior to {gateway.name}</button></td>
             <td>{gateway.offers.map((offer) => <div key={offer.id}><code>{offer.prefix}</code> · {offer.kind === "subnet" ? "Subnet" : offer.kind === "default_ipv4" ? "IPv4 default" : "IPv6 default"} · {offer.enabled ? "enabled" : "disabled"}{offer.requires_client_consent && " · client consent required"} · {offer.forwarding_readiness === "ready" ? "ready" : offer.forwarding_readiness === "degraded" ? "degraded" : "unreported"}</div>)}</td>
             <td>{gateway.control_connected ? "Connected" : "Disconnected"}</td>
-            <td>{gateway.forwarding_readiness === "ready" ? "Ready" : gateway.forwarding_readiness === "degraded" ? "Degraded — check the node for an nftables apply failure." : <>Unreported — inspect <code>karst gateway status</code> on the node.</>}</td>
+            <td><p>{gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "ready").length} ready · {gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "degraded").length} degraded · {gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "unreported").length} unreported enabled behaviors</p>{gateway.forwarding_readiness === "ready" ? "Ready" : gateway.forwarding_readiness === "degraded" ? "Degraded — check the node for an nftables apply failure." : <>Unreported — inspect <code>karst gateway status</code> on the node.</>}</td>
           </tr>)}
         </Rows> : <p>No Gateway nodes resolved from the configured route offers.</p>}
         {Boolean(inventory.value?.unresolved_routes.length) && <p role="status">Routes without a visible eligible node: {inventory.value?.unresolved_routes.join(", ")}. Check routing groups and enrolled machines.</p>}
         {Boolean(inventory.value?.unsupported_routes.length) && <p role="status">Routes outside the CIDR Gateway model: {inventory.value?.unsupported_routes.join(", ")}.</p>}
       </>}
     </section>
-    <h3>Route offers</h3>
+    <h3>Gateway behaviors</h3>
     <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled machines ("gateways") will carry traffic to it. Advertise a subnet or default route through enrolled gateway machines. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
     <div className="actions">
-      <button className="primary" onClick={() => setDraft({ value: fresh() })}>Add subnet route</button>
+      <button className="primary" onClick={() => addBehavior()}>Add Gateway behavior</button>
+      <button onClick={() => setDraft({ value: fresh() })}>Add subnet route</button>
       <button onClick={() => setDraft({ value: fresh("0.0.0.0/0") })}>Add IPv4 exit route</button>
       <button onClick={() => setDraft({ value: fresh("::/0") })}>Add IPv6 exit route</button>
     </div>
@@ -108,9 +110,12 @@ export function Routes() {
         </tr>)}
       </Rows>}
 
-    <Dialog open={Boolean(draft)} title={draft?.id ? "Edit route" : isExit(draft?.value.network ?? "") ? "Add exit route" : "Add subnet route"} onClose={() => setDraft(undefined)}>
+    <Dialog open={Boolean(draft)} title={draft?.id ? "Edit Gateway behavior" : "Add Gateway behavior"} onClose={() => setDraft(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <label>Identifier<input aria-label="Route identifier" placeholder="aws-prod" value={draft?.value.network_id ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network_id: event.target.value } })} /></label>
+        <label>Behavior<select aria-label="Gateway behavior" value={isExit(draft?.value.network ?? "") ? draft?.value.network : "subnet"} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value === "subnet" ? "" : event.target.value, skip_auto_apply: event.target.value !== "subnet" } })}>
+          <option value="subnet">Specific-prefix access</option><option value="0.0.0.0/0">IPv4 default-route egress</option><option value="::/0">IPv6 default-route egress</option>
+        </select></label>
         <label>Network (CIDR)<input aria-label="Route network (CIDR)" placeholder="10.10.0.0/16" value={draft?.value.network ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value, skip_auto_apply: isExit(event.target.value) } })} /></label>
         {isExit(draft?.value.network ?? "") && <p className="lede">The server only offers this default route. Each client must run <code>karst gateway exit use &lt;route-id&gt;</code> locally before it becomes active. IPv4 and IPv6 consent are independent.</p>}
         <label>Description<input aria-label="Route description" value={draft?.value.description ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, description: event.target.value } })} /></label>

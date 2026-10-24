@@ -20,13 +20,14 @@ of being silently presented as supported Gateway behavior.
 
 The inventory describes configuration, not effective per-recipient eligibility,
 route selection or live forwarding. Recorded control connectivity is distinct
-from forwarding readiness, which remains `unreported` here. Inspect
+from forwarding readiness, which is self-reported per candidate. Inspect
 `karst gateway status` on the node for local grants/readiness. A connected node
 may lack kernel forwarding, nftables, current policy, a usable return path, or
 independent Bedrock membership. A declaration does not establish reachability.
 
-The route editor administers subnet and default behaviors through the same
-existing route records. Routing groups choose candidate nodes; distribution
+The Gateway behavior editor administers specific-prefix access and IPv4/IPv6
+default egress through one behavior selector, including from a Gateway row.
+Existing route records and IDs remain authoritative. Routing groups choose candidate nodes; distribution
 groups choose offer recipients; access-control groups and packet policy govern
 use. Default routes additionally require durable local client selection:
 
@@ -60,7 +61,7 @@ forwarding privileges.
   live in the gateway's own nftables table as of its last report; `degraded`
   means the gateway holds the offer but its last report said the rule was not
   live (e.g. an nftables apply failure); `unreported` means no report has
-  ever been received (an older agent, or a grant never installed). A node's
+  received with attributable readiness (an older agent, or a grant never installed). A node's
   own `forwarding_readiness` aggregates its offers degraded-first.
 - `unresolved_routes` and `unsupported_routes` contain declaration IDs needing
   operator attention. Hidden peer identities are not returned through group
@@ -85,7 +86,7 @@ the console does not require a database conversion.
 
 | Concern | Shared implementation and protocol boundary |
 |---|---|
-| Configuration/persistence | Inherited account route/group records store both specific and default prefixes. Local durable exit consent remains distinct. |
+| Configuration/persistence | `[gateway]` supplies shared local forwarding policy and consent storage. Inherited account route/group records store both prefix kinds. Local durable exit consent remains distinct. |
 | Advertisement/distribution | `control/routes.go` projects both into authenticated `KarstRouteOffer` fields with role, kind, metric and masquerade. Distribution and access checks retain their existing authority. |
 | Validation/selection | `route_offer.rs` validates prefix/kind/gateway roles. `config.rs` and `routing.rs` select candidate ownership; default selection is constrained by local consent. |
 | Forwarding/NAT | `gateway.rs` builds one owned nftables ruleset for both kinds, most-specific destination first, preserving operator tables and per-route attribution. Masquerade or explicit return routing remains necessary. |
@@ -99,8 +100,17 @@ after consent removal on the same Gateway. The
 [container runner](../deploy/lab/aquifer/README.md) also executes existing subnet,
 failover, crash recovery and independent-family selection scenarios.
 
-Issue #404 still tracks full configuration/deployment migration, richer local
-capability configuration, production and mixed-version checks, IPv6/DNS
-forwarding and other platform verification. This inventory, the shared
-editor, and the `forwarding_readiness` self-report above do not establish
-completion of those items.
+Issue #421 tracks the remaining production, real mixed-version upgrade,
+IPv6/DNS forwarding and native-platform verification. Local configuration,
+the Gateway behavior editor, diagnostics and the naming audit are described
+below; these changes do not establish completion of that verification.
+
+## Local policy, health and migration
+
+The `[gateway]` table controls forwarding for both kinds and local consent
+storage. Candidate health is stored independently from route-wide counters;
+legacy counter-only reports remain unreported. The console shows aggregate
+behavior counts, and `karst_gateway_offers` supplies local alerting hooks.
+See the [migration audit and verification record](gateway-migration-verification.md)
+for config examples, rollback requirements, preserved platform contracts and
+verification boundaries. ADR-0057 records the costs and alternatives.

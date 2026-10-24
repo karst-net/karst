@@ -96,7 +96,7 @@ synchronized, direct and error-free throughout.
   checks use the host's Keycloak realm URL, since the relay speaks no HTTP.
   A recipient exit route becomes active only with local consent (ADR-0024);
   the workflow gives it as the Mac's administrator with the shipped CLI
-  (`sudo karst exit-node use`, ADR-0036).
+  (`sudo karst gateway exit use`, ADR-0036).
 
 ### Policy
 

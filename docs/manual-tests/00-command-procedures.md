@@ -259,14 +259,14 @@ local `nc -lk` equivalent and record its implementation.
    select and withdraw it explicitly:
 
    ```sh
-   sudo karst exit-node list
+   sudo karst gateway exit list
    ip rule show
    curl -4 https://ifconfig.me/ip
-   sudo karst exit-node use <route-id>
+   sudo karst gateway exit use <route-id>
    sudo karst status
    ip rule show
    curl -4 https://ifconfig.me/ip
-   sudo karst exit-node disable
+   sudo karst gateway exit disable
    ip rule show
    ```
 
@@ -398,7 +398,7 @@ may name redaction but must never include an actual secret or full config.
 sudo nft delete table inet karst_manual 2>/dev/null || true
 sudo systemctl start karst-control karst-relay karstd
 sudo karst dns revert --config /etc/karst/karstd.toml
-sudo karst exit-node disable 2>/dev/null || true
+sudo karst gateway exit disable 2>/dev/null || true
 ```
 
 Delete only named disposable objects, restore the approved policy/resolver and

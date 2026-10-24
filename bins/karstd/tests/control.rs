@@ -268,6 +268,7 @@ fn local(seed: u8) -> LocalSettings {
         relay_ca_file: None,
         prefer_quic_relay: false,
         exit_node_state_file: None,
+        gateway_forwarding: true,
         keys: keys(seed),
         listen: "0.0.0.0:51820".parse().expect("addr"),
         port_mapping: true,

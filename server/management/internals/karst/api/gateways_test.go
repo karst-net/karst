@@ -102,6 +102,15 @@ func (f fakeGatewayTelemetry) LatestByRoute(_ context.Context, accountID string)
 	return f.byRoute, f.err
 }
 
+func (f fakeGatewayTelemetry) LatestByGateway(ctx context.Context, accountID string) (map[string]map[string]routetelemetry.StoredGatewayHealth, error) {
+	rows, err := f.LatestByRoute(ctx, accountID)
+	reports := map[string]routetelemetry.StoredGatewayHealth{}
+	for id, row := range rows {
+		reports[id] = routetelemetry.StoredGatewayHealth{ForwardingActive: row.ForwardingActive, ReadinessReported: true}
+	}
+	return map[string]map[string]routetelemetry.StoredGatewayHealth{"node-a": reports}, err
+}
+
 func TestGatewayInventoryJoinsForwardingReadinessByResourceIDNotRouteRow(t *testing.T) {
 	// "office" and "office-2" share one resource ID ("office") but are two
 	// distinct route rows (e.g. a group route expanded per candidate) --
@@ -166,4 +175,28 @@ func TestGatewayInventoryUsesExistingKarstRoleGate(t *testing.T) {
 			require.Equal(t, http.StatusForbidden, w.Code)
 		})
 	}
+}
+
+func TestGatewayInventoryDoesNotCopyOneCandidatesReadinessToAnother(t *testing.T) {
+	sources := gatewaySources{t: t, groups: []*types.Group{{ID: "ha", Peers: []string{"node-a", "node-b"}}}, routes: []*route.Route{
+		{ID: "office", NetworkType: route.IPv4Network, Network: netip.MustParsePrefix("10.0.0.0/8"), PeerGroups: []string{"ha"}, Enabled: true},
+	}}
+	h := &handler{routes: sources, peers: fakePeers{{ID: "node-a"}, {ID: "node-b"}}, routeTelemetry: fakeGatewayTelemetry{byRoute: map[string]routetelemetry.StoredRouteBytes{"office": {ForwardingActive: true}}}}
+	w := gatewayRequest(h)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var got gatewayInventory
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got.Gateways, 2)
+	require.Equal(t, "ready", got.Gateways[0].ForwardingReadiness)
+	require.Equal(t, "unreported", got.Gateways[1].ForwardingReadiness)
+}
+
+func TestDisabledGatewayOffersDoNotDegradeTheNode(t *testing.T) {
+	require.Equal(t, "ready", aggregateForwardingReadiness([]gatewayOffer{
+		{Enabled: true, ForwardingReadiness: "ready"},
+		{Enabled: false, ForwardingReadiness: "degraded"},
+	}))
+	require.Equal(t, "unreported", offerForwardingReadiness(map[string]routetelemetry.StoredGatewayHealth{
+		"legacy": {ForwardingActive: false},
+	}, "legacy"))
 }

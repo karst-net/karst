@@ -106,6 +106,7 @@ fn node(
         psk_epoch: 1,
         route_offers: Vec::new(),
         exit_node_state_file: None,
+        gateway_forwarding: true,
         node_id: handle(&[own; 2592]).into_bytes(),
         relays: Vec::new(),
         peers,
