@@ -169,7 +169,13 @@ export function InfrastructureConnections() {
           <label>Server certificate (optional, PEM)<textarea aria-label="LXD server certificate" rows={4} value={connectionDraft.lxdServerCert} onChange={(event) => setConnectionDraft((current) => current && { ...current, lxdServerCert: event.target.value })} placeholder={"-----BEGIN CERTIFICATE-----\n..."} /></label>
           <p className="lede">Pins this LXD server's own certificate, since its default is self-signed with no real CA behind it — paste the server's own cert here rather than a CA's.</p>
           <label>Client certificate (PEM)<textarea aria-label="LXD client certificate" rows={4} value={connectionDraft.lxdClientCert} onChange={(event) => setConnectionDraft((current) => current && { ...current, lxdClientCert: event.target.value })} placeholder={"-----BEGIN CERTIFICATE-----\n..."} /></label>
-          <label>Client key (PEM)<textarea aria-label="LXD client key" rows={4} value={connectionDraft.lxdClientKey} onChange={(event) => setConnectionDraft((current) => current && { ...current, lxdClientKey: event.target.value })} placeholder={"-----BEGIN PRIVATE KEY-----\n..."} /></label>
+          {/* Deliberately no illustrative PEM-header placeholder here,
+              unlike the cert fields above: a second literal occurrence of
+              the private-key PEM marker in this file (Nomad's client key
+              field above already has one) trips the secret scanner's
+              private-key rule, even though neither is a real key -- see
+              the commit message. */}
+          <label>Client key (PEM)<textarea aria-label="LXD client key" rows={4} value={connectionDraft.lxdClientKey} onChange={(event) => setConnectionDraft((current) => current && { ...current, lxdClientKey: event.target.value })} placeholder="Paste the client key's PEM contents" /></label>
           <p className="lede">LXD authenticates the client by certificate (<code>lxc config trust add</code>) rather than a token.</p>
         </>}
         {(connectionDraft?.type === "kubernetes" || connectionDraft?.type === "nomad" || connectionDraft?.type === "lxd") && <>
