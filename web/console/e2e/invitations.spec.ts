@@ -51,9 +51,14 @@ test(`administrator creates an assigned ${reusable ? "reusable" : "one-off"} inv
   }
   await page.getByLabel("Device name").fill("invitation-browser-laptop");
   await page.getByRole("checkbox", { name: "sre", exact: true }).check();
-  await page.getByRole("button", { name: "Create invitation", exact: true }).click();
+  await page.getByRole("button", { name: "Create invitation", exact: true }).focus();
+  await page.keyboard.press("Enter");
   const value = await page.getByLabel("Enrollment invitation", { exact: true }).inputValue();
   expect(value).toMatch(/^karst-invite-v1:/);
+  const invitationRow = page.locator("li").filter({ hasText: "invitation-browser-laptop" });
+  await expect(invitationRow).toContainText("SRE operator");
+  await expect(invitationRow).toContainText("pending");
+  if (reusable) await expect(invitationRow).toContainText("0 / 2 uses");
   const payload = JSON.parse(Buffer.from(value.slice("karst-invite-v1:".length), "base64url").toString("utf8"));
   expect(payload).toEqual({ server: "https://console.example.test", server_kem_pin: "ab".repeat(1184), server_verify_pin: "cd".repeat(2592), control_minimum_version: 1, setup_key: "invitation-fixture-secret" });
   const storage = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
@@ -61,7 +66,7 @@ test(`administrator creates an assigned ${reusable ? "reusable" : "one-off"} inv
   expect(storage).not.toContain(value);
   await page.getByRole("button", { name: "Dismiss invitation" }).click();
   await expect(page.getByLabel("Enrollment invitation", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Auth keys", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Auth keys", exact: true })).toHaveCount(0);
   await page.goto("https://console.example.test/#/users");
   await page.getByLabel("Search users").fill("sre@example.test");
   await expect(page.getByRole("cell", { name: "it@example.test", exact: true })).toHaveCount(0);

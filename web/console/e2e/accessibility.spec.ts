@@ -93,57 +93,19 @@ test("policy syntax errors surface their line number", async ({ page }) => {
   await expect(page.getByLabel("Policy diagnostics")).toContainText("line 3");
 });
 
-test("setup requires a label and groups and refuses issuance over HTTP", async ({ page }) => {
+test("setup requires a label, groups, and assignee and refuses issuance over HTTP", async ({ page }) => {
  await page.goto("/#/enroll");
  await expect(page.getByRole("button", { name: "Create invitation" })).toBeDisabled();
  await page.getByLabel("Device name").fill("Laptop");
  await page.getByRole("checkbox", { name: "sre", exact: true }).check();
+ await expect(page.getByRole("button", { name: "Create invitation" })).toBeDisabled();
+ await page.getByLabel("Assign to user").selectOption("user-sre");
  await page.getByRole("button", { name: "Create invitation" }).click();
  await expect(page.getByRole("alert")).toContainText("HTTPS");
 });
 
-test("auth-key creation is keyboard accessible", async ({ page }) => {
-  await page.goto("/#/keys");
-  await page.getByRole("button", { name: "Create auth key" }).focus();
-  await page.keyboard.press("Enter");
-  // showModal() puts focus inside the dialog, so the form is reachable by
-  // typing alone from here — no pointer, and no tabbing back out to find it.
-  await page.getByLabel("Key name").fill("laptop-alice");
-  await page.getByRole("button", { name: "Issue auth key" }).focus();
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toContainText("Copy this key now");
-  await expect(page.getByLabel("New auth key")).toHaveValue("setup-fixture-secret");
-});
-
-test("a created auth key appears in the list with its state and usage", async ({ page }) => {
-  await page.goto("/#/keys");
-  await page.getByRole("button", { name: "Create auth key" }).click();
-  await page.getByLabel("Key name").fill("ci-runners");
-  await page.getByLabel("Key type").selectOption("reusable");
-  // Usage limit only exists for a reusable key: a one-off with a limit of 5
-  // would be a contradiction the server has to reject.
-  await page.getByLabel("Usage limit (0 for unlimited)").fill("5");
-  await page.getByRole("button", { name: "Issue auth key" }).click();
-  await page.getByRole("button", { name: "Done" }).click();
-  const row = page.locator("tbody tr").filter({ hasText: "ci-runners" });
-  await expect(row).toContainText("reusable");
-  await expect(row).toContainText("0 / 5");
-  await expect(row).toContainText("valid");
-});
-
-test("an auth key can be revoked without being deleted", async ({ page }) => {
-  await page.goto("/#/keys");
-  await page.getByRole("button", { name: "Create auth key" }).click();
-  await page.getByLabel("Key name").fill("temporary");
-  await page.getByRole("button", { name: "Issue auth key" }).click();
-  await page.getByRole("button", { name: "Done" }).click();
-  page.on("dialog", (dialog) => dialog.accept());
-  await page.locator("tbody tr").filter({ hasText: "temporary" }).getByRole("button", { name: "Revoke" }).click();
-  await expect(page.getByRole("status")).toContainText("was revoked");
-  // Still listed, and still says what happened to it. A key that vanished on
-  // revocation would leave nothing to answer "was this one ever used?".
-  await expect(page.locator("tbody tr").filter({ hasText: "temporary" })).toContainText("revoked");
-});
+// Invitation issuance, keyboard submission, reusable usage counts, and
+// retained revocation records are covered in invitations.spec.ts.
 
 test("a machine can be renamed", async ({ page }) => {
   await page.goto("/#/machines");
@@ -188,11 +150,11 @@ test("adding a machine opens the invitation flow", async ({ page }) => {
   await page.getByRole("button", { name: "Add machine" }).click();
   await expect(page.getByRole("heading", { name: "Add device", exact: true })).toBeVisible();
   await expect(page.getByLabel("Device name")).toBeVisible();
-  await expect(page.getByText("No account or identity-provider login is needed.", { exact: false })).toBeVisible();
+  await expect(page.getByText("No identity-provider login is needed to enroll.", { exact: false })).toBeVisible();
 });
 
 test("a machine's paths show sent/received totals, not just kind and endpoint", async ({ page }) => {
-  await page.goto("/#/machines");
+  await page.goto("/#/machines/status");
   await page.locator("tbody tr").filter({ hasText: "sre-laptop" }).getByRole("button", { name: "Paths" }).click();
   const row = page.locator("dialog[open] tbody tr").first();
   await expect(row).toContainText("relay");
@@ -506,7 +468,7 @@ test.afterEach(async ({ page }) => { await setUncovered(page, uncovered); await 
 
 test("empty-account list views explain what happens next", async ({ page }) => {
   await setFixture(page, true);
-  for (const [route, title] of [["machines", "No machines yet"], ["keys", "No auth keys"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No Relay services configured"]]) {
+  for (const [route, title] of [["machines", "No machines yet"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No Relay services configured"]]) {
     await page.goto(`/#/${route}`);
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
   }
