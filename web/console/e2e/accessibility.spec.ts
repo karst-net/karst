@@ -148,9 +148,24 @@ test("a machine's mesh domain can be shown and changed", async ({ page }) => {
 test("adding a machine opens the invitation flow", async ({ page }) => {
   await page.goto("/#/machines");
   await page.getByRole("button", { name: "Add machine" }).click();
-  await expect(page.getByRole("heading", { name: "Add device", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Add machine", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/#\/machines\/add$/);
+  await expect(page.getByRole("heading", { name: "Machines", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Machines", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("link", { name: "Add device", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Device name")).toBeVisible();
+  await expect(page.getByLabel("Domain", { exact: true })).toHaveCount(1);
   await expect(page.getByText("No identity-provider login is needed to enroll.", { exact: false })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Device name")).toBeVisible();
+  await page.getByRole("button", { name: "View machines", exact: true }).click();
+  await expect(page).toHaveURL(/#\/machines$/);
+  await page.goBack();
+  await expect(page.getByLabel("Device name")).toBeVisible();
+  await page.goto("/#/enroll");
+  await expect(page.getByRole("heading", { name: "Machines", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add machine", exact: true })).toHaveAttribute("aria-pressed", "true");
+
 });
 
 test("a machine's paths show sent/received totals, not just kind and endpoint", async ({ page }) => {
