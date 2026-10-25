@@ -35,6 +35,10 @@ func publication(tx *gorm.DB, account string) (Publication, error) {
 	if err != nil {
 		return Publication{}, err
 	}
+	if value.Mode == "legacy-v3" || value.Mode == "services-v3" {
+		value.Mode = strings.TrimSuffix(value.Mode, "-v3")
+		value.SchemaVersion = 3
+	}
 	if value.Mode == "legacy-v2" || value.Mode == "services-v2" {
 		value.Mode = strings.TrimSuffix(value.Mode, "-v2")
 		value.SchemaVersion = 2
@@ -97,8 +101,20 @@ func (s *Store) SetPublication(ctx context.Context, mode string) (Publication, e
 			}
 			value.Mode += "-v2"
 		}
+		var scoped int64
+		if err := tx.Model(&BackendAccess{}).Where("account_id = ?", account).Count(&scoped).Error; err != nil {
+			return err
+		}
+		if scoped > 0 {
+			value.Mode = mode + "-v3"
+			value.SchemaVersion = 3
+		}
 		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "account_id"}}, DoUpdates: clause.AssignmentColumns([]string{"mode"})}).Create(&value).Error
 	})
+	if strings.HasSuffix(value.Mode, "-v3") {
+		value.Mode = strings.TrimSuffix(value.Mode, "-v3")
+		value.SchemaVersion = 3
+	}
 	if strings.HasSuffix(value.Mode, "-v2") {
 		value.Mode = strings.TrimSuffix(value.Mode, "-v2")
 		value.SchemaVersion = 2
@@ -111,6 +127,9 @@ func (s *Store) SetPublication(ctx context.Context, mode string) (Publication, e
 // instead of silently republishing a disabled endpoint. Explicit publication
 // selection can clear the marker after all mode flags have been reset.
 func (s *Store) protectModeSchema(ctx context.Context, tx *gorm.DB, account string, current Publication) error {
+	if current.SchemaVersion == 3 {
+		return nil
+	}
 	var disabled int64
 	if err := tx.Model(&Service{}).Where("account_id = ? AND ponor_disabled = ?", account, true).Count(&disabled).Error; err != nil {
 		return err

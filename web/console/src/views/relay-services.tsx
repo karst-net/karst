@@ -4,7 +4,8 @@
 import { useState } from "react";
 import { Dialog, EmptyState, Status } from "@karst-net/ui";
 import type { RelayService } from "@karst-net/api-client";
-import { api } from "../api";
+import { api, type ManagedRelayService } from "../api";
+import { RelayAccess } from "./relay-access";
 import { Failure, Notice, Rows, useMutation, usePolledResource } from "../common";
 import { Relays } from "./relays";
 
@@ -31,6 +32,7 @@ function Services() {
   const { message, setMessage, run } = useMutation(resource.reload);
   const [draft, setDraft] = useState<RelayService>();
   const [saving, setSaving] = useState(false);
+  const [configuring, setConfiguring] = useState<ManagedRelayService | "new">();
   const [preview, setPreview] = useState<RelayService[]>();
   const [acknowledged, setAcknowledged] = useState(false);
   const [modeDraft, setModeDraft] = useState<{ service: RelayService; ponor: boolean }>();
@@ -64,7 +66,7 @@ function Services() {
       <button disabled={saving} onClick={async () => { setMessage(undefined); setSaving(true); try { setPreview(await api.previewRelayPublication()); setAcknowledged(false); } catch (error) { setMessage((error as Error).message); } finally { setSaving(false); } }}>Preview service publication</button>
       {publication.mode === "services" && <button disabled={saving} onClick={async () => { if (!confirm("Return to legacy registry publication? Previously unassociated legacy endpoints may become available to clients again.")) return; setSaving(true); await run(() => api.setRelayPublication("legacy"), "Legacy registry publication restored."); setSaving(false); }}>Restore legacy publication</button>}
     </div>
-    <div className="actions"><button className="primary" onClick={() => { setMessage(undefined); setDraft({ id: "", ponor_id: "" }); }}>Add service</button><button onClick={resource.reload}>Refresh services</button></div>
+    <div className="actions"><button className="primary" onClick={() => setConfiguring("new")}>Configure a relay</button><button onClick={() => { setMessage(undefined); setDraft({ id: "", ponor_id: "" }); }}>Add legacy association</button><button onClick={resource.reload}>Refresh services</button></div>
     {!draft && !modeDraft && preview === undefined && <Notice message={message} />}
     {services.length === 0 ? <EmptyState title="No Relay services configured">Existing endpoints continue operating. Register a backend in the Ponor view, then choose its association here.</EmptyState> :
       <Rows head={<><th>Service</th><th>Ponor</th><th>Actions</th></>}>
@@ -76,10 +78,11 @@ function Services() {
               {service.ponor_disabled ? <Status state="unknown" label="Ponor disabled" /> : !service.ponor_present || !p ? <Status state="warning" label="Ponor registration missing" /> :
                 <><span>Registered</span><br /><Status state={p.health.admission_state === "confirmed" ? "healthy" : p.health.admission_state === "stale" ? "warning" : "unknown"} label={`Ponor admission: ${p.health.admission_state}`} /></>}
             </td>
-            <td><button disabled={saving} onClick={() => { setMessage(undefined); setModeAcknowledged(false); setModeDraft({ service, ponor: !service.ponor_disabled }); }}>Change modes</button><button onClick={() => remove(service)}>Remove association</button></td>
+            <td><button onClick={() => setConfiguring(service)}>Configure access to {service.id}</button><button disabled={saving} onClick={() => { setMessage(undefined); setModeAcknowledged(false); setModeDraft({ service, ponor: !service.ponor_disabled }); }}>Change modes</button><button onClick={() => remove(service)}>Remove association</button></td>
           </tr>;
         })}
       </Rows>}
+    {configuring && <RelayAccess service={configuring === "new" ? undefined : configuring} onClose={() => setConfiguring(undefined)} onSaved={() => { setConfiguring(undefined); resource.reload(); setMessage("Relay configuration saved. Check admission and Gateway forwarding readiness before use."); }} />}
     <Dialog open={Boolean(modeDraft)} title="Change Relay modes" onClose={() => { if (!saving) setModeDraft(undefined); }}>
       {modeDraft && <><Notice message={message} />
         <p>Service: <strong>{modeDraft.service.id}</strong></p>
@@ -98,6 +101,7 @@ function Services() {
     </Dialog>
     <Dialog open={Boolean(draft)} title="Add Relay service" onClose={() => { if (!saving) setDraft(undefined); }}>
       <form onSubmit={(event) => { event.preventDefault(); void add(); }}>
+        <p>This preserves legacy account-wide access. Use Configure a relay to select allowed groups and optional internet egress.</p>
         {draft && <Notice message={message} />}
         <label>Service name<input required maxLength={64} value={draft?.id ?? ""} onChange={(event) => setDraft((current) => current && { ...current, id: event.target.value })} /></label>
         <label>Ponor endpoint<select required value={draft?.ponor_id ?? ""} onChange={(event) => setDraft((current) => current && { ...current, ponor_id: event.target.value })}>

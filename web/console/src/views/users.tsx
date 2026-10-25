@@ -6,12 +6,15 @@ import { Dialog, EmptyState, Observed, Status } from "@karst-net/ui";
 import { api, type AccountUser } from "../api";
 import { Failure, Notice, Rows, idList, useMutation, useResource } from "../common";
 
+import { GroupPicker } from "./access";
+
 const roles = ["admin", "user"];
 
 export function Users() {
   const [filter, setFilter] = useState("");
   const [details, setDetails] = useState<AccountUser>();
   const resource = useResource(api.users);
+  const groups = useResource(api.groups);
   const { message, run } = useMutation(resource.reload);
   const [editing, setEditing] = useState<{ user: AccountUser; role: string; is_blocked: boolean; groups: string }>();
 
@@ -61,7 +64,8 @@ export function Users() {
     <Dialog open={Boolean(editing)} title={`Edit ${editing?.user.name ?? "user"}`} onClose={() => setEditing(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <label>Role<select aria-label="Edit role" value={editing?.role ?? "user"} onChange={(event) => setEditing((current) => current && { ...current, role: event.target.value })}>{[...new Set([...roles, editing?.role ?? "user"])].map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
-        <label>Auto-assign group IDs<input aria-label="Edit auto-assign group IDs" value={editing?.groups ?? ""} onChange={(event) => setEditing((current) => current && { ...current, groups: event.target.value })} /></label>
+        <GroupPicker label="Auto-assigned groups" groups={groups.value ?? []} value={idList(editing?.groups ?? "")} onChange={selected => setEditing(current => current && { ...current, groups: selected.join(",") })} />
+        {groups.error && <Failure message={groups.error} retry={groups.reload} />}
         <label><input type="checkbox" checked={editing?.is_blocked ?? false} onChange={(event) => setEditing((current) => current && { ...current, is_blocked: event.target.checked })} /> Blocked</label>
         <div className="actions"><button type="button" onClick={() => setEditing(undefined)}>Cancel</button><button className="primary" type="submit">Save user</button></div>
       </form>

@@ -391,6 +391,14 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			}
 		}
 	}
+	if scoped, ok := h.RelayServices.(interface {
+		FilterForPeer(context.Context, string, []*proto.KarstRelay) ([]*proto.KarstRelay, error)
+	}); ok {
+		relays, err = scoped.FilterForPeer(relayservice.WithAccount(ctx, accountID), selfPeer.ID, relays)
+		if err != nil {
+			return nil, fmt.Errorf("relay group access: %w", err)
+		}
+	}
 	// Loaded once and reused for every peer below, rather than re-read per
 	// peer: a rotation landing mid-response must not hand out a mix of old-
 	// and new-epoch PSKs within what is supposed to be one consistent
@@ -632,10 +640,33 @@ func (h *NetmapHandler) compileFilter(ctx context.Context, self string, peers []
 		return nil, nil, nil, false, nil
 	}
 
+	var registry *types.Account
+	if doc.UsesRegistryGroups() {
+		if h.DNS == nil {
+			return nil, nil, nil, false, fmt.Errorf("registry group source unavailable")
+		}
+		account, accountErr := h.Peers.GetAccountIDForPeerKey(ctx, self)
+		if accountErr != nil {
+			return nil, nil, nil, false, accountErr
+		}
+		registry, accountErr = h.DNS.GetAccount(ctx, account)
+		if accountErr != nil || registry == nil || registry.Id != account {
+			return nil, nil, nil, false, fmt.Errorf("registry groups unavailable: %v", accountErr)
+		}
+	}
 	all := make([]policy.Node, 0, len(peers))
 	var target policy.Node
 	for _, p := range peers {
 		n := policy.Node{Handle: p.Key, User: p.UserID, Addresses: allowedIPsOf(p)}
+		if registry != nil {
+			if p.UserID != "" {
+				owner := registry.Users[p.UserID]
+				n.Inactive = owner == nil || owner.Blocked || owner.PendingApproval
+			}
+			for id := range registry.GetPeerGroups(p.ID) {
+				n.GroupIDs = append(n.GroupIDs, id)
+			}
+		}
 		all = append(all, n)
 		if p.Key == self {
 			target = n

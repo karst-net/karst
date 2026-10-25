@@ -79,7 +79,7 @@ export function buildFixture({ empty = false } = {}) {
     },
     policyVersions: [
       { version: 7, document: '{\n  "acls": [{"action": "accept", "src": ["*"], "dst": ["tag:prod:22"]}]\n}', author: "user-owner", created_at: "2026-08-22T19:04:00Z" },
-      { version: 6, document: '{\n  "acls": [{"src": ["group:engineering"], "dst": ["tag:staging:22"]}]\n}', author: "user-sre", created_at: "2026-08-21T16:20:00Z" },
+      { version: 6, document: '{\n  "groups":{"group:engineering":["user-sre"]}, "acls": [{"action":"accept","src": ["group:engineering"], "dst": ["tag:staging:22"]}]\n}', author: "user-sre", created_at: "2026-08-21T16:20:00Z" },
     ],
     audit: empty ? [] : [
       { sequence: 41, created_at: "2026-08-22T19:04:00Z", actor: "user-owner", action: "policy.write", target: "policy", detail: "version 7", previous_hash: "audit-hash-40", hash: "audit-hash-41" },

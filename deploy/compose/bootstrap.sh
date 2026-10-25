@@ -139,6 +139,17 @@ else
     echo "bootstrap: keeping the existing relay identity and registry"
 fi
 
+# Bind the admission writer to the actual local relay identity. The admin UI
+# can then configure group access without editing deployment configuration.
+relay_id=$(docker run --rm -v "$state:/var/lib/karst" "$relay_image" \
+    pubkey --config /var/lib/karst/relay.toml | awk '/^relay_id/ { print $2 }')
+if [ -z "$relay_id" ]; then
+    echo "bootstrap: relay did not print its public identity" >&2
+    exit 1
+fi
+printf '%s\n' "$relay_id" > "$state/relay-roster.id"
+
+
 # ---------------------------------------------------------------------------
 # 4. The packet filter.
 #

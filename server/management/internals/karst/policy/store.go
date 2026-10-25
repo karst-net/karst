@@ -47,6 +47,9 @@ func (Version) TableName() string { return "karst_policy_versions" }
 
 type Store struct{ db *gorm.DB }
 
+// TransactionStore shares an already-migrated database transaction.
+func TransactionStore(tx *gorm.DB) *Store { return &Store{db: tx} }
+
 func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("policy: nil database")

@@ -807,12 +807,15 @@ func (e RelayPublicationMode) Valid() bool {
 // Defines values for RelayPublicationSchemaVersion.
 const (
 	RelayPublicationSchemaVersionN2 RelayPublicationSchemaVersion = 2
+	RelayPublicationSchemaVersionN3 RelayPublicationSchemaVersion = 3
 )
 
 // Valid indicates whether the value is a known member of the RelayPublicationSchemaVersion enum.
 func (e RelayPublicationSchemaVersion) Valid() bool {
 	switch e {
 	case RelayPublicationSchemaVersionN2:
+		return true
+	case RelayPublicationSchemaVersionN3:
 		return true
 	default:
 		return false
@@ -1143,6 +1146,21 @@ func (e SetRelayPublicationJSONBodyMode) Valid() bool {
 	case SetRelayPublicationJSONBodyModeLegacy:
 		return true
 	case SetRelayPublicationJSONBodyModeServices:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange.
+const (
+	UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChangeTrue UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange = true
+)
+
+// Valid indicates whether the value is a known member of the UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange enum.
+func (e UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange) Valid() bool {
+	switch e {
+	case UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChangeTrue:
 		return true
 	default:
 		return false
@@ -2041,18 +2059,43 @@ type RelayPublicationSchemaVersion int
 
 // RelayService defines model for RelayService.
 type RelayService struct {
-	Id string `json:"id"`
+	// AccessManaged Use live registry-group membership for relay admission. Requires a live identity-bound roster writer.
+	AccessManaged *bool `json:"access_managed,omitempty"`
+
+	// AllowedGroups Stable account group IDs permitted to use this backend.
+	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
+	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
+	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`
+
+	// GatewayHandle Explicitly selected enrolled Linux machine providing internet egress.
+	GatewayHandle *string `json:"gateway_handle,omitempty"`
+	Id            string  `json:"id"`
+	Metric        *int    `json:"metric,omitempty"`
 
 	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
 	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
 
 	// PonorId Existing account-local Ponor registry ID.
 	PonorId string `json:"ponor_id"`
+
+	// Revision Expected service revision when updating access.
+	Revision *int `json:"revision,omitempty"`
 }
 
 // RelayServiceView defines model for RelayServiceView.
 type RelayServiceView struct {
-	Id string `json:"id"`
+	// AccessManaged Use live registry-group membership for relay admission. Requires a live identity-bound roster writer.
+	AccessManaged *bool `json:"access_managed,omitempty"`
+
+	// AllowedGroups Stable account group IDs permitted to use this backend.
+	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
+	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
+	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`
+
+	// GatewayHandle Explicitly selected enrolled Linux machine providing internet egress.
+	GatewayHandle *string `json:"gateway_handle,omitempty"`
+	Id            string  `json:"id"`
+	Metric        *int    `json:"metric,omitempty"`
 
 	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
 	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
@@ -2062,6 +2105,9 @@ type RelayServiceView struct {
 
 	// PonorPresent Referenced Ponor registry entry exists in this account; not a health result.
 	PonorPresent bool `json:"ponor_present"`
+
+	// Revision Expected service revision when updating access.
+	Revision *int `json:"revision,omitempty"`
 }
 
 // RelayUsageDay defines model for RelayUsageDay.
@@ -2438,6 +2484,23 @@ type SetRelayPublicationJSONBodyAcknowledgeConnectivityChange bool
 // SetRelayPublicationJSONBodyMode defines parameters for SetRelayPublication.
 type SetRelayPublicationJSONBodyMode string
 
+// UpdateRelayServiceAccessJSONBody defines parameters for UpdateRelayServiceAccess.
+type UpdateRelayServiceAccessJSONBody struct {
+	AccessManaged           *bool                                                   `json:"access_managed,omitempty"`
+	AcknowledgeAccessChange UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange `json:"acknowledge_access_change"`
+	AllowedGroups           []string                                                `json:"allowed_groups"`
+	ExitIpv4                *bool                                                   `json:"exit_ipv4,omitempty"`
+	ExitIpv6                *bool                                                   `json:"exit_ipv6,omitempty"`
+	GatewayHandle           *string                                                 `json:"gateway_handle,omitempty"`
+	Id                      *string                                                 `json:"id,omitempty"`
+	Metric                  *int                                                    `json:"metric,omitempty"`
+	PonorId                 *string                                                 `json:"ponor_id,omitempty"`
+	Revision                int                                                     `json:"revision"`
+}
+
+// UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange defines parameters for UpdateRelayServiceAccess.
+type UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange bool
+
 // SetRelayServiceModesJSONBody defines parameters for SetRelayServiceModes.
 type SetRelayServiceModesJSONBody struct {
 	AcknowledgeConnectivityChange SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
@@ -2544,6 +2607,9 @@ type CreateRelayServiceJSONRequestBody = RelayService
 
 // SetRelayPublicationJSONRequestBody defines body for SetRelayPublication for application/json ContentType.
 type SetRelayPublicationJSONRequestBody SetRelayPublicationJSONBody
+
+// UpdateRelayServiceAccessJSONRequestBody defines body for UpdateRelayServiceAccess for application/json ContentType.
+type UpdateRelayServiceAccessJSONRequestBody UpdateRelayServiceAccessJSONBody
 
 // SetRelayServiceModesJSONRequestBody defines body for SetRelayServiceModes for application/json ContentType.
 type SetRelayServiceModesJSONRequestBody SetRelayServiceModesJSONBody

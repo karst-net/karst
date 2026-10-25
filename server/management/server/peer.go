@@ -1914,6 +1914,10 @@ func (am *DefaultAccountManager) ExpandAndUpdateAffected(ctx context.Context, ac
 // context's cancellation up front.
 func (am *DefaultAccountManager) dispatchAffected(ctx context.Context, accountID string, snaps []*affectedpeers.Snapshot, changes []affectedpeers.Change) {
 	ctx = context.WithoutCancel(ctx)
+	if am.karstRegistryAccess(ctx, accountID) {
+		am.UpdateAccountPeers(ctx, accountID, types.UpdateReason{Resource: types.UpdateResourcePolicy, Operation: types.UpdateOperationUpdate})
+		return
+	}
 
 	var lists [][]string
 	for i, snap := range snaps {

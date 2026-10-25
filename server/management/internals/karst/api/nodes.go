@@ -1200,6 +1200,18 @@ func (h *handler) meAccess(w http.ResponseWriter, r *http.Request) {
 			own = append(own, n)
 		}
 	}
+	if document.UsesRegistryGroups() {
+		if err := h.addRegistryMembership(r.Context(), user.AccountId, all); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		own = nil
+		for _, n := range all {
+			if n.User == user.UserId {
+				own = append(own, n)
+			}
+		}
+	}
 	type explanation struct {
 		Destination string    `json:"destination"`
 		Rule        int       `json:"rule"`
@@ -1216,7 +1228,7 @@ func (h *handler) meAccess(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, rule := range filter.Rules {
-			for _, destination := range rule.Dsts {
+			for _, destination := range append(append([]string{}, rule.Dsts...), rule.DstCidrs...) {
 				for _, port := range rule.Ports {
 					label := names[destination]
 					if label == "" {
@@ -3836,6 +3848,10 @@ func (h *handler) policyWrite(w http.ResponseWriter, r *http.Request) {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
+	if err := h.validateRegistryGrants(r.Context(), user.AccountId, request.Document); err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
 	version, err := h.policy.Write(r.Context(), request.Document, user.UserId, expected)
 	if errors.Is(err, karstpolicy.ErrVersionConflict) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "policy version changed"), w)
@@ -3979,6 +3995,12 @@ func (h *handler) policyPreview(w http.ResponseWriter, r *http.Request) {
 	} else if !errors.Is(currentErr, karstpolicy.ErrNoVersion) {
 		util.WriteError(r.Context(), currentErr, w)
 		return
+	}
+	if candidate.UsesRegistryGroups() || current.UsesRegistryGroups() {
+		if err := h.addRegistryMembership(r.Context(), user.AccountId, network); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
 	}
 	oldFlows, err := compiledFlows(current, network)
 	if err != nil {

@@ -22,6 +22,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -298,7 +300,27 @@ func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
 		}
 		interval = parsed
 	}
-	r, err := roster.New(roster.NodeSource{Nodes: k.Nodes}, roster.Config{
+	var source roster.Source = roster.NodeSource{Nodes: k.Nodes}
+	var refreshed func() error
+	relayID := os.Getenv("KARST_RELAY_ROSTER_ID")
+	if file := os.Getenv("KARST_RELAY_ROSTER_ID_FILE"); relayID == "" && file != "" {
+		raw, err := os.ReadFile(file)
+		if err == nil {
+			decoded, decodeErr := hex.DecodeString(strings.TrimSpace(string(raw)))
+			if decodeErr != nil || len(decoded) != 32 {
+				log.Fatalf("karst: invalid relay roster identity file")
+			}
+			relayID = base64.RawURLEncoding.EncodeToString(decoded)
+		} else if !os.IsNotExist(err) {
+			log.Fatalf("karst: relay roster identity: %v", err)
+		}
+	}
+	if relayID != "" {
+		source = scopedRelayRoster{source: source, store: k.RelayServices, relayID: relayID}
+		refreshed = func() error { return k.RelayServices.RefreshAdmissionLease(relayID) }
+	}
+	r, err := roster.New(source, roster.Config{
+		AfterWrite:    refreshed,
 		Path:          path,
 		AquiferPrefix: os.Getenv(karstRosterAquiferEnv),
 		Interval:      interval,
@@ -566,4 +588,35 @@ func loadPolicy() (*policy.Document, error) {
 	}
 	log.Infof("karst: loaded policy from %s (%d rules)", path, len(doc.ACLs))
 	return doc, nil
+}
+
+// scopedRelayRoster binds one operator-installed writer to one relay identity.
+// The refreshed roster is the authorization boundary, not endpoint discovery.
+type scopedRelayRoster struct {
+	source roster.Source
+	store  interface {
+		AllowedOnRelay(context.Context, string, string, string) (bool, error)
+	}
+	relayID string
+}
+
+func (s scopedRelayRoster) All() ([]roster.Entry, error) {
+	entries, err := s.source.All()
+	if err != nil {
+		return nil, err
+	}
+	allowed := make([]roster.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.AccountID == "" {
+			continue
+		}
+		ok, err := s.store.AllowedOnRelay(context.Background(), s.relayID, entry.AccountID, entry.Handle)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			allowed = append(allowed, entry)
+		}
+	}
+	return allowed, nil
 }

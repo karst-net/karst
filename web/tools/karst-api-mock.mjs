@@ -378,7 +378,9 @@ const server = http.createServer((request, response) => {
     });
   }
   const groupMatch = path.match(/^\/api\/groups\/([^/]+)$/);
-  if (groupMatch && method === "PUT") return readBody(request).then((body) => replace(groups, groupMatch[1], { name: body.name }, response));
+  if (groupMatch && method === "GET") return json(response, 200, groups.find(group => group.id === groupMatch[1]) ?? {});
+  if (path === "/api/peers" && method === "GET") return json(response,200,fixture.nodes.map(node=>({id:node.handle,name:node.name})));
+  if (groupMatch && method === "PUT") return readBody(request).then((body) => replace(groups, groupMatch[1], { name: body.name, ...(body.peers ? { peers: body.peers.map(id=>({id,name:id})), peers_count:body.peers.length } : {}) }, response));
   if (groupMatch && method === "DELETE") return remove(groups, groupMatch[1], response);
 
   if (path === "/api/dns/settings" && method === "GET") return json(response, 200, dnsSettings);
@@ -554,6 +556,7 @@ const server = http.createServer((request, response) => {
     if (method === "DELETE") { fixture.nodes.splice(index, 1); return noContent(response); }
   }
   if (method === "GET" && karst === "/policy/schema") return json(response, 200, policySchema);
+  if (method === "GET" && karst === "/relay-services/admission-targets") return json(response,200,[]);
   if (method === "GET" && karst === "/policy") return json(response, 200, fixture.policy);
   if (method === "GET" && karst === "/policy/versions") return json(response, 200, page(fixture.policyVersions, url));
   if (method === "GET" && /^\/policy\/versions\/\d+$/.test(karst)) {
