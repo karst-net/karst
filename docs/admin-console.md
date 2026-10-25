@@ -280,3 +280,28 @@ existing account boundary; unregistered tenants do not gain admission.
 
 See [ADR-0058](adr/0058-form-managed-group-and-resource-access.md) for migration,
 downgrade and Gateway ingress constraints.
+
+### Unified relay management
+
+**Relays** has one inventory for registered endpoints and their service
+configurations. Each configured relay shows its address, admission health,
+group-access status and internet-egress settings. Unassociated endpoints stay
+visible as **Not configured**, with a **Configure relay** action. Missing
+registrations remain visible for diagnosis. Shared legacy endpoints can still
+appear under multiple named configurations.
+
+**Add relay** registers a running endpoint and immediately opens group-access
+and exit configuration with that endpoint selected. Cancelling this second
+step leaves the registration visible. In service publication mode an
+unassociated endpoint is not published; in legacy mode registration can make
+it available account-wide. Registration does not provision a running process.
+Location is optional and does not require an authorized-location entry.
+
+**Endpoint details** shows transport and location information alongside the
+last signed health observation. Remove all configurations using an endpoint
+before deleting its registration. Removing a configuration preserves the
+endpoint and the running process. **Advanced publication and legacy settings**
+contains publication preview/activation, rollback, and legacy associations.
+These retain their existing connectivity acknowledgments. Endpoint details
+remain available when the service API fails; access is shown as unknown and
+deletion/configuration actions are disabled until that API recovers.

@@ -7,13 +7,13 @@ import { api, type ManagedRelayService } from "../api";
 import { Failure, useResource } from "../common";
 import { GroupPicker } from "./access";
 
-export function RelayAccess({ service, onClose, onSaved }: { service?: ManagedRelayService; onClose: () => void; onSaved: () => void }) {
+export function RelayAccess({ service, relayId, onClose, onSaved }: { service?: ManagedRelayService; relayId?: string; onClose: () => void; onSaved: () => void }) {
   const groups = useResource(api.groups);
   const relays = useResource(api.relays);
   const targets = useResource(api.relayAdmissionTargets);
   const publication = useResource(api.relayPublication);
   const machines = useResource(async () => { const result = await api.nodes(); while (result.next_cursor) { const next = await api.nodes(result.next_cursor); result.items.push(...next.items); result.next_cursor = next.next_cursor; } return result; });
-  const [draft, setDraft] = useState<ManagedRelayService>(service ? { id: service.id, ponor_id: service.ponor_id, access_managed: true, allowed_groups: service.allowed_groups ?? [], gateway_handle: service.gateway_handle ?? "", exit_ipv4: service.exit_ipv4 ?? false, exit_ipv6: service.exit_ipv6 ?? false, metric: service.metric || 9999, revision: service.revision ?? 0 } : { id: "", ponor_id: "", access_managed: true, allowed_groups: [], metric: 9999 });
+  const [draft, setDraft] = useState<ManagedRelayService>(service ? { id: service.id, ponor_id: service.ponor_id, access_managed: true, allowed_groups: service.allowed_groups ?? [], gateway_handle: service.gateway_handle ?? "", exit_ipv4: service.exit_ipv4 ?? false, exit_ipv6: service.exit_ipv6 ?? false, metric: service.metric || 9999, revision: service.revision ?? 0 } : { id: "", ponor_id: relayId ?? "", access_managed: true, allowed_groups: [], metric: 9999 });
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
