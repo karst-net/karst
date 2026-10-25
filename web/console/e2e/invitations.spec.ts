@@ -16,8 +16,16 @@ test(`administrator creates an assigned ${reusable ? "reusable" : "one-off"} inv
   // Keep invitation state local to this browser: other suites deliberately
   // reset the shared mock to exercise empty accounts.
   const invitations: Record<string, unknown>[] = [];
+  const users = [
+    { id: "user-it", name: "IT operator", email: "it@example.test", role: "admin", status: "active", is_current: true, is_blocked: false, auto_groups: [] },
+    { id: "user-sre", name: "SRE operator", email: "sre@example.test", role: "admin", status: "active", is_current: false, is_blocked: false, auto_groups: ["group-sre"] },
+  ];
   await page.route("https://console.example.test/**", async route => {
     const url = new URL(route.request().url());
+    // Users must be browser-local too: the empty-account suite can reset
+    // the shared directory while this worker chooses an assignee.
+    if (url.pathname === "/api/users") { await route.fulfill({ json: users }); return; }
+    if (url.pathname === "/api/users/current") { await route.fulfill({ json: users[0] }); return; }
     if (url.pathname === "/api/groups") {
       await route.fulfill({ json: [{ id: "group-sre", name: "sre" }] }); return;
     }
