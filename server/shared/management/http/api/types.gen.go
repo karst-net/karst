@@ -5972,6 +5972,12 @@ type GetApiGroupsParams struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
+// PutApiGroupsGroupIdParams defines parameters for PutApiGroupsGroupId.
+type PutApiGroupsGroupIdParams struct {
+	// IfMatch Single strong group revision from the most recent GET. Wildcards, weak tags and tag lists are not supported.
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 // PostApiIntegrationsBillingAwsMarketplaceActivateJSONBody defines parameters for PostApiIntegrationsBillingAwsMarketplaceActivate.
 type PostApiIntegrationsBillingAwsMarketplaceActivateJSONBody struct {
 	// PlanTier The plan tier to activate the subscription for.

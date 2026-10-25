@@ -7667,7 +7667,7 @@ paths:
   /api/groups/{groupId}:
     get:
       summary: Retrieve a Group
-      description: Get information about a group
+      description: Get information about a group. The ETag identifies its write-relevant name, membership, source and resource assignments. Send it as If-Match when updating.
       tags: [ Groups ]
       security:
         - BearerAuth: [ ]
@@ -7682,6 +7682,11 @@ paths:
       responses:
         '200':
           description: A Group object
+          headers:
+            ETag:
+              description: Opaque group snapshot revision for conditional writes.
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -7696,7 +7701,7 @@ paths:
           "$ref": "#/components/responses/internal_error"
     put:
       summary: Update a Group
-      description: Update/Replace a group
+      description: Update/Replace a group. If-Match is optional for legacy clients; the console requires it. A stale revision fails before any mutation.
       tags: [ Groups ]
       security:
         - BearerAuth: [ ]
@@ -7708,6 +7713,12 @@ paths:
           schema:
             type: string
           description: The unique identifier of a group
+        - in: header
+          name: If-Match
+          required: false
+          description: Single strong group revision from the most recent GET. Wildcards, weak tags and tag lists are not supported.
+          schema:
+            type: string
       requestBody:
         description: Update Group request
         content:
@@ -7727,6 +7738,8 @@ paths:
           "$ref": "#/components/responses/requires_authentication"
         '403':
           "$ref": "#/components/responses/forbidden"
+        '412':
+          description: The group changed. Reload and review before retrying.
         '500':
           "$ref": "#/components/responses/internal_error"
     delete:

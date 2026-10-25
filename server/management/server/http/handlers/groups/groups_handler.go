@@ -101,6 +101,14 @@ func (h *handler) updateGroup(w http.ResponseWriter, r *http.Request) {
 
 	accountID, userID := userAuth.AccountId, userAuth.UserId
 
+	if revision := r.Header.Get("If-Match"); revision != "" {
+		if !types.ValidGroupRevision(revision) {
+			util.WriteErrorResponse("If-Match must contain the group revision from GET /groups/{groupId}", http.StatusBadRequest, w)
+			return
+		}
+		r = r.WithContext(types.WithGroupRevision(r.Context(), revision))
+	}
+
 	vars := mux.Vars(r)
 	groupID, ok := vars["groupId"]
 	if !ok {
@@ -178,6 +186,7 @@ func (h *handler) updateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Cache-Control", "no-store")
 	util.WriteJSONObject(r.Context(), w, toGroupResponse(accountPeers, &group))
 }
 
@@ -299,6 +308,8 @@ func (h *handler) getGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("ETag", types.GroupRevision(group))
+	w.Header().Set("Cache-Control", "no-store")
 	util.WriteJSONObject(r.Context(), w, toGroupResponse(accountPeers, group))
 
 }

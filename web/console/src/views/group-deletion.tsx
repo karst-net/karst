@@ -4,16 +4,16 @@
 import { useEffect, useState } from "react";
 import { Dialog } from "@karst-net/ui";
 import { api } from "../api";
-import { reviewGroupDeletion, type GroupDeletionReview } from "../group-deletion";
+import { loadGroupDependencies, type GroupDependencyReview } from "../group-dependencies";
 
 export function GroupDeletion({ id, onClose, onDeleted }: { id: string; onClose: () => void; onDeleted: (name: string) => void }) {
-  const [review, setReview] = useState<GroupDeletionReview>();
+  const [review, setReview] = useState<GroupDependencyReview>();
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string>();
   const [acknowledged, setAcknowledged] = useState(false);
   const refresh = async () => {
     setBusy(true); setError(undefined); setAcknowledged(false); setReview(undefined);
-    try { setReview(await reviewGroupDeletion(id)); }
+    try { setReview(await loadGroupDependencies(id)); }
     catch (error) { setError((error as Error).message); }
     finally { setBusy(false); }
   };
@@ -22,7 +22,7 @@ export function GroupDeletion({ id, onClose, onDeleted }: { id: string; onClose:
     if (!review || !acknowledged || busy || review.dependencies.length) return;
     setBusy(true); setError(undefined);
     try {
-      const current = await reviewGroupDeletion(id);
+      const current = await loadGroupDependencies(id);
       if (current.fingerprint !== review.fingerprint) {
         setReview(current); setAcknowledged(false); setError("The group or its access changed. Review the updated impact before deleting."); return;
       }

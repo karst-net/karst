@@ -323,3 +323,22 @@ dependency checks. Historical policy versions are retained. Revoked, expired or
 exhausted invitations remain visible as history without blocking deletion;
 active invitations must be revoked first. Deleting a group never deletes its
 machines or automatically removes access grants.
+
+### Reviewing group membership changes
+
+**Groups & access → Groups → Members of …** selects machines by name. Review
+shows machines gaining and losing group access alongside the group's named
+resource assignments. Acknowledge that review before applying. Other groups
+and preserved legacy rules may independently permit access; this list does not
+claim to compute all effective access. Relay admission updates on its roster
+refresh, and internet egress still requires local client consent and Gateway
+readiness.
+
+Membership and rename forms save against the group revision loaded when the
+form opened. A conflicting edit is rejected without automatically retrying.
+**Reload latest group** discards the draft and loads current membership and
+assignments for another review. Changes to resource assignments also require
+a fresh acknowledgment. An older control server without revision support must
+be upgraded before these console forms can save safely. Existing API clients
+may continue using the replacement endpoint without the optional If-Match
+header; they retain their existing concurrency behavior.

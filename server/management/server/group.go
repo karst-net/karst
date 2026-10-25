@@ -142,6 +142,15 @@ func (am *DefaultAccountManager) UpdateGroup(ctx context.Context, accountID, use
 	change := affectedpeers.Change{ChangedGroupIDs: []string{newGroup.ID}}
 
 	err = am.Store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+		oldGroup, err := transaction.GetGroupByID(ctx, store.LockingStrengthUpdate, accountID, newGroup.ID)
+		if err != nil {
+			return status.Errorf(status.NotFound, "group with ID %s not found", newGroup.ID)
+		}
+
+		if expected := types.ExpectedGroupRevision(ctx); expected != "" && expected != types.GroupRevision(oldGroup) {
+			return status.Errorf(status.PreconditionFailed, "group changed; reload before saving")
+		}
+
 		if err = validateNewGroup(ctx, transaction, accountID, newGroup); err != nil {
 			return err
 		}
@@ -150,11 +159,6 @@ func (am *DefaultAccountManager) UpdateGroup(ctx context.Context, accountID, use
 
 		events := am.prepareGroupEvents(ctx, transaction, accountID, userID, newGroup)
 		eventsToStore = append(eventsToStore, events...)
-
-		oldGroup, err := transaction.GetGroupByID(ctx, store.LockingStrengthNone, accountID, newGroup.ID)
-		if err != nil {
-			return status.Errorf(status.NotFound, "group with ID %s not found", newGroup.ID)
-		}
 
 		peersToAdd := util.Difference(newGroup.Peers, oldGroup.Peers)
 		peersToRemove := util.Difference(oldGroup.Peers, newGroup.Peers)

@@ -3,7 +3,7 @@
 
 import { beforeEach, expect, test, vi } from "vitest";
 import { api, ApiError } from "./api";
-import { reviewGroupDeletion } from "./group-deletion";
+import { loadGroupDependencies } from "./group-dependencies";
 
 vi.mock("./api", () => ({ ApiError: class extends Error { constructor(message: string, readonly status: number) { super(message); } }, api: { group: vi.fn(), policy: vi.fn(), relayServices: vi.fn(), routes: vi.fn(), nameservers: vi.fn(), dnsSettings: vi.fn(), users: vi.fn(), invitations: vi.fn() } }));
 beforeEach(() => {
@@ -27,7 +27,7 @@ test("all Gateway group roles and DNS/user assignments are dependencies, includi
   vi.mocked(api.nameservers).mockResolvedValue([{ id: "dns", name: "Internal DNS", groups: ["g"], enabled: false }] as Awaited<ReturnType<typeof api.nameservers>>);
   vi.mocked(api.dnsSettings).mockResolvedValue({ disabled_management_groups: ["g"] });
   vi.mocked(api.users).mockResolvedValue([{ id: "owner", name: "Operator", auto_groups: ["g"] }] as Awaited<ReturnType<typeof api.users>>);
-  const review = await reviewGroupDeletion("g");
+  const review = await loadGroupDependencies("g");
   expect(review.dependencies).toHaveLength(6);
   expect(review.dependencies.find(link => link.key === "route:relay-exit-denver-0")?.href).toBe("#/relays");
   expect(review.dependencies.map(link => link.label)).toContain("Automatic assignment: Operator");
@@ -35,22 +35,22 @@ test("all Gateway group roles and DNS/user assignments are dependencies, includi
 
 test("a target-group grant and retained group binding block deletion", async () => {
   vi.mocked(api.policy).mockResolvedValue({ version: 1, document: JSON.stringify({ grants: [{ id: "target", name: "Target access", source_groups: ["other"], target_groups: ["g"] }], groupBindings: { "group:legacy": "g" } }) } as Awaited<ReturnType<typeof api.policy>>);
-  const review = await reviewGroupDeletion("g");
+  const review = await loadGroupDependencies("g");
   expect(review.dependencies.map(link => link.key)).toEqual(["binding:group:legacy", "grant:target"]);
 });
 
 test("malformed policy or unavailable inventory fails the review", async () => {
   vi.mocked(api.policy).mockResolvedValue({ version: 1, document: "malformed" } as Awaited<ReturnType<typeof api.policy>>);
-  await expect(reviewGroupDeletion("g")).rejects.toThrow();
+  await expect(loadGroupDependencies("g")).rejects.toThrow();
   vi.mocked(api.policy).mockResolvedValue({ version: 1, document: "{}" } as Awaited<ReturnType<typeof api.policy>>);
   vi.mocked(api.routes).mockRejectedValue(new Error("Gateway unavailable"));
-  await expect(reviewGroupDeletion("g")).rejects.toThrow("Gateway unavailable");
+  await expect(loadGroupDependencies("g")).rejects.toThrow("Gateway unavailable");
 });
 
 
 test("only an explicit missing policy version is treated as no Karst grants", async () => {
   vi.mocked(api.policy).mockRejectedValue(new ApiError("no Karst policy version", 404, {}));
-  await expect(reviewGroupDeletion("g")).resolves.toMatchObject({ dependencies: [] });
+  await expect(loadGroupDependencies("g")).resolves.toMatchObject({ dependencies: [] });
   vi.mocked(api.policy).mockRejectedValue(new ApiError("API route missing", 404, {}));
-  await expect(reviewGroupDeletion("g")).rejects.toThrow("API route missing");
+  await expect(loadGroupDependencies("g")).rejects.toThrow("API route missing");
 });

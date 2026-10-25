@@ -2,6 +2,7 @@
 // Copyright the Karst contributors.
 
 import http from "node:http";
+import { createHash } from "node:crypto";
 import { buildFixture } from "../fixtures/karst-api.mjs";
 
 // Two APIs are mocked here, because the console talks to two: /api/karst/v1 is
@@ -378,9 +379,19 @@ const server = http.createServer((request, response) => {
     });
   }
   const groupMatch = path.match(/^\/api\/groups\/([^/]+)$/);
-  if (groupMatch && method === "GET") return json(response, 200, groups.find(group => group.id === groupMatch[1]) ?? {});
+  const groupRevision = group => `"group-${createHash("sha256").update(JSON.stringify(group)).digest("hex")}"`;
+  if (groupMatch && method === "GET") {
+    const group = groups.find(group => group.id === groupMatch[1]);
+    if (!group) return error(response, 404, "not_found", "Group not found");
+    response.setHeader("ETag", groupRevision(group));
+    return json(response, 200, group);
+  }
   if (path === "/api/peers" && method === "GET") return json(response,200,fixture.nodes.map(node=>({id:node.handle,name:node.name})));
-  if (groupMatch && method === "PUT") return readBody(request).then((body) => replace(groups, groupMatch[1], { name: body.name, ...(body.peers ? { peers: body.peers.map(id=>({id,name:id})), peers_count:body.peers.length } : {}) }, response));
+  if (groupMatch && method === "PUT") {
+    const group = groups.find(group => group.id === groupMatch[1]);
+    if (request.headers["if-match"] && request.headers["if-match"] !== groupRevision(group)) return error(response, 412, "precondition_failed", "group changed; reload before saving");
+    return readBody(request).then(body => replace(groups, groupMatch[1], { name: body.name, resources: body.resources ?? [], ...(body.peers ? { peers: body.peers.map(id=>({id,name:id})), peers_count:body.peers.length } : {}) }, response));
+  }
   if (groupMatch && method === "DELETE") return remove(groups, groupMatch[1], response);
 
   if (path === "/api/dns/settings" && method === "GET") return json(response, 200, dnsSettings);

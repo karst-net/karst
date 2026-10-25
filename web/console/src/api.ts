@@ -23,7 +23,7 @@ export class ApiError extends Error {
 //
 // The shared transport renews expired sessions before sending requests and
 // redirects to login when renewal fails or the renewed token is rejected.
-async function http<T>(url: string, init?: RequestInit): Promise<T> {
+async function http<T>(url: string, init?: RequestInit, observe?: (response: Response) => void): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
   const response = await authenticatedFetch(url, { ...init, headers });
@@ -31,6 +31,7 @@ async function http<T>(url: string, init?: RequestInit): Promise<T> {
     const error = await response.json().catch(() => ({ message: response.statusText })) as Record<string, unknown>;
     throw new ApiError(typeof error.message === "string" ? error.message : "The server rejected this request.", response.status, error);
   }
+  observe?.(response);
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
@@ -108,6 +109,8 @@ export type AccountUser = { id: string; name: string; email: string; role: strin
 
 export type ManagedRelayService = RelayService & { access_managed?: boolean; allowed_groups?: string[]; gateway_handle?: string; exit_ipv4?: boolean; exit_ipv6?: boolean; metric?: number; revision?: number };
 export type Group = { id: string; name: string; peers_count: number; resources_count: number; issued?: string; peers?: Array<{ id: string; name: string }>; resources?: Array<{ id: string; type: string }> };
+
+export type GroupSnapshot = { group: Group; revision: string };
 
 export type Nameserver = { ip: string; ns_type: "udp"; port: number };
 export type NameserverGroup = { id: string; name: string; description: string; nameservers: Nameserver[]; enabled: boolean; groups: string[]; primary: boolean; domains: string[]; search_domains_enabled: boolean };
@@ -300,14 +303,14 @@ export const api = {
   createGroup: (name: string) => management<Group>("/groups", { method: "POST", body: body({ name, peers: [] }) }),
   group: (id: string) => management<Group>(`/groups/${encodeURIComponent(id)}`),
   groupPeers: () => management<Array<{ id: string; name: string }>>("/peers"),
-  renameGroup: async (id: string, name: string) => {
-    const current = await management<Group>(`/groups/${encodeURIComponent(id)}`);
-    return management<Group>(`/groups/${encodeURIComponent(id)}`, { method: "PUT", body: body({ name, peers: current.peers?.map(peer => peer.id) ?? [], resources: current.resources ?? [] }) });
+  groupForEdit: async (id: string): Promise<GroupSnapshot> => {
+    let revision: string | null = null;
+    const group = await http<Group>(`/api${withAccountOverride(`/groups/${encodeURIComponent(id)}`)}`, undefined, response => { revision = response.headers.get("ETag"); });
+    if (!revision) throw new Error("This server does not support safe group edits. Upgrade the control server before changing membership or names.");
+    return { group, revision };
   },
-  setGroupMembers: async (id: string, peers: string[]) => {
-    const current = await management<Group>(`/groups/${encodeURIComponent(id)}`);
-    return management<Group>(`/groups/${encodeURIComponent(id)}`, { method: "PUT", body: body({ name: current.name, peers, resources: current.resources ?? [] }) });
-  },
+  renameGroup: (snapshot: GroupSnapshot, name: string) => management<Group>(`/groups/${encodeURIComponent(snapshot.group.id)}`, { method: "PUT", headers: { "If-Match": snapshot.revision }, body: body({ name, peers: snapshot.group.peers?.map(peer => peer.id) ?? [], resources: snapshot.group.resources ?? [] }) }),
+  setGroupMembers: (snapshot: GroupSnapshot, peers: string[]) => management<Group>(`/groups/${encodeURIComponent(snapshot.group.id)}`, { method: "PUT", headers: { "If-Match": snapshot.revision }, body: body({ name: snapshot.group.name, peers, resources: snapshot.group.resources ?? [] }) }),
   deleteGroup: (id: string) => management<void>(`/groups/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── DNS ────────────────────────────────────────────────────────────────────
