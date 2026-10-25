@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { Dialog, EmptyState } from "@karst-net/ui";
+import { GroupDeletion } from "./group-deletion";
 import { api, type Group } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
@@ -24,6 +25,7 @@ export function Groups() {
   const groupLocations = useResource(api.groupLocations);
   const locationByGroup = new Map((groupLocations.value ?? []).map((gl) => [gl.group_id, gl]));
   const { message, setMessage, run } = useMutation(() => { resource.reload(); groupLocations.reload(); });
+  const [deleting, setDeleting] = useState<string>();
   const [creating, setCreating] = useState<string>();
   const [renaming, setRenaming] = useState<{ group: Group; name: string }>();
   const [locating, setLocating] = useState<{ group: Group; lat: string; lon: string; label: string }>();
@@ -42,16 +44,6 @@ export function Groups() {
     const name = renaming.name.trim();
     if (!name) { setMessage("A group needs a name."); return; }
     if (await run(() => api.renameGroup(renaming.group.id, name), `Group ${renaming.group.name} is now named ${name}.`)) setRenaming(undefined);
-  };
-  const remove = (group: Group) => {
-    const count = referencing(group).length;
-    const warning = count > 0
-      ? `Delete ${group.name}? ${count} access grants reference this group. Its membership will stop granting access. Review dependent Gateway and DNS configuration before deleting.`
-      : group.peers_count > 0
-        ? `Delete ${group.name}? ${group.peers_count} machine(s) are in it.`
-        : `Delete ${group.name}?`;
-    if (!confirm(warning)) return;
-    void run(() => api.deleteGroup(group.id), `Group ${group.name} was deleted.`);
   };
   const saveLocation = async () => {
     if (!locating) return;
@@ -91,12 +83,14 @@ export function Groups() {
               {editable(group) && <button onClick={() => setRenaming({ group, name: group.name })}>Rename</button>}
               <button onClick={() => setLocating({ group, lat: location ? String(location.lat) : "", lon: location ? String(location.lon) : "", label: location?.label ?? "" })}>{location ? "Edit location" : "Set location"}</button>
               {location && <button onClick={() => clearLocation(group)}>Clear location</button>}
-              {editable(group) && <button className="danger" onClick={() => remove(group)}>Delete</button>}
+              {editable(group) && <button className="danger" onClick={() => setDeleting(group.id)}>Delete</button>}
               {!editable(group) && <span className="lede">{group.name === "All" ? "Built in" : "Managed by the identity provider"}</span>}
             </div></td>
           </tr>;
         })}
       </Rows>}
+
+    {deleting && <GroupDeletion id={deleting} onClose={() => setDeleting(undefined)} onDeleted={name => { setDeleting(undefined); setMessage(`Group ${name} was deleted.`); resource.reload(); policy.reload(); relayAccess.reload(); groupLocations.reload(); }} />}
 
     <Dialog open={creating !== undefined} title="Create group" onClose={() => setCreating(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void create(); }}>
