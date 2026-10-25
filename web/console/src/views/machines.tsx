@@ -121,15 +121,15 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
           </Rows>}
     </>}
 
-    <Dialog open={Boolean(renaming)} title="Rename machine" onClose={() => setRenaming(undefined)}>
+    {renaming && <Dialog open title="Rename machine" onClose={() => setRenaming(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void rename(); }}>
         <label>Machine name<input aria-label="Machine name" value={renaming?.name ?? ""} onChange={(event) => setRenaming((current) => current && { ...current, name: event.target.value })} /></label>
         <p className="lede">The handle <code>{renaming?.node.handle}</code> is derived from the node’s identity key and never changes.</p>
         <div className="actions"><button type="button" onClick={() => setRenaming(undefined)}>Cancel</button><button className="primary" type="submit">Save name</button></div>
       </form>
-    </Dialog>
+    </Dialog>}
 
-    <Dialog open={Boolean(moving)} title="Move machine" onClose={() => setMoving(undefined)}>
+    {moving && <Dialog open title="Move machine" onClose={() => setMoving(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void move(); }}>
         <label>Domain<select aria-label="Domain" value={moving?.domainId ?? ""} onChange={(event) => setMoving((current) => current && { ...current, domainId: event.target.value })}>
           <option value="" disabled>Choose a domain</option>
@@ -142,9 +142,9 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
         })()}</p>
         <div className="actions"><button type="button" onClick={() => setMoving(undefined)}>Cancel</button><button className="primary" type="submit">Move</button></div>
       </form>
-    </Dialog>
+    </Dialog>}
 
-    <Dialog open={Boolean(paths)} title={`Paths — ${paths?.node.name ?? ""}`} onClose={() => setPaths(undefined)}>
+    {paths && <Dialog open title={`Paths — ${paths?.node.name ?? ""}`} onClose={() => setPaths(undefined)}>
       {paths?.error ? <p role="alert">{paths.error}</p> : !paths?.value ? <p>Loading paths…</p> : paths.value.paths.length === 0
         ? <p>No paths observed. The machine has not reached another peer in this window.</p>
         : <Rows head={<><th>Peer</th><th>Kind</th><th>Endpoint</th><th>Sent</th><th>Received</th><th>Observed</th></>}>
@@ -159,7 +159,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
         </Rows>}
       <p className="lede">Sent/received are running totals for this session, as this machine last reported them — not a live rate.</p>
       <div className="actions"><button onClick={() => setPaths(undefined)}>Close</button></div>
-    </Dialog>
+    </Dialog>}
 
   </section>;
 }

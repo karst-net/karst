@@ -154,6 +154,7 @@ test("adding a machine opens the invitation flow", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Machines", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("link", { name: "Add device", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Device name")).toBeVisible();
+  await expect(page.getByLabel("Domain", { exact: true })).toHaveCount(1);
   await expect(page.getByText("No identity-provider login is needed to enroll.", { exact: false })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Device name")).toBeVisible();
