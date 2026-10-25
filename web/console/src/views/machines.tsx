@@ -8,6 +8,8 @@ import { api, type MeshDomain } from "../api";
 import { domainDNSName, peerDNSName } from "../domains";
 import { Failure, formatBytes, Notice, Rows, statusFor, useMutation, useResource } from "../common";
 
+import { Setup } from "./setup";
+
 type Paths = Awaited<ReturnType<typeof api.nodePaths>>;
 
 // Exhaustive — a new path kind must be given a tier here rather than fall
@@ -19,8 +21,8 @@ const PATH_STATUS: Record<Paths["paths"][number]["kind"], StatusState> = {
   unreachable: "warning",
 };
 
-export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "status" }) {
-  const [tab, setTab] = useState(defaultTab);
+export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "status" | "add" }) {
+  const tab = defaultTab;
   const resource = useResource(api.nodes);
   const { message, setMessage, run } = useMutation(resource.reload);
   const [filter, setFilter] = useState("");
@@ -46,8 +48,8 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
     return nodes.filter((node) => [node.name, node.handle, node.user_id, ...node.tags].some((field) => field?.toLowerCase().includes(needle)));
   }, [nodes, filter]);
 
-  if (resource.loading) return <p>Loading machines…</p>;
-  if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
+  if (tab !== "add" && resource.loading) return <p>Loading machines…</p>;
+  if (tab !== "add" && resource.error) return <Failure message={resource.error} retry={resource.reload} />;
 
   const deprovision = (node: Node) => {
     if (!confirm(`Deprovision ${node.name}? Its node keys will expire and sessions will be dropped.`)) return;
@@ -72,13 +74,13 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
   return <section>
     <h2>Machines</h2>
     <nav aria-label="Machines view" className="actions">
-      <button aria-pressed={tab === "manage"} onClick={() => setTab("manage")}>Manage</button>
-      <button aria-pressed={tab === "status"} onClick={() => setTab("status")}>Status</button>
+      <button aria-pressed={tab === "manage"} onClick={() => { location.hash = "/machines"; }}>Manage</button>
+      <button aria-pressed={tab === "status"} onClick={() => { location.hash = "/machines/status"; }}>Status</button>
+      <button aria-pressed={tab === "add"} onClick={() => { location.hash = "/machines/add"; }}>Add machine</button>
     </nav>
-    {tab === "manage" ? <>
+    {tab === "add" ? <Setup go={(route) => { location.hash = `/${route}`; }} /> : tab === "manage" ? <>
       <p className="lede">Add a device by creating an enrollment invitation.</p>
       <div className="actions">
-        <button className="primary" onClick={() => { location.hash = "/enroll"; }}>Add machine</button>
         <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
       </div>
       <Notice message={message} />

@@ -8,7 +8,6 @@ import "./styles.css";
 import { applyTheme, storedTheme, writePref, type Theme } from "./prefs";
 import { bootstrap, loadConfig, login, logout, SessionExpiredError, type AuthConfig, type AuthState } from "./auth";
 import { api, getActiveAccountOverride, setActiveAccountOverride } from "./api";
-import { Setup } from "./views/setup";
 import { FirstRunWizard } from "./views/firstrun";
 import { Domains } from "./views/domains";
 import { Machines } from "./views/machines";
@@ -28,7 +27,7 @@ import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "enroll" | "domains" | "machines" | "access" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
+type Route = "domains" | "machines" | "access" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
 type Mode = "configure" | "observe";
 type NavItem = { route: Route; label: string; hash: string; group?: string };
 
@@ -43,7 +42,6 @@ type NavItem = { route: Route; label: string; hash: string; group?: string };
 // Observe's list stays flat (no `group`) since it's short enough on its own.
 const navConfigure: NavItem[] = [
   { route: "machines", label: "Machines", hash: "/machines", group: "Identity & Access" },
-  { route: "enroll", label: "Add device", hash: "/enroll", group: "Identity & Access" },
   { route: "access", label: "Access controls", hash: "/access", group: "Identity & Access" },
   { route: "users", label: "Users", hash: "/users", group: "Identity & Access" },
   { route: "groups", label: "Groups", hash: "/groups", group: "Identity & Access" },
@@ -87,9 +85,11 @@ function groupNav(items: NavItem[]): Array<{ group?: string; items: NavItem[] }>
  *  path against both lists recovers mode and route together, and an
  *  unrecognized path always falls back to Configure/Domains rather than a
  *  blank page. */
-function parseHash(): { route: Route; mode: Mode } {
+function parseHash(): { route: Route; mode: Mode; machineTab?: "add" } {
   const rawPath = (location.hash || "#/domains").slice(1);
   const path = rawPath === "/routes" ? "/gateways" : rawPath;
+  // Preserve saved enrollment links inside the consolidated Machines surface.
+  if (path === "/enroll" || path === "/machines/add") return { route: "machines", mode: "configure", machineTab: "add" };
   for (const mode of ["configure", "observe"] as const) {
     const match = navByMode[mode].find((item) => item.hash === path);
     if (match) return { route: match.route, mode };
@@ -110,12 +110,8 @@ function useFirstRunCompleted() {
 }
 
 function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
-  const [{ route, mode }, setState] = useState(parseHash());
+  const [{ route, mode, machineTab }, setState] = useState(parseHash());
   useEffect(() => { const change = () => setState(parseHash()); addEventListener("hashchange", change); return () => removeEventListener("hashchange", change); }, []);
-  // Bare route names, as Setup's `go` prop and machines.tsx's "Add machine"
-  // button already pass them -- always lands on Configure's hash for that
-  // route (its default/management tab), same as before this mode split.
-  const navigate = (next: string) => { location.hash = `/${next === "routes" ? "gateways" : next}`; };
   const switchMode = (next: Mode) => { location.hash = navByMode[next][0].hash; };
   const firstRun = useFirstRunCompleted();
 
@@ -166,9 +162,8 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
     </aside>
     <main id="main">
       <header><AccountSwitcher config={config} />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
-      {route === "enroll" && <Setup go={navigate} />}
       {route === "domains" && <Domains />}
-      {route === "machines" && <Machines key={mode} defaultTab={mode === "observe" ? "status" : "manage"} />}
+      {route === "machines" && <Machines key={`${mode}:${machineTab ?? "list"}`} defaultTab={machineTab ?? (mode === "observe" ? "status" : "manage")} />}
       {route === "access" && <Access />}
       {route === "users" && <Users />}
       {route === "groups" && <Groups />}
