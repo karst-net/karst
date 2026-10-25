@@ -44,7 +44,8 @@ func TestGroupHTTPRevision(t *testing.T) {
 	require.Equal(t, "no-store", get.Header().Get("Cache-Control"))
 	manager := h.accountManager.(*mock_server.MockAccountManager)
 	calls := 0
-	manager.UpdateGroupFunc = func(ctx context.Context, _, _ string, _ *types.Group) error {
+	manager.SaveGroupFunc = func(ctx context.Context, _, _ string, _ *types.Group, create bool) error {
+		require.False(t, create, "conditional edits must use the update path")
 		calls++
 		require.Equal(t, revision, types.ExpectedGroupRevision(ctx))
 		return status.Errorf(status.PreconditionFailed, "group changed")
