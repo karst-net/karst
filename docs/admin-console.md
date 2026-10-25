@@ -49,18 +49,12 @@ Compliance-conditioned access remains a follow-up capability.
 
 ## Groups and access-rule cross-references
 
-- **The "Access rules" column on the Groups page is a name match, not a
-  foreign key.** The access policy document has its own, independent
-  `"groups"` map (`"group:name"` → a list of user identifiers), defined
-  inside the JSON document itself. It is unrelated storage from the fork's
-  own group records this page manages — the two line up only when an admin
-  names them the same way. Renaming a group here never edits the policy
-  document; the console says so in the rename dialog.
-- **Deferred: a real cross-reference.** Making group renames propagate into
-  the policy document (or the policy document look up group membership from
-  the fork's own store instead of its own literal user list) is a design
-  change to how `Document.Groups` works, not a console feature — tracked as
-  a possible future policy-format change, not started.
+New form-managed grants reference account group IDs and resolve live device
+membership. Renames preserve access. The Groups view links to the same grants
+and Relay configuration that determine effective access. Legacy JSON policy
+names remain independent until explicitly mapped through the reviewed migration
+form; see ADR-0058 and the form-managed access section below. No automatic
+name-based migration is performed.
 
 ## SIEM / audit sinks
 
@@ -249,3 +243,40 @@ Compliance-conditioned access remains a follow-up capability.
   than guessing a stale mode. No console settings UI for this yet — a
   separate, later concern, same posture as this page's own missing
   per-pool drill-down above.
+
+## Form-managed access (#439)
+
+Groups and Access controls are consolidated into **Groups & access**, with Groups
+and Access grants views. New grants use stable account group IDs and live device
+membership. Select source groups, destination groups/machines or a configured
+Gateway network, ports, and any additional SSH permission. Review concrete access
+changes before applying. A concurrent policy update requires reload and reapply.
+Group renames preserve device membership and form-managed grants.
+
+Existing policy rules remain readable. Mapping a legacy policy group to a
+registry group is explicit and previewed; matching display names never triggers
+an automatic migration. Broad legacy rules remain effective until migrated.
+
+**Relays → Configure a relay** selects a registered running backend, allowed
+groups, optional IPv4/IPv6 exit service, an enrolled Linux Gateway and priority.
+Resource-owned exit grants appear in Access grants and are edited through the
+resource form. Its transaction saves the association, admission policy, routes
+and generated access grant together. Service revisions prevent stale edits.
+The form explicitly discloses the required all-port Gateway machine permission;
+it does not claim destination-only ingress isolation. Client exit consent and
+forwarding readiness are still required. This does not provision a new workload.
+
+Group restrictions require a live identity-bound roster writer. The default
+Compose bootstrap derives its public identity binding from the local relay
+binary and supplies `KARST_RELAY_ROSTER_ID_FILE`. Other installations can supply
+that identity file or `KARST_RELAY_ROSTER_ID` (registry ID in URL-safe base64).
+These are installation settings, not per-resource administrator configuration.
+Without the capability the form and API refuse restricted configuration.
+Admission normally converges within 30 seconds (25-second refresh plus 5-second
+relay poll). If the writer fails, the relay expires its last roster after 90
+seconds plus the next poll. Removing a managed association leaves admission
+closed. Existing legacy tenants on an explicitly shared backend keep their
+existing account boundary; unregistered tenants do not gain admission.
+
+See [ADR-0058](adr/0058-form-managed-group-and-resource-access.md) for migration,
+downgrade and Gateway ingress constraints.

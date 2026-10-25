@@ -407,3 +407,27 @@ authorized administrator from making a harmful change.
   operationally useful but not a claim of payload inspection or real-time
   truth. See the [threat model](THREAT-MODEL.md) for the full disclosure of
   relay metadata and administrator-risk limits.
+
+
+## Form-managed group and infrastructure access (#439)
+
+An account administrator creates a named group, selects machine members or user
+auto-assignment, and grants it access using the Groups & access forms. Choosing
+source groups, destination machines/groups or configured networks, ports and
+SSH permission produces a readable preview and a version-checked change. A
+rename preserves grants; membership changes recompute both sides' filters.
+Existing rules can be revoked through reviewed removal actions; legacy group
+membership can be explicitly mapped to current device groups without writing a
+policy document.
+
+For registered running infrastructure, the administrator opens Relays → Configure
+a relay, chooses a backend with live admission management, selects permitted
+groups, and optionally enables IPv4/IPv6 internet service on a named enrolled
+Linux Gateway. The final review discloses the required Gateway machine access.
+The association, routes and policy commit together. The result is configured,
+not a claim that forwarding is ready or that a cloud workload was provisioned.
+Group or service revocation reaches actual relay admission, including cached
+endpoints and active connections, on the roster refresh cycle.
+
+See ADR-0058 for legacy migration, downgrade, Gateway ingress and deployment
+capability boundaries.

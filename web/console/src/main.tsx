@@ -11,9 +11,8 @@ import { api, getActiveAccountOverride, setActiveAccountOverride } from "./api";
 import { FirstRunWizard } from "./views/firstrun";
 import { Domains } from "./views/domains";
 import { Machines } from "./views/machines";
-import { Access } from "./views/access";
+import { GroupsAccess } from "./views/groups-access";
 import { Users } from "./views/users";
-import { Groups } from "./views/groups";
 import { Bedrock } from "./views/bedrock";
 import { Posture } from "./views/posture";
 import { Dns } from "./views/dns";
@@ -42,9 +41,8 @@ type NavItem = { route: Route; label: string; hash: string; group?: string };
 // Observe's list stays flat (no `group`) since it's short enough on its own.
 const navConfigure: NavItem[] = [
   { route: "machines", label: "Machines", hash: "/machines", group: "Identity & Access" },
-  { route: "access", label: "Access controls", hash: "/access", group: "Identity & Access" },
   { route: "users", label: "Users", hash: "/users", group: "Identity & Access" },
-  { route: "groups", label: "Groups", hash: "/groups", group: "Identity & Access" },
+  { route: "groups", label: "Groups & access", hash: "/groups", group: "Identity & Access" },
   { route: "bedrock", label: "Network lock", hash: "/bedrock", group: "Identity & Access" },
   { route: "domains", label: "Domains", hash: "/domains", group: "Network" },
   { route: "dns", label: "DNS", hash: "/dns", group: "Network" },
@@ -89,6 +87,7 @@ function parseHash(): { route: Route; mode: Mode; machineTab?: "add" } {
   const rawPath = (location.hash || "#/domains").slice(1);
   const path = rawPath === "/routes" ? "/gateways" : rawPath;
   // Preserve saved enrollment links inside the consolidated Machines surface.
+  if (path === "/access" || path === "/groups/access") return { route: "access", mode: "configure" };
   if (path === "/enroll" || path === "/machines/add") return { route: "machines", mode: "configure", machineTab: "add" };
   for (const mode of ["configure", "observe"] as const) {
     const match = navByMode[mode].find((item) => item.hash === path);
@@ -149,11 +148,11 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
         <button aria-pressed={mode === "observe"} onClick={() => switchMode("observe")}>Observe</button>
       </nav>
       <nav aria-label="Primary">{groupNav(navByMode[mode]).map((section, index) => {
-        const links = section.items.map((item) => <a key={item.hash} aria-current={route === item.route ? "page" : undefined} href={`#${item.hash}`}>{item.label}</a>);
+        const links = section.items.map((item) => <a key={item.hash} aria-current={route === item.route || (route === "access" && item.route === "groups") ? "page" : undefined} href={`#${item.hash}`}>{item.label}</a>);
         // Collapsed by default; a section that already contains the active
         // route opens so navigating here never hides where you landed.
         return section.group
-          ? <details key={section.group} open={section.items.some((item) => item.route === route)}>
+          ? <details key={section.group} open={section.items.some((item) => item.route === route || (route === "access" && item.route === "groups"))}>
             <summary>{section.group}</summary>
             {links}
           </details>
@@ -164,9 +163,9 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       <header><AccountSwitcher config={config} />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
       {route === "domains" && <Domains />}
       {route === "machines" && <Machines key={`${mode}:${machineTab ?? "list"}`} defaultTab={machineTab ?? (mode === "observe" ? "status" : "manage")} />}
-      {route === "access" && <Access />}
+      {route === "access" && <GroupsAccess tab="access" />}
       {route === "users" && <Users />}
-      {route === "groups" && <Groups />}
+      {route === "groups" && <GroupsAccess tab="groups" />}
       {route === "bedrock" && <Bedrock />}
       {route === "posture" && <Posture />}
       {route === "dns" && <Dns />}

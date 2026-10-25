@@ -501,7 +501,7 @@ export type RelayPublication = {
     /**
      * Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
      */
-    schema_version?: 2;
+    schema_version?: 2 | 3;
 };
 
 export type RelayService = {
@@ -510,6 +510,25 @@ export type RelayService = {
      * Existing account-local Ponor registry ID.
      */
     ponor_id: string;
+    /**
+     * Use live registry-group membership for relay admission. Requires a live identity-bound roster writer.
+     */
+    access_managed?: boolean;
+    /**
+     * Stable account group IDs permitted to use this backend.
+     */
+    allowed_groups?: Array<string>;
+    /**
+     * Explicitly selected enrolled Linux machine providing internet egress.
+     */
+    gateway_handle?: string;
+    exit_ipv4?: boolean;
+    exit_ipv6?: boolean;
+    metric?: number;
+    /**
+     * Expected service revision when updating access.
+     */
+    revision?: number;
     /**
      * Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
      */
@@ -2306,6 +2325,65 @@ export type DeleteRelayServiceResponses = {
 };
 
 export type DeleteRelayServiceResponse = DeleteRelayServiceResponses[keyof DeleteRelayServiceResponses];
+
+export type ListRelayAdmissionTargetsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/relay-services/admission-targets';
+};
+
+export type ListRelayAdmissionTargetsResponses = {
+    /**
+     * Registered backends with a live identity-bound admission writer.
+     */
+    200: Array<{
+        relay_id: string;
+        refreshed_at: string;
+    }>;
+};
+
+export type ListRelayAdmissionTargetsResponse = ListRelayAdmissionTargetsResponses[keyof ListRelayAdmissionTargetsResponses];
+
+export type UpdateRelayServiceAccessData = {
+    body: {
+        id?: string;
+        ponor_id?: string;
+        access_managed?: boolean;
+        allowed_groups: Array<string>;
+        gateway_handle?: string;
+        exit_ipv4?: boolean;
+        exit_ipv6?: boolean;
+        metric?: number;
+        revision: number;
+        acknowledge_access_change: true;
+    };
+    path: {
+        serviceId: string;
+    };
+    query?: never;
+    url: '/relay-services/{serviceId}/access';
+};
+
+export type UpdateRelayServiceAccessErrors = {
+    /**
+     * Service revision changed; reload before reapplying edits.
+     */
+    409: unknown;
+    /**
+     * Invalid group
+     */
+    422: unknown;
+};
+
+export type UpdateRelayServiceAccessResponses = {
+    /**
+     * Access and optional exit configuration committed atomically.
+     */
+    200: RelayService;
+};
+
+export type UpdateRelayServiceAccessResponse = UpdateRelayServiceAccessResponses[keyof UpdateRelayServiceAccessResponses];
 
 export type SetRelayServiceModesData = {
     body: {

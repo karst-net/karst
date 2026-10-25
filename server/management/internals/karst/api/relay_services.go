@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
@@ -36,6 +37,7 @@ type relayServiceModes interface {
 }
 
 type RelayServiceOptions struct {
+	Audit    auditReader
 	Accounts accountUpdater
 }
 
@@ -52,6 +54,7 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 		}
 	}
 	routes := router.PathPrefix("/karst/v1/relay-services").Subrouter()
+	routes.Use((&handler{audit: config.Audit}).auditMutations)
 	routes.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
@@ -72,7 +75,64 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay service storage is not configured"), w)
 			return
 		}
-		ctx := relayservice.WithAccount(r.Context(), user.AccountId)
+		ctx := relayservice.WithActor(relayservice.WithAccount(r.Context(), user.AccountId), user.UserId)
+		if mux.CurrentRoute(r).GetName() == "relay-access" {
+			scoped, ok := store.(interface {
+				UpdateAccess(context.Context, string, relayservice.Service) (*relayservice.Service, error)
+			})
+			if !ok {
+				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay access storage unavailable"), w)
+				return
+			}
+			var request struct {
+				relayservice.Service
+				ExpectedRevision *uint64 `json:"revision"`
+				Acknowledge      bool    `json:"acknowledge_access_change"`
+			}
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&request); err != nil {
+				util.WriteErrorResponse("invalid Relay access request", http.StatusBadRequest, w)
+				return
+			}
+			if err := decoder.Decode(new(any)); err != io.EOF {
+				util.WriteErrorResponse("expected one Relay access request", http.StatusBadRequest, w)
+				return
+			}
+			if request.ExpectedRevision == nil {
+				util.WriteErrorResponse("service revision is required", http.StatusBadRequest, w)
+				return
+			}
+			request.Service.Revision = *request.ExpectedRevision
+			if !request.Acknowledge {
+				util.WriteErrorResponse("review and acknowledge the access change", http.StatusBadRequest, w)
+				return
+			}
+			service, err := scoped.UpdateAccess(ctx, mux.Vars(r)["serviceId"], request.Service)
+			if err != nil {
+				relayServiceError(w, r, err)
+				return
+			}
+			push(ctx, user.AccountId)
+			util.WriteJSONObject(ctx, w, service)
+			return
+		}
+		if mux.CurrentRoute(r).GetName() == "relay-admission-targets" {
+			scoped, ok := store.(interface {
+				AdmissionTargets(context.Context) ([]relayservice.AdmissionLease, error)
+			})
+			if !ok {
+				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay admission capability unavailable"), w)
+				return
+			}
+			targets, err := scoped.AdmissionTargets(ctx)
+			if err != nil {
+				relayServiceError(w, r, err)
+				return
+			}
+			util.WriteJSONObject(ctx, w, targets)
+			return
+		}
 		if mux.CurrentRoute(r).GetName() == "relay-modes" {
 			if r.Method == http.MethodOptions {
 				return
@@ -201,9 +261,11 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			w.WriteHeader(http.StatusNoContent)
 		}
 	}
+	routes.HandleFunc("/admission-targets", handle).Methods(http.MethodGet).Name("relay-admission-targets")
 	routes.HandleFunc("", handle).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 	routes.HandleFunc("/publication", handle).Methods(http.MethodGet, http.MethodPut, http.MethodOptions).Name("relay-publication")
 	routes.HandleFunc("/publication/preview", handle).Methods(http.MethodPost, http.MethodOptions).Name("relay-publication-preview")
+	routes.HandleFunc("/{serviceId}/access", handle).Methods(http.MethodPut).Name("relay-access")
 	routes.HandleFunc("/{serviceId}/modes", handle).Methods(http.MethodPut, http.MethodOptions).Name("relay-modes")
 	routes.HandleFunc("/{serviceId}", handle).Methods(http.MethodDelete, http.MethodOptions)
 }
@@ -212,7 +274,7 @@ func relayServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, relayservice.ErrInvalid):
 		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
-	case errors.Is(err, relayservice.ErrExists):
+	case errors.Is(err, relayservice.ErrExists), errors.Is(err, policy.ErrVersionConflict):
 		util.WriteError(r.Context(), status.Errorf(status.AlreadyExists, "Relay service already exists"), w)
 	case errors.Is(err, relayservice.ErrNotFound):
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "Relay service not found"), w)

@@ -106,7 +106,8 @@ export type DomainDelegation = { id: string; domain_id: string; domain_path: str
 
 export type AccountUser = { id: string; name: string; email: string; role: string; status: string; is_current?: boolean; is_blocked: boolean; auto_groups?: string[]; issued?: string; last_login?: string | null };
 
-export type Group = { id: string; name: string; peers_count: number; resources_count: number; issued?: string };
+export type ManagedRelayService = RelayService & { access_managed?: boolean; allowed_groups?: string[]; gateway_handle?: string; exit_ipv4?: boolean; exit_ipv6?: boolean; metric?: number; revision?: number };
+export type Group = { id: string; name: string; peers_count: number; resources_count: number; issued?: string; peers?: Array<{ id: string; name: string }>; resources?: Array<{ id: string; type: string }> };
 
 export type Nameserver = { ip: string; ns_type: "udp"; port: number };
 export type NameserverGroup = { id: string; name: string; description: string; nameservers: Nameserver[]; enabled: boolean; groups: string[]; primary: boolean; domains: string[]; search_domains_enabled: boolean };
@@ -227,8 +228,10 @@ export const api = {
   previewRelayPublication: () => request<RelayService[]>("/relay-services/publication/preview", { method: "POST" }),
   setRelayPublication: (mode: RelayPublication["mode"]) => request<RelayPublication>("/relay-services/publication", { method: "PUT", body: body({ mode, acknowledge_connectivity_change: true }) }),
   setRelayServiceModes: (id: string, ponorEnabled: boolean) => request<RelayService>(`/relay-services/${encodeURIComponent(id)}/modes`, { method: "PUT", body: body({ ponor_enabled: ponorEnabled, acknowledge_connectivity_change: true }) }),
-  relayServices: () => request<RelayServiceView[]>("/relay-services"),
-  addRelayService: (service: RelayService) => request<RelayService>("/relay-services", { method: "POST", body: body(service) }),
+  relayServices: () => request<Array<RelayServiceView & ManagedRelayService>>("/relay-services"),
+  addRelayService: (service: ManagedRelayService) => request<RelayService>("/relay-services", { method: "POST", body: body(service) }),
+  relayAdmissionTargets: () => request<Array<{ relay_id: string; refreshed_at: string }>>("/relay-services/admission-targets"),
+  setRelayAccess: (service: ManagedRelayService) => request<ManagedRelayService>(`/relay-services/${encodeURIComponent(service.id)}/access`, { method: "PUT", body: body({ ...service, acknowledge_access_change: true }) }),
   removeRelayService: (id: string) => request<void>(`/relay-services/${encodeURIComponent(id)}`, { method: "DELETE" }),
   relays: () => request<Relay[]>("/relays"),
   addRelay: (entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: RelayLocation }) => request<Relay>("/relays", { method: "POST", body: body(entry) }),
@@ -295,7 +298,16 @@ export const api = {
   // ── groups ─────────────────────────────────────────────────────────────────
   groups: () => management<Group[]>("/groups"),
   createGroup: (name: string) => management<Group>("/groups", { method: "POST", body: body({ name, peers: [] }) }),
-  renameGroup: (id: string, name: string) => management<Group>(`/groups/${encodeURIComponent(id)}`, { method: "PUT", body: body({ name }) }),
+  group: (id: string) => management<Group>(`/groups/${encodeURIComponent(id)}`),
+  groupPeers: () => management<Array<{ id: string; name: string }>>("/peers"),
+  renameGroup: async (id: string, name: string) => {
+    const current = await management<Group>(`/groups/${encodeURIComponent(id)}`);
+    return management<Group>(`/groups/${encodeURIComponent(id)}`, { method: "PUT", body: body({ name, peers: current.peers?.map(peer => peer.id) ?? [], resources: current.resources ?? [] }) });
+  },
+  setGroupMembers: async (id: string, peers: string[]) => {
+    const current = await management<Group>(`/groups/${encodeURIComponent(id)}`);
+    return management<Group>(`/groups/${encodeURIComponent(id)}`, { method: "PUT", body: body({ name: current.name, peers, resources: current.resources ?? [] }) });
+  },
   deleteGroup: (id: string) => management<void>(`/groups/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── DNS ────────────────────────────────────────────────────────────────────

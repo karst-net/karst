@@ -64,33 +64,29 @@ test("posture opens on exceptions, worst first", async ({ page }) => {
   expect(statuses[0]).toContain("stale");
 });
 
-test("policy validation and save are keyboard accessible", async ({ page }) => {
+test("access grants use group pickers and require review", async ({ page }) => {
   await page.goto("/#/access");
-  await page.getByLabel("Policy document").focus();
-  await page.keyboard.press("ControlOrMeta+A");
-  await page.keyboard.type('{ "acls": [] }');
-  await page.getByRole("button", { name: "Validate policy" }).focus();
+  await expect(page.getByRole("heading", {name:"Groups & access", exact:true})).toBeVisible();
+  await expect(page.getByLabel("Policy document")).toHaveCount(0);
+  await page.getByRole("button", {name:"Add access grant",exact:true}).click();
+  await page.getByRole("textbox",{name:"Name",exact:true}).fill("Engineering web");
+  await page.getByRole("group",{name:"Allowed groups",exact:true}).getByRole("checkbox",{name:"sre",exact:true}).check();
+  await page.getByRole("group",{name:"Destination groups",exact:true}).getByRole("checkbox",{name:"engineering",exact:true}).check();
+  await page.getByLabel("Ports",{exact:true}).selectOption("web");
+  await page.getByRole("button",{name:"Review access changes",exact:true}).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toContainText("Policy is valid");
-  await page.getByRole("button", { name: "Save policy" }).focus();
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toContainText("Policy saved");
+  await expect(page.getByRole("dialog",{name:"Review access changes",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Apply access changes",exact:true})).toBeDisabled();
+  await page.getByRole("checkbox",{name:"I reviewed the access changes.",exact:true}).check();
+  await page.getByRole("button",{name:"Apply access changes",exact:true}).click();
+  await expect(page.getByRole("status")).toContainText("Access changes saved");
 });
 
-test("policy syntax errors surface their line number", async ({ page }) => {
-  await page.goto("/#/access");
-  // `.fill()` targets an <input>/<textarea> value directly; the policy
-  // document is a CodeMirror 6 editor (issue #128) whose content is a
-  // `contenteditable` div, not either of those, so `.fill()` raced
-  // CodeMirror's own view update and intermittently left the field's
-  // original content in place — the same keyboard-driven interaction the
-  // "keyboard accessible" test above already uses is what actually reaches
-  // the editor reliably.
-  await page.getByLabel("Policy document").focus();
-  await page.keyboard.press("ControlOrMeta+A");
-  await page.keyboard.type('{\n  "acls": [],\n}');
-  await page.getByRole("button", { name: "Validate policy" }).click();
-  await expect(page.getByLabel("Policy diagnostics")).toContainText("line 3");
+test("access defaults to no selected source or destination", async ({ page }) => {
+  await page.goto("/#/groups/access");
+  await page.getByRole("button",{name:"Add access grant",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Review access changes",exact:true})).toBeDisabled();
+  await expect(page.getByRole("dialog").getByRole("checkbox",{checked:true})).toHaveCount(0);
 });
 
 test("setup requires a label, groups, and assignee and refuses issuance over HTTP", async ({ page }) => {
@@ -425,11 +421,10 @@ test("a personal access token is shown once and can be revoked", async ({ page }
   await expect(page.getByRole("status")).toContainText("was revoked");
 });
 
-test("policy tests report which expectation failed", async ({ page }) => {
+test("legacy access is retained and shown without an editable policy", async ({page}) => {
   await page.goto("/#/access");
-  await page.getByRole("button", { name: "Test policy" }).click();
-  await expect(page.getByRole("status")).toContainText("Access tests failed");
-  await expect(page.getByLabel("Policy tests")).toContainText("expected deny, got allow");
+  await expect(page.getByLabel("Existing access",{exact:true})).toContainText("tag:prod:22");
+  await expect(page.getByLabel("Policy document")).toHaveCount(0);
 });
 
 test("Escape closes a create dialog without submitting it", async ({ page }) => {
@@ -462,15 +457,15 @@ test("user deprovisioning surfaces the console result without a timing assertion
   await expect(page.getByRole("status")).toContainText("deprovisioned");
 });
 
-test("policy history can be viewed and restored", async ({ page }) => {
+test("access history requires a reviewed change before restoration", async ({ page }) => {
   await page.goto("/#/access");
-  await expect(page.getByRole("heading", { name: "Version history" })).toBeVisible();
-  const oldVersion = page.locator("tbody tr").filter({ hasText: "user-sre" });
-  await oldVersion.getByRole("button", { name: "View" }).click();
-  await expect(page.getByRole("status")).toContainText("Viewing version 6");
-  page.on("dialog", (dialog) => dialog.accept());
-  await oldVersion.getByRole("button", { name: "Restore" }).click();
-  await expect(page.getByRole("status")).toContainText("version 6 restored");
+  await expect(page.getByRole("heading", { name: "Change history" })).toBeVisible();
+  await page.getByRole("button",{name:"Review version 6",exact:true}).click();
+  await expect(page.getByRole("dialog",{name:"Review access changes",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Apply access changes",exact:true})).toBeDisabled();
+  await page.getByRole("checkbox",{name:"I reviewed the access changes.",exact:true}).check();
+  await page.getByRole("button",{name:"Apply access changes",exact:true}).click();
+  await expect(page.getByRole("status")).toContainText("Access changes saved");
 });
 
 const uncovered = ["node-0001-karst-fixture-handle", "node-0049-karst-fixture-handle"];

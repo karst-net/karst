@@ -41,6 +41,7 @@ services:
       # time and expires after 90 seconds, so without this the relay stops
       # admitting nodes a minute and a half after it starts (GitHub issue [#47](https://github.com/karst-net/karst/issues/47)).
       KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
+      KARST_RELAY_ROSTER_ID_FILE: /var/lib/karst/relay-roster.id
       # §5.4 scopes relay forwarding by aquifer. Each node's aquifer is now
       # derived from its own account (ADR-0033), which is what actually stops
       # a relay becoming a message bus between any two keys it has heard of
