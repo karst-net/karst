@@ -3758,6 +3758,12 @@ func (h *handler) policyRollback(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
+	// Restoring history must obey the same current registry-reference and
+	// resource-managed grant checks as a new policy write.
+	if err := h.validateRegistryGrants(r.Context(), user.AccountId, previous.Document); err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
 	written, err := h.policy.Write(r.Context(), previous.Document, user.UserId, expected)
 	if errors.Is(err, karstpolicy.ErrVersionConflict) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "policy version changed"), w)

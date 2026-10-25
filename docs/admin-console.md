@@ -305,3 +305,21 @@ contains publication preview/activation, rollback, and legacy associations.
 These retain their existing connectivity acknowledgments. Endpoint details
 remain available when the service API fails; access is shown as unknown and
 deletion/configuration actions are disabled until that API recovers.
+
+### Deleting a group
+
+**Groups & access → Groups → Delete** opens an impact review with current machine
+membership and named dependencies. Access grants, legacy membership mappings,
+relay restrictions, Gateway routing/distribution/access assignments, DNS,
+automatic user assignments and active invitations must be resolved in their
+owning forms first. Disabled resources still count as dependencies.
+
+An unavailable dependency source blocks deletion. After resolving assignments,
+refresh the review and acknowledge deletion explicitly. The console reloads
+before deleting; changed membership or access requires another acknowledgment.
+The server independently rejects deletion while current form-managed policy or
+relay admission records reference the group, in addition to inherited management
+dependency checks. Historical policy versions are retained. Revoked, expired or
+exhausted invitations remain visible as history without blocking deletion;
+active invitations must be revoked first. Deleting a group never deletes its
+machines or automatically removes access grants.
