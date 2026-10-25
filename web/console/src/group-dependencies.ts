@@ -4,16 +4,16 @@
 import { api, ApiError, type Group } from "./api";
 import type { AccessDocument } from "./access-model";
 
-export type GroupDeletionReview = {
+export type GroupDependencyReview = {
   group: Group;
   dependencies: Array<{ key: string; label: string; href: string }>;
   history: string[];
   fingerprint: string;
 };
 
-// Load on opening and again before deleting. Missing or malformed dependency
+// Load when reviewing a group change and again before applying it. Missing or malformed dependency
 // data must never be interpreted as a group with no access relationships.
-export async function reviewGroupDeletion(id: string): Promise<GroupDeletionReview> {
+export async function loadGroupDependencies(id: string): Promise<GroupDependencyReview> {
   const [group, policy, relays, routes, nameservers, dns, users, invitations] = await Promise.all([
     api.group(id), api.policy().catch(error => {
       if (error instanceof ApiError && error.status === 404 && error.message === "no Karst policy version") return { version: 0, document: "{}" };
@@ -21,7 +21,7 @@ export async function reviewGroupDeletion(id: string): Promise<GroupDeletionRevi
     }), api.relayServices(), api.routes(), api.nameservers(), api.dnsSettings(), api.users(), api.invitations(),
   ]);
   const document = JSON.parse(policy.document) as AccessDocument;
-  const dependencies: GroupDeletionReview["dependencies"] = [];
+  const dependencies: GroupDependencyReview["dependencies"] = [];
   const add = (key: string, label: string, href: string) => dependencies.push({ key, label, href });
   for (const grant of document.grants ?? []) {
     if (grant.source_groups.includes(id) || grant.target_groups?.includes(id)) add(`grant:${grant.id}`, `Access grant: ${grant.name}`, grant.id.startsWith("relay-exit-") ? "#/relays" : "#/groups/access");

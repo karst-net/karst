@@ -3,8 +3,9 @@
 
 import { useState } from "react";
 import { Dialog, EmptyState } from "@karst-net/ui";
+import { GroupMembership } from "./group-membership";
 import { GroupDeletion } from "./group-deletion";
-import { api, type Group } from "../api";
+import { api, ApiError, type Group, type GroupSnapshot } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
 // A group synchronised from an identity provider is a copy, not a source. The
@@ -17,9 +18,10 @@ export function Groups() {
   const resource = useResource(api.groups);
   const policy = useResource(api.policy);
   const relayAccess = useResource(api.relayServices);
-  const peerResource = useResource(api.groupPeers);
-  const [membership, setMembership] = useState<{ group: Group; peers: string[] }>();
-  const [membershipBusy, setMembershipBusy] = useState(false);
+  const [membership, setMembership] = useState<string>();
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string>();
+  const [renameConflicted, setRenameConflicted] = useState(false);
   const grants: import("../access-model").AccessGrant[] = (() => { try { return JSON.parse(policy.value?.document ?? "{}").grants ?? []; } catch { return []; } })();
   const referencing = (group: Group) => grants.filter(grant => grant.source_groups.includes(group.id) || grant.target_groups?.includes(group.id));
   const groupLocations = useResource(api.groupLocations);
@@ -27,7 +29,7 @@ export function Groups() {
   const { message, setMessage, run } = useMutation(() => { resource.reload(); groupLocations.reload(); });
   const [deleting, setDeleting] = useState<string>();
   const [creating, setCreating] = useState<string>();
-  const [renaming, setRenaming] = useState<{ group: Group; name: string }>();
+  const [renaming, setRenaming] = useState<{ snapshot: GroupSnapshot; name: string }>();
   const [locating, setLocating] = useState<{ group: Group; lat: string; lon: string; label: string }>();
 
   if (resource.loading) return <p>Loading groups…</p>;
@@ -39,11 +41,29 @@ export function Groups() {
     if (!name) { setMessage("A group needs a name."); return; }
     if (await run(() => api.createGroup(name), `Group ${name} was created.`)) setCreating(undefined);
   };
+  const openRename = async (id: string) => {
+    setRenameBusy(true); setRenameError(undefined); setRenameConflicted(false);
+    try {
+      const snapshot = await api.groupForEdit(id);
+      if ((snapshot.group.issued ?? "api") !== "api" || snapshot.group.name === "All") throw new Error("This group is built in or managed by an identity provider and cannot be renamed here.");
+      setRenaming({ snapshot, name: snapshot.group.name });
+    } catch (error) {
+      if (renaming) { setRenameError((error as Error).message); setRenameConflicted(true); }
+      else setMessage((error as Error).message);
+    }
+    finally { setRenameBusy(false); }
+  };
   const rename = async () => {
-    if (!renaming) return;
+    if (!renaming || renameBusy || renameConflicted) return;
     const name = renaming.name.trim();
-    if (!name) { setMessage("A group needs a name."); return; }
-    if (await run(() => api.renameGroup(renaming.group.id, name), `Group ${renaming.group.name} is now named ${name}.`)) setRenaming(undefined);
+    if (!name) { setRenameError("A group needs a name."); return; }
+    setRenameBusy(true); setRenameError(undefined);
+    try {
+      await api.renameGroup(renaming.snapshot, name);
+      setMessage(`Group ${renaming.snapshot.group.name} is now named ${name}.`); setRenaming(undefined); resource.reload();
+    } catch (error) {
+      setRenameError((error as Error).message); if (error instanceof ApiError && error.status === 412) setRenameConflicted(true);
+    } finally { setRenameBusy(false); }
   };
   const saveLocation = async () => {
     if (!locating) return;
@@ -79,8 +99,8 @@ export function Groups() {
               : <span className="lede">{policy.error ? "Access unavailable" : "None"}</span>}</td>
             <td>{location ? (location.label || `${location.lat}, ${location.lon}`) : <span className="lede">No location</span>}</td>
             <td><div className="actions">
-              {editable(group) && <button onClick={() => { setMembershipBusy(true); void api.group(group.id).then(current => setMembership({ group: current, peers: current.peers?.map(peer => peer.id) ?? [] })).catch(error => setMessage((error as Error).message)).finally(() => setMembershipBusy(false)); }} disabled={membershipBusy}>Members of {group.name}</button>}
-              {editable(group) && <button onClick={() => setRenaming({ group, name: group.name })}>Rename</button>}
+              {editable(group) && <button onClick={() => setMembership(group.id)}>Members of {group.name}</button>}
+              {editable(group) && <button disabled={renameBusy} onClick={() => void openRename(group.id)}>Rename</button>}
               <button onClick={() => setLocating({ group, lat: location ? String(location.lat) : "", lon: location ? String(location.lon) : "", label: location?.label ?? "" })}>{location ? "Edit location" : "Set location"}</button>
               {location && <button onClick={() => clearLocation(group)}>Clear location</button>}
               {editable(group) && <button className="danger" onClick={() => setDeleting(group.id)}>Delete</button>}
@@ -100,11 +120,12 @@ export function Groups() {
       </form>
     </Dialog>
 
-    <Dialog open={Boolean(renaming)} title="Rename group" onClose={() => setRenaming(undefined)}>
+    <Dialog open={Boolean(renaming)} title="Rename group" onClose={() => { if (!renameBusy) setRenaming(undefined); }}>
+      {renameError && <p role="alert">{renameError}</p>}
       <form onSubmit={(event) => { event.preventDefault(); void rename(); }}>
-        <label>Group name<input aria-label="New group name" value={renaming?.name ?? ""} onChange={(event) => setRenaming((current) => current && { ...current, name: event.target.value })} /></label>
+        <label>Group name<input disabled={renameBusy || renameConflicted} aria-label="New group name" value={renaming?.name ?? ""} onChange={(event) => setRenaming((current) => current && { ...current, name: event.target.value })} /></label>
         <p className="lede">Access grants reference this group by its stable identity. Renaming preserves membership and form-managed access. Existing legacy policies remain unchanged.</p>
-        <div className="actions"><button type="button" onClick={() => setRenaming(undefined)}>Cancel</button><button className="primary" type="submit">Save name</button></div>
+        <div className="actions"><button type="button" disabled={renameBusy} onClick={() => setRenaming(undefined)}>Cancel</button>{renameConflicted && <button type="button" disabled={renameBusy} onClick={() => void openRename(renaming!.snapshot.group.id)}>Reload latest group</button>}<button className="primary" type="submit" disabled={renameBusy || renameConflicted}>Save name</button></div>
       </form>
     </Dialog>
 
@@ -118,10 +139,6 @@ export function Groups() {
       </form>
     </Dialog>
 
-    {membership && <Dialog open title={`Members of ${membership.group.name}`} onClose={() => { if (!membershipBusy) setMembership(undefined); }}>
-      <p>Membership changes affect access to resources assigned to this group.</p>
-      {peerResource.error ? <Failure message={peerResource.error} retry={peerResource.reload} /> : <fieldset><legend>Machines</legend>{peerResource.value?.map(peer => <label key={peer.id}><input type="checkbox" checked={membership.peers.includes(peer.id)} onChange={event => setMembership({ ...membership, peers: event.target.checked ? [...membership.peers, peer.id] : membership.peers.filter(id => id !== peer.id) })} />{peer.name}</label>)}</fieldset>}
-      <div className="actions"><button disabled={membershipBusy} onClick={() => setMembership(undefined)}>Cancel</button><button disabled={membershipBusy || peerResource.loading || Boolean(peerResource.error)} onClick={() => { setMembershipBusy(true); void run(() => api.setGroupMembers(membership.group.id, membership.peers), "Group membership saved.").then(saved => { if (saved) setMembership(undefined); }).finally(() => setMembershipBusy(false)); }}>Save members</button></div>
-    </Dialog>}
+    {membership && <GroupMembership id={membership} onClose={() => setMembership(undefined)} onSaved={() => { setMembership(undefined); resource.reload(); setMessage("Group membership saved."); }} />}
   </section>;
 }
