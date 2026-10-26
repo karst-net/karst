@@ -1066,6 +1066,7 @@ jobs:
         run: |
           docker pull alpine:latest
           python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
+          python3 -m unittest discover -s deploy/compose -p test_relay_installation.py -v
       - name: bootstrap.sh parses, and is executable
         run: |
           sh -n deploy/compose/bootstrap.sh

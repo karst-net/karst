@@ -8,6 +8,7 @@ import { api, type ManagedRelayService } from "../api";
 import { RelayReadiness } from "./relay-readiness";
 import { RelayAccess } from "./relay-access";
 import { Failure, Notice, Rows, useMutation, usePolledResource } from "../common";
+import { RelayInstallation } from "./relay-installation";
 import { RelayRegistration } from "./relay-registration";
 
 export function RelayServices() {
@@ -20,6 +21,7 @@ export function RelayServices() {
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5_000); return () => clearInterval(timer); }, []);
   const reload = () => { resource.reload(); endpoints.reload(); groups.reload(); gateways.reload(); admission.reload(); setNow(Date.now()); };
   const { message, setMessage, run } = useMutation(reload);
+  const [installing, setInstalling] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [relayId, setRelayId] = useState<string>();
   const [details, setDetails] = useState<Relay>();
@@ -54,7 +56,7 @@ export function RelayServices() {
   return <section>
     <h2>Relays</h2>
     <p>Manage relay endpoints, group access, internet egress and health in one place. Ponor is the relay transport; a service stores the endpoint's access and publication settings.</p>
-    <div className="actions"><button className="primary" onClick={() => setRegistering(true)}>Add relay</button><button onClick={reload}>Refresh relays</button></div>
+    <div className="actions"><button className="primary" onClick={() => setRegistering(true)}>Add relay</button><button onClick={() => setInstalling(true)}>Install a local relay</button><button onClick={reload}>Refresh relays</button></div>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {endpoints.error && <Failure message={endpoints.error} retry={endpoints.reload} />}
     {admission.error && services.some(service => service.access_managed) && <p role="alert">Admission writer observations unavailable: {admission.error}</p>}
@@ -93,7 +95,8 @@ export function RelayServices() {
           <td><button onClick={() => { setMessage(undefined); setDetails(endpoint); }}>Endpoint details</button><button disabled={Boolean(resource.error)} onClick={() => { setRelayId(endpoint.id); setConfiguring("new"); }}>Configure relay</button></td>
         </tr>)}
       </Rows>}
-    {registering && <RelayRegistration onClose={() => setRegistering(false)} onAdded={endpoint => { setRegistering(false); reload(); setRelayId(endpoint.id); setConfiguring("new"); setMessage("Endpoint registered. Configure group access to complete setup."); }} />}
+    {installing && <RelayInstallation onClose={() => setInstalling(false)} />}
+    {registering && <RelayRegistration onClose={() => setRegistering(false)} onAdded={endpoint => { setRegistering(false); reload(); setRelayId(endpoint.id); setConfiguring(services.find(service => service.ponor_id === endpoint.id) ?? "new"); setMessage("Endpoint registered. Configure group access to complete setup."); }} />}
     <Dialog open={Boolean(details)} title="Relay endpoint details" onClose={() => setDetails(undefined)}>
       {details && <><Notice message={message} /><dl><dt>Address</dt><dd>{details.address}</dd><dt>TLS server name</dt><dd>{details.tls_server_name}</dd><dt>Region</dt><dd>{details.region}</dd><dt>Location</dt><dd>{details.location?.label || (details.location ? `${details.location.lat}, ${details.location.lon}` : "No location")}</dd><dt>Last confirmed</dt><dd><Observed at={details.health.last_confirmed_at} /></dd></dl>
       <p>Health is the relay's signed report. A stale report does not prove the process stopped forwarding traffic.</p>

@@ -368,3 +368,38 @@ Forwarding readiness is self-reported and has the freshness semantics of the
 Gateway inventory. A reported-ready offer still requires client exit consent,
 applicable policy, and working end-to-end connectivity. The console does not
 infer consent, provision workloads or change forwarding from these observations.
+
+### Local Relay installation handoff
+
+**Relays → Install a local relay** generates a download for the supported
+co-located reference Docker Compose deployment. Enter the existing public IP
+and port, certificate TLS name and region; optionally select a declared location
+and compatible Relay/control image tags or digests. Review the interruption:
+applying restarts control and Relay, and the generated admission writer denies
+legacy/unconfigured tenants until managed access is saved. Existing managed
+access remains enforced. Downloading does not start an installation.
+
+On the Linux control host, run the downloaded program with `--directory` pointing
+to the existing Compose directory. Its default invocation checks prerequisites;
+add `--apply` to install. It requires Python 3.11+, Compose v2, OpenSSL, the
+existing writable shared state and trusted Relay certificate/key. It generates
+the runtime configuration and identity-bound writer overlay, preserving existing
+secrets. It rejects unsupported control images, conflicting writers and registry
+or Compose bindings rather than rewriting them.
+
+Import `state/relay-install/receipt.json` through **Add relay → Installation
+receipt**, review the endpoint and register it. The public key is imported, not
+typed. A matching registered identity is reused. The next form selects allowed
+groups and optional IPv4/IPv6 internet egress through an explicitly enrolled
+Linux Gateway. Preview service publication if it is not enabled. Check the
+operational observations afterward; neither a receipt nor a running container
+proves forwarding or confirms an applied policy revision.
+
+Failures record `state/relay-install/status.json`, retain keys and permit retry
+with the same handoff. Earlier actions may have completed; no automatic rollback
+reopens access. Use `state/relay-install/compose.json` alongside the original
+Compose file for future lifecycle operations. Removing the overlay or downgrading
+the writer can bypass managed-only admission. This path supports one local Relay,
+not remote hosts, cloud/cluster provisioning, new TLS trust distribution or
+Gateway installation. Infrastructure connections remain discovery-only for this
+workflow. See ADR-0062 and the reference Compose guide.

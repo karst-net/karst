@@ -131,3 +131,30 @@ func TestAutomaticWritePreservesEmptySSHGate(t *testing.T) {
 	require.NotNil(t, restored.Ssh)
 	require.Empty(t, restored.Ssh)
 }
+
+func TestInstallationWriterRequiresManagedAccessForEveryTenant(t *testing.T) {
+	s, svc := accessFixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	// Legacy behavior is retained only for writers not using managed-only mode.
+	legacy, err := s.AllowedOnRelay(ctx, svc.PonorID, "a", "laptop-key")
+	require.NoError(t, err)
+	require.True(t, legacy)
+	allowed, err := s.AllowedOnManagedRelay(ctx, svc.PonorID, "a", "laptop-key")
+	require.NoError(t, err)
+	require.False(t, allowed)
+	_, err = s.Create(ctx, svc)
+	require.NoError(t, err)
+	allowed, err = s.AllowedOnManagedRelay(ctx, svc.PonorID, "a", "laptop-key")
+	require.NoError(t, err)
+	require.True(t, allowed)
+	allowed, err = s.AllowedOnManagedRelay(ctx, svc.PonorID, "other-account", "laptop-key")
+	require.NoError(t, err)
+	require.False(t, allowed)
+	allowed, err = s.AllowedOnManagedRelay(ctx, svc.PonorID, "a", "gateway-key")
+	require.NoError(t, err)
+	require.False(t, allowed)
+	require.NoError(t, s.Delete(ctx, svc.ID))
+	allowed, err = s.AllowedOnManagedRelay(ctx, svc.PonorID, "a", "laptop-key")
+	require.NoError(t, err)
+	require.False(t, allowed)
+}

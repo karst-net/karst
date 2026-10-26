@@ -39,7 +39,11 @@ def require_file(path):
 def validate_material(directory, desired):
     state = directory / "state"
     if desired["ponor"]["enabled"]:
-        for name in ("relay.toml", "relay.key", "relays.json", "roster.toml", "tls/relay.crt", "tls/relay.key"):
+        if (state / "relay-install" / "compose.json").exists():
+            names = ("relay-install/relay.toml", "relay.key", "roster.toml", "tls/relay.crt", "tls/relay.key")
+        else:
+            names = ("relay.toml", "relay.key", "relays.json", "roster.toml", "tls/relay.crt", "tls/relay.key")
+        for name in names:
             require_file(state / name)
 
 
@@ -53,7 +57,11 @@ def compose_command(directory, args):
     # Explicit project file/directory: current working directory cannot select
     # another stack. Docker's normal environment/.env image and port settings
     # are retained. Never print resolved configuration or container env values.
-    return ["docker", "compose", "--project-directory", str(directory), "-f", str(directory / "docker-compose.yml"), *args]
+    command = ["docker", "compose", "--project-directory", str(directory), "-f", str(directory / "docker-compose.yml")]
+    installed = directory / "state" / "relay-install" / "compose.json"
+    if installed.exists():
+        command.extend(["-f", str(installed)])
+    return [*command, *args]
 
 
 def compose(directory, args, capture=False):
