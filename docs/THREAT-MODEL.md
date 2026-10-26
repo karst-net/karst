@@ -362,3 +362,30 @@ writers upgraded and must not replace them with legacy unrestricted writers.
 Provider workload provisioning and
 authenticated remote roster delivery are not claimed by the registered-backend
 configuration workflow.
+
+### Local Relay installation handoff (ADR-0062)
+
+The console-generated local Compose installer carries public settings only and
+has no administrator API credential. The trusted host operator runs it with
+Docker privileges, preserving the existing privilege boundary. Settings are
+embedded as UTF-8 data rather than executable Python; subprocess arguments do
+not use a shell. Management configuration and Docker diagnostics can contain
+secrets and are captured rather than echoed. Existing trusted TLS/seed material
+is reused. Installation files and public receipts use private local modes.
+
+Before runtime changes the selected control image must report
+`managed-roster-v1` without access to deployment state. The installer stops the
+old writer before clearing admission. Its generated managed-only writer denies
+unconfigured and legacy tenants, applies existing account/group/owner checks,
+and preserves bounded roster refresh and expiry behavior. This closes the gap
+between installation, registration and saving access; it does not authenticate
+an arbitrary remote roster producer. Removing the overlay, downgrading control
+or substituting a legacy writer remains an operator-controlled bypass risk.
+
+Receipts are untrusted public registration metadata and never credentials or
+proof of readiness. The console strips unknown fields, reuses an existing
+registration only by matching its public key, and leaves account/identity
+validation and write authorization to the API. Group grants still require the
+reviewed transactional form. A failed installation records local retry state;
+no automatic rollback broadens access. Remote authenticated delivery, durable
+remote job auditing and applied-policy acknowledgment remain outstanding.

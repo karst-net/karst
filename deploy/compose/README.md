@@ -269,3 +269,58 @@ python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
 # Requires local alpine:latest; containers are harmless process stand-ins.
 KARST_COMPOSE_LIFECYCLE_TEST=1 python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
 ```
+
+## Console-generated Relay installation/configuration handoff
+
+For an existing reference deployment with trusted Relay TLS material, the admin
+console's **Relays → Install a local relay** supplies a Python installer. This
+replaces manual Relay TOML and admission-writer environment editing for the
+supported local case. It supports one control replica and one co-located Relay
+on Linux, with Python 3.11+, OpenSSL and Docker Compose v2. It does not create a
+new control deployment or distribute TLS trust to nodes.
+
+Use the existing endpoint address, TLS name and region when adopting a bootstrapped
+Relay. In Runtime settings choose compatible Karst control/Relay images; preload
+or pull those images first if needed. The installer probes the selected control
+image for `managed-roster-v1` before changing runtime state. Older images fail
+explicitly. Image tags are not a capability guarantee; digests are preferable
+for repeatable deployment. The installer does not upgrade an unsupported image
+by silently changing the requested version.
+
+```sh
+python3 karst-relay-install.py --directory /srv/karst/compose
+python3 karst-relay-install.py --directory /srv/karst/compose --apply
+```
+
+The first command checks prerequisites; apply generates the files and restarts
+control and Relay. It preserves management credentials, policy, registry, Relay
+seed and trusted TLS material. It stops the old writer before replacing the
+roster. The generated writer uses `KARST_RELAY_REQUIRE_MANAGED=true`: tenants
+without managed backend access are denied, including during the installation /
+registration / group-configuration gap. Adopting an unrestricted Relay therefore
+interrupts its legacy access. Existing managed grants are evaluated normally.
+
+Import the generated `state/relay-install/receipt.json` in the console's Add relay
+form. It contains public metadata only, not enrollment or administrator tokens.
+Review registration, choose groups and optional egress, then inspect operational
+observations. `runtime_started` in `state/relay-install/status.json` means that
+containers reported running, not that admission, a saved revision or traffic was
+verified. `failed` means earlier actions may have completed. Diagnose locally and
+rerun the same handoff; no automatic rollback reinstates broad access. Different
+settings require an explicit migration, not a retry.
+
+Keep the generated overlay in every subsequent lifecycle command:
+
+```sh
+docker compose --project-directory /srv/karst/compose \
+  -f /srv/karst/compose/docker-compose.yml \
+  -f /srv/karst/compose/state/relay-install/compose.json ps
+```
+
+Use the same prefix for `logs`, `up` and `stop`. The `relay-service.py` process adapter automatically includes this overlay when
+it exists, preserving the installed writer configuration. Removing managed-only mode, reverting to a legacy
+writer or downgrading control can reopen admission. The overlay is private local
+state; do not publish it with deployment credentials. Custom inherited ports,
+mounts, execution settings, multiple writers and mismatched registries are
+rejected rather than silently altered. Remote roster delivery, provider workload
+provisioning and Gateway agent installation remain unsupported by this handoff.

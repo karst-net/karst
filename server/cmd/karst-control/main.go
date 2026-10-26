@@ -191,6 +191,13 @@ const (
 const karstBootstrapKeyEnv = "KARST_BOOTSTRAP_SETUP_KEY_FILE"
 
 func main() {
+	// An installer probes the exact image without credentials, volumes or booting
+	// management. Older images reject the option instead of silently ignoring
+	// an environment variable that carries a new enforcement requirement.
+	if len(os.Args) == 2 && os.Args[1] == "--relay-installation-capabilities" {
+		fmt.Println("managed-roster-v1")
+		return
+	}
 	pol, err := loadPolicy()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
@@ -288,7 +295,18 @@ func main() {
 // which is the failure this exists to prevent and is remarkably hard to
 // diagnose from the relay's end. An operator who set nothing gets nothing.
 func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
+	requireManaged := false
+	if raw := os.Getenv("KARST_RELAY_REQUIRE_MANAGED"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			log.Fatalf("karst: KARST_RELAY_REQUIRE_MANAGED must be a boolean")
+		}
+		requireManaged = parsed
+	}
 	path := os.Getenv(karstRosterFileEnv)
+	if requireManaged && path == "" {
+		log.Fatalf("karst: managed-only admission requires a roster file")
+	}
 	if path == "" {
 		return
 	}
@@ -315,8 +333,11 @@ func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
 			log.Fatalf("karst: relay roster identity: %v", err)
 		}
 	}
+	if requireManaged && relayID == "" {
+		log.Fatalf("karst: managed-only admission requires an explicit relay identity")
+	}
 	if relayID != "" {
-		source = scopedRelayRoster{source: source, store: k.RelayServices, relayID: relayID}
+		source = scopedRelayRoster{source: source, store: k.RelayServices, relayID: relayID, requireManaged: requireManaged}
 		refreshed = func() error { return k.RelayServices.RefreshAdmissionLease(relayID) }
 	}
 	r, err := roster.New(source, roster.Config{
@@ -597,7 +618,8 @@ type scopedRelayRoster struct {
 	store  interface {
 		AllowedOnRelay(context.Context, string, string, string) (bool, error)
 	}
-	relayID string
+	relayID        string
+	requireManaged bool
 }
 
 func (s scopedRelayRoster) All() ([]roster.Entry, error) {
@@ -610,7 +632,18 @@ func (s scopedRelayRoster) All() ([]roster.Entry, error) {
 		if entry.AccountID == "" {
 			continue
 		}
-		ok, err := s.store.AllowedOnRelay(context.Background(), s.relayID, entry.AccountID, entry.Handle)
+		var ok bool
+		if s.requireManaged {
+			managed, supported := s.store.(interface {
+				AllowedOnManagedRelay(context.Context, string, string, string) (bool, error)
+			})
+			if !supported {
+				return nil, fmt.Errorf("managed-only admission is unsupported")
+			}
+			ok, err = managed.AllowedOnManagedRelay(context.Background(), s.relayID, entry.AccountID, entry.Handle)
+		} else {
+			ok, err = s.store.AllowedOnRelay(context.Background(), s.relayID, entry.AccountID, entry.Handle)
+		}
 		if err != nil {
 			return nil, err
 		}

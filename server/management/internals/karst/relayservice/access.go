@@ -182,6 +182,19 @@ type BackendAccess struct {
 
 func (BackendAccess) TableName() string { return "karst_relay_backend_access" }
 
+// AllowedOnManagedRelay is the installation writer's default-deny variant.
+// Legacy/unconfigured tenants never inherit account-wide admission here.
+func (s *Store) AllowedOnManagedRelay(ctx context.Context, relayID, account, handle string) (bool, error) {
+	var count int64
+	if err := s.db.WithContext(ctx).Model(&BackendAccess{}).Where("account_id = ? AND relay_id = ?", account, relayID).Count(&count).Error; err != nil {
+		return false, err
+	}
+	if count == 0 {
+		return false, nil
+	}
+	return s.AllowedOnRelay(ctx, relayID, account, handle)
+}
+
 func (s *Store) AllowedOnRelay(ctx context.Context, relayID, account, handle string) (bool, error) {
 	var access BackendAccess
 	err := s.db.WithContext(ctx).Where("account_id = ? AND relay_id = ?", account, relayID).First(&access).Error

@@ -159,3 +159,15 @@ netmap field. It does not remove legacy configuration or introduce a new
 credential authority. Bulk configuration migration tooling, lifecycle
 operations, per-mode health/accounting, and full transport verification
 remain required by #404.
+
+## Installation handoff
+
+Relays also offers a form-generated installer for the one-Relay co-located
+reference Compose deployment (ADR-0062). It delivers runtime configuration and
+an identity-bound managed-only roster writer without manual configuration
+editing. Host-generated public receipts fill registration, then the same access
+form controls groups and optional egress. Installation, registration and traffic
+readiness remain separate. See the reference Compose guide for prerequisites,
+retry stages and the required generated lifecycle overlay. Remote provisioning,
+Gateway installation and authenticated remote roster delivery remain outside
+this handoff.
