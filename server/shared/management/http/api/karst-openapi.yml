@@ -1195,6 +1195,7 @@ components:
       required: [node_id, name, control_connected, forwarding_readiness, offers]
       properties:
         node_id: { type: string }
+        node_handle: { type: string, description: "Enrolled node public handle for explicit resource bindings. Optional for compatibility with older control servers; never infer it from names or addresses." }
         name: { type: string }
         control_connected: { type: boolean }
         forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: "Aggregated across this node's own offers, degraded-first." }

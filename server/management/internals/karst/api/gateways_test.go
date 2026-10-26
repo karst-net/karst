@@ -55,7 +55,7 @@ func TestGatewayInventoryResolvesBothBehaviorsOncePerVisibleNode(t *testing.T) {
 		{ID: "empty-group", NetworkType: route.IPv4Network, Network: netip.MustParsePrefix("192.168.0.0/16"), PeerGroups: []string{"missing"}},
 		{ID: "domain", NetworkType: route.DomainNetwork},
 	}}
-	h := &handler{routes: sources, peers: fakePeers{{ID: "node-a", Name: "Combined Gateway", Status: &peer.PeerStatus{Connected: true}}, {ID: "unused-node", Name: "unused"}}}
+	h := &handler{routes: sources, peers: fakePeers{{ID: "node-a", Key: "gateway-key", Name: "Combined Gateway", Status: &peer.PeerStatus{Connected: true}}, {ID: "unused-node", Name: "unused"}}}
 	w := gatewayRequest(h)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
@@ -63,6 +63,7 @@ func TestGatewayInventoryResolvesBothBehaviorsOncePerVisibleNode(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.Len(t, got.Gateways, 1)
 	node := got.Gateways[0]
+	require.Equal(t, "gateway-key", node.NodeHandle)
 	require.True(t, node.ControlConnected)
 	require.Equal(t, "unreported", node.ForwardingReadiness)
 	require.Len(t, node.Offers, 3, "duplicate routing-group membership must not duplicate offers")
@@ -74,6 +75,7 @@ func TestGatewayInventoryResolvesBothBehaviorsOncePerVisibleNode(t *testing.T) {
 	require.Equal(t, []string{"empty-group"}, got.UnresolvedRoutes)
 	require.Equal(t, []string{"domain"}, got.UnsupportedRoutes)
 	require.NotContains(t, w.Body.String(), "hidden-node")
+	require.NotContains(t, w.Body.String(), "unused-node")
 	var response any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	spec := loadKarstOpenAPISchemas(t)

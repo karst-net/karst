@@ -23,6 +23,10 @@ export type GatewayOffer = {
 
 export type GatewayNode = {
     node_id: string;
+    /**
+     * Enrolled node public handle for explicit resource bindings. Optional for compatibility with older control servers; never infer it from names or addresses.
+     */
+    node_handle?: string;
     name: string;
     control_connected: boolean;
     /**

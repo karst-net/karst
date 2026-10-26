@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, EmptyState, Observed, Status } from "@karst-net/ui";
 import type { Relay, RelayService } from "@karst-net/api-client";
 import { api, type ManagedRelayService } from "../api";
+import { RelayReadiness } from "./relay-readiness";
 import { RelayAccess } from "./relay-access";
 import { Failure, Notice, Rows, useMutation, usePolledResource } from "../common";
 import { RelayRegistration } from "./relay-registration";
@@ -12,7 +13,12 @@ import { RelayRegistration } from "./relay-registration";
 export function RelayServices() {
   const resource = usePolledResource(async () => { const [services, publication] = await Promise.all([api.relayServices(), api.relayPublication()]); return { services, publication }; }, 60_000);
   const endpoints = usePolledResource(api.relays, 60_000);
-  const reload = () => { resource.reload(); endpoints.reload(); };
+  const groups = usePolledResource(api.groups, 60_000);
+  const gateways = usePolledResource(api.gateways, 15_000);
+  const admission = usePolledResource(api.relayAdmissionTargets, 15_000);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5_000); return () => clearInterval(timer); }, []);
+  const reload = () => { resource.reload(); endpoints.reload(); groups.reload(); gateways.reload(); admission.reload(); setNow(Date.now()); };
   const { message, setMessage, run } = useMutation(reload);
   const [registering, setRegistering] = useState(false);
   const [relayId, setRelayId] = useState<string>();
@@ -51,6 +57,9 @@ export function RelayServices() {
     <div className="actions"><button className="primary" onClick={() => setRegistering(true)}>Add relay</button><button onClick={reload}>Refresh relays</button></div>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {endpoints.error && <Failure message={endpoints.error} retry={endpoints.reload} />}
+    {admission.error && services.some(service => service.access_managed) && <p role="alert">Admission writer observations unavailable: {admission.error}</p>}
+    {gateways.error && services.some(service => service.exit_ipv4 || service.exit_ipv6) && <p role="alert">Gateway observations unavailable: {gateways.error}</p>}
+    <p className="lede">Operational status shows the last reported observations, separate from saved configuration. Writer refresh does not prove a particular policy revision has reached the relay. Gateway readiness is self-reported, and clients still choose whether to use internet egress.</p>
     <details><summary>Advanced publication and legacy settings</summary>
     <p>Endpoint publication: <strong>{resource.error ? "Unknown" : publication.mode === "services" ? "Configured relays" : "Legacy registries"}</strong>.</p>
     <p className="lede">{resource.error ? "Publication status could not be loaded." : publication.mode === "services" ? "Only enabled, associated endpoints are sent to clients." : "Legacy registry endpoints are published account-wide. Preview the configured relays before switching publication."}</p>
@@ -62,7 +71,7 @@ export function RelayServices() {
     </details>
     {!draft && !modeDraft && !details && preview === undefined && <Notice message={message} />}
     {!resource.error && !endpoints.error && services.length === 0 && ponor.length === 0 ? <EmptyState title="No relays configured">Add a running relay, then choose its allowed groups and optional internet egress.</EmptyState> :
-      <Rows head={<><th>Relay</th><th>Endpoint and health</th><th>Access</th><th>Actions</th></>}>
+      <Rows head={<><th>Relay</th><th>Endpoint and health</th><th>Access</th><th>Operational status</th><th>Actions</th></>}>
         {services.map((service) => {
           const p = ponor.find((entry) => entry.id === service.ponor_id);
           return <tr key={`service-${service.id}`}>
@@ -71,7 +80,8 @@ export function RelayServices() {
               {service.ponor_disabled ? <Status state="unknown" label="Relay disabled" /> : endpoints.error ? <Status state="unknown" label="Endpoint health unavailable" /> : !service.ponor_present || !p ? <Status state="warning" label="Endpoint registration missing" /> :
                 <><span>Registered</span><br /><Status state={p.health.admission_state === "confirmed" ? "healthy" : p.health.admission_state === "stale" ? "warning" : "unknown"} label={`Admission: ${p.health.admission_state}`} /></>}
             </td>
-            <td>{resource.error ? "Unknown" : service.access_managed ? <>Allowed groups: {service.allowed_groups?.length ?? 0}<br />Internet egress: {service.exit_ipv4 || service.exit_ipv6 ? [service.exit_ipv4 && "IPv4", service.exit_ipv6 && "IPv6"].filter(Boolean).join(", ") : "Disabled"}</> : "Legacy account-wide access"}</td>
+            <td>{resource.error ? "Unknown" : service.access_managed ? <>Allowed groups: {service.allowed_groups?.length ?? 0}<br />{groups.error ? "Group names unavailable" : service.allowed_groups?.map(id => groups.value?.find(group => group.id === id)?.name ?? "Unavailable group").join(", ")}<br />Internet egress: {service.exit_ipv4 || service.exit_ipv6 ? [service.exit_ipv4 && "IPv4", service.exit_ipv6 && "IPv6"].filter(Boolean).join(", ") : "Disabled"}</> : "Legacy account-wide access"}</td>
+            <td>{resource.error ? "Configuration unavailable" : <RelayReadiness service={service} targets={admission.value} inventory={gateways.value} targetError={admission.error} gatewayError={gateways.error} now={now} />}</td>
             <td>{p && <button onClick={() => { setMessage(undefined); setDetails(p); }}>Endpoint details</button>}<button disabled={Boolean(resource.error || endpoints.error)} onClick={() => setConfiguring(service)}>Configure access to {service.id}</button><button disabled={saving || Boolean(resource.error)} onClick={() => { setMessage(undefined); setModeAcknowledged(false); setModeDraft({ service, ponor: !service.ponor_disabled }); }}>Change availability</button><button disabled={Boolean(resource.error)} onClick={() => remove(service)}>Remove configuration</button></td>
           </tr>;
         })}
@@ -79,6 +89,7 @@ export function RelayServices() {
           <td>{endpoint.region || "Unnamed relay"}<br /><span className="lede">{resource.error ? "Configuration unavailable" : "Not configured"}</span></td>
           <td><code>{endpoint.address}</code><br /><Status state={endpoint.health.admission_state === "confirmed" ? "healthy" : endpoint.health.admission_state === "stale" ? "warning" : "unknown"} label={`Admission: ${endpoint.health.admission_state}`} /></td>
           <td>{resource.error ? "Unknown" : publication.mode === "legacy" ? "Legacy account-wide access" : "Not published"}</td>
+          <td>Configure group access to track managed admission and egress.</td>
           <td><button onClick={() => { setMessage(undefined); setDetails(endpoint); }}>Endpoint details</button><button disabled={Boolean(resource.error)} onClick={() => { setRelayId(endpoint.id); setConfiguring("new"); }}>Configure relay</button></td>
         </tr>)}
       </Rows>}
@@ -89,7 +100,7 @@ export function RelayServices() {
       {services.some(service => service.ponor_id === details.id) ? <p>Remove all relay configurations using this endpoint before deleting its registration.</p> : <button className="danger" disabled={Boolean(resource.error)} onClick={async () => { if (!confirm(`Remove the endpoint at ${details.address}? Clients relying on it may lose connectivity. The running process will remain intact.`)) return; if (await run(() => api.removeRelay(details.id), "Relay endpoint removed.")) setDetails(undefined); }}>Remove endpoint</button>}
       <button onClick={() => setDetails(undefined)}>Close</button></>}
     </Dialog>
-    {configuring && <RelayAccess relayId={relayId} service={configuring === "new" ? undefined : configuring} onClose={() => { setConfiguring(undefined); setRelayId(undefined); }} onSaved={() => { setConfiguring(undefined); setRelayId(undefined); reload(); setMessage("Relay configuration saved. Check admission and Gateway forwarding readiness before use."); }} />}
+    {configuring && <RelayAccess relayId={relayId} service={configuring === "new" ? undefined : configuring} onClose={() => { setConfiguring(undefined); setRelayId(undefined); }} onSaved={() => { setConfiguring(undefined); setRelayId(undefined); reload(); setMessage("Relay configuration saved. Operational observations below show reported admission and forwarding status."); }} />}
     <Dialog open={Boolean(modeDraft)} title="Change relay availability" onClose={() => { if (!saving) setModeDraft(undefined); }}>
       {modeDraft && <><Notice message={message} />
         <p>Relay: <strong>{modeDraft.service.id}</strong></p>

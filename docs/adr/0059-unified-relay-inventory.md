@@ -47,3 +47,21 @@ Cloud/cluster provisioning remains outside this workflow. Legacy shared
 endpoints can appear under multiple configurations, and separate APIs can be
 observed at different moments during refresh. The console's deletion guard does
 not introduce a new server-side integrity constraint.
+
+## Operational observations follow-up
+
+Present saved access configuration separately from admission-writer and
+per-family exit forwarding observations. Include the enrolled public node
+handle as an optional additive Gateway inventory field, so relay bindings can
+be joined explicitly without inferring identity from a name or internal ID.
+Require both that handle and the resource-owned route for a forwarding status.
+Missing capabilities, disconnected control, disabled offers, failed reads and
+unreported/degraded readiness cannot be presented as healthy. Older inventories
+remain readable but cannot substantiate a public-handle binding.
+
+These are observations rather than proof of policy convergence or successful
+traffic. Lease timestamps depend on clocks; future or invalid timestamps are
+unknown. Polling adds read traffic and bounds display freshness independently
+of the server's admission enforcement. Independent readers preserve registration
+and editing when observation sources fail. No authorization or provisioning
+semantics change.
