@@ -342,3 +342,29 @@ a fresh acknowledgment. An older control server without revision support must
 be upgraded before these console forms can save safely. Existing API clients
 may continue using the replacement endpoint without the optional If-Match
 header; they retain their existing concurrency behavior.
+
+### Relay operational observations
+
+The Relays inventory shows named allowed groups and operational observations
+beside each managed configuration. A saved configuration is not proof that its
+rules have reached a relay or that internet egress works.
+
+Admission-writer observations use the server's identity-bound roster lease.
+The console polls every 15 seconds and ages the displayed observation every
+five seconds against the same 50-second lease boundary. Expired, malformed,
+future-dated or unavailable observations never appear healthy. A recent writer
+refresh establishes writer availability, not receipt of a particular policy
+revision or successful client traffic.
+
+IPv4 and IPv6 forwarding are shown separately. Match the configured public
+Gateway handle and that service's managed exit offer, then show the Gateway's
+control connection, offer enablement and per-offer readiness report. Node names,
+addresses, internal IDs and aggregate readiness are not binding evidence. An
+older control server without public handles shows unknown readiness until
+upgraded. Failed refreshes mark observations unavailable even if cached data
+previously reported ready. Registration and access editing remain available.
+
+Forwarding readiness is self-reported and has the freshness semantics of the
+Gateway inventory. A reported-ready offer still requires client exit consent,
+applicable policy, and working end-to-end connectivity. The console does not
+infer consent, provision workloads or change forwarding from these observations.

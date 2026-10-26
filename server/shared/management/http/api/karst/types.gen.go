@@ -1592,8 +1592,11 @@ type GatewayNode struct {
 	// ForwardingReadiness Aggregated across this node's own offers, degraded-first.
 	ForwardingReadiness GatewayNodeForwardingReadiness `json:"forwarding_readiness"`
 	Name                string                         `json:"name"`
-	NodeId              string                         `json:"node_id"`
-	Offers              []GatewayOffer                 `json:"offers"`
+
+	// NodeHandle Enrolled node public handle for explicit resource bindings. Optional for compatibility with older control servers; never infer it from names or addresses.
+	NodeHandle *string        `json:"node_handle,omitempty"`
+	NodeId     string         `json:"node_id"`
+	Offers     []GatewayOffer `json:"offers"`
 }
 
 // GatewayNodeForwardingReadiness Aggregated across this node's own offers, degraded-first.
