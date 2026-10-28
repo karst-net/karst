@@ -42,8 +42,8 @@ real-socket/real-process tests against an actual `karst-relay` binary.
 | Admission denial, credential/TLS rejection, draining/reconnect signaling against a real Ponor relay and a real node | `bins/karstd/tests/relay_live.rs` — 10/10 passed, including `an_unlisted_node_is_refused`, `a_substituted_relay_registry_entry_is_refused`, `without_the_configured_ca_the_tls_hop_is_refused`, `a_draining_relay_sends_restarting_before_it_closes`. |
 | Roster-based admission, replay resistance, mesh peering, QUIC/TCP interop, real-socket forwarding | `bins/karst-relay` test suites — lib 9, `end_to_end.rs` 9, `listener.rs` 16, `quic.rs` 7, `roster_vector.rs` 3, `shutdown_signal.rs` 1, `telemetry_vector.rs` 1, `usage_write.rs` 3 — 49/49 passed. |
 | End-to-end encrypted transit | Covered implicitly by the above: every forwarded packet in `end_to_end.rs`/`listener.rs`/`quic.rs` crosses a real Noise handshake between node and relay: the relay forwards opaque frames and never decrypts overlay payload. No test asserts on plaintext at the relay. |
-| Roster lease expiry and refresh (the 90s freshness lease `deploy/compose/README.md` documents) | **Not covered by an automated test.** Verified only by the manual `watch`/stop/start demonstration in that README. This is a real gap, not a documented limitation elsewhere. |
-| Real mixed old/new **Relay-binary** namespace execution, parallel to Gateway's seven real mixed-binary aquifer runs | **Not done.** `scripts/test-aquifer-container.sh` accepts `KARST_AQUIFER_NODE_A_BIN`/`KARST_AQUIFER_NODE_B_BIN`/`KARST_AQUIFER_TESTSERVER_BIN` overrides but has no equivalent for `karst-relay` — `bins/karstd/tests/aquifer.rs`'s `spawn_relay`/`start_relay` always build and run the current worktree's relay. Existing aquifer scenarios already exercise real Ponor transport (`two_nodes_meet_on_the_relay_and_end_up_direct`, `two_nodes_on_two_relays_reach_each_other`, symmetric-NAT-stays-on-relay cases), but none of them can select an old relay binary today. Adding a `KARST_AQUIFER_RELAY_BIN` override (mirroring the existing node/testserver ones) is the concrete next step, not done here — it also needs a Linux/Docker host to execute, which this verification pass did not have. |
+| Roster lease expiry and refresh (the 90s freshness lease `deploy/compose/README.md` documents) | **Covered in #450.** The real-TLS-socket regression checks expiry, revocation, silent refusal, invalid replacements, and recovery; see the 2026-10-28 record below. |
+| Real mixed old/new **Relay-binary** namespace execution, parallel to Gateway's seven real mixed-binary aquifer runs | **Executed in #450.** Old relay/current nodes+control and current relay/old nodes+control both pass the real Ponor-to-direct namespace scenario; exact revisions and commands appear below. |
 | Production control deployment, database upgrade, native-platform (macOS/Windows) integration | Not covered, same boundary `gateway-migration-verification.md` records for Gateway. |
 
 ### Local check results
@@ -64,3 +64,69 @@ real-socket/real-process tests against an actual `karst-relay` binary.
 - This is current-worktree Rust and Go test execution on macOS/arm64. It is
   not a claim that CI's full matrix, `just check`, or any Linux-namespace
   suite ran as part of this pass.
+
+## Follow-up verification — 2026-10-28 (#450)
+
+Both remaining gaps are now covered on Linux/amd64. The current source is
+`970abb2f559702a1dc9ae6372c162050d9ead4f1` (based on main `72c3a93`).
+The older source is `e519de57c76ca819e1abc75f5c2d310879be39ec`.
+The old relay and node were extracted from the existing Debian packages
+`/tmp/karst-pr431-relay.deb` and `/tmp/karst-pr431-client.deb`; both package
+versions are `0.0.0+git.e519de57c76ca819e1abc75f5c2d310879be39ec-1`.
+The old control fixture was built from the clean checkout of that same revision
+at `/tmp/karst-421-verification`:
+
+```sh
+(cd /tmp/karst-421-verification/server && \
+  CGO_ENABLED=1 go build -o /tmp/karst450-old-testserver \
+    ./management/internals/karst/testserver/)
+
+KARST_AQUIFER_RELAY_BIN=/tmp/karst-pr431-relay/usr/bin/karst-relay \
+  ./scripts/test-aquifer-container.sh \
+    two_nodes_meet_on_the_relay_and_end_up_direct --exact
+
+KARST_AQUIFER_NODE_A_BIN=/tmp/karst-pr431-client/usr/bin/karstd \
+KARST_AQUIFER_NODE_B_BIN=/tmp/karst-pr431-client/usr/bin/karstd \
+KARST_AQUIFER_TESTSERVER_BIN=/tmp/karst450-old-testserver \
+  ./scripts/test-aquifer-container.sh \
+    two_nodes_meet_on_the_relay_and_end_up_direct --exact
+```
+
+| Actual binary combination | Executed result |
+|---|---|
+| Old relay; current node A, node B, and control fixture | 1 passed, 0 failed. |
+| Current relay; old node A, node B, and control fixture | 1 passed, 0 failed. |
+
+The relay override applies to every relay started by the harness, including
+multi-relay scenarios. The container runner validates and copies the selected
+executable into its read-only products mount. These two executed runs use the
+single-relay scenario: enrollment, authenticated Ponor transit, PHREATIC
+handshake, AVEN rendezvous, direct-path upgrade, and an ACL-scoped TCP exchange.
+They do not establish mixed-version mesh peering, a full rolling production
+upgrade, production database migration, or native-platform behavior.
+
+### Automated freshness-lease regression
+
+```sh
+cargo test -p karst-relay --lib \
+  roster_lease_expiry_refuses_admission_and_refresh_restores_it
+```
+
+`server::roster_tests::roster_lease_expiry_refuses_admission_and_refresh_restores_it`
+passed. It runs the production roster reload loop and a real TLS/Ponor listener
+with a private three-second lease and 20ms poll interval. Production still uses
+90 seconds and a five-second poll; no configuration or environment override
+can shorten them.
+
+The test authenticates a rostered client, stops refreshing the roster, and
+observes admission become empty. The existing socket receives `NotAdmitted`
+and closes; a new handshake is silently refused. An invalid roster write does
+not reopen admission. Atomically publishing the original membership with a new
+mtime restores admission and a new client handshake succeeds. It exercises
+actual elapsed monotonic time and real file/socket I/O, without a 90-second wait.
+
+Validation at the same implementation: the complete `karst-relay` suite passed
+(195 library tests and 49 integration tests), strict relay Clippy across all
+targets passed, Rust formatting passed, and the container runner passed shell
+syntax validation. The two namespace runs above passed. The full Aquifer suite,
+`just check` (`just` is unavailable), and the full CI matrix were not run locally.

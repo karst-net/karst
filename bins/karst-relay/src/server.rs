@@ -514,8 +514,19 @@ pub async fn metrics_loop(listener: TcpListener, ctx: Arc<Ctx>) {
 /// Keep admission current without making a relay restart an availability
 /// dependency. Invalid replacements never become active; a missing refresh
 /// eventually does, by replacing the roster with one that admits nobody.
-async fn roster_loop(mut source: RosterSource, ctx: Arc<Ctx>) {
-    let mut poll = tokio::time::interval(ROSTER_POLL);
+async fn roster_loop(source: RosterSource, ctx: Arc<Ctx>) {
+    roster_loop_with_timing(source, ctx, crate::roster::MAX_AGE, ROSTER_POLL).await;
+}
+
+// Keep test timing out of configuration and environment variables: production
+// always uses the 90-second lease and five-second poll above.
+async fn roster_loop_with_timing(
+    mut source: RosterSource,
+    ctx: Arc<Ctx>,
+    max_age: Duration,
+    poll_interval: Duration,
+) {
+    let mut poll = tokio::time::interval(poll_interval);
     poll.tick().await; // interval's first tick is immediate; do not reload twice at start.
     let mut failed_closed = false;
     loop {
@@ -529,7 +540,7 @@ async fn roster_loop(mut source: RosterSource, ctx: Arc<Ctx>) {
             Ok(None) => {}
             Err(err) => eprintln!("karst-relay: roster reload failed: {err}"),
         }
-        if source.expired() && !failed_closed {
+        if source.expired_after(max_age) && !failed_closed {
             eprintln!("karst-relay: roster lease expired; admitting nobody until a valid reload");
             ctx.replace_roster(FileRoster::empty());
             failed_closed = true;
@@ -1291,3 +1302,6 @@ pub(crate) async fn next_frame(
         buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
     }
 }
+
+#[cfg(test)]
+mod roster_tests;

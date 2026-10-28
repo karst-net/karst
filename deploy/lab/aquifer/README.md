@@ -72,8 +72,9 @@ exit-DNS behavior.
 
 The container runner accepts optional host paths to executable binaries:
 
-- `KARST_AQUIFER_NODE_A_BIN`: gateway agent for routing scenarios.
-- `KARST_AQUIFER_NODE_B_BIN`: recipient agent for routing scenarios.
+- `KARST_AQUIFER_RELAY_BIN`: relay executable, used for every relay in a scenario.
+- `KARST_AQUIFER_NODE_A_BIN`: node A (gateway agent for routing scenarios).
+- `KARST_AQUIFER_NODE_B_BIN`: node B (recipient agent for routing scenarios).
 - `KARST_AQUIFER_TESTSERVER_BIN`: control fixture executable, built from the
   desired revision's `server/management/internals/karst/testserver` package.
 
@@ -84,6 +85,8 @@ build-script/protobuf output when switching source checkouts. Preserve the old
 executables outside either target directory before starting the runner.
 
 ```sh
+KARST_AQUIFER_RELAY_BIN=/tmp/old-karst-relay \
+  ./scripts/test-aquifer-container.sh two_nodes_meet_on_the_relay_and_end_up_direct --exact
 KARST_AQUIFER_NODE_A_BIN=/tmp/old-karstd \
   ./scripts/test-aquifer-container.sh a_recipient_reaches_
 KARST_AQUIFER_NODE_B_BIN=/tmp/old-karstd \

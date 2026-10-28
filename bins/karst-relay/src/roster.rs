@@ -235,7 +235,12 @@ impl Source {
     /// Whether the last successfully parsed roster is too old to trust.
     #[must_use]
     pub fn expired(&self) -> bool {
-        self.last_valid.elapsed() >= MAX_AGE
+        self.expired_after(MAX_AGE)
+    }
+
+    /// Internal timing seam for the reload loop's real-socket regression.
+    pub(crate) fn expired_after(&self, max_age: Duration) -> bool {
+        self.last_valid.elapsed() >= max_age
     }
 }
 
