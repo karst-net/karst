@@ -119,8 +119,9 @@ availability, not runtime health. Legacy credential minting and wire
 projections remain in use. Operators can preview and explicitly enable
 service-based publication, or retain legacy registry publication. The
 reference Compose [deployment adapter](../deploy/compose/README.md#relay-deployment-adapter)
-manages the Ponor process mode from one manifest without changing account
-publication. Other deployment adapters remain pending. The Relay console
+and the bare-metal [systemd adapter](../deploy/systemd/README.md#relay-deployment-adapter)
+each manage the Ponor process mode from one manifest without changing account
+publication. A Kubernetes adapter remains pending. The Relay console
 groups service associations and existing Ponor backend controls in one view.
 Explicit mode controls withdraw service endpoints without deleting backend
 configuration. Versioned persistence guards older service-aware control

@@ -1067,6 +1067,13 @@ jobs:
           docker pull alpine:latest
           python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
           python3 -m unittest discover -s deploy/compose -p test_relay_installation.py -v
+      # ubuntu-latest runners are full VMs with systemd as PID 1 (see the
+      # walkthrough-c job above), so the lifecycle test's transient unit is
+      # real systemd, not a stand-in for it.
+      - name: Relay systemd deployment adapter and isolated process lifecycle
+        env:
+          KARST_SYSTEMD_LIFECYCLE_TEST: '1'
+        run: sudo -E python3 -m unittest discover -s deploy/systemd -p test_relay_service.py -v
       - name: bootstrap.sh parses, and is executable
         run: |
           sh -n deploy/compose/bootstrap.sh
