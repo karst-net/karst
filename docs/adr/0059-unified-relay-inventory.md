@@ -40,7 +40,7 @@ endpoint diagnosis; show unknown access and disable dependent mutations.
 ## Costs and limitations
 
 Registration and access configuration remain separate server operations. If the
-second step is cancelled or fails, the registration remains visible. Legacy
+second step is canceled or fails, the registration remains visible. Legacy
 publication can expose a newly registered endpoint account-wide; the add form
 states that effect. Service publication keeps unassociated endpoints unpublished.
 Cloud/cluster provisioning remains outside this workflow. Legacy shared

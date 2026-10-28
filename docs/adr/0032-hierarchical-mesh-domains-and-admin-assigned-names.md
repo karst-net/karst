@@ -254,12 +254,12 @@ Confirmation uses an opaque naming-state token; the root also carries a
 monotonically increasing `naming_revision`. Suffix/projection writes are atomic,
 permissions and split-DNS compatibility are revalidated, and concurrent naming
 writers coordinate through the account/root lock. The console previews affected
-names, requires no-alias acknowledgement, and offers rollback as a fresh rename.
+names, requires no-alias acknowledgment, and offers rollback as a fresh rename.
 Audit records include actor, suffixes and revision. Persisted DNS state is
 republished by ordinary client refresh after restart, independently of the
 best-effort streaming notification.
 
-The current protocol has no client application acknowledgement. Convergence is
+The current protocol has no client application acknowledgment. Convergence is
 reported as unobserved, including after commit; this is not a claim that all
 clients have applied the new suffix. The [acceptance validation](../mesh-domain-validation.md)
 records the Go/Rust REST-to-live-DNS rename/rollback test, encrypted-cache

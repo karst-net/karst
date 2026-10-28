@@ -79,8 +79,8 @@ func TestSessionSummary_SumsMatchSummedEntries(t *testing.T) {
 	assert.InDelta(t, sess.CostUsd, fromEntries, 1e-12, "summary total must match the summed rendered entries")
 
 	// The sub-microdollar row must still contribute; it would vanish under
-	// 6-decimal quantisation.
-	assert.Greater(t, sess.InputCostUsd, 0.001393, "small-cost rows must not be quantised away")
+	// 6-decimal quantization.
+	assert.Greater(t, sess.InputCostUsd, 0.001393, "small-cost rows must not be quantized away")
 }
 
 // TestUsageBuckets_SumsMatchSummedRows proves the same identity one level up:

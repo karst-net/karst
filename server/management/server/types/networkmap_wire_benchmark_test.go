@@ -16,7 +16,7 @@ import (
 )
 
 // wireBenchScales — trimmed scale set for wire-size measurements. Encoding
-// and marshalling are linear, so the largest extremes don't add signal.
+// and marshaling are linear, so the largest extremes don't add signal.
 var wireBenchScales = []benchmarkScale{
 	{"100peers_5groups", 100, 5},
 	{"500peers_20groups", 500, 20},

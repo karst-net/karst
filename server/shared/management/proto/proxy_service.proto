@@ -69,7 +69,7 @@ message ProxyCapabilities {
   // Whether the proxy is running embedded in the netbird client and serving
   // exclusively over the WireGuard tunnel (i.e. `netbird proxy` rather than
   // the standalone netbird-proxy binary). Surfaces upstream so dashboards can
-  // distinguish per-peer / private clusters from centralised ones.
+  // distinguish per-peer / private clusters from centralized ones.
   optional bool private = 4;
   // Whether the proxy enforces ProxyMapping.private (fails closed on ValidateTunnelPeer failure). Management MUST NOT stream private mappings to proxies that don't claim this.
   optional bool supports_private_service = 5;
@@ -158,7 +158,7 @@ message MiddlewareConfig {
   string id = 1;
   bool enabled = 2;
   MiddlewareSlot slot = 3;
-  // Free-form JSON unmarshalled by the middleware factory into its own typed
+  // Free-form JSON unmarshaled by the middleware factory into its own typed
   // config struct. Empty / null / {} are valid (zero-value config).
   bytes config_json = 4;
   enum FailMode {

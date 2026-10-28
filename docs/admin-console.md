@@ -291,7 +291,7 @@ registrations remain visible for diagnosis. Shared legacy endpoints can still
 appear under multiple named configurations.
 
 **Add relay** registers a running endpoint and immediately opens group-access
-and exit configuration with that endpoint selected. Cancelling this second
+and exit configuration with that endpoint selected. Canceling this second
 step leaves the registration visible. In service publication mode an
 unassociated endpoint is not published; in legacy mode registration can make
 it available account-wide. Registration does not provision a running process.

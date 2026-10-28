@@ -90,7 +90,7 @@ fn forward(
     if let Some(cached) = resolver.cache_get(&key) {
         if let Ok(mut cached) = crate::message::decode(&cached) {
             // IDs and the question section are per-client.  Rebuild both on a
-            // cache hit so 0x20 randomisation remains effective.
+            // cache hit so 0x20 randomization remains effective.
             cached.metadata.id = request.metadata.id;
             cached.queries.clone_from(&request.queries);
             return cached

@@ -34,7 +34,7 @@ while true; do
         fi
         unset invitation
     fi
-    if ! /usr/bin/zenity --question --title='Karst Setup' --text="${message:-Setup was cancelled or operating-system permission was denied.}" --ok-label='Retry' --cancel-label='Close'; then
+    if ! /usr/bin/zenity --question --title='Karst Setup' --text="${message:-Setup was canceled or operating-system permission was denied.}" --ok-label='Retry' --cancel-label='Close'; then
         exit 0
     fi
 done

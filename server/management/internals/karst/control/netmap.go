@@ -251,7 +251,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// change reflected in the version it is handed, rather than one poll later.
 	//
 	// A malformed value is refused rather than ignored. Ignoring it would leave
-	// the node believing it had published a relay while every peer kept dialling
+	// the node believing it had published a relay while every peer kept dialing
 	// the old one — an unreachable node with nothing anywhere saying why.
 	if err := h.Nodes.SetHomeRelay(self, req.GetHomeRelay()); err != nil {
 		if errors.Is(err, node.ErrBadHomeRelay) {
@@ -776,7 +776,7 @@ func PeerDigest(p *proto.KarstNetmapPeer, epoch uint32) uint64 {
 	// The home relay is routable content: it is the second way a node reaches
 	// this peer (ponor-v1.md §9.1). Omitting it would leave the digest
 	// unchanged when a peer moved relay, the delta would never be sent, and
-	// every other node would keep dialling a relay the peer had left.
+	// every other node would keep dialing a relay the peer had left.
 	writeField(h, p.GetHomeRelay())
 	for _, ip := range p.GetAllowedIps() {
 		writeField(h, []byte(ip))

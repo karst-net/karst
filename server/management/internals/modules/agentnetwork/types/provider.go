@@ -62,17 +62,17 @@ type Provider struct {
 	Enabled bool
 	// SkipTLSVerification disables upstream TLS certificate verification for
 	// this provider's URL. For self-hosted / internal gateways fronted by a
-	// private or self-signed certificate. The synthesiser propagates it into
+	// private or self-signed certificate. The synthesizer propagates it into
 	// the router route so the proxy dials that provider's upstream insecurely.
 	SkipTLSVerification bool `gorm:"column:skip_tls_verification"`
 	// MetadataDisabled suppresses identity metadata injection for this provider.
 	// Metadata (the caller's user + authorizing group) is injected by default;
-	// when true the synthesiser omits the provider's identity-inject shape, so no
+	// when true the synthesizer omits the provider's identity-inject shape, so no
 	// user/group headers (e.g. Bedrock's X-Amzn-Bedrock-Request-Metadata) are
 	// stamped. Catalog ExtraHeaders (routing config) are unaffected.
 	MetadataDisabled bool `gorm:"column:metadata_disabled"`
 	// SessionPrivateKey + SessionPublicKey are the ed25519 keypair the
-	// synthesised reverse-proxy service uses to sign / verify session
+	// synthesized reverse-proxy service uses to sign / verify session
 	// JWTs after a successful OIDC handshake. Generated once on
 	// provider create and never rotated by the manager so existing
 	// session cookies survive provider edits. SessionPrivateKey is

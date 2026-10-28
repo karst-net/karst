@@ -319,7 +319,7 @@ impl CookieSecret {
 // `cookie_key` is called with the **issuing responder's own static key**,
 // symmetric with [`mac1_key`]: the party building a reply passes its own key,
 // and the party opening one (an initiator who already knows which peer it
-// dialled) passes that peer's key. Deliberately independent of any suite —
+// dialed) passes that peer's key. Deliberately independent of any suite —
 // like the fragment MAC's hash (§13.9), this runs on the pre-authentication
 // path before a suite is resolved, and AES-256-GCM is reached directly rather
 // than through a suite-selected `Algorithm` for the same reason.
@@ -423,7 +423,7 @@ pub fn build_cookie_reply(
 
 /// Open a `CookieReply` message body, returning `(receiver_index, cookie)`.
 ///
-/// `responder_static_pk` is the peer this session dialled — see the module
+/// `responder_static_pk` is the peer this session dialed — see the module
 /// note for why the same key that built it opens it.
 ///
 /// # Errors

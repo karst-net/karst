@@ -738,7 +738,7 @@ roughly 20 attempts; at 36% per-attempt success the failure probability falls
 from ~7% to ~1e-4, and all 25 seeds then connect.
 
 Implementations MUST jitter the interval. The simulation deliberately does not,
-so that runs stay reproducible — but synchronised retries after a shared outage
+so that runs stay reproducible — but synchronized retries after a shared outage
 are a real failure mode on a production network.
 
 ### 13.6 The 1280-byte datagram cap applies to handshakes, not to data
@@ -875,7 +875,7 @@ load found `sha512_compress` at **23.4% of CPU** — against 2.9% for ChaCha20 a
 
 That arithmetic is sound **for the handshake** and was never re-examined for the
 data path, where the same MAC runs on every transport packet and gates no
-ML-KEM at all — only an AEAD several times cheaper than itself. Amortisation
+ML-KEM at all — only an AEAD several times cheaper than itself. Amortization
 against a cost that is not there.
 
 **Why removing the payload loses nothing.** §9.2 already states what the MAC is:
@@ -1100,7 +1100,7 @@ Flipping any of the other three bytes was undetectable at this layer.
 type, `0x04`, and `open` rejects anything else outright, so flipping the type
 byte only ever turned a valid message into a dropped one. Bedrock's own head
 exchange multiplexes inside the *plaintext* on a `0x00` marker instead
-(zero is not a legal IP version, so it cannot collide with a tunnelled
+(zero is not a legal IP version, so it cannot collide with a tunneled
 packet, and the marker is covered by the AEAD like the rest of the body) —
 the right choice for that feature, and one that leaves this section's
 constraint for the next one to trip over: the obvious way to add a second
@@ -1139,7 +1139,7 @@ Item 5 is resolved, which unblocks implementation of the fragmentation layer.
 Item 7 was initially resolved by ADR-0015 and issue #78. ADR-0018 makes that
 schedule the only one and promotes its models to `phreatic.{vp,pv}` (§13.3).
 
-**Item 10 was the one to read most sceptically, and it did not fully survive
+**Item 10 was the one to read most skeptically, and it did not fully survive
 the reading.** Every other change in §13 fixed something that was wrong;
 §13.8 changed a security construction because it was expensive, reasoning
 that the property removed was one the construction never provided. That held

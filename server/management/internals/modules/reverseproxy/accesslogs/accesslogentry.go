@@ -39,7 +39,7 @@ type AccessLogEntry struct {
 	BytesDownload   int64             `gorm:"index"`
 	Protocol        AccessLogProtocol `gorm:"index"`
 	Metadata        map[string]string `gorm:"serializer:json"`
-	// AgentNetwork marks the entry as emitted by a synthesised agent-network
+	// AgentNetwork marks the entry as emitted by a synthesized agent-network
 	// service. Sourced from proto.AccessLog.AgentNetwork the proxy stamps
 	// before shipping. Indexed so the agent-network log surface filters cheaply.
 	AgentNetwork bool `gorm:"index"`

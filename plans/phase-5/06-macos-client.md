@@ -84,7 +84,7 @@ seen it, and `karst status` kept working throughout because the control socket's
 accept already cleared the flag. The same defect was latent in KarstDNS's TCP
 listener.
 
-`KARST_PAIR_ON_HOST=1` is what localised it. The rows above the interface are
+`KARST_PAIR_ON_HOST=1` is what localized it. The rows above the interface are
 the same code on both platforms, so the suite will run against this host's own
 TUN when asked; the row passing on Linux in half a second said the fault was in
 the platform and not in the arrangement, without a CI round trip per hypothesis.

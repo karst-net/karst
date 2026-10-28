@@ -155,7 +155,7 @@ pub fn server_config(cert: &Path, key: &Path) -> Result<Arc<ServerConfig>, Error
     Ok(Arc::new(config))
 }
 
-/// A client configuration for dialling a mesh peer — §8.
+/// A client configuration for dialing a mesh peer — §8.
 ///
 /// **The certificate is not what authenticates the peer, and §4.2 says why.** A
 /// relay proves itself with an ML-DSA-65 signature over its registry key;

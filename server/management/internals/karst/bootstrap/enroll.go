@@ -83,7 +83,7 @@ func MintBootstrapKey(ctx context.Context, accounts account.Manager, opts Bootst
 
 	// Domain and DomainCategory are left empty on purpose. In single-account
 	// mode — the fork's default — they are overwritten with the deployment's
-	// domain before the account is resolved, which is the behaviour that puts
+	// domain before the account is resolved, which is the behavior that puts
 	// this user and the first IdP user in one account. With single-account
 	// mode off, the empty domain routes to a per-user account instead, which
 	// is the same thing that would happen to any user of a multi-account

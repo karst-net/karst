@@ -1274,7 +1274,7 @@ fn build_nat64(net: &mut Aquifer) -> (&'static str, &'static str) {
 /// a `resolv.conf` inside node A's namespace that points at it.
 ///
 /// **This is the fixture's half of RFC 7050, and it is a fixture and not a
-/// DNS64 implementation.** A real DNS64 resolver synthesises AAAA for every
+/// DNS64 implementation.** A real DNS64 resolver synthesizes AAAA for every
 /// name with only an A record; all this one does is serve the single name the
 /// standard reserves for prefix discovery, with the AAAA a real one would
 /// return for it — `prefix::192.0.0.170`. That is the entire input the node
@@ -1288,9 +1288,9 @@ fn start_dns64(net: &mut Aquifer) {
     // so this constant is an independent statement of what the daemon must work
     // out for itself — a fixture that derived it the same way the product does
     // would agree with a wrong answer.
-    const SYNTHESISED_WKA: &str = "64:ff9b::c000:aa";
+    const SYNTHESIZED_WKA: &str = "64:ff9b::c000:aa";
 
-    let record = format!("{IPV4ONLY_ARPA},{SYNTHESISED_WKA}");
+    let record = format!("{IPV4ONLY_ARPA},{SYNTHESIZED_WKA}");
     let listen = format!("--listen-address={NAT64_GW_V6}");
     net.spawn_service(
         NS_NAT_A,
@@ -2795,7 +2795,7 @@ fn first_ipv4(records: &str) -> Option<std::net::Ipv4Addr> {
 /// comes from its own configuration file, its relay from the netmap, and its
 /// peer from a call-me-maybe — all three IPv4 literals arriving at a node with
 /// no IPv4 route. The row asserts that it reaches all three anyway, which on a
-/// NAT64 network means synthesising `prefix::v4` and therefore first learning
+/// NAT64 network means synthesizing `prefix::v4` and therefore first learning
 /// the prefix.
 ///
 /// Node B is the control: it is an ordinary public IPv4 node that is told
@@ -3077,7 +3077,7 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
 /// 2. **Node A holds a plain IPv4 address for node B.** A is reaching B through
 ///    `prefix::51.75.10.20`, and if that address reached the engine then A
 ///    would advertise it as an observed address — the GitHub issue [#50](https://github.com/karst-net/karst/issues/50) failure in
-///    its other spelling, and worse here, because a synthesised address is
+///    its other spelling, and worse here, because a synthesized address is
 ///    meaningless outside A's own network rather than merely unreachable from
 ///    half of it.
 /// 3. **Node B sees an ordinary IPv4 peer.** B is told nothing and does nothing
@@ -3494,7 +3494,7 @@ fn two_nodes_on_two_relays_reach_each_other() {
 
     // **The assertion this row exists for.** A is on relay 1, B is on relay 2,
     // and the only way a packet crosses is A reading what B published and
-    // dialling it.
+    // dialing it.
     wait_for(
         &net,
         "node A to dial the relay its peer published",

@@ -44,7 +44,7 @@
 //! `accept_bi` — until whoever opened it writes to it. Ponor's relay always
 //! speaks first (`RelayHandshake` sends `RelayHello` unprompted), so the
 //! relay always **opens** the bidirectional stream and the other side always
-//! **accepts** it, regardless of which side dialled the QUIC connection.
+//! **accepts** it, regardless of which side dialed the QUIC connection.
 //! Getting this backwards deadlocks silently: each side waits to read what
 //! the other is waiting to be allowed to write.
 
@@ -191,7 +191,7 @@ pub fn server_config(tls: &Arc<rustls::ServerConfig>) -> Result<quinn::ServerCon
     Ok(quinn::ServerConfig::with_crypto(Arc::new(quic_tls)))
 }
 
-/// Build a QUIC client config for dialling a mesh peer over QUIC —
+/// Build a QUIC client config for dialing a mesh peer over QUIC —
 /// ADR-0020's mesh dial path.
 ///
 /// # Errors
@@ -329,9 +329,9 @@ pub async fn dial_mesh(
         .map_err(|e| format!("quic: {e}"))?;
     let remote = connection.remote_address();
 
-    // The dialled relay speaks first here too — it runs `RelayHandshake`
-    // regardless of which side dialled — so this side accepts the stream the
-    // same way a node accepts one from a relay it dialled over TCP.
+    // The dialed relay speaks first here too — it runs `RelayHandshake`
+    // regardless of which side dialed — so this side accepts the stream the
+    // same way a node accepts one from a relay it dialed over TCP.
     let (send, recv) = connection
         .accept_bi()
         .await

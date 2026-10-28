@@ -56,7 +56,7 @@ var words = []string{
 	"mountain", "mulberry", "muscat", "mustard",
 	"narwhal", "navy", "nectar", "needle", "nest", "nettle", "newt", "nightfall",
 	"noon", "nook", "north", "nova", "nutmeg",
-	"oaken", "oasis", "oatmeal", "ocean", "ochre", "octagon", "olive", "onyx",
+	"oaken", "oasis", "oatmeal", "ocean", "ocher", "octagon", "olive", "onyx",
 	"opal", "orange", "orbit", "orchard", "orchid", "oregano", "orion", "osprey",
 	"otter", "outpost", "owlet", "oyster",
 	"painter", "palace", "palm", "pansy", "panther", "papaya", "paprika", "parsley",

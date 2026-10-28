@@ -330,7 +330,7 @@ fn a_peer_with_no_endpoint_and_no_relay_is_still_undeliverable() {
     let out = a.engine.connect_all(0, seed(0x31));
     assert!(
         out.datagrams.is_empty(),
-        "a node with no relay dialled a peer it has no address for"
+        "a node with no relay dialed a peer it has no address for"
     );
 
     let sent = a
@@ -632,7 +632,7 @@ fn route(from: &Node, now: u64) -> Route {
 /// **This node's own relay first, even when the peer published another.** §9.1
 /// orders the two rules, and the order is the whole economy of it: the home
 /// connection is already up, and the peer may well be on it or on its mesh. A
-/// node that dialled the published relay on sight would pay for a TLS and
+/// node that dialed the published relay on sight would pay for a TLS and
 /// ML-DSA-87 handshake for every peer whose registry entry happened to differ.
 #[test]
 fn a_peer_that_published_another_relay_is_still_tried_here_first() {
@@ -640,7 +640,7 @@ fn a_peer_that_published_another_relay_is_still_tried_here_first() {
     assert_eq!(
         route(&a, 1_000),
         Route::Home,
-        "the published relay was dialled before this node's own had been asked"
+        "the published relay was dialed before this node's own had been asked"
     );
     assert_eq!(
         a.engine.relay_for(id_of(0x02)),
@@ -683,10 +683,10 @@ fn a_refusal_for_a_peer_that_published_nothing_changes_nothing() {
 }
 
 /// **The two rules can name the same relay, and then there is one connection.**
-/// Dialling a second one to the address this node is already sitting on would
+/// Dialing a second one to the address this node is already sitting on would
 /// double the handshakes and the relay's connection count for no path at all.
 #[test]
-fn a_peer_homed_on_this_nodes_own_relay_is_not_dialled_twice() {
+fn a_peer_homed_on_this_nodes_own_relay_is_not_dialed_twice() {
     let (a, _b) = homed_pair(Some(relay().relay_id));
     assert!(
         !a.engine.relay_unreachable(id_of(0x02), 1_000),
@@ -700,7 +700,7 @@ fn a_peer_homed_on_this_nodes_own_relay_is_not_dialled_twice() {
 /// peer publishing one this node's netmap does not carry is left on the relay
 /// this node has, which still works whenever the peer is on it.
 #[test]
-fn a_published_relay_the_registry_does_not_carry_is_not_dialled() {
+fn a_published_relay_the_registry_does_not_carry_is_not_dialed() {
     let (a, _b) = homed_pair(Some([0x99; 32]));
     assert!(!a.engine.relay_unreachable(id_of(0x02), 1_000));
     assert_eq!(route(&a, 1_000), Route::Home);
@@ -709,7 +709,7 @@ fn a_published_relay_the_registry_does_not_carry_is_not_dialled() {
 /// **A peer heard from on this node's own relay is on it, whatever it
 /// published.** The refusal that sent its traffic elsewhere is a fact with a
 /// lifetime, and the peer arriving here is the evidence that ends it — most
-/// obviously when the peer has dialled this very relay on demand because
+/// obviously when the peer has dialed this very relay on demand because
 /// *this* node is the one it cannot reach. Without this the pair sits either
 /// side of a mark for minutes, each sending to a relay the other is not on,
 /// while both are meeting on one relay the whole time.

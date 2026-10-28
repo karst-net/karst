@@ -15,7 +15,7 @@
 //! Every frame here is a **Karst inner control frame** — the same
 //! multiplexing [`crate::bedrock`]'s peer-to-peer head comparison uses: a
 //! leading [`crate::bedrock::CONTROL_MARKER`] byte (`0x00`) inside the
-//! PHREATIC transport's AEAD, which cannot collide with a tunnelled IP packet
+//! PHREATIC transport's AEAD, which cannot collide with a tunneled IP packet
 //! (zero is not a legal IP version — `karst_tun::ip::addresses` already
 //! returns `None` for it) and is authenticated because it lives inside the
 //! ciphertext, unlike the transport's own cleartext type byte
@@ -256,7 +256,7 @@ pub fn encode_offer(
 
 /// # Errors
 /// `None` for anything that is not a well-formed `Offer` — including every
-/// other frame kind and every tunnelled IP packet, which the caller uses to
+/// other frame kind and every tunneled IP packet, which the caller uses to
 /// route between them.
 #[must_use]
 pub fn decode_offer(p: &[u8]) -> Option<Offer> {

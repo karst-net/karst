@@ -3359,7 +3359,7 @@ components:
           example: false
         private:
           type: boolean
-          description: True when at least one connected proxy in this cluster is running embedded in a netbird client (`netbird proxy`) and serving over a WireGuard tunnel. Lets the dashboard distinguish per-peer / private clusters from centralised ones.
+          description: True when at least one connected proxy in this cluster is running embedded in a netbird client (`netbird proxy`) and serving over a WireGuard tunnel. Lets the dashboard distinguish per-peer / private clusters from centralized ones.
           example: false
       required:
         - id
@@ -5635,7 +5635,7 @@ components:
           example: "ch8i4ug6lnn4g9hqv7m0"
         service_id:
           type: string
-          description: ID of the synthesised agent-network service that handled the request.
+          description: ID of the synthesized agent-network service that handled the request.
         timestamp:
           type: string
           format: date-time

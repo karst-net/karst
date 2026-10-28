@@ -145,7 +145,7 @@ pub enum Verdict {
     Denied,
     /// The packet's ports could not be established, so no rule could be
     /// evaluated. Denied, but worth counting separately: a sustained rate here
-    /// means something is fragmenting or tunnelling, not that a policy is
+    /// means something is fragmenting or tunneling, not that a policy is
     /// wrong.
     Unclassifiable,
 }
@@ -308,7 +308,7 @@ impl PacketFilter {
     /// allow-list" reuse [`Self::ingress`] itself documents, just without a
     /// real IP packet to read a port from: a file-transfer offer rides the
     /// PHREATIC session's inner control channel
-    /// (`crate::filetransfer`), not a tunnelled packet, so there is nothing
+    /// (`crate::filetransfer`), not a tunneled packet, so there is nothing
     /// for [`ip::ports`] to parse. `peer_owns_destination: true` for the
     /// same reason [`SshFilter::admit`] hardcodes it — the "destination"
     /// here is always this node itself, never `from`'s.

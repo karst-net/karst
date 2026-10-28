@@ -209,7 +209,7 @@ maps onto existing, exercised machinery.
 | Packages | `management/server` (10), `shared/management` (6), `management/internals` (4), `client/internal` (3), `client/iface` (1) |
 
 Threshold was 30%. The identity spine is **conceptually fused but
-architecturally localised** — five packages, twenty-four files. This is the
+architecturally localized** — five packages, twenty-four files. This is the
 single most encouraging result in the spike.
 
 ### 5.2a The identity split, measured by the compiler (2026-08-13)
@@ -347,7 +347,7 @@ against a forked management server with an ML-DSA identity. It needs Go and
 Rust toolchains. Its purpose is now narrower than originally framed: criterion 2
 is already answered, so the slice exists to confirm that separating the three
 fused roles of `wgPubKey` (auth handle, primary index, transport encryption
-key) is clean in practice rather than merely localised on paper.
+key) is clean in practice rather than merely localized on paper.
 
 ---
 

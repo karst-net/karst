@@ -376,7 +376,7 @@ coverage on the same path. Documented in place
 one this pass missed.
 
 New coverage: `crates/karst-node/tests/reassembly_id.rs` — two freshly
-dialled sessions given different seeds do not pick the same first id (and
+dialed sessions given different seeds do not pick the same first id (and
 neither picks the old fixed value, `1`), and a handshake retry's id is not
 the previous one plus one. `cookie_reply.rs`'s five tests updated for
 `handle_cookie_reply`'s new parameter. GitHub issue
@@ -459,7 +459,7 @@ GitHub issue [#80](https://github.com/karst-net/karst/issues/80) closed.
 ### 6. §13.8's argument mostly holds, but its own "narrow regression" paragraph undersold what an eavesdropper gains against `mac2` — **fixed 2026-09-02**
 
 **Closed, with a code change.** This is the adversarial reading
-`spec/phreatic-v1.md` §14 flags as "the one to read most sceptically" — a
+`spec/phreatic-v1.md` §14 flags as "the one to read most skeptically" — a
 security construction changed on performance grounds, never externally
 checked. Option 2 below was chosen: `HandshakeInit`/`HandshakeResponse`
 fragments cover the payload again; `CookieReply`/`TransportData` do not,

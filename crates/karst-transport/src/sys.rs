@@ -604,7 +604,7 @@ const ICMP6_FILTER: libc::c_int = 1;
 /// `ND_ROUTER_SOLICIT` and `ND_ROUTER_ADVERT` — RFC 4861 §4.1, §4.2.
 const ND_ROUTER_SOLICIT: u8 = 133;
 const ND_ROUTER_ADVERT: u8 = 134;
-/// RFC 4861 §4: every Neighbour Discovery message is sent with a hop limit of
+/// RFC 4861 §4: every Neighbor Discovery message is sent with a hop limit of
 /// 255 and refused on receipt if it arrives with anything less. That single
 /// rule is what makes these messages un-spoofable from off-link, and it is the
 /// only authentication `PREF64` has.
@@ -648,7 +648,7 @@ impl RouterSocket {
 
         // **Block every ICMPv6 type, then pass only Router Advertisements.**
         // Without this the socket receives every ICMPv6 message the host sees —
-        // every ping, every unreachable, every neighbour solicitation — and the
+        // every ping, every unreachable, every neighbor solicitation — and the
         // read loop below would spend its timeout discarding them.
         //
         // **A set bit *blocks*.** RFC 3542 §3.2 defines `SETBLOCKALL` as all

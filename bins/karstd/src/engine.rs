@@ -206,7 +206,7 @@ pub struct Stats {
     ///
     /// Separate from the two above because it is not a policy decision: no rule
     /// was evaluated, because none could be. A sustained rate means something
-    /// is fragmenting or tunnelling, not that a policy is wrong.
+    /// is fragmenting or tunneling, not that a policy is wrong.
     pub acl_unclassifiable: u64,
     /// New TCP/22 flows the independent SSH gate refused, having already
     /// passed the general ingress ACL (`plans/phase-6/07-acl-gated-ssh.md`
@@ -231,7 +231,7 @@ pub struct Stats {
 /// Atomics rather than fields behind the peer locks: a counter shared by every
 /// peer would reintroduce exactly the contention this design removes, and
 /// `Relaxed` is right because nothing is ordered against these — they are
-/// diagnostics, not synchronisation.
+/// diagnostics, not synchronization.
 #[derive(Debug, Default)]
 struct Counters {
     unroutable: AtomicU64,
@@ -478,7 +478,7 @@ impl Engine {
     ///
     /// Routing needs it to tell the two rules apart: a peer whose published
     /// home is the relay this node is already connected to is reached on that
-    /// connection, not on a second one dialled to the same address.
+    /// connection, not on a second one dialed to the same address.
     pub fn set_home_relay(&self, relay_id: Option<[u8; karst_relay_proto::consts::ID_LEN]>) {
         *self
             .home_relay
@@ -489,7 +489,7 @@ impl Engine {
     /// The registry entry for a relay id, or `None` if the netmap carries none.
     ///
     /// The engine holds the current configuration and swaps it as a unit, so
-    /// asking it is what keeps a dialler from working off a registry that has
+    /// asking it is what keeps a dialer from working off a registry that has
     /// been replaced since the packet was routed.
     #[must_use]
     pub fn relay(
@@ -508,7 +508,7 @@ impl Engine {
     ///
     /// Read from the engine rather than from the configuration the daemon
     /// started with, because a netmap refresh replaces it: a node measuring
-    /// alternatives against a registry that has been withdrawn would be dialling
+    /// alternatives against a registry that has been withdrawn would be dialing
     /// relays its peers are no longer told about.
     #[must_use]
     pub fn relays(&self) -> Vec<crate::netmap::Relay> {
@@ -911,7 +911,7 @@ impl Engine {
         let roster = self.roster();
         for index in 0..roster.peers.len() {
             // A peer with neither a direct endpoint nor a relay path is not
-            // dialled: there is nowhere to send, and it is expected to contact
+            // dialed: there is nowhere to send, and it is expected to contact
             // us instead.
             if self.via(&roster, index).is_none() {
                 continue;
@@ -1028,7 +1028,7 @@ impl Engine {
     /// Shared by [`Self::outbound`], which arrives here after routing and the
     /// ACL, and by the Bedrock head claim, which is not an IP packet and so has
     /// neither. Keeping one sealing path means a control frame cannot acquire
-    /// different framing, replay or counter behavior from tunnelled traffic by
+    /// different framing, replay or counter behavior from tunneled traffic by
     /// drifting apart from it.
     fn send_sealed(
         &self,
@@ -1171,7 +1171,7 @@ impl Engine {
     /// Compare a peer's head claim against this node's chain.
     ///
     /// Returns `true` when the payload was a claim and has been handled, so the
-    /// caller knows not to treat it as a tunnelled packet.
+    /// caller knows not to treat it as a tunneled packet.
     ///
     /// **A divergence does not tear the session down.** Both nodes verified
     /// their peer against a valid chain, and the fault is the server's; cutting
@@ -1846,7 +1846,7 @@ impl Engine {
     ) {
         // Karst inner control frames are multiplexed ahead of the IP path.
         // The marker byte is zero, which is not a legal IP version, so this
-        // cannot shadow a tunnelled packet — and it is inside the AEAD, unlike
+        // cannot shadow a tunneled packet — and it is inside the AEAD, unlike
         // the transport's outer type byte.
         if self.on_head_claim(peer, packet) {
             return;
@@ -2278,12 +2278,12 @@ impl Engine {
 
     /// Karst's own file-transfer control frames (GitHub issue #212) —
     /// checked right after the Bedrock head claim and before the
-    /// tunnelled-IP-packet path, for the same reason: both ride the
+    /// tunneled-IP-packet path, for the same reason: both ride the
     /// zero-marker inner control channel inside the AEAD
     /// (`crate::filetransfer`'s module doc).
     ///
     /// Returns `true` when the payload was a file-transfer frame and has
-    /// been handled, so the caller knows not to treat it as a tunnelled
+    /// been handled, so the caller knows not to treat it as a tunneled
     /// packet.
     fn on_file_transfer_frame(
         &self,

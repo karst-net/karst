@@ -608,12 +608,12 @@ fn a_tcp_conversation_crosses_a_real_utun_in_both_directions() {
     let target: SocketAddr = format!("{OVERLAY_TUN}:{SERVICE_PORT}")
         .parse()
         .expect("target");
-    let mut tunnelled = socks_connect_when_ready(proxy, target, &both);
+    let mut tunneled = socks_connect_when_ready(proxy, target, &both);
 
-    tunnelled.write_all(&request).expect("send the request");
-    tunnelled.flush().expect("flush the request");
+    tunneled.write_all(&request).expect("send the request");
+    tunneled.flush().expect("flush the request");
     let mut received = vec![0u8; PAYLOAD];
-    tunnelled.read_exact(&mut received).unwrap_or_else(|e| {
+    tunneled.read_exact(&mut received).unwrap_or_else(|e| {
         panic!(
             "reading the reply back through the utun: {e}{}",
             report(&both)

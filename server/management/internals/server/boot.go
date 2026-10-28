@@ -254,7 +254,7 @@ func (s *BaseServer) ReverseProxyGRPCServer() *nbgrpc.ProxyServiceServer {
 }
 
 // agentNetworkSynthesizerAdapter implements nbgrpc.AgentNetworkSynthesizer by
-// delegating to the agentnetwork package's store-backed synthesiser.
+// delegating to the agentnetwork package's store-backed synthesizer.
 type agentNetworkSynthesizerAdapter struct {
 	store store.Store
 }

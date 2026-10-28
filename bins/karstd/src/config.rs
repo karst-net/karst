@@ -473,7 +473,7 @@ pub struct NodeSection {
     ///
     /// `"auto"` — the default — discovers a NAT64 prefix by RFC 7050, and only
     /// on a node that both listens on IPv6 and holds no IPv4 address. `"off"`
-    /// never synthesises. A prefix such as `"64:ff9b::/96"` uses that one.
+    /// never synthesizes. A prefix such as `"64:ff9b::/96"` uses that one.
     /// See [`crate::nat64`] for what each gate is protecting against.
     #[serde(default)]
     pub nat64: crate::nat64::Mode,
@@ -909,7 +909,7 @@ pub struct Peer {
     /// `None` for a static TOML roster, which has no coordination server to
     /// publish through, and for a peer that has not chosen one. Only a
     /// registry id of the right width survives: a value of any other length
-    /// names no relay in `relays` and could only be dialled by guessing.
+    /// names no relay in `relays` and could only be dialed by guessing.
     pub home_relay: Option<[u8; karst_relay_proto::consts::ID_LEN]>,
 }
 
@@ -1626,7 +1626,7 @@ impl Peer {
         let identity_addresses = allowed_ips.clone();
 
         // An endpoint the server does not know is not an error: a peer behind
-        // NAT is expected to contact us rather than be dialled.
+        // NAT is expected to contact us rather than be dialed.
         let endpoint = if entry.endpoint.is_empty() {
             None
         } else {

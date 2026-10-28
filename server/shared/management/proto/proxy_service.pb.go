@@ -291,7 +291,7 @@ type ProxyCapabilities struct {
 	// Whether the proxy is running embedded in the netbird client and serving
 	// exclusively over the WireGuard tunnel (i.e. `netbird proxy` rather than
 	// the standalone netbird-proxy binary). Surfaces upstream so dashboards can
-	// distinguish per-peer / private clusters from centralised ones.
+	// distinguish per-peer / private clusters from centralized ones.
 	Private *bool `protobuf:"varint,4,opt,name=private,proto3,oneof" json:"private,omitempty"`
 	// Whether the proxy enforces ProxyMapping.private (fails closed on ValidateTunnelPeer failure). Management MUST NOT stream private mappings to proxies that don't claim this.
 	SupportsPrivateService *bool `protobuf:"varint,5,opt,name=supports_private_service,json=supportsPrivateService,proto3,oneof" json:"supports_private_service,omitempty"`
@@ -679,7 +679,7 @@ type MiddlewareConfig struct {
 	Id      string         `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Enabled bool           `protobuf:"varint,2,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	Slot    MiddlewareSlot `protobuf:"varint,3,opt,name=slot,proto3,enum=management.MiddlewareSlot" json:"slot,omitempty"`
-	// Free-form JSON unmarshalled by the middleware factory into its own typed
+	// Free-form JSON unmarshaled by the middleware factory into its own typed
 	// config struct. Empty / null / {} are valid (zero-value config).
 	ConfigJson []byte                    `protobuf:"bytes,4,opt,name=config_json,json=configJson,proto3" json:"config_json,omitempty"`
 	FailMode   MiddlewareConfig_FailMode `protobuf:"varint,5,opt,name=fail_mode,json=failMode,proto3,enum=management.MiddlewareConfig_FailMode" json:"fail_mode,omitempty"`

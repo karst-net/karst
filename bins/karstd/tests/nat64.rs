@@ -12,7 +12,7 @@
 //! **This file exists because the whole-aquifer row cannot see whether it did.**
 //! `an_ipv6_only_node_behind_nat64_reaches_an_ipv4_mesh` passes with the
 //! receive-side translation removed, and that is not a flaw in the row — with
-//! two nodes there is nothing for the mistake to break. The synthesised address
+//! two nodes there is nothing for the mistake to break. The synthesized address
 //! is one the NAT64 node really can reach, so its own paths keep working; what
 //! breaks is what it *tells other people*, and telling requires a third node.
 //!
@@ -37,7 +37,7 @@
 //! whatever that socket says the source was.
 //!
 //! `::/96` is the prefix, for the reason that file records: it embeds `0.0.0.1`
-//! as `::1`, so synthesised addresses are ones loopback already carries and no
+//! as `::1`, so synthesized addresses are ones loopback already carries and no
 //! translator is needed to make the round trip real.
 
 #![allow(
@@ -62,7 +62,7 @@ const KEY: [u8; 32] = [0x5A; 32];
 const OUR_ID: &[u8] = &[0xA1; 32];
 const THEIR_ID: &[u8] = &[0xB2; 32];
 
-/// A prefix whose synthesised addresses loopback already routes — see the
+/// A prefix whose synthesized addresses loopback already routes — see the
 /// module docs.
 fn prefix() -> Nat64Prefix {
     "::/96".parse().expect("::/96 is a legal prefix")

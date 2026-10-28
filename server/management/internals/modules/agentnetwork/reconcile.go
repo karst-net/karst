@@ -10,8 +10,8 @@ import (
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
-// reconcile recomputes the synthesised reverse-proxy services for an
-// account, diffs them against the previously-synthesised set in the
+// reconcile recomputes the synthesized reverse-proxy services for an
+// account, diffs them against the previously-synthesized set in the
 // in-memory cache, and emits Create / Update / Delete proxy mappings
 // to the affected clusters. Also triggers a peer-side network-map
 // recompute via accountManager.UpdateAccountPeers so the
@@ -40,7 +40,7 @@ func (m *managerImpl) reconcile(ctx context.Context, accountID string) {
 
 	services, err := SynthesizeServices(ctx, m.store, accountID)
 	if err != nil {
-		log.WithContext(ctx).WithError(err).Warnf("agent-network reconcile: synthesise services for account %s", accountID)
+		log.WithContext(ctx).WithError(err).Warnf("agent-network reconcile: synthesize services for account %s", accountID)
 		return
 	}
 
@@ -115,7 +115,7 @@ func currentClusterChanged(prev, cur *proto.ProxyMapping) bool {
 
 // clusterFromMapping returns the cluster the mapping should be sent
 // to. ProxyMapping doesn't carry the cluster directly, so we rely on
-// the synthesised service's domain (`<slug>.<cluster>`) and split on
+// the synthesized service's domain (`<slug>.<cluster>`) and split on
 // the first '.'.
 func clusterFromMapping(m *proto.ProxyMapping) string {
 	if m == nil {

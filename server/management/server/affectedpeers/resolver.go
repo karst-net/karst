@@ -30,14 +30,14 @@ import (
 	"github.com/netbirdio/netbird/route"
 )
 
-// agentNetworkSynthesizer returns the account's synthesised (never-persisted)
+// agentNetworkSynthesizer returns the account's synthesized (never-persisted)
 // agent-network reverse-proxy services. It is registered at boot via
 // SetAgentNetworkSynthesizer to avoid an import cycle (agentnetwork → account →
 // affectedpeers). nil when agent-network is not wired, in which case only
 // persisted services are considered.
 var agentNetworkSynthesizer func(ctx context.Context, s store.Store, accountID string) ([]*rpservice.Service, error)
 
-// SetAgentNetworkSynthesizer registers the agent-network service synthesiser.
+// SetAgentNetworkSynthesizer registers the agent-network service synthesizer.
 // Called once during boot, before any request is served.
 func SetAgentNetworkSynthesizer(fn func(ctx context.Context, s store.Store, accountID string) ([]*rpservice.Service, error)) {
 	agentNetworkSynthesizer = fn
@@ -139,8 +139,8 @@ func (snap *Snapshot) loadDNS(ctx context.Context, s store.Store, accountID stri
 
 // loadProxyServices loads the embedded-proxy cluster index, and the services only
 // when the account actually has embedded proxy peers. Both the persisted
-// reverse-proxy services and the synthesised agent-network services are loaded:
-// agent-network services are never persisted, so without synthesising them here
+// reverse-proxy services and the synthesized agent-network services are loaded:
+// agent-network services are never persisted, so without synthesizing them here
 // collectFromProxyServices can't fold the embedded proxy peer into the affected
 // set when a client's group changes, and the proxy never learns a newly
 // authorized client until it reconnects (full network-map resync).
@@ -162,7 +162,7 @@ func (snap *Snapshot) loadProxyServices(ctx context.Context, s store.Store, acco
 	if serr != nil {
 		// Non-fatal: fall back to persisted services. The next full
 		// network-map resync still converges the proxy.
-		log.WithContext(ctx).Warnf("affectedpeers: synthesise agent-network services for account %s: %v", accountID, serr)
+		log.WithContext(ctx).Warnf("affectedpeers: synthesize agent-network services for account %s: %v", accountID, serr)
 		return nil
 	}
 	snap.services = append(snap.services, synth...)

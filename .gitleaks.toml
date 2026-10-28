@@ -43,7 +43,7 @@ paths = [
 description = "Published cross-implementation test vectors"
 paths = ['''^spec/vectors/''']
 
-# Build artefacts. Absent from a fresh CI checkout; present when the scan is
+# Build artifacts. Absent from a fresh CI checkout; present when the scan is
 # run locally, where a dependency's own test key would otherwise be reported.
 [[allowlists]]
 description = "Build output"

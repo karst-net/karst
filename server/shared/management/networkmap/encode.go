@@ -232,7 +232,7 @@ func ConvertToProtoNameServerGroup(nsGroup *nbdns.NameServerGroup) *proto.NameSe
 	return protoGroup
 }
 
-// DNSConfigCache is the cache contract for amortising NameServerGroup
+// DNSConfigCache is the cache contract for amortizing NameServerGroup
 // proto-conversion across peers in the same account. Server uses a concrete
 // implementation; client passes nil (no cross-peer caching needed when
 // rebuilding a single NetworkMap from an envelope).
@@ -243,7 +243,7 @@ type DNSConfigCache interface {
 
 // ToProtocolDNSConfig converts nbdns.Config to proto.DNSConfig. If cache is
 // non-nil, NameServerGroup proto values are cached by NSG.ID across calls —
-// the server amortises this across peers, the client passes nil.
+// the server amortizes this across peers, the client passes nil.
 func ToProtocolDNSConfig(update nbdns.Config, cache DNSConfigCache, forwardPort int64) *proto.DNSConfig {
 	protoUpdate := &proto.DNSConfig{
 		ServiceEnable:    update.ServiceEnable,

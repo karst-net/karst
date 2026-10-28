@@ -36,7 +36,7 @@ func serviceIDs(svcs []*rpservice.Service) []string {
 	return ids
 }
 
-// loadProxyServices must merge the synthesised agent-network services (which are
+// loadProxyServices must merge the synthesized agent-network services (which are
 // never persisted) with the persisted ones, so the proxy-affected expansion can
 // see agent-network AccessGroups. Without this the embedded proxy peer is never
 // flagged on a client group change and only a full resync (restart) recovers.
@@ -58,10 +58,10 @@ func TestLoadProxyServices_MergesSynthesizedAgentNetworkServices(t *testing.T) {
 
 	ids := serviceIDs(snap.services)
 	assert.Contains(t, ids, "persisted-rp-svc", "persisted services must be kept")
-	assert.Contains(t, ids, "agent-net-svc-acc", "synthesised agent-network service must be merged in")
+	assert.Contains(t, ids, "agent-net-svc-acc", "synthesized agent-network service must be merged in")
 }
 
-// With no synthesiser registered, loadProxyServices falls back to persisted
+// With no synthesizer registered, loadProxyServices falls back to persisted
 // services only (no panic, no behavior change for non-agent-network builds).
 func TestLoadProxyServices_NoSynthesizerRegistered(t *testing.T) {
 	prev := agentNetworkSynthesizer
@@ -77,7 +77,7 @@ func TestLoadProxyServices_NoSynthesizerRegistered(t *testing.T) {
 	assert.Equal(t, []string{"persisted"}, serviceIDs(snap.services))
 }
 
-// No embedded proxy peers → skip entirely (don't even call the synthesiser).
+// No embedded proxy peers → skip entirely (don't even call the synthesizer).
 func TestLoadProxyServices_NoEmbeddedProxyPeersSkips(t *testing.T) {
 	prev := agentNetworkSynthesizer
 	t.Cleanup(func() { agentNetworkSynthesizer = prev })
@@ -90,6 +90,6 @@ func TestLoadProxyServices_NoEmbeddedProxyPeersSkips(t *testing.T) {
 	s := &fakeProxyStore{proxyByCluster: map[string][]string{}}
 	snap := &Snapshot{}
 	require.NoError(t, snap.loadProxyServices(context.Background(), s, "acc"))
-	assert.False(t, called, "synthesiser must not run for accounts without embedded proxy peers")
+	assert.False(t, called, "synthesizer must not run for accounts without embedded proxy peers")
 	assert.Empty(t, snap.services)
 }

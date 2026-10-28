@@ -294,7 +294,7 @@ endpoint = "192.0.2.20:51820"
 allowed_ips = ["10.77.0.2/32"]
 ```
 
-`endpoint` is optional. A peer without one is never dialled but can still
+`endpoint` is optional. A peer without one is never dialed but can still
 connect inbound, and its address is learned from the handshake — that is the
 arrangement for a peer behind NAT. At least one side of every pair needs one.
 
@@ -411,7 +411,7 @@ outcome than an error —
 Two things about this deployment that are worth watching once, so that the
 behavior is familiar before it happens in production:
 
-```sh walkthrough=none reason="interactive (watch, docker compose logs -f); the runner asserts the same lease behaviour without them"
+```sh walkthrough=none reason="interactive (watch, docker compose logs -f); the runner asserts the same lease behavior without them"
 # The roster's mtime advances every 25s while its contents stay byte-identical.
 watch -n5 'stat -c "%y %s" state/roster.toml'
 
@@ -1138,4 +1138,4 @@ Everything found by review and not yet fixed is in
 | Annotated node configuration | [docs/karstd-example.toml](karstd-example.toml) |
 | Subnet routers and exit nodes: prerequisites, NAT modes, privacy, recovery | [docs/subnet-routers-and-exit-nodes.md](subnet-routers-and-exit-nodes.md) |
 | The co-located deployment in detail | [deploy/compose/README.md](../deploy/compose/README.md) |
-| Reporting a vulnerability, with an explicit safe harbour | [SECURITY.md](../SECURITY.md) |
+| Reporting a vulnerability, with an explicit safe harbor | [SECURITY.md](../SECURITY.md) |

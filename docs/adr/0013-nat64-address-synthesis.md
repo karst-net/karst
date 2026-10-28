@@ -43,19 +43,19 @@ does not is confined to its own segment.
 
 ### 1. Translate at the socket boundary, in both directions
 
-The datapath socket synthesises `prefix::v4` on every send to an IPv4 address,
+The datapath socket synthesizes `prefix::v4` on every send to an IPv4 address,
 and extracts the IPv4 address back out of every source that arrives within the
 prefix. Nothing above the socket is aware that either happened.
 
 **Alternative rejected: translate where each address is used.** The engine,
 AVEN's candidate list, the endpoint printed by `karst status`, and the
 reassembler's source key would each have had to know about prefixes. That is
-four places to keep consistent and four places for a synthesised address to
+four places to keep consistent and four places for a synthesized address to
 leak from.
 
 The decisive argument is what a leak costs. `aven-v1.md` §7.2 has a node hand
 back the source it saw as `Pong.observed`, and the peer publishes that as its
-own reflexive candidate. A synthesised address escaping there means an IPv4 peer
+own reflexive candidate. A synthesized address escaping there means an IPv4 peer
 advertising, to the entire mesh, an address that exists only inside one other
 node's network. GitHub issue [#50](https://github.com/karst-net/karst/issues/50) is precisely this failure in its other spelling —
 a v4-mapped address rather than a prefixed one — and the fix for it put
@@ -72,15 +72,15 @@ strings. Both are rewritten at the point the configuration becomes real
 §9.1's latency measurements, §9.2's moves — dials an address that works without
 any of them knowing why.
 
-**A hostname is left alone, in both.** DNS64 synthesises for names already; that
-is what it is for. Only a literal arrives at a node unsynthesised, because
+**A hostname is left alone, in both.** DNS64 synthesizes for names already; that
+is what it is for. Only a literal arrives at a node unsynthesized, because
 nothing looked it up.
 
 ### 3. Learn the prefix by PREF64 where possible, RFC 7050 otherwise, gated twice
 
 `node.nat64` takes `"auto"` (the default), `"off"`, or a literal prefix.
 `"auto"` solicits routers for an RFC 8781 PREF64 option and, failing that,
-resolves `ipv4only.arpa` for AAAA and takes the prefix out of the synthesised
+resolves `ipv4only.arpa` for AAAA and takes the prefix out of the synthesized
 answer — but only after two gates:
 
 1. **The datapath socket must be IPv6.** `node.listen` decides the address
@@ -89,7 +89,7 @@ answer — but only after two gates:
    rewrite every *reachable* destination into an unreachable one.
 2. **The host must hold no IPv4 address of its own.** This is not an
    optimization. A host with working IPv4 and a NAT64 translator would, if it
-   synthesised, route every IPv4 flow through the translator — and so learn a
+   synthesized, route every IPv4 flow through the translator — and so learn a
    reflexive address belonging to the translator rather than to itself,
    advertise it, and be reached there by peers that could have reached it
    directly.
@@ -137,7 +137,7 @@ confidentiality — and it is why the mechanism is gated rather than eager.
 bits 64–71 are reserved and must be zero, so an address straddling them is split
 around the gap, and five of the six lengths do straddle.
 
-Assuming /96 for a prefix that is not one does not fail — it synthesises a
+Assuming /96 for a prefix that is not one does not fail — it synthesizes a
 well-formed address for the wrong host, and the only symptom is that nothing
 answers. So a length the standard does not define is refused at configuration
 time with the standard's own reason.
@@ -157,7 +157,7 @@ itself proves nothing.
   IPv4 address for a node that has none, which is what makes the translation
   node-local rather than a protocol change.
 - **The whole-aquifer row cannot verify the receive half.** With extraction
-  deleted the row still passes: a synthesised address is one the NAT64 node
+  deleted the row still passes: a synthesized address is one the NAT64 node
   really can reach, so its own paths keep working, and what breaks is only what
   it tells *other* nodes. Observing that needs a third node.
   `bins/karstd/tests/nat64.rs` observes it directly instead, with a real socket

@@ -15,6 +15,6 @@
 # moved to the heap — but the *test* futures are large by construction and
 # boxing every test body would be noise rather than a fix.
 #
-# Release builds are unaffected: the optimiser collapses the nesting. This is a
+# Release builds are unaffected: the optimizer collapses the nesting. This is a
 # debug-build test-harness accommodation and nothing more. FINDINGS 58.
 RUST_MIN_STACK = "16777216"

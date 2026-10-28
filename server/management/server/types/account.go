@@ -1706,7 +1706,7 @@ func (a *Account) injectServiceProxyPolicies(ctx context.Context, service *servi
 	a.injectPrivateServicePolicies(service, proxyPeers)
 }
 
-// injectPrivateServicePolicies synthesises an in-memory ACL: AccessGroups → cluster proxy peers on TCP 80/443.
+// injectPrivateServicePolicies synthesizes an in-memory ACL: AccessGroups → cluster proxy peers on TCP 80/443.
 func (a *Account) injectPrivateServicePolicies(svc *service.Service, proxyPeers []*nbpeer.Peer) {
 	if !svc.Private {
 		return
@@ -1718,7 +1718,7 @@ func (a *Account) injectPrivateServicePolicies(svc *service.Service, proxyPeers 
 		return
 	}
 	// A service's AccessGroups can name groups that no longer exist — persisted
-	// services and the agent-network synthesiser both carry the ids verbatim from
+	// services and the agent-network synthesizer both carry the ids verbatim from
 	// their own state. An unresolvable source authorizes nothing, so drop it here
 	// rather than let the network-map assembly resolve it to a nil group.
 	sources := a.existingGroupIDs(svc.AccessGroups)
