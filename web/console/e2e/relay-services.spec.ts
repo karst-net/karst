@@ -67,6 +67,10 @@ test("publication preview is read only and activation requires acknowledgment", 
 });
 
 test("explicit Relay association preserves backend identity and supports removal", async ({ page }) => {
+  // Other browser tests reset the shared mock, including its endpoint registry.
+  // Own both sides of this association so a reset cannot remove our backend.
+  const endpoint = { id: "association-ponor", address: "203.0.113.42:443", region: "West", health: { admission_state: "confirmed" } };
+  await page.route("**/api/karst/v1/relays", route => route.fulfill({ json: [endpoint] }));
   let services: Record<string, unknown>[] = [];
   let submitted: Record<string, unknown> | undefined;
   await page.route("**/api/karst/v1/relay-services**", async (route) => {
@@ -85,17 +89,18 @@ test("explicit Relay association preserves backend identity and supports removal
   await page.getByRole("button", { name: "Add legacy association", exact: true }).click();
   await expect(page.getByLabel("Ponor endpoint")).toHaveValue("");
   await page.getByLabel("Service name").fill("primary");
-  await page.getByLabel("Ponor endpoint").selectOption({ index: 1 });
-  const ponorID = await page.getByLabel("Ponor endpoint").inputValue();
+  await page.getByLabel("Ponor endpoint").selectOption(endpoint.id);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.getByRole("button", { name: "Create service" }).click();
   await expect(page.getByRole("cell", { name: "primary", exact: true })).toBeVisible();
-  expect(submitted).toEqual({ id: "primary", ponor_id: ponorID });
+  expect(submitted).toEqual({ id: "primary", ponor_id: endpoint.id });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Remove configuration" }).click();
   await expect(page.getByRole("cell", { name: "primary", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Configure relay", exact: true })).not.toHaveCount(0);
+  const backend = page.locator("tbody tr").filter({ hasText: endpoint.address });
+  await expect(backend).toHaveCount(1);
+  await expect(backend.getByRole("button", { name: "Configure relay", exact: true })).toBeVisible();
 });
 
 test("missing Ponor registration remains visible for diagnosis", async ({ page }) => {
