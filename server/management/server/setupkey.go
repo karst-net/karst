@@ -392,7 +392,15 @@ func (am *DefaultAccountManager) RotateBootstrapKey(ctx context.Context, account
 // may issue an invitation into their own delegated subtree even without the
 // account-wide SetupKeys grant -- that delegation is the whole point of
 // having subdomains at all.
-func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, accountID, userID, name string, groups []string, domainID string) (*types.SetupKey, error) {
+//
+// assignedUserID is who the invitation is for, validated here the same way
+// issuer is validated below; the actual ownership assignment at redemption
+// and the console-facing display of this value both live in Karst's own
+// layer (internals/karst/api/invitations.go), not here, per ADR-0009.
+// reusable/usageLimit let an invitation enroll more than one device (the
+// CI/fleet case Auth Keys used to cover) -- a one-off invitation ignores
+// usageLimit and is always capped to exactly one use, same as before.
+func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, accountID, userID, name string, groups []string, domainID string, assignedUserID string, reusable bool, usageLimit int) (*types.SetupKey, error) {
 	if domainID == "" {
 		root, err := am.Store.GetAccountRootDomain(ctx, store.LockingStrengthNone, accountID)
 		if err != nil {
@@ -422,11 +430,20 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 	if name == "" || len(name) > 100 || len(groups) == 0 || len(groups) > 100 {
 		return nil, status.Errorf(status.InvalidArgument, "provide a device label and 1 to 100 access groups")
 	}
-	// A device invitation is always one-off (SetupKeyOneOff below), so this
-	// name becomes the enrolling device's real mesh DNS label -- not just
-	// console bookkeeping (see LoginPeer / handleSetupKeyAddedPeer). Reject it
-	// early, at the point where the admin can still correct it, rather than
-	// silently handing back a mangled or meaningless label at enrollment.
+	if usageLimit < 0 {
+		return nil, status.Errorf(status.InvalidArgument, "usage limit must not be negative")
+	}
+	if !reusable {
+		usageLimit = 1
+	}
+	assignedUserID = strings.TrimSpace(assignedUserID)
+	if assignedUserID == "" {
+		return nil, status.Errorf(status.InvalidArgument, "an invitation must be assigned to a user")
+	}
+	// A one-off device invitation's name becomes the enrolling device's real
+	// mesh DNS label (see LoginPeer / handleSetupKeyAddedPeer). Reusable
+	// invitations use the same name as a base with unique DNS labels for
+	// subsequent devices, so validate it before issuing either kind.
 	if label, err := nbdns.GetParsedDomainLabel(name); err != nil || strings.Trim(label, "-") == "" {
 		return nil, status.Errorf(status.InvalidArgument, "device name must contain at least one letter or digit valid in a DNS label")
 	}
@@ -451,6 +468,13 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 		if issuer.AccountID != accountID || issuer.IsBlocked() || issuer.PendingApproval {
 			return status.NewPermissionDeniedError()
 		}
+		assignee, err := tx.GetUserByUserID(ctx, store.LockingStrengthNone, assignedUserID)
+		if err != nil {
+			return status.Errorf(status.InvalidArgument, "assigned user not found")
+		}
+		if assignee.AccountID != accountID || assignee.IsBlocked() || assignee.PendingApproval {
+			return status.Errorf(status.InvalidArgument, "assigned user is not an active member of this account")
+		}
 		if err := validateSetupKeyAutoGroups(ctx, tx, accountID, groups); err != nil {
 			return err
 		}
@@ -467,7 +491,11 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 		if recent >= 20 {
 			return status.Errorf(status.TooManyRequests, "too many invitations; wait before issuing another")
 		}
-		key, plain = types.GenerateSetupKey(name, types.SetupKeyOneOff, 24*time.Hour, groups, 1, false, false)
+		keyType := types.SetupKeyOneOff
+		if reusable {
+			keyType = types.SetupKeyReusable
+		}
+		key, plain = types.GenerateSetupKey(name, keyType, 24*time.Hour, groups, usageLimit, false, false)
 		key.AccountID = accountID
 		key.InvitationIssuerID = userID
 		key.DomainID = domainID

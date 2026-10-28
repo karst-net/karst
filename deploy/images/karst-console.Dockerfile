@@ -16,7 +16,7 @@
 # /api-client, /auth); portal is a sibling workspace member but is not part
 # of this image, and pnpm install is fine with its directory simply absent.
 
-FROM node:22-bookworm AS build
+FROM node:24.12.0-bookworm AS build
 WORKDIR /src
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
@@ -27,7 +27,12 @@ ARG KARST_VERSION=development
 ENV KARST_VERSION=${KARST_VERSION}
 RUN corepack pnpm --filter @karst-net/console build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.28-alpine
+ARG KARST_VERSION=development
+ARG KARST_REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/karst-net/karst" \
+      org.opencontainers.image.version="${KARST_VERSION}" \
+      org.opencontainers.image.revision="${KARST_REVISION}"
 COPY --from=build /src/console/dist /usr/share/nginx/html
 # A plain SPA static server. Edge concerns (TLS, gzip, /config.json's
 # no-cache override, and the /auth, /management, /api, /releases and

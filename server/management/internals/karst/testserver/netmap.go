@@ -52,10 +52,11 @@ const (
 )
 
 type memoryAccount struct {
-	mu    sync.Mutex
-	peers map[string]*nbpeer.Peer
-	order []string
-	next  int
+	dualStack bool
+	mu        sync.Mutex
+	peers     map[string]*nbpeer.Peer
+	order     []string
+	next      int
 	// updates drives the deprovisioning push (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)). Nil in every
 	// mode but the end-to-end deprovisioning check — set from main.go, once
 	// buildNetmapServer has returned an account to attach it to.
@@ -83,6 +84,9 @@ func (m *memoryAccount) register(handle, hostname string) *nbpeer.Peer {
 		UserID:    "fixture-user",
 		DNSLabel:  hostname,
 		IP:        netip.AddrFrom4([4]byte{100, 64, 0, byte(m.next)}),
+	}
+	if m.dualStack {
+		p.IPv6 = netip.MustParseAddr(fmt.Sprintf("fd42:6b61:7273::%x", m.next))
 	}
 	m.peers[handle] = p
 	m.order = append(m.order, handle)
@@ -377,7 +381,7 @@ func relayRow(address string, key []byte) *proto.KarstRelay {
 	}
 }
 
-func buildNetmapServer(preload int, dnsZone string, sshPolicy string) (*router, error) {
+func buildNetmapServer(preload int, dnsZone string, sshPolicy string, gatewayVerification ...bool) (*router, error) {
 	// This in-memory, shared-cache database now takes real concurrent
 	// write traffic it did not before — every connected node's session
 	// Opened/Touched/Closed calls (GitHub issue #109's
@@ -413,6 +417,8 @@ func buildNetmapServer(preload int, dnsZone string, sshPolicy string) (*router, 
 	}
 
 	account := newMemoryAccount()
+	verifyGateway := len(gatewayVerification) > 0 && gatewayVerification[0]
+	account.dualStack = verifyGateway
 
 	// A policy the Rust side can check it received: the preloaded peers may
 	// reach this node on 22, and may reach the routing fixture's isolated
@@ -434,9 +440,13 @@ func buildNetmapServer(preload int, dnsZone string, sshPolicy string) (*router, 
 	case "deny":
 		sshBlock = `, "ssh": []`
 	}
+	destinations := `"*:22", "10.99.0.0/24:22"`
+	if verifyGateway {
+		destinations += `, "*:53", "fd99::/64:22", "fd99::/64:53"`
+	}
 	doc, err := policy.Parse([]byte(`{
-	  "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:22", "10.99.0.0/24:22"] } ]` + sshBlock + `
-	}`))
+      "acls": [ { "action": "accept", "src": ["*"], "dst": [` + destinations + `] } ]` + sshBlock + `
+    }`))
 	if err != nil {
 		return nil, fmt.Errorf("policy: %w", err)
 	}

@@ -5,7 +5,7 @@
 # shape as ../../compose/prod/docker-compose.yml: the console and Keycloak
 # share one externally-forwarded port, karst-control is not published to the
 # host at all (only reachable from Caddy over a private network), and
-# control/relay are pinned by image digest to a cosign-verified release
+# control/relay/console are pinned by image digest to a cosign-verified release
 # rather than a mutable tag. See that compose file's own header comment for
 # why this shape exists (ADR pentest / real production posture, not
 # disposable test infra) -- unchanged by running it under Nomad instead of
@@ -13,7 +13,7 @@
 #
 # Networking is split, matching compose's own architecture rather than
 # flattening everything to the host:
-#   - control, keycloak: join the pre-created `karst` Docker network
+#   - control, keycloak, console: join the pre-created `karst` Docker network
 #     (`docker network create karst`, once) with a network alias, same as
 #     compose's bridge network + service-name DNS. No ports published to the
 #     host at all -- control is genuinely unreachable except from Caddy, and
@@ -21,7 +21,7 @@
 #   - relay: network_mode = "host". It needs the real host port 443 and has
 #     no service-to-service dependency on the others (it only reads shared
 #     state files), so there's nothing it needs the `karst` network for.
-#   - caddy: on the `karst` network (to resolve control/keycloak by name,
+#   - caddy: on the `karst` network (to resolve control/keycloak/console by name,
 #     exactly as the Caddyfile expects) *and* publishes host port 33073.
 # This is why control/keycloak must NOT also use host networking: under host
 # networking every task shares one real network namespace, so control's own
@@ -45,7 +45,7 @@ variable "node_name" {
 variable "repo_root" {
   type        = string
   default     = "/home/adrian/code/karst"
-  description = "Checkout root, for web/console/dist and web/portal/dist (Caddy serves these as static assets, same as compose)."
+  description = "Checkout root for web/portal/dist, served by Caddy. The console is a versioned container."
 }
 
 variable "shared_state_dir" {
@@ -79,14 +79,17 @@ variable "control_image_digest" {
 }
 
 variable "relay_image_digest" {
-  type        = string
-  default     = "sha256:45a72850a7f3864c5200f3d147998f8e291c0ceb8aaa5f81e045a3eba93c1404"
+  type    = string
+  default = "sha256:45a72850a7f3864c5200f3d147998f8e291c0ceb8aaa5f81e045a3eba93c1404"
 }
 
-variable "console_image" {
+variable "console_image_digest" {
   type        = string
-  default     = "local/karst-console:0996bc9"
-  description = "Not yet a published, cosign-verified artefact like control/relay above -- built locally from deploy/images/karst-console.Dockerfile (web/ as context) against whatever web/console revision was current. Rebuild and bump this for a newer admin console."
+  description = "Required sha256 digest of ghcr.io/karst-net/karst-console, verified with Cosign against the release tag; see README.md."
+  validation {
+    condition     = strlen(var.console_image_digest) == 71 && substr(var.console_image_digest, 0, 7) == "sha256:"
+    error_message = "The console image must be an immutable sha256 image digest."
+  }
 }
 
 variable "karst_console_host" {
@@ -228,7 +231,7 @@ job "karst" {
       driver = "docker"
 
       config {
-        image           = var.console_image
+        image           = "ghcr.io/karst-net/karst-console@${var.console_image_digest}"
         network_mode    = var.docker_network
         network_aliases = ["console"]
       }

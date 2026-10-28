@@ -962,9 +962,10 @@ auth key) once authentication works.
 
 ### 8.3 Guided client enrollment
 
-In the administrative console, open **Machines → Add machine** or **First-run
-setup**. Enter a device label, select its access groups, and click **Create
-invitation**. Copy the invitation and give it privately to the intended recipient.
+In the administrative console, open **Machines → Add machine**. Enrollment and
+invitation history live alongside machine management and status in Machines;
+existing `#/enroll` links open this same tab. Assign a user, enter a device label,
+select its access groups, and click **Create invitation**. Copy the invitation and give it privately to the intended recipient.
 It authorizes one device, expires in 24 hours, and is displayed only on creation.
 Pending invitations can be revoked from the same screen; history is retained.
 

@@ -4,7 +4,7 @@
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-const routes = ["enroll", "domains", "machines", "access", "keys", "users", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "connections", "billing", "settings"];
+const routes = ["enroll", "domains", "machines", "access", "users", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "connections", "billing", "settings"];
 
 for (const route of routes) {
   test(`${route} has no accessibility violations`, async ({ page }) => {
@@ -64,86 +64,44 @@ test("posture opens on exceptions, worst first", async ({ page }) => {
   expect(statuses[0]).toContain("stale");
 });
 
-test("policy validation and save are keyboard accessible", async ({ page }) => {
+test("access grants use group pickers and require review", async ({ page }) => {
   await page.goto("/#/access");
-  await page.getByLabel("Policy document").focus();
-  await page.keyboard.press("ControlOrMeta+A");
-  await page.keyboard.type('{ "acls": [] }');
-  await page.getByRole("button", { name: "Validate policy" }).focus();
+  await expect(page.getByRole("heading", {name:"Groups & access", exact:true})).toBeVisible();
+  await expect(page.getByLabel("Policy document")).toHaveCount(0);
+  await page.getByRole("button", {name:"Add access grant",exact:true}).click();
+  await page.getByRole("textbox",{name:"Name",exact:true}).fill("Engineering web");
+  await page.getByRole("group",{name:"Allowed groups",exact:true}).getByRole("checkbox",{name:"sre",exact:true}).check();
+  await page.getByRole("group",{name:"Destination groups",exact:true}).getByRole("checkbox",{name:"engineering",exact:true}).check();
+  await page.getByLabel("Ports",{exact:true}).selectOption("web");
+  await page.getByRole("button",{name:"Review access changes",exact:true}).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toContainText("Policy is valid");
-  await page.getByRole("button", { name: "Save policy" }).focus();
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toContainText("Policy saved");
+  await expect(page.getByRole("dialog",{name:"Review access changes",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Apply access changes",exact:true})).toBeDisabled();
+  await page.getByRole("checkbox",{name:"I reviewed the access changes.",exact:true}).check();
+  await page.getByRole("button",{name:"Apply access changes",exact:true}).click();
+  await expect(page.getByRole("status")).toContainText("Access changes saved");
 });
 
-test("policy syntax errors surface their line number", async ({ page }) => {
-  await page.goto("/#/access");
-  // `.fill()` targets an <input>/<textarea> value directly; the policy
-  // document is a CodeMirror 6 editor (issue #128) whose content is a
-  // `contenteditable` div, not either of those, so `.fill()` raced
-  // CodeMirror's own view update and intermittently left the field's
-  // original content in place — the same keyboard-driven interaction the
-  // "keyboard accessible" test above already uses is what actually reaches
-  // the editor reliably.
-  await page.getByLabel("Policy document").focus();
-  await page.keyboard.press("ControlOrMeta+A");
-  await page.keyboard.type('{\n  "acls": [],\n}');
-  await page.getByRole("button", { name: "Validate policy" }).click();
-  await expect(page.getByLabel("Policy diagnostics")).toContainText("line 3");
+test("access defaults to no selected source or destination", async ({ page }) => {
+  await page.goto("/#/groups/access");
+  await page.getByRole("button",{name:"Add access grant",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Review access changes",exact:true})).toBeDisabled();
+  await expect(page.getByRole("dialog").getByRole("checkbox",{checked:true})).toHaveCount(0);
 });
 
-test("setup requires a label and groups and refuses issuance over HTTP", async ({ page }) => {
+test("setup requires a label, groups, and assignee and refuses issuance over HTTP", async ({ page }) => {
  await page.goto("/#/enroll");
  await expect(page.getByRole("button", { name: "Create invitation" })).toBeDisabled();
  await page.getByLabel("Device name").fill("Laptop");
  await page.getByRole("checkbox", { name: "sre", exact: true }).check();
+ await expect(page.getByRole("button", { name: "Create invitation" })).toBeDisabled();
+ await page.getByLabel("Assign to user").selectOption("user-sre");
  await page.getByRole("button", { name: "Create invitation" }).click();
  await expect(page.getByRole("alert")).toContainText("HTTPS");
 });
 
-test("auth-key creation is keyboard accessible", async ({ page }) => {
-  await page.goto("/#/keys");
-  await page.getByRole("button", { name: "Create auth key" }).focus();
-  await page.keyboard.press("Enter");
-  // showModal() puts focus inside the dialog, so the form is reachable by
-  // typing alone from here — no pointer, and no tabbing back out to find it.
-  await page.getByLabel("Key name").fill("laptop-alice");
-  await page.getByRole("button", { name: "Issue auth key" }).focus();
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toContainText("Copy this key now");
-  await expect(page.getByLabel("New auth key")).toHaveValue("setup-fixture-secret");
-});
-
-test("a created auth key appears in the list with its state and usage", async ({ page }) => {
-  await page.goto("/#/keys");
-  await page.getByRole("button", { name: "Create auth key" }).click();
-  await page.getByLabel("Key name").fill("ci-runners");
-  await page.getByLabel("Key type").selectOption("reusable");
-  // Usage limit only exists for a reusable key: a one-off with a limit of 5
-  // would be a contradiction the server has to reject.
-  await page.getByLabel("Usage limit (0 for unlimited)").fill("5");
-  await page.getByRole("button", { name: "Issue auth key" }).click();
-  await page.getByRole("button", { name: "Done" }).click();
-  const row = page.locator("tbody tr").filter({ hasText: "ci-runners" });
-  await expect(row).toContainText("reusable");
-  await expect(row).toContainText("0 / 5");
-  await expect(row).toContainText("valid");
-});
-
-test("an auth key can be revoked without being deleted", async ({ page }) => {
-  await page.goto("/#/keys");
-  await page.getByRole("button", { name: "Create auth key" }).click();
-  await page.getByLabel("Key name").fill("temporary");
-  await page.getByRole("button", { name: "Issue auth key" }).click();
-  await page.getByRole("button", { name: "Done" }).click();
-  page.on("dialog", (dialog) => dialog.accept());
-  await page.locator("tbody tr").filter({ hasText: "temporary" }).getByRole("button", { name: "Revoke" }).click();
-  await expect(page.getByRole("status")).toContainText("was revoked");
-  // Still listed, and still says what happened to it. A key that vanished on
-  // revocation would leave nothing to answer "was this one ever used?".
-  await expect(page.locator("tbody tr").filter({ hasText: "temporary" })).toContainText("revoked");
-});
+// Invitation issuance, keyboard submission, reusable usage counts, and
+// retained revocation records are covered in invitations.spec.ts.
 
 test("a machine can be renamed", async ({ page }) => {
   await page.goto("/#/machines");
@@ -186,13 +144,28 @@ test("a machine's mesh domain can be shown and changed", async ({ page }) => {
 test("adding a machine opens the invitation flow", async ({ page }) => {
   await page.goto("/#/machines");
   await page.getByRole("button", { name: "Add machine" }).click();
-  await expect(page.getByRole("heading", { name: "Add device", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Add machine", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/#\/machines\/add$/);
+  await expect(page.getByRole("heading", { name: "Machines", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Machines", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("link", { name: "Add device", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Device name")).toBeVisible();
-  await expect(page.getByText("No account or identity-provider login is needed.", { exact: false })).toBeVisible();
+  await expect(page.getByLabel("Domain", { exact: true })).toHaveCount(1);
+  await expect(page.getByText("No identity-provider login is needed to enroll.", { exact: false })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Device name")).toBeVisible();
+  await page.getByRole("button", { name: "View machines", exact: true }).click();
+  await expect(page).toHaveURL(/#\/machines$/);
+  await page.goBack();
+  await expect(page.getByLabel("Device name")).toBeVisible();
+  await page.goto("/#/enroll");
+  await expect(page.getByRole("heading", { name: "Machines", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add machine", exact: true })).toHaveAttribute("aria-pressed", "true");
+
 });
 
 test("a machine's paths show sent/received totals, not just kind and endpoint", async ({ page }) => {
-  await page.goto("/#/machines");
+  await page.goto("/#/machines/status");
   await page.locator("tbody tr").filter({ hasText: "sre-laptop" }).getByRole("button", { name: "Paths" }).click();
   const row = page.locator("dialog[open] tbody tr").first();
   await expect(row).toContainText("relay");
@@ -305,7 +278,8 @@ test("groups can be created and renamed, and provider groups cannot", async ({ p
 
 test("a relay with a DNS name for an address is refused before it is sent", async ({ page }) => {
   await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Ponor endpoints" }).click();
+  await expect(page.getByRole("button", { name: "Add relay", exact: true })).toBeVisible();
+  const rowsBefore = await page.locator("tbody tr").count();
   await page.getByRole("button", { name: "Add relay" }).click();
   await page.getByLabel("Relay address").fill("relay.example.com:443");
   await page.getByLabel("TLS server name").fill("relay.example.com");
@@ -313,28 +287,27 @@ test("a relay with a DNS name for an address is refused before it is sent", asyn
   await page.getByRole("button", { name: "Add relay" }).nth(1).click();
   // karstd parses this with SocketAddr, which does not resolve. A name here is
   // not one bad relay — it is a netmap every node rejects in full.
-  await expect(page.getByRole("status")).toContainText("must be an IP address and port");
-  // Fixture count, not a magic number: the rejected add must leave the
-  // table exactly as it was. ADR-0048 added a third fixture relay
-  // (declared, no location, detected) to exercise location provenance.
-  await expect(page.locator("tbody tr")).toHaveCount(3);
+  await expect(page.getByRole("alert")).toContainText("must be an IP address and port");
+  await expect(page.locator("tbody tr")).toHaveCount(rowsBefore);
 });
 
 test("a relay can be added and removed", async ({ page }) => {
   await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Ponor endpoints" }).click();
   await page.getByRole("button", { name: "Add relay" }).click();
   await page.getByLabel("Relay address").fill("203.0.113.9:443");
   await page.getByLabel("TLS server name").fill("relay-new.example.test");
   await page.getByLabel("Relay identity key").fill("fixture-public-key-new");
   await page.getByLabel("Relay region").fill("ap-south");
   await page.getByRole("button", { name: "Add relay" }).nth(1).click();
-  await expect(page.getByRole("status")).toContainText("was added");
+  await expect(page.getByRole("status")).toContainText("Endpoint registered");
+  await expect(page.getByLabel("Registered relay", { exact: true }).locator("option:checked")).toContainText("203.0.113.9:443");
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
   const row = page.locator("tbody tr").filter({ hasText: "203.0.113.9:443" });
   await expect(row).toBeVisible();
   page.on("dialog", (dialog) => dialog.accept());
-  await row.getByRole("button", { name: "Remove" }).click();
-  await expect(page.getByRole("status")).toContainText("was removed");
+  await row.getByRole("button", { name: "Endpoint details" }).click();
+  await page.getByRole("button", { name: "Remove endpoint" }).click();
+  await expect(page.getByRole("status")).toContainText("Relay endpoint removed");
   await expect(page.locator("tbody tr").filter({ hasText: "203.0.113.9:443" })).toHaveCount(0);
 });
 
@@ -448,11 +421,10 @@ test("a personal access token is shown once and can be revoked", async ({ page }
   await expect(page.getByRole("status")).toContainText("was revoked");
 });
 
-test("policy tests report which expectation failed", async ({ page }) => {
+test("legacy access is retained and shown without an editable policy", async ({page}) => {
   await page.goto("/#/access");
-  await page.getByRole("button", { name: "Test policy" }).click();
-  await expect(page.getByRole("status")).toContainText("Access tests failed");
-  await expect(page.getByLabel("Policy tests")).toContainText("expected deny, got allow");
+  await expect(page.getByLabel("Existing access",{exact:true})).toContainText("tag:prod:22");
+  await expect(page.getByLabel("Policy document")).toHaveCount(0);
 });
 
 test("Escape closes a create dialog without submitting it", async ({ page }) => {
@@ -485,15 +457,15 @@ test("user deprovisioning surfaces the console result without a timing assertion
   await expect(page.getByRole("status")).toContainText("deprovisioned");
 });
 
-test("policy history can be viewed and restored", async ({ page }) => {
+test("access history requires a reviewed change before restoration", async ({ page }) => {
   await page.goto("/#/access");
-  await expect(page.getByRole("heading", { name: "Version history" })).toBeVisible();
-  const oldVersion = page.locator("tbody tr").filter({ hasText: "user-sre" });
-  await oldVersion.getByRole("button", { name: "View" }).click();
-  await expect(page.getByRole("status")).toContainText("Viewing version 6");
-  page.on("dialog", (dialog) => dialog.accept());
-  await oldVersion.getByRole("button", { name: "Restore" }).click();
-  await expect(page.getByRole("status")).toContainText("version 6 restored");
+  await expect(page.getByRole("heading", { name: "Change history" })).toBeVisible();
+  await page.getByRole("button",{name:"Review version 6",exact:true}).click();
+  await expect(page.getByRole("dialog",{name:"Review access changes",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Apply access changes",exact:true})).toBeDisabled();
+  await page.getByRole("checkbox",{name:"I reviewed the access changes.",exact:true}).check();
+  await page.getByRole("button",{name:"Apply access changes",exact:true}).click();
+  await expect(page.getByRole("status")).toContainText("Access changes saved");
 });
 
 const uncovered = ["node-0001-karst-fixture-handle", "node-0049-karst-fixture-handle"];
@@ -506,7 +478,7 @@ test.afterEach(async ({ page }) => { await setUncovered(page, uncovered); await 
 
 test("empty-account list views explain what happens next", async ({ page }) => {
   await setFixture(page, true);
-  for (const [route, title] of [["machines", "No machines yet"], ["keys", "No auth keys"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No Relay services configured"]]) {
+  for (const [route, title] of [["machines", "No machines yet"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No relays configured"]]) {
     await page.goto(`/#/${route}`);
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
   }

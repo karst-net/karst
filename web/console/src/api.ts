@@ -23,7 +23,7 @@ export class ApiError extends Error {
 //
 // The shared transport renews expired sessions before sending requests and
 // redirects to login when renewal fails or the renewed token is rejected.
-async function http<T>(url: string, init?: RequestInit): Promise<T> {
+async function http<T>(url: string, init?: RequestInit, observe?: (response: Response) => void): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
   const response = await authenticatedFetch(url, { ...init, headers });
@@ -31,6 +31,7 @@ async function http<T>(url: string, init?: RequestInit): Promise<T> {
     const error = await response.json().catch(() => ({ message: response.statusText })) as Record<string, unknown>;
     throw new ApiError(typeof error.message === "string" ? error.message : "The server rejected this request.", response.status, error);
   }
+  observe?.(response);
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
@@ -80,7 +81,7 @@ async function auditExport(format: "json" | "csv"): Promise<AuditPage["items"] |
 
 // ── the fork's resources ─────────────────────────────────────────────────────
 // These live on the management API rather than /karst/v1. Karst owns nodes,
-// policy, relays, Bedrock, posture and audit; users, groups, keys, routes and
+// policy, relays, Bedrock, posture and audit; users, groups, routes and
 // nameservers are the fork's and are reused as they are (ADR-0009).
 
 export type DeviceInvitation = {
@@ -89,6 +90,7 @@ export type DeviceInvitation = {
   expires_at: string; created_at: string; redeemed_at?: string; credential?: string;
   /** The mesh domain (ADR-0032) the enrolling device will be placed in, or absent for the account root. */
   domain_id?: string;
+  assigned_user_id?: string; reusable?: boolean; usage_limit?: number; used_times?: number;
 };
 
 // A mesh domain (ADR-0032) an admin can place devices into, and organize
@@ -103,27 +105,12 @@ export type RootRenamePreview = { root_id: string; old_suffix: string; new_suffi
 // can show what subtree a delegation covers without a second lookup.
 export type DomainDelegation = { id: string; domain_id: string; domain_path: string; user_id: string };
 
-export type SetupKeyType = "one-off" | "reusable";
-export type SetupKey = {
-  id: string;
-  name: string;
-  key: string;
-  type: SetupKeyType;
-  expires: string;
-  revoked: boolean;
-  /** "valid" | "overused" | "expired" | "revoked" — the server's own word for it. */
-  state?: string;
-  usage_limit?: number;
-  used_times?: number;
-  auto_groups?: string[];
-  ephemeral?: boolean;
-  last_used?: string | null;
-};
-export type SetupKeyDraft = { name: string; type: SetupKeyType; expires_in: number; usage_limit: number; auto_groups: string[]; ephemeral: boolean };
-
 export type AccountUser = { id: string; name: string; email: string; role: string; status: string; is_current?: boolean; is_blocked: boolean; auto_groups?: string[]; issued?: string; last_login?: string | null };
 
-export type Group = { id: string; name: string; peers_count: number; resources_count: number; issued?: string };
+export type ManagedRelayService = RelayService & { access_managed?: boolean; allowed_groups?: string[]; gateway_handle?: string; exit_ipv4?: boolean; exit_ipv6?: boolean; metric?: number; revision?: number };
+export type Group = { id: string; name: string; peers_count: number; resources_count: number; issued?: string; peers?: Array<{ id: string; name: string }>; resources?: Array<{ id: string; type: string }> };
+
+export type GroupSnapshot = { group: Group; revision: string };
 
 export type Nameserver = { ip: string; ns_type: "udp"; port: number };
 export type NameserverGroup = { id: string; name: string; description: string; nameservers: Nameserver[]; enabled: boolean; groups: string[]; primary: boolean; domains: string[]; search_domains_enabled: boolean };
@@ -172,7 +159,7 @@ export const api = {
   invitations: () => request<DeviceInvitation[]>("/invitations"),
   // domainId places the enrolling device in that mesh domain (ADR-0032)
   // rather than the account's implicit root; omit it for prior behavior.
-  createInvitation: (name: string, groups: string[], domainId?: string) => request<DeviceInvitation>("/invitations", { method: "POST", body: body({ name, groups, domain_id: domainId || undefined }) }),
+  createInvitation: (name: string, groups: string[], domainId: string, forUserId: string, options?: { reusable: boolean; usageLimit: number }) => request<DeviceInvitation>("/invitations", { method: "POST", body: body({ name, groups, domain_id: domainId || undefined, for_user_id: forUserId, reusable: options?.reusable, usage_limit: options?.usageLimit }) }),
   revokeInvitation: (id: string) => request<DeviceInvitation>(`/invitations/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
 
   // ── mesh domains ───────────────────────────────────────────────────────────
@@ -188,7 +175,7 @@ export const api = {
   enrollmentMetadata: () => request<EnrollmentMetadata>("/me/enrollment"),
   enroll: () => request<EnrollmentGrant>("/me/devices/enroll", { method: "POST" }),
   // ── machines ───────────────────────────────────────────────────────────────
-  nodes: () => request<NodePage>("/nodes?limit=100"),
+  nodes: (cursor?: string) => request<NodePage>(`/nodes?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
   node: (handle: string) => request<NodePage["items"][number]>(`/nodes/${encodeURIComponent(handle)}`),
   nodePaths: (handle: string) => request<{ observed_at: string; paths: Array<{ peer_handle: string; kind: string; endpoint: string | null; relay_id: string | null; since: string | null; observed_at: string; tx_bytes: number; rx_bytes: number }> }>(`/nodes/${encodeURIComponent(handle)}/paths`),
   // Only name and domain_id (ADR-0032). The contract rejects a PATCH
@@ -244,8 +231,10 @@ export const api = {
   previewRelayPublication: () => request<RelayService[]>("/relay-services/publication/preview", { method: "POST" }),
   setRelayPublication: (mode: RelayPublication["mode"]) => request<RelayPublication>("/relay-services/publication", { method: "PUT", body: body({ mode, acknowledge_connectivity_change: true }) }),
   setRelayServiceModes: (id: string, ponorEnabled: boolean) => request<RelayService>(`/relay-services/${encodeURIComponent(id)}/modes`, { method: "PUT", body: body({ ponor_enabled: ponorEnabled, acknowledge_connectivity_change: true }) }),
-  relayServices: () => request<RelayServiceView[]>("/relay-services"),
-  addRelayService: (service: RelayService) => request<RelayService>("/relay-services", { method: "POST", body: body(service) }),
+  relayServices: () => request<Array<RelayServiceView & ManagedRelayService>>("/relay-services"),
+  addRelayService: (service: ManagedRelayService) => request<RelayService>("/relay-services", { method: "POST", body: body(service) }),
+  relayAdmissionTargets: () => request<Array<{ relay_id: string; refreshed_at: string }>>("/relay-services/admission-targets"),
+  setRelayAccess: (service: ManagedRelayService) => request<ManagedRelayService>(`/relay-services/${encodeURIComponent(service.id)}/access`, { method: "PUT", body: body({ ...service, acknowledge_access_change: true }) }),
   removeRelayService: (id: string) => request<void>(`/relay-services/${encodeURIComponent(id)}`, { method: "DELETE" }),
   relays: () => request<Relay[]>("/relays"),
   addRelay: (entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: RelayLocation }) => request<Relay>("/relays", { method: "POST", body: body(entry) }),
@@ -290,14 +279,6 @@ export const api = {
   addAllowedRegion: (entry: AllowedRegion) => request<AllowedRegion>("/regions", { method: "POST", body: body(entry) }),
   removeAllowedRegion: (provider: string, region: string) => request<void>(`/regions/${encodeURIComponent(provider)}/${encodeURIComponent(region)}`, { method: "DELETE" }),
 
-  // ── auth keys ──────────────────────────────────────────────────────────────
-  setupKeys: () => management<SetupKey[]>("/setup-keys"),
-  createSetupKey: (draft: SetupKeyDraft) => management<SetupKey>("/setup-keys", { method: "POST", body: body(draft) }),
-  // The fork's PUT is the revocation path: it takes revoked and auto_groups,
-  // and nothing else about a key is mutable once it exists.
-  revokeSetupKey: (key: SetupKey) => management<SetupKey>(`/setup-keys/${encodeURIComponent(key.id)}`, { method: "PUT", body: body({ revoked: true, auto_groups: key.auto_groups ?? [] }) }),
-  deleteSetupKey: (id: string) => management<void>(`/setup-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
-
   // ── users ──────────────────────────────────────────────────────────────────
   users: () => management<AccountUser[]>("/users"),
   currentUser: () => management<AccountUser>("/users/current"),
@@ -320,7 +301,16 @@ export const api = {
   // ── groups ─────────────────────────────────────────────────────────────────
   groups: () => management<Group[]>("/groups"),
   createGroup: (name: string) => management<Group>("/groups", { method: "POST", body: body({ name, peers: [] }) }),
-  renameGroup: (id: string, name: string) => management<Group>(`/groups/${encodeURIComponent(id)}`, { method: "PUT", body: body({ name }) }),
+  group: (id: string) => management<Group>(`/groups/${encodeURIComponent(id)}`),
+  groupPeers: () => management<Array<{ id: string; name: string }>>("/peers"),
+  groupForEdit: async (id: string): Promise<GroupSnapshot> => {
+    let revision: string | null = null;
+    const group = await http<Group>(`/api${withAccountOverride(`/groups/${encodeURIComponent(id)}`)}`, undefined, response => { revision = response.headers.get("ETag"); });
+    if (!revision) throw new Error("This server does not support safe group edits. Upgrade the control server before changing membership or names.");
+    return { group, revision };
+  },
+  renameGroup: (snapshot: GroupSnapshot, name: string) => management<Group>(`/groups/${encodeURIComponent(snapshot.group.id)}`, { method: "PUT", headers: { "If-Match": snapshot.revision }, body: body({ name, peers: snapshot.group.peers?.map(peer => peer.id) ?? [], resources: snapshot.group.resources ?? [] }) }),
+  setGroupMembers: (snapshot: GroupSnapshot, peers: string[]) => management<Group>(`/groups/${encodeURIComponent(snapshot.group.id)}`, { method: "PUT", headers: { "If-Match": snapshot.revision }, body: body({ name: snapshot.group.name, peers, resources: snapshot.group.resources ?? [] }) }),
   deleteGroup: (id: string) => management<void>(`/groups/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── DNS ────────────────────────────────────────────────────────────────────

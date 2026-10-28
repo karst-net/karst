@@ -64,7 +64,7 @@ const kinds = Object.keys(kindGlyph);
 
 const healthState = (health?: string): StatusState => health === "confirmed" ? "healthy" : health === "stale" ? "warning" : "unknown";
 
-// Matches the Relays page's own mapping (views/relays.tsx) -- the drill-down
+// Matches the Relays page's own mapping (views/relay-services.tsx) -- the drill-down
 // dialog for a relay shows the same health ADR-0021 already derives, not a
 // second opinion on it. Only relays carry this richer, telemetry-backed
 // shape; every other kind's detail comes straight from the NocComponent

@@ -113,7 +113,9 @@ func (s NodeSource) All() ([]Entry, error) {
 type Config struct {
 	// Usage optionally publishes durable attribution references. Nil preserves
 	// the existing roster format and does not query the usage ledger.
-	Usage *UsageConfig
+	// AfterWrite renews capability proof only after the roster was replaced.
+	AfterWrite func() error
+	Usage      *UsageConfig
 	// Path to the roster file. Empty disables the refresher entirely.
 	Path string
 	// AquiferPrefix optionally namespaces every derived aquifer value as
@@ -230,7 +232,13 @@ func (r *Refresher) Once() error {
 			versions[entry.AccountID] = mapping
 		}
 	}
-	return WriteFile(r.cfg.Path, render(entries, r.cfg.AquiferPrefix, versions))
+	if err := WriteFile(r.cfg.Path, render(entries, r.cfg.AquiferPrefix, versions)); err != nil {
+		return err
+	}
+	if r.cfg.AfterWrite != nil {
+		return r.cfg.AfterWrite()
+	}
+	return nil
 }
 
 // Render returns the TOML the relay parses.

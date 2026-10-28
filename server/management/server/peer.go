@@ -1053,8 +1053,10 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 			if user.AccountID != accountID || user.IsBlocked() || user.PendingApproval {
 				return nil, nil, nil, false, status.Errorf(status.PermissionDenied, "enrollment owner is not eligible")
 			}
-			// Membership policy supplies groups, never an untrusted request.
-			if owner != "" {
+			// Portal enrollment follows current membership groups. Invitations
+			// retain the groups explicitly authorized by their issuer; assigning
+			// a recipient changes ownership, not the invitation's access scope.
+			if owner != "" && !peerAddConfig.SetupKeyIsInvitation {
 				memberEnrollment = true
 				peerAddConfig.GroupsToAdd = slices.Clone(user.AutoGroups)
 			}
@@ -1912,6 +1914,10 @@ func (am *DefaultAccountManager) ExpandAndUpdateAffected(ctx context.Context, ac
 // context's cancellation up front.
 func (am *DefaultAccountManager) dispatchAffected(ctx context.Context, accountID string, snaps []*affectedpeers.Snapshot, changes []affectedpeers.Change) {
 	ctx = context.WithoutCancel(ctx)
+	if am.karstRegistryAccess(ctx, accountID) {
+		am.UpdateAccountPeers(ctx, accountID, types.UpdateReason{Resource: types.UpdateResourcePolicy, Operation: types.UpdateOperationUpdate})
+		return
+	}
 
 	var lists [][]string
 	for i, snap := range snaps {

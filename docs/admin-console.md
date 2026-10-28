@@ -49,18 +49,12 @@ Compliance-conditioned access remains a follow-up capability.
 
 ## Groups and access-rule cross-references
 
-- **The "Access rules" column on the Groups page is a name match, not a
-  foreign key.** The access policy document has its own, independent
-  `"groups"` map (`"group:name"` → a list of user identifiers), defined
-  inside the JSON document itself. It is unrelated storage from the fork's
-  own group records this page manages — the two line up only when an admin
-  names them the same way. Renaming a group here never edits the policy
-  document; the console says so in the rename dialog.
-- **Deferred: a real cross-reference.** Making group renames propagate into
-  the policy document (or the policy document look up group membership from
-  the fork's own store instead of its own literal user list) is a design
-  change to how `Document.Groups` works, not a console feature — tracked as
-  a possible future policy-format change, not started.
+New form-managed grants reference account group IDs and resolve live device
+membership. Renames preserve access. The Groups view links to the same grants
+and Relay configuration that determine effective access. Legacy JSON policy
+names remain independent until explicitly mapped through the reviewed migration
+form; see ADR-0058 and the form-managed access section below. No automatic
+name-based migration is performed.
 
 ## SIEM / audit sinks
 
@@ -249,3 +243,163 @@ Compliance-conditioned access remains a follow-up capability.
   than guessing a stale mode. No console settings UI for this yet — a
   separate, later concern, same posture as this page's own missing
   per-pool drill-down above.
+
+## Form-managed access (#439)
+
+Groups and Access controls are consolidated into **Groups & access**, with Groups
+and Access grants views. New grants use stable account group IDs and live device
+membership. Select source groups, destination groups/machines or a configured
+Gateway network, ports, and any additional SSH permission. Review concrete access
+changes before applying. A concurrent policy update requires reload and reapply.
+Group renames preserve device membership and form-managed grants.
+
+Existing policy rules remain readable. Mapping a legacy policy group to a
+registry group is explicit and previewed; matching display names never triggers
+an automatic migration. Broad legacy rules remain effective until migrated.
+
+**Relays → Configure a relay** selects a registered running backend, allowed
+groups, optional IPv4/IPv6 exit service, an enrolled Linux Gateway and priority.
+Resource-owned exit grants appear in Access grants and are edited through the
+resource form. Its transaction saves the association, admission policy, routes
+and generated access grant together. Service revisions prevent stale edits.
+The form explicitly discloses the required all-port Gateway machine permission;
+it does not claim destination-only ingress isolation. Client exit consent and
+forwarding readiness are still required. This does not provision a new workload.
+
+Group restrictions require a live identity-bound roster writer. The default
+Compose bootstrap derives its public identity binding from the local relay
+binary and supplies `KARST_RELAY_ROSTER_ID_FILE`. Other installations can supply
+that identity file or `KARST_RELAY_ROSTER_ID` (registry ID in URL-safe base64).
+These are installation settings, not per-resource administrator configuration.
+Without the capability the form and API refuse restricted configuration.
+Admission normally converges within 30 seconds (25-second refresh plus 5-second
+relay poll). If the writer fails, the relay expires its last roster after 90
+seconds plus the next poll. Removing a managed association leaves admission
+closed. Existing legacy tenants on an explicitly shared backend keep their
+existing account boundary; unregistered tenants do not gain admission.
+
+See [ADR-0058](adr/0058-form-managed-group-and-resource-access.md) for migration,
+downgrade and Gateway ingress constraints.
+
+### Unified relay management
+
+**Relays** has one inventory for registered endpoints and their service
+configurations. Each configured relay shows its address, admission health,
+group-access status and internet-egress settings. Unassociated endpoints stay
+visible as **Not configured**, with a **Configure relay** action. Missing
+registrations remain visible for diagnosis. Shared legacy endpoints can still
+appear under multiple named configurations.
+
+**Add relay** registers a running endpoint and immediately opens group-access
+and exit configuration with that endpoint selected. Cancelling this second
+step leaves the registration visible. In service publication mode an
+unassociated endpoint is not published; in legacy mode registration can make
+it available account-wide. Registration does not provision a running process.
+Location is optional and does not require an authorized-location entry.
+
+**Endpoint details** shows transport and location information alongside the
+last signed health observation. Remove all configurations using an endpoint
+before deleting its registration. Removing a configuration preserves the
+endpoint and the running process. **Advanced publication and legacy settings**
+contains publication preview/activation, rollback, and legacy associations.
+These retain their existing connectivity acknowledgments. Endpoint details
+remain available when the service API fails; access is shown as unknown and
+deletion/configuration actions are disabled until that API recovers.
+
+### Deleting a group
+
+**Groups & access → Groups → Delete** opens an impact review with current machine
+membership and named dependencies. Access grants, legacy membership mappings,
+relay restrictions, Gateway routing/distribution/access assignments, DNS,
+automatic user assignments and active invitations must be resolved in their
+owning forms first. Disabled resources still count as dependencies.
+
+An unavailable dependency source blocks deletion. After resolving assignments,
+refresh the review and acknowledge deletion explicitly. The console reloads
+before deleting; changed membership or access requires another acknowledgment.
+The server independently rejects deletion while current form-managed policy or
+relay admission records reference the group, in addition to inherited management
+dependency checks. Historical policy versions are retained. Revoked, expired or
+exhausted invitations remain visible as history without blocking deletion;
+active invitations must be revoked first. Deleting a group never deletes its
+machines or automatically removes access grants.
+
+### Reviewing group membership changes
+
+**Groups & access → Groups → Members of …** selects machines by name. Review
+shows machines gaining and losing group access alongside the group's named
+resource assignments. Acknowledge that review before applying. Other groups
+and preserved legacy rules may independently permit access; this list does not
+claim to compute all effective access. Relay admission updates on its roster
+refresh, and internet egress still requires local client consent and Gateway
+readiness.
+
+Membership and rename forms save against the group revision loaded when the
+form opened. A conflicting edit is rejected without automatically retrying.
+**Reload latest group** discards the draft and loads current membership and
+assignments for another review. Changes to resource assignments also require
+a fresh acknowledgment. An older control server without revision support must
+be upgraded before these console forms can save safely. Existing API clients
+may continue using the replacement endpoint without the optional If-Match
+header; they retain their existing concurrency behavior.
+
+### Relay operational observations
+
+The Relays inventory shows named allowed groups and operational observations
+beside each managed configuration. A saved configuration is not proof that its
+rules have reached a relay or that internet egress works.
+
+Admission-writer observations use the server's identity-bound roster lease.
+The console polls every 15 seconds and ages the displayed observation every
+five seconds against the same 50-second lease boundary. Expired, malformed,
+future-dated or unavailable observations never appear healthy. A recent writer
+refresh establishes writer availability, not receipt of a particular policy
+revision or successful client traffic.
+
+IPv4 and IPv6 forwarding are shown separately. Match the configured public
+Gateway handle and that service's managed exit offer, then show the Gateway's
+control connection, offer enablement and per-offer readiness report. Node names,
+addresses, internal IDs and aggregate readiness are not binding evidence. An
+older control server without public handles shows unknown readiness until
+upgraded. Failed refreshes mark observations unavailable even if cached data
+previously reported ready. Registration and access editing remain available.
+
+Forwarding readiness is self-reported and has the freshness semantics of the
+Gateway inventory. A reported-ready offer still requires client exit consent,
+applicable policy, and working end-to-end connectivity. The console does not
+infer consent, provision workloads or change forwarding from these observations.
+
+### Local Relay installation handoff
+
+**Relays → Install a local relay** generates a download for the supported
+co-located reference Docker Compose deployment. Enter the existing public IP
+and port, certificate TLS name and region; optionally select a declared location
+and compatible Relay/control image tags or digests. Review the interruption:
+applying restarts control and Relay, and the generated admission writer denies
+legacy/unconfigured tenants until managed access is saved. Existing managed
+access remains enforced. Downloading does not start an installation.
+
+On the Linux control host, run the downloaded program with `--directory` pointing
+to the existing Compose directory. Its default invocation checks prerequisites;
+add `--apply` to install. It requires Python 3.11+, Compose v2, OpenSSL, the
+existing writable shared state and trusted Relay certificate/key. It generates
+the runtime configuration and identity-bound writer overlay, preserving existing
+secrets. It rejects unsupported control images, conflicting writers and registry
+or Compose bindings rather than rewriting them.
+
+Import `state/relay-install/receipt.json` through **Add relay → Installation
+receipt**, review the endpoint and register it. The public key is imported, not
+typed. A matching registered identity is reused. The next form selects allowed
+groups and optional IPv4/IPv6 internet egress through an explicitly enrolled
+Linux Gateway. Preview service publication if it is not enabled. Check the
+operational observations afterward; neither a receipt nor a running container
+proves forwarding or confirms an applied policy revision.
+
+Failures record `state/relay-install/status.json`, retain keys and permit retry
+with the same handoff. Earlier actions may have completed; no automatic rollback
+reopens access. Use `state/relay-install/compose.json` alongside the original
+Compose file for future lifecycle operations. Removing the overlay or downgrading
+the writer can bypass managed-only admission. This path supports one local Relay,
+not remote hosts, cloud/cluster provisioning, new TLS trust distribution or
+Gateway installation. Infrastructure connections remain discovery-only for this
+workflow. See ADR-0062 and the reference Compose guide.

@@ -21,7 +21,8 @@ function GroupSelect({ label, value, groups, onChange }: { label: string; value:
   </select></label>;
 }
 
-export function Routes() {
+export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "metrics" }) {
+  const [tab, setTab] = useState(defaultTab);
   const resource = useResource(api.routes);
   const groupResource = useResource(api.groups);
   const inventory = useResource(api.gateways);
@@ -66,11 +67,15 @@ export function Routes() {
 
   return <section>
     <h2>Gateways</h2>
-    <section aria-label="Configured Gateway nodes">
+    <nav aria-label="Gateways view" className="actions">
+      <button aria-pressed={tab === "manage"} onClick={() => setTab("manage")}>Manage</button>
+      <button aria-pressed={tab === "metrics"} onClick={() => setTab("metrics")}>Metrics</button>
+    </nav>
+    {tab === "metrics" ? <section aria-label="Configured Gateway nodes">
       <h3>Configured Gateway nodes</h3>
       <p className="lede">One enrolled node can serve subnet access and default-route egress together. Control connectivity is shown separately from forwarding readiness. Local exit consent and destination policy still apply.</p>
       <button onClick={inventory.reload}>Refresh Gateway inventory</button>
-      {inventory.loading ? <p>Loading Gateway inventory…</p> : inventory.error ? <><Failure message={`Gateway inventory unavailable: ${inventory.error}`} retry={inventory.reload} /><p>Route administration remains available below.</p></> : <>
+      {inventory.loading ? <p>Loading Gateway inventory…</p> : inventory.error ? <><Failure message={`Gateway inventory unavailable: ${inventory.error}`} retry={inventory.reload} /><p>Route administration remains available under Manage.</p></> : <>
         {inventory.value?.gateways.length ? <Rows head={<><th>Node</th><th>Configured behaviors</th><th>Recorded control connection</th><th>Forwarding readiness</th></>}>
           {inventory.value.gateways.map((gateway) => <tr key={gateway.node_id}>
             <td><strong>{gateway.name}</strong><br /><code>{gateway.node_id}</code><br /><button onClick={() => addBehavior([...new Set(routes.filter((route) => gateway.offers.some((offer) => offer.id === route.id)).flatMap((route) => route.peer_groups))])}>Add behavior to {gateway.name}</button></td>
@@ -82,33 +87,36 @@ export function Routes() {
         {Boolean(inventory.value?.unresolved_routes.length) && <p role="status">Routes without a visible eligible node: {inventory.value?.unresolved_routes.join(", ")}. Check routing groups and enrolled machines.</p>}
         {Boolean(inventory.value?.unsupported_routes.length) && <p role="status">Routes outside the CIDR Gateway model: {inventory.value?.unsupported_routes.join(", ")}.</p>}
       </>}
-    </section>
-    <h3>Gateway behaviors</h3>
-    <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled machines ("gateways") will carry traffic to it. Advertise a subnet or default route through enrolled gateway machines. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
-    <div className="actions">
-      <button className="primary" onClick={() => addBehavior()}>Add Gateway behavior</button>
-      <button onClick={() => setDraft({ value: fresh() })}>Add subnet route</button>
-      <button onClick={() => setDraft({ value: fresh("0.0.0.0/0") })}>Add IPv4 exit route</button>
-      <button onClick={() => setDraft({ value: fresh("::/0") })}>Add IPv6 exit route</button>
-    </div>
-    <Notice message={message} />
-    {routes.length === 0
-      ? <EmptyState title="No network routes">Add a subnet route or offer an exit route that clients may explicitly accept.</EmptyState>
-      : <Rows head={<><th>Identifier</th><th>Route</th><th>Gateways</th><th>Recipients</th><th>Access</th><th>State</th><th>Actions</th></>}>
-        {routes.map((route) => <tr key={route.id}>
-          <td><strong>{route.network_id}</strong>{route.description && <><br /><span className="lede">{route.description}</span></>}</td>
-          <td><strong>{isExit(route.network) ? "Exit" : "Subnet"}</strong><br /><code>{route.network}</code><br /><span className="lede">metric {route.metric}</span></td>
-          <td>{names(route.peer_groups)}</td>
-          <td>{names(route.groups)}</td>
-          <td>{names(route.access_control_groups ?? [])}</td>
-          <td><Status state={route.enabled ? "healthy" : "unknown"} label={route.enabled ? (isExit(route.network) ? "offered · client consent required" : "offered") : "disabled"} /></td>
-          <td><div className="actions">
-            <button onClick={() => edit(route)}>Edit</button>
-            <button onClick={() => toggle(route)}>{route.enabled ? "Disable" : "Enable"}</button>
-            <button className="danger" onClick={() => remove(route)}>Delete</button>
-          </div></td>
-        </tr>)}
-      </Rows>}
+    </section> : <>
+      <h3>Gateway behaviors</h3>
+      <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled machines ("gateways") will carry traffic to it. Advertise a subnet or default route through enrolled gateway machines. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
+      <div className="actions">
+        <button className="primary" onClick={() => addBehavior()}>Add Gateway behavior</button>
+        <button onClick={() => setDraft({ value: fresh() })}>Add subnet route</button>
+        <button onClick={() => setDraft({ value: fresh("0.0.0.0/0") })}>Add IPv4 exit route</button>
+        <button onClick={() => setDraft({ value: fresh("::/0") })}>Add IPv6 exit route</button>
+      </div>
+      <Notice message={message} />
+      {routes.length === 0
+        ? <EmptyState title="No network routes">Add a subnet route or offer an exit route that clients may explicitly accept.</EmptyState>
+        : <Rows head={<><th>Identifier</th><th>Route</th><th>Gateways</th><th>Recipients</th><th>Access</th><th>State</th><th>Actions</th></>}>
+          {routes.map((route) => <tr key={route.id}>
+            <td><strong>{route.network_id}</strong>{route.description && <><br /><span className="lede">{route.description}</span></>}</td>
+            <td><strong>{isExit(route.network) ? "Exit" : "Subnet"}</strong><br /><code>{route.network}</code><br /><span className="lede">metric {route.metric}</span></td>
+            <td>{names(route.peer_groups)}</td>
+            <td>{names(route.groups)}</td>
+            <td>{names(route.access_control_groups ?? [])}</td>
+            <td><Status state={route.enabled ? "healthy" : "unknown"} label={route.enabled ? (isExit(route.network) ? "offered · client consent required" : "offered") : "disabled"} /></td>
+            <td><div className="actions">
+              {route.id.startsWith("relay-exit-") ? <a href="#/relays">Configure in Relays</a> : <>
+              <button onClick={() => edit(route)}>Edit</button>
+              <button onClick={() => toggle(route)}>{route.enabled ? "Disable" : "Enable"}</button>
+              <button className="danger" onClick={() => remove(route)}>Delete</button>
+              </>}
+            </div></td>
+          </tr>)}
+        </Rows>}
+    </>}
 
     <Dialog open={Boolean(draft)} title={draft?.id ? "Edit Gateway behavior" : "Add Gateway behavior"} onClose={() => setDraft(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void save(); }}>

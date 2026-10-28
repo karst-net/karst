@@ -11,7 +11,7 @@ import { Locations } from "./locations";
 type Step = "domain" | "groups" | "locations";
 
 /** The console's actual first-run onboarding gate -- not to be confused
- *  with the "Add device" nav item (the old "setup" route), which is the
+ *  with the Machines enrollment tab (the old "setup" route), which is the
  *  device-enrollment/invite flow and has nothing to do with account
  *  onboarding. main.tsx renders only this component, with no sidebar at
  *  all, until GET /firstrun reports completed=true. */

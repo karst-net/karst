@@ -45,6 +45,7 @@ type gatewayOffer struct {
 
 type gatewayNode struct {
 	NodeID              string         `json:"node_id"`
+	NodeHandle          string         `json:"node_handle"`
 	Name                string         `json:"name"`
 	ControlConnected    bool           `json:"control_connected"`
 	ForwardingReadiness string         `json:"forwarding_readiness"`
@@ -108,7 +109,7 @@ func (h *handler) gateways(w http.ResponseWriter, r *http.Request) {
 		if p == nil {
 			continue
 		}
-		nodes[p.ID] = gatewayNode{NodeID: p.ID, Name: p.Name, ControlConnected: p.Status != nil && p.Status.Connected, Offers: []gatewayOffer{}}
+		nodes[p.ID] = gatewayNode{NodeID: p.ID, NodeHandle: p.Key, Name: p.Name, ControlConnected: p.Status != nil && p.Status.Connected, Offers: []gatewayOffer{}}
 	}
 	members := make(map[string][]string)
 	for _, group := range groups {

@@ -44,6 +44,10 @@ var (
 
 // Document is a policy as written.
 type Document struct {
+	// Grants use stable account group IDs, resolved against current membership.
+	Grants []Grant `json:"grants,omitempty"`
+	// GroupBindings explicitly migrate legacy policy names to registry groups.
+	GroupBindings map[string]string `json:"groupBindings,omitempty"`
 	// Groups maps "group:name" to a list of user identifiers.
 	Groups map[string][]string `json:"groups,omitempty"`
 	// TagOwners maps "tag:name" to the groups or users allowed to apply it.
@@ -86,7 +90,9 @@ type SshRule struct {
 // rule applies to it.
 type Node struct {
 	// Handle is the node's stable identifier and the value used in the filter.
-	Handle string
+	Handle   string
+	Inactive bool
+	GroupIDs []string
 	// User owns the node, e.g. "alice@example.com". Empty for a tagged node,
 	// which by convention has no user.
 	User string
@@ -137,6 +143,9 @@ func ErrorLocation(data []byte, err error) (line, column int) {
 // Validate checks the document for the mistakes that would otherwise compile
 // into a silently wrong filter.
 func (d *Document) Validate() error {
+	if err := d.validateGrants(); err != nil {
+		return err
+	}
 	for name := range d.Groups {
 		if !strings.HasPrefix(name, "group:") {
 			return fmt.Errorf("%w: group %q must be named group:something", ErrInvalid, name)
@@ -153,7 +162,7 @@ func (d *Document) Validate() error {
 			return fmt.Errorf("%w: tag %q has no owners", ErrInvalid, name)
 		}
 	}
-	for i, r := range d.ACLs {
+	for i, r := range d.packetRules() {
 		if r.Action != "accept" {
 			return fmt.Errorf("%w: acl %d has action %q; only \"accept\" exists",
 				ErrInvalid, i, r.Action)
@@ -177,7 +186,7 @@ func (d *Document) Validate() error {
 			}
 		}
 	}
-	for i, r := range d.Ssh {
+	for i, r := range d.sshRules() {
 		if r.Action != "accept" {
 			return fmt.Errorf("%w: ssh %d has action %q; only \"accept\" exists",
 				ErrInvalid, i, r.Action)
@@ -334,7 +343,7 @@ type Filter struct {
 func (d *Document) Compile(target Node, all []Node) (*Filter, error) {
 	f := &Filter{Node: target.Handle}
 
-	for i, rule := range d.ACLs {
+	for i, rule := range d.packetRules() {
 		for _, dst := range rule.Dst {
 			selector, ports, err := splitDst(dst)
 			if err != nil {
@@ -368,12 +377,12 @@ func (d *Document) Compile(target Node, all []Node) (*Filter, error) {
 // beyond ACLs. This mirrors the nil-vs-empty distinction compileFilter
 // already threads for "no policy loaded at all".
 func (d *Document) CompileSSH(target Node, all []Node) (*Filter, error) {
-	if d.Ssh == nil {
+	if d.Ssh == nil && !d.hasSSHGrants() {
 		return nil, nil
 	}
 
 	f := &Filter{Node: target.Handle}
-	for i, rule := range d.Ssh {
+	for i, rule := range d.sshRules() {
 		for _, dst := range rule.Dst {
 			if !d.matches(dst, target) {
 				continue // this rule does not grant ssh access to this node
@@ -449,7 +458,7 @@ type EgressFilter struct {
 func (d *Document) CompileEgress(target Node, all []Node) (*EgressFilter, error) {
 	f := &EgressFilter{Node: target.Handle}
 
-	for i, rule := range d.ACLs {
+	for i, rule := range d.packetRules() {
 		sourceTerm := d.matchingSource(rule.Src, target)
 		if sourceTerm == "" {
 			continue // this rule does not describe traffic from this node
@@ -584,6 +593,9 @@ func parseCIDRSelector(selector string) (string, bool) {
 // correct: a routed subnet is never the target of inbound traffic to *this*
 // node, only ever a destination this node's own egress may reach.
 func (d *Document) matches(selector string, n Node) bool {
+	if n.Inactive {
+		return false
+	}
 	switch {
 	case selector == Wildcard:
 		return true
@@ -594,7 +606,12 @@ func (d *Document) matches(selector string, n Node) bool {
 			}
 		}
 		return false
+	case strings.HasPrefix(selector, "group-id:"):
+		return contains(n.GroupIDs, strings.TrimPrefix(selector, "group-id:"))
 	case strings.HasPrefix(selector, "group:"):
+		if id, bound := d.GroupBindings[selector]; bound {
+			return contains(n.GroupIDs, id)
+		}
 		// A tagged node has no user, so it is never a member of a group. This
 		// is deliberate and matches Tailscale: tags replace user ownership
 		// rather than adding to it, so that a server's access does not follow

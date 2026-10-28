@@ -558,6 +558,54 @@ paths:
       responses:
         '204': {description: Association removed}
         default: {$ref: '#/components/responses/Error'}
+  /relay-services/admission-targets:
+    get:
+      operationId: listRelayAdmissionTargets
+      responses:
+        '200':
+          description: Registered backends with a live identity-bound admission writer.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [relay_id, refreshed_at]
+                  properties:
+                    relay_id: {type: string}
+                    refreshed_at: {type: string, format: date-time}
+  /relay-services/{serviceId}/access:
+    parameters:
+      - {name: serviceId, in: path, required: true, schema: {type: string}}
+    put:
+      operationId: updateRelayServiceAccess
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [allowed_groups, revision, acknowledge_access_change]
+              additionalProperties: false
+              properties:
+                id: {type: string}
+                ponor_id: {type: string}
+                access_managed: {type: boolean}
+                allowed_groups: {type: array, minItems: 1, items: {type: string}}
+                gateway_handle: {type: string}
+                exit_ipv4: {type: boolean}
+                exit_ipv6: {type: boolean}
+                metric: {type: integer, minimum: 1, maximum: 9999}
+                revision: {type: integer, minimum: 0}
+                acknowledge_access_change: {type: boolean, enum: [true]}
+      responses:
+        '200':
+          description: Access and optional exit configuration committed atomically.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RelayService'}
+        '409': {description: Service revision changed; reload before reapplying edits.}
+        '422': {description: Invalid group, Gateway identity, or missing live admission capability.}
   /relay-services/{serviceId}/modes:
     parameters:
       - {name: serviceId, in: path, required: true, schema: {type: string}}
@@ -1147,6 +1195,7 @@ components:
       required: [node_id, name, control_connected, forwarding_readiness, offers]
       properties:
         node_id: { type: string }
+        node_handle: { type: string, description: "Enrolled node public handle for explicit resource bindings. Optional for compatibility with older control servers; never infer it from names or addresses." }
         name: { type: string }
         control_connected: { type: boolean }
         forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: "Aggregated across this node's own offers, degraded-first." }
@@ -1512,7 +1561,7 @@ components:
       additionalProperties: false
       properties:
         mode: {type: string, enum: [legacy, services]}
-        schema_version: {type: integer, enum: [2], description: Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.}
+        schema_version: {type: integer, enum: [2, 3], description: Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.}
     RelayService:
       type: object
       required: [id, ponor_id]
@@ -1520,6 +1569,13 @@ components:
       properties:
         id: {type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}
         ponor_id: {type: string, minLength: 1, description: Existing account-local Ponor registry ID.}
+        access_managed: {type: boolean, default: false, description: Use live registry-group membership for relay admission. Requires a live identity-bound roster writer.}
+        allowed_groups: {type: array, items: {type: string}, description: Stable account group IDs permitted to use this backend.}
+        gateway_handle: {type: string, description: Explicitly selected enrolled Linux machine providing internet egress.}
+        exit_ipv4: {type: boolean, default: false}
+        exit_ipv6: {type: boolean, default: false}
+        metric: {type: integer, minimum: 1, maximum: 9999}
+        revision: {type: integer, minimum: 0, description: Expected service revision when updating access.}
         ponor_disabled: {type: boolean, default: false, description: Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.}
     RelayServiceView:
       allOf:

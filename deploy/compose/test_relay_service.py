@@ -42,6 +42,17 @@ class DeploymentTests(unittest.TestCase):
         with self.assertRaises(relay.Invalid):
             relay.manifest(path)
 
+    def test_console_installation_overlay_is_preserved_in_lifecycle_commands(self):
+        installed = self.state / "relay-install" / "compose.json"
+        installed.parent.mkdir()
+        installed.write_text("{}")
+        (installed.parent / "relay.toml").write_text("installed runtime config")
+        (self.state / "relay.toml").unlink()
+        (self.state / "relays.json").unlink()
+        relay.validate_material(self.directory, self.desired)
+        command = relay.compose_command(self.directory, ["up", "-d", "--no-deps", "relay"])
+        self.assertEqual(command[-6:], ["-f", str(installed), "up", "-d", "--no-deps", "relay"])
+
     def test_modes_reconcile_independently(self):
         self.assertEqual(relay.operations(self.desired), [["up", "-d", "--no-deps", "relay"]])
         self.desired["ponor"]["enabled"] = False

@@ -22,6 +22,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -189,6 +191,13 @@ const (
 const karstBootstrapKeyEnv = "KARST_BOOTSTRAP_SETUP_KEY_FILE"
 
 func main() {
+	// An installer probes the exact image without credentials, volumes or booting
+	// management. Older images reject the option instead of silently ignoring
+	// an environment variable that carries a new enforcement requirement.
+	if len(os.Args) == 2 && os.Args[1] == "--relay-installation-capabilities" {
+		fmt.Println("managed-roster-v1")
+		return
+	}
 	pol, err := loadPolicy()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
@@ -286,7 +295,18 @@ func main() {
 // which is the failure this exists to prevent and is remarkably hard to
 // diagnose from the relay's end. An operator who set nothing gets nothing.
 func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
+	requireManaged := false
+	if raw := os.Getenv("KARST_RELAY_REQUIRE_MANAGED"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			log.Fatalf("karst: KARST_RELAY_REQUIRE_MANAGED must be a boolean")
+		}
+		requireManaged = parsed
+	}
 	path := os.Getenv(karstRosterFileEnv)
+	if requireManaged && path == "" {
+		log.Fatalf("karst: managed-only admission requires a roster file")
+	}
 	if path == "" {
 		return
 	}
@@ -298,7 +318,30 @@ func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
 		}
 		interval = parsed
 	}
-	r, err := roster.New(roster.NodeSource{Nodes: k.Nodes}, roster.Config{
+	var source roster.Source = roster.NodeSource{Nodes: k.Nodes}
+	var refreshed func() error
+	relayID := os.Getenv("KARST_RELAY_ROSTER_ID")
+	if file := os.Getenv("KARST_RELAY_ROSTER_ID_FILE"); relayID == "" && file != "" {
+		raw, err := os.ReadFile(file)
+		if err == nil {
+			decoded, decodeErr := hex.DecodeString(strings.TrimSpace(string(raw)))
+			if decodeErr != nil || len(decoded) != 32 {
+				log.Fatalf("karst: invalid relay roster identity file")
+			}
+			relayID = base64.RawURLEncoding.EncodeToString(decoded)
+		} else if !os.IsNotExist(err) {
+			log.Fatalf("karst: relay roster identity: %v", err)
+		}
+	}
+	if requireManaged && relayID == "" {
+		log.Fatalf("karst: managed-only admission requires an explicit relay identity")
+	}
+	if relayID != "" {
+		source = scopedRelayRoster{source: source, store: k.RelayServices, relayID: relayID, requireManaged: requireManaged}
+		refreshed = func() error { return k.RelayServices.RefreshAdmissionLease(relayID) }
+	}
+	r, err := roster.New(source, roster.Config{
+		AfterWrite:    refreshed,
 		Path:          path,
 		AquiferPrefix: os.Getenv(karstRosterAquiferEnv),
 		Interval:      interval,
@@ -566,4 +609,47 @@ func loadPolicy() (*policy.Document, error) {
 	}
 	log.Infof("karst: loaded policy from %s (%d rules)", path, len(doc.ACLs))
 	return doc, nil
+}
+
+// scopedRelayRoster binds one operator-installed writer to one relay identity.
+// The refreshed roster is the authorization boundary, not endpoint discovery.
+type scopedRelayRoster struct {
+	source roster.Source
+	store  interface {
+		AllowedOnRelay(context.Context, string, string, string) (bool, error)
+	}
+	relayID        string
+	requireManaged bool
+}
+
+func (s scopedRelayRoster) All() ([]roster.Entry, error) {
+	entries, err := s.source.All()
+	if err != nil {
+		return nil, err
+	}
+	allowed := make([]roster.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.AccountID == "" {
+			continue
+		}
+		var ok bool
+		if s.requireManaged {
+			managed, supported := s.store.(interface {
+				AllowedOnManagedRelay(context.Context, string, string, string) (bool, error)
+			})
+			if !supported {
+				return nil, fmt.Errorf("managed-only admission is unsupported")
+			}
+			ok, err = managed.AllowedOnManagedRelay(context.Background(), s.relayID, entry.AccountID, entry.Handle)
+		} else {
+			ok, err = s.store.AllowedOnRelay(context.Background(), s.relayID, entry.AccountID, entry.Handle)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			allowed = append(allowed, entry)
+		}
+	}
+	return allowed, nil
 }

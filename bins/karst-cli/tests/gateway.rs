@@ -64,7 +64,12 @@ fn request(args: &[&str], response: &'static str) -> (Output, String) {
 fn gateway_status_uses_the_selected_socket_and_prints_the_route_report() {
     let report = "[routing]\noffers = 2\nselected_exit = None\nexit_route_active = false\n";
     let (output, line) = request(&["gateway", "status"], report);
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "CLI failed: status={:?}, stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(line, "gateway-status\n");
     assert_eq!(String::from_utf8(output.stdout).expect("UTF-8"), report);
 }
@@ -75,7 +80,11 @@ fn an_older_daemon_rejecting_gateway_status_is_a_cli_failure() {
     assert_eq!(line, "gateway-status\n");
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown command"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unknown command"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -89,7 +98,12 @@ fn gateway_exit_and_legacy_commands_send_the_same_consent_request() {
             let mut args = prefix;
             args.extend(action.iter().copied());
             let (output, line) = request(&args, "selected = None\n");
-            assert!(output.status.success());
+            assert!(
+                output.status.success(),
+                "CLI failed: status={:?}, stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
             assert_eq!(line, wire);
         }
     }

@@ -25,6 +25,8 @@ const JSONSchema = `{
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "grants": {"type":"array","description":"Form-managed grants referencing current account group IDs.","items":{"type":"object","additionalProperties":false,"required":["id","name","source_groups","ports"],"properties":{"id":{"type":"string","minLength":1},"name":{"type":"string","minLength":1},"source_groups":{"type":"array","minItems":1,"items":{"type":"string"}},"target_groups":{"type":"array","items":{"type":"string"}},"target_nodes":{"type":"array","items":{"type":"string"}},"networks":{"type":"array","items":{"type":"string"}},"ports":{"type":"string"},"ssh":{"type":"boolean"}}}},
+    "groupBindings": {"type":"object","propertyNames":{"pattern":"^group:"},"additionalProperties":{"type":"string","minLength":1}},
     "groups": {
       "type": "object",
       "description": "Maps \"group:name\" to a list of user identifiers.",

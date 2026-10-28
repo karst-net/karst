@@ -3,7 +3,9 @@
 
 import { useState } from "react";
 import { Dialog, EmptyState } from "@karst-net/ui";
-import { api, type Group } from "../api";
+import { GroupMembership } from "./group-membership";
+import { GroupDeletion } from "./group-deletion";
+import { api, ApiError, type Group, type GroupSnapshot } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
 // A group synchronised from an identity provider is a copy, not a source. The
@@ -12,47 +14,22 @@ import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 // why in the row itself.
 const editable = (group: Group) => (group.issued ?? "api") === "api" && group.name !== "All";
 
-type PolicyRule = { action: string; src: string[]; dst: string[] };
-type PolicyDocument = { acls?: PolicyRule[]; ssh?: PolicyRule[] };
-type ReferencingRule = PolicyRule & { list: "acls" | "ssh" };
-
-// The access policy (access.tsx) is its own JSON document with its own
-// "groups" map — a selector like "group:sre" is resolved against *that*
-// document's list of user identifiers, never against this page's group
-// records. The two line up only when an admin names them the same way; there
-// is no foreign key between them, so this is a best-effort, name-matched
-// cross-reference, not an authoritative one.
-function selectorFor(group: Group) { return `group:${group.name}`; }
-
-/** Every acls/ssh rule whose src or dst names this group's selector. */
-function rulesReferencing(document: PolicyDocument | undefined, selector: string): ReferencingRule[] {
-  const acls = (document?.acls ?? []).filter((r) => r.src.includes(selector) || r.dst.includes(selector)).map((r) => ({ ...r, list: "acls" as const }));
-  const ssh = (document?.ssh ?? []).filter((r) => r.src.includes(selector) || r.dst.includes(selector)).map((r) => ({ ...r, list: "ssh" as const }));
-  return [...acls, ...ssh];
-}
-
 export function Groups() {
   const resource = useResource(api.groups);
-  // Best-effort: if the policy document fails to load or fails to parse, the
-  // "Access rules" column just reads "None" rather than blocking this whole
-  // page on a second, unrelated fetch.
   const policy = useResource(api.policy);
-  const document: PolicyDocument | undefined = (() => {
-    if (!policy.value) return undefined;
-    try { return JSON.parse(policy.value.document) as PolicyDocument; } catch { return undefined; }
-  })();
-  // A group's declared location is Karst-owned (package grouplocation), not
-  // a field on this fork-owned Group record -- a best-effort, id-matched
-  // cross-reference, the same posture selectorFor's own policy-document
-  // cross-reference already takes. It is what places an exit-node/
-  // subnet-router marker on the NOC map for whichever route names this
-  // group in its peer_groups.
+  const relayAccess = useResource(api.relayServices);
+  const [membership, setMembership] = useState<string>();
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string>();
+  const [renameConflicted, setRenameConflicted] = useState(false);
+  const grants: import("../access-model").AccessGrant[] = (() => { try { return JSON.parse(policy.value?.document ?? "{}").grants ?? []; } catch { return []; } })();
+  const referencing = (group: Group) => grants.filter(grant => grant.source_groups.includes(group.id) || grant.target_groups?.includes(group.id));
   const groupLocations = useResource(api.groupLocations);
   const locationByGroup = new Map((groupLocations.value ?? []).map((gl) => [gl.group_id, gl]));
   const { message, setMessage, run } = useMutation(() => { resource.reload(); groupLocations.reload(); });
+  const [deleting, setDeleting] = useState<string>();
   const [creating, setCreating] = useState<string>();
-  const [renaming, setRenaming] = useState<{ group: Group; name: string }>();
-  const [viewing, setViewing] = useState<Group>();
+  const [renaming, setRenaming] = useState<{ snapshot: GroupSnapshot; name: string }>();
   const [locating, setLocating] = useState<{ group: Group; lat: string; lon: string; label: string }>();
 
   if (resource.loading) return <p>Loading groups…</p>;
@@ -64,21 +41,29 @@ export function Groups() {
     if (!name) { setMessage("A group needs a name."); return; }
     if (await run(() => api.createGroup(name), `Group ${name} was created.`)) setCreating(undefined);
   };
-  const rename = async () => {
-    if (!renaming) return;
-    const name = renaming.name.trim();
-    if (!name) { setMessage("A group needs a name."); return; }
-    if (await run(() => api.renameGroup(renaming.group.id, name), `Group ${renaming.group.name} is now named ${name}.`)) setRenaming(undefined);
+  const openRename = async (id: string) => {
+    setRenameBusy(true); setRenameError(undefined); setRenameConflicted(false);
+    try {
+      const snapshot = await api.groupForEdit(id);
+      if ((snapshot.group.issued ?? "api") !== "api" || snapshot.group.name === "All") throw new Error("This group is built in or managed by an identity provider and cannot be renamed here.");
+      setRenaming({ snapshot, name: snapshot.group.name });
+    } catch (error) {
+      if (renaming) { setRenameError((error as Error).message); setRenameConflicted(true); }
+      else setMessage((error as Error).message);
+    }
+    finally { setRenameBusy(false); }
   };
-  const remove = (group: Group) => {
-    const referencing = rulesReferencing(document, selectorFor(group)).length;
-    const warning = referencing > 0
-      ? `Delete ${group.name}? ${referencing} access-policy rule(s) name "${selectorFor(group)}" and would stop matching until the policy document is edited to match.`
-      : group.peers_count > 0
-        ? `Delete ${group.name}? ${group.peers_count} machine(s) are in it.`
-        : `Delete ${group.name}?`;
-    if (!confirm(warning)) return;
-    void run(() => api.deleteGroup(group.id), `Group ${group.name} was deleted.`);
+  const rename = async () => {
+    if (!renaming || renameBusy || renameConflicted) return;
+    const name = renaming.name.trim();
+    if (!name) { setRenameError("A group needs a name."); return; }
+    setRenameBusy(true); setRenameError(undefined);
+    try {
+      await api.renameGroup(renaming.snapshot, name);
+      setMessage(`Group ${renaming.snapshot.group.name} is now named ${name}.`); setRenaming(undefined); resource.reload();
+    } catch (error) {
+      setRenameError((error as Error).message); if (error instanceof ApiError && error.status === 412) setRenameConflicted(true);
+    } finally { setRenameBusy(false); }
   };
   const saveLocation = async () => {
     if (!locating) return;
@@ -94,7 +79,7 @@ export function Groups() {
   };
 
   return <section>
-    <h2>Groups</h2>
+    <h3>Groups</h3>
     <p className="lede">Groups are what access rules name. Groups synchronised from an identity provider are managed there and are read-only here.</p>
     <div className="actions"><button className="primary" onClick={() => setCreating("")}>Create group</button></div>
     <Notice message={message} />
@@ -102,27 +87,30 @@ export function Groups() {
       ? <EmptyState title="No groups">Groups from your identity provider will appear here.</EmptyState>
       : <Rows head={<><th>Name</th><th>Members</th><th>Resources</th><th>Source</th><th>Access rules</th><th>Location</th><th>Actions</th></>}>
         {groups.map((group) => {
-          const referencing = rulesReferencing(document, selectorFor(group));
+          const related = referencing(group);
           const location = locationByGroup.get(group.id);
           return <tr key={group.id}>
             <td><strong>{group.name}</strong><br /><code>{group.id}</code></td>
             <td>{group.peers_count}</td>
             <td>{group.resources_count}</td>
             <td>{group.issued ?? "api"}</td>
-            <td>{referencing.length > 0
-              ? <button onClick={() => setViewing(group)}>{referencing.length} rule{referencing.length === 1 ? "" : "s"}</button>
-              : <span className="lede">None</span>}</td>
+            <td>{relayAccess.value?.filter(service => service.allowed_groups?.includes(group.id)).map(service => <p key={service.id}><a href="#/relays">Relay {service.id}</a></p>)}{related.length > 0
+              ? <a href="#/groups/access">{related.length} access grant{related.length === 1 ? "" : "s"}</a>
+              : <span className="lede">{policy.error ? "Access unavailable" : "None"}</span>}</td>
             <td>{location ? (location.label || `${location.lat}, ${location.lon}`) : <span className="lede">No location</span>}</td>
             <td><div className="actions">
-              {editable(group) && <button onClick={() => setRenaming({ group, name: group.name })}>Rename</button>}
+              {editable(group) && <button onClick={() => setMembership(group.id)}>Members of {group.name}</button>}
+              {editable(group) && <button disabled={renameBusy} onClick={() => void openRename(group.id)}>Rename</button>}
               <button onClick={() => setLocating({ group, lat: location ? String(location.lat) : "", lon: location ? String(location.lon) : "", label: location?.label ?? "" })}>{location ? "Edit location" : "Set location"}</button>
               {location && <button onClick={() => clearLocation(group)}>Clear location</button>}
-              {editable(group) && <button className="danger" onClick={() => remove(group)}>Delete</button>}
+              {editable(group) && <button className="danger" onClick={() => setDeleting(group.id)}>Delete</button>}
               {!editable(group) && <span className="lede">{group.name === "All" ? "Built in" : "Managed by the identity provider"}</span>}
             </div></td>
           </tr>;
         })}
       </Rows>}
+
+    {deleting && <GroupDeletion id={deleting} onClose={() => setDeleting(undefined)} onDeleted={name => { setDeleting(undefined); setMessage(`Group ${name} was deleted.`); resource.reload(); policy.reload(); relayAccess.reload(); groupLocations.reload(); }} />}
 
     <Dialog open={creating !== undefined} title="Create group" onClose={() => setCreating(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void create(); }}>
@@ -132,11 +120,12 @@ export function Groups() {
       </form>
     </Dialog>
 
-    <Dialog open={Boolean(renaming)} title="Rename group" onClose={() => setRenaming(undefined)}>
+    <Dialog open={Boolean(renaming)} title="Rename group" onClose={() => { if (!renameBusy) setRenaming(undefined); }}>
+      {renameError && <p role="alert">{renameError}</p>}
       <form onSubmit={(event) => { event.preventDefault(); void rename(); }}>
-        <label>Group name<input aria-label="New group name" value={renaming?.name ?? ""} onChange={(event) => setRenaming((current) => current && { ...current, name: event.target.value })} /></label>
-        <p className="lede">This changes nothing in the access policy document: it names groups independently, by whatever string an admin wrote into its own "groups" section. If this group's old name is referenced there, update the policy to match.</p>
-        <div className="actions"><button type="button" onClick={() => setRenaming(undefined)}>Cancel</button><button className="primary" type="submit">Save name</button></div>
+        <label>Group name<input disabled={renameBusy || renameConflicted} aria-label="New group name" value={renaming?.name ?? ""} onChange={(event) => setRenaming((current) => current && { ...current, name: event.target.value })} /></label>
+        <p className="lede">Access grants reference this group by its stable identity. Renaming preserves membership and form-managed access. Existing legacy policies remain unchanged.</p>
+        <div className="actions"><button type="button" disabled={renameBusy} onClick={() => setRenaming(undefined)}>Cancel</button>{renameConflicted && <button type="button" disabled={renameBusy} onClick={() => void openRename(renaming!.snapshot.group.id)}>Reload latest group</button>}<button className="primary" type="submit" disabled={renameBusy || renameConflicted}>Save name</button></div>
       </form>
     </Dialog>
 
@@ -150,13 +139,6 @@ export function Groups() {
       </form>
     </Dialog>
 
-    <Dialog open={Boolean(viewing)} title={viewing ? `Access rules naming ${selectorFor(viewing)}` : ""} onClose={() => setViewing(undefined)}>
-      {viewing && <>
-        <p className="lede">The access policy (Access controls page) defines its own "groups" map by name. These are the rules in the current policy whose src or dst is exactly <code>{selectorFor(viewing)}</code> — a name match, not a reference to this group's id.</p>
-        {rulesReferencing(document, selectorFor(viewing)).length === 0
-          ? <p>No rule in the current policy names this selector.</p>
-          : <ul>{rulesReferencing(document, selectorFor(viewing)).map((rule, index) => <li key={index}><code>{rule.list}</code>: <code>{rule.src.join(", ")}</code> → <code>{rule.dst.join(", ")}</code></li>)}</ul>}
-      </>}
-    </Dialog>
+    {membership && <GroupMembership id={membership} onClose={() => setMembership(undefined)} onSaved={() => { setMembership(undefined); resource.reload(); setMessage("Group membership saved."); }} />}
   </section>;
 }

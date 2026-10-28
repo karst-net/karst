@@ -166,6 +166,12 @@ func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) 
 		return nil, fmt.Errorf("register identity: %w", err)
 	}
 
+	// The account manager has accepted registration. Reusable bindings remain
+	// available for subsequent devices; one-off bindings can now be removed.
+	if err := h.Nodes.ConsumeEnrollmentKey(req.GetSetupKey()); err != nil {
+		return nil, fmt.Errorf("consume enrollment owner: %w", err)
+	}
+
 	// A bare DNSLabel is not something another user could actually address
 	// this device by -- it's unique only within the account (and, under a
 	// mesh domain, only within that domain's path), not on the wider

@@ -44,6 +44,14 @@ func accountFromContext(ctx context.Context) (string, error) {
 // Service has its own stable operator-selected ID, independent of the
 // Ponor relay's own identity.
 type Service struct {
+	Revision      uint64   `gorm:"not null;default:0" json:"revision,omitempty"`
+	AccessManaged bool     `gorm:"not null;default:false" json:"access_managed,omitempty"`
+	AllowedGroups []string `gorm:"serializer:json" json:"allowed_groups,omitempty"`
+	GatewayHandle string   `json:"gateway_handle,omitempty"`
+	ExitIPv4      bool     `json:"exit_ipv4,omitempty"`
+	ExitIPv6      bool     `json:"exit_ipv6,omitempty"`
+	Metric        int      `json:"metric,omitempty"`
+
 	AccountID     string `gorm:"primaryKey;size:64" json:"-"`
 	ID            string `gorm:"primaryKey;size:64" json:"id"`
 	PonorID       string `gorm:"not null" json:"ponor_id"`
@@ -73,7 +81,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("relay service: nil database")
 	}
-	if err := db.AutoMigrate(&Service{}, &Publication{}); err != nil {
+	if err := db.AutoMigrate(&Service{}, &Publication{}, &AdmissionLease{}, &BackendAccess{}); err != nil {
 		return nil, err
 	}
 	return &Store{db: db}, nil
@@ -82,6 +90,9 @@ func NewStore(db *gorm.DB) (*Store, error) {
 var validID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 func validate(service Service) error {
+	if !service.AccessManaged && (len(service.AllowedGroups) > 0 || service.GatewayHandle != "" || service.ExitIPv4 || service.ExitIPv6) {
+		return fmt.Errorf("%w: access settings require managed admission", ErrInvalid)
+	}
 	if !validID.MatchString(service.ID) || service.PonorID == "" {
 		return fmt.Errorf("%w: id must be 1-64 letters, digits, underscores or hyphens and ponor_id is required", ErrInvalid)
 	}
@@ -98,6 +109,7 @@ func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 	}
 	// Never accept account ownership from a caller-supplied record.
 	service.AccountID = account
+	service.Revision = 1
 	if err := validate(service); err != nil {
 		return nil, err
 	}
@@ -108,6 +120,18 @@ func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 		}
 		if count != 1 {
 			return fmt.Errorf("%w: ponor_id is not registered in this account", ErrInvalid)
+		}
+		if !service.AccessManaged {
+			var locked int64
+			if err := tx.Model(&BackendAccess{}).Where("account_id = ? AND relay_id = ?", account, service.PonorID).Count(&locked).Error; err != nil {
+				return err
+			}
+			if locked > 0 {
+				return fmt.Errorf("%w: backend requires explicit group access", ErrInvalid)
+			}
+		}
+		if err := s.configureAccess(ctx, tx, service); err != nil {
+			return err
 		}
 		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&service)
 		if result.Error != nil {
@@ -159,12 +183,23 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	result := s.db.WithContext(ctx).Where("account_id = ? AND id = ?", account, id).Delete(&Service{})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current Service
+		if err := tx.Where("account_id = ? AND id = ?", account, id).First(&current).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return ErrNotFound
+			}
+			return err
+		}
+		if err := clearManagedExit(tx, current); err != nil {
+			return err
+		}
+		if current.AccessManaged {
+			access := BackendAccess{AccountID: account, RelayID: current.PonorID, Groups: []string{}}
+			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&access).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("account_id = ? AND id = ?", account, id).Delete(&Service{}).Error
+	})
 }

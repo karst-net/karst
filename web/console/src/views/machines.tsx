@@ -8,6 +8,8 @@ import { api, type MeshDomain } from "../api";
 import { domainDNSName, peerDNSName } from "../domains";
 import { Failure, formatBytes, Notice, Rows, statusFor, useMutation, useResource } from "../common";
 
+import { Setup } from "./setup";
+
 type Paths = Awaited<ReturnType<typeof api.nodePaths>>;
 
 // Exhaustive — a new path kind must be given a tier here rather than fall
@@ -19,7 +21,8 @@ const PATH_STATUS: Record<Paths["paths"][number]["kind"], StatusState> = {
   unreachable: "warning",
 };
 
-export function Machines() {
+export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "status" | "add" }) {
+  const tab = defaultTab;
   const resource = useResource(api.nodes);
   const { message, setMessage, run } = useMutation(resource.reload);
   const [filter, setFilter] = useState("");
@@ -45,8 +48,8 @@ export function Machines() {
     return nodes.filter((node) => [node.name, node.handle, node.user_id, ...node.tags].some((field) => field?.toLowerCase().includes(needle)));
   }, [nodes, filter]);
 
-  if (resource.loading) return <p>Loading machines…</p>;
-  if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
+  if (tab !== "add" && resource.loading) return <p>Loading machines…</p>;
+  if (tab !== "add" && resource.error) return <Failure message={resource.error} retry={resource.reload} />;
 
   const deprovision = (node: Node) => {
     if (!confirm(`Deprovision ${node.name}? Its node keys will expire and sessions will be dropped.`)) return;
@@ -70,43 +73,63 @@ export function Machines() {
   };
   return <section>
     <h2>Machines</h2>
-    <p className="lede">Connection state always includes its last observation time. Add a device by creating an enrollment invitation.</p>
-    <div className="actions">
-      <button className="primary" onClick={() => { location.hash = "/enroll"; }}>Add machine</button>
-      <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
-    </div>
-    <Notice message={message} />
-    {nodes.length === 0
-      ? <EmptyState title="No machines yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
-      : shown.length === 0
-        ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
-        : <Rows head={<><th>Name</th><th>Domain</th><th>Owner</th><th>Tags</th><th>Crypto posture</th><th>Observed</th><th>Actions</th></>}>
-          {shown.map((node) => <tr key={node.handle}>
-            <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
-            <td>{domainPath(node.domain_id) ?? (node.domain_id ? <span className="lede">Unknown domain</span> : <span className="lede">Account root</span>)}</td>
-            <td>{node.user_id}</td>
-            <td>{node.tags.join(", ") || "—"}</td>
-            <td><Status state={statusFor(node.posture.status)} label={node.posture.status.replaceAll("_", " ")} /></td>
-            <td><Observed at={node.last_seen_at} /></td>
-            <td><div className="actions">
-              <button onClick={() => setRenaming({ node, name: node.name })}>Rename</button>
-              <button onClick={() => setMoving({ node, domainId: node.domain_id ?? "" })}>Move</button>
-              <button onClick={() => void showPaths(node)}>Paths</button>
-              <button className="danger" onClick={() => deprovision(node)}>Deprovision</button>
-            </div></td>
-          </tr>)}
-        </Rows>}
-    <p className="lede">Tags, expiry and the enabled flag are set by the coordination server and are not editable here — the contract accepts a name and a domain and nothing else on a node, so a form offering the rest would fail on save.</p>
+    <nav aria-label="Machines view" className="actions">
+      <button aria-pressed={tab === "manage"} onClick={() => { location.hash = "/machines"; }}>Manage</button>
+      <button aria-pressed={tab === "status"} onClick={() => { location.hash = "/machines/status"; }}>Status</button>
+      <button aria-pressed={tab === "add"} onClick={() => { location.hash = "/machines/add"; }}>Add machine</button>
+    </nav>
+    {tab === "add" ? <Setup go={(route) => { location.hash = `/${route}`; }} /> : tab === "manage" ? <>
+      <p className="lede">Add a device by creating an enrollment invitation.</p>
+      <div className="actions">
+        <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
+      </div>
+      <Notice message={message} />
+      {nodes.length === 0
+        ? <EmptyState title="No machines yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
+        : shown.length === 0
+          ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
+          : <Rows head={<><th>Name</th><th>Domain</th><th>Owner</th><th>Tags</th><th>Actions</th></>}>
+            {shown.map((node) => <tr key={node.handle}>
+              <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
+              <td>{domainPath(node.domain_id) ?? (node.domain_id ? <span className="lede">Unknown domain</span> : <span className="lede">Account root</span>)}</td>
+              <td>{node.user_id}</td>
+              <td>{node.tags.join(", ") || "—"}</td>
+              <td><div className="actions">
+                <button onClick={() => setRenaming({ node, name: node.name })}>Rename</button>
+                <button onClick={() => setMoving({ node, domainId: node.domain_id ?? "" })}>Move</button>
+                <button className="danger" onClick={() => deprovision(node)}>Deprovision</button>
+              </div></td>
+            </tr>)}
+          </Rows>}
+      <p className="lede">Tags, expiry and the enabled flag are set by the coordination server and are not editable here — the contract accepts a name and a domain and nothing else on a node, so a form offering the rest would fail on save.</p>
+    </> : <>
+      <p className="lede">Connection state always includes its last observation time.</p>
+      <div className="actions">
+        <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
+      </div>
+      {nodes.length === 0
+        ? <EmptyState title="No machines yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
+        : shown.length === 0
+          ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
+          : <Rows head={<><th>Name</th><th>Crypto posture</th><th>Observed</th><th>Actions</th></>}>
+            {shown.map((node) => <tr key={node.handle}>
+              <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
+              <td><Status state={statusFor(node.posture.status)} label={node.posture.status.replaceAll("_", " ")} /></td>
+              <td><Observed at={node.last_seen_at} /></td>
+              <td><button onClick={() => void showPaths(node)}>Paths</button></td>
+            </tr>)}
+          </Rows>}
+    </>}
 
-    <Dialog open={Boolean(renaming)} title="Rename machine" onClose={() => setRenaming(undefined)}>
+    {renaming && <Dialog open title="Rename machine" onClose={() => setRenaming(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void rename(); }}>
         <label>Machine name<input aria-label="Machine name" value={renaming?.name ?? ""} onChange={(event) => setRenaming((current) => current && { ...current, name: event.target.value })} /></label>
         <p className="lede">The handle <code>{renaming?.node.handle}</code> is derived from the node’s identity key and never changes.</p>
         <div className="actions"><button type="button" onClick={() => setRenaming(undefined)}>Cancel</button><button className="primary" type="submit">Save name</button></div>
       </form>
-    </Dialog>
+    </Dialog>}
 
-    <Dialog open={Boolean(moving)} title="Move machine" onClose={() => setMoving(undefined)}>
+    {moving && <Dialog open title="Move machine" onClose={() => setMoving(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void move(); }}>
         <label>Domain<select aria-label="Domain" value={moving?.domainId ?? ""} onChange={(event) => setMoving((current) => current && { ...current, domainId: event.target.value })}>
           <option value="" disabled>Choose a domain</option>
@@ -119,9 +142,9 @@ export function Machines() {
         })()}</p>
         <div className="actions"><button type="button" onClick={() => setMoving(undefined)}>Cancel</button><button className="primary" type="submit">Move</button></div>
       </form>
-    </Dialog>
+    </Dialog>}
 
-    <Dialog open={Boolean(paths)} title={`Paths — ${paths?.node.name ?? ""}`} onClose={() => setPaths(undefined)}>
+    {paths && <Dialog open title={`Paths — ${paths?.node.name ?? ""}`} onClose={() => setPaths(undefined)}>
       {paths?.error ? <p role="alert">{paths.error}</p> : !paths?.value ? <p>Loading paths…</p> : paths.value.paths.length === 0
         ? <p>No paths observed. The machine has not reached another peer in this window.</p>
         : <Rows head={<><th>Peer</th><th>Kind</th><th>Endpoint</th><th>Sent</th><th>Received</th><th>Observed</th></>}>
@@ -136,7 +159,7 @@ export function Machines() {
         </Rows>}
       <p className="lede">Sent/received are running totals for this session, as this machine last reported them — not a live rate.</p>
       <div className="actions"><button onClick={() => setPaths(undefined)}>Close</button></div>
-    </Dialog>
+    </Dialog>}
 
   </section>;
 }

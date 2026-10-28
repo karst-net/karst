@@ -437,6 +437,18 @@ jobs:
             image: karst-control
             arch: arm64
             runner: ubuntu-24.04-arm
+          - name: console
+            file: deploy/images/karst-console.Dockerfile
+            context: web
+            image: karst-console
+            arch: amd64
+            runner: ubuntu-latest
+          - name: console
+            file: deploy/images/karst-console.Dockerfile
+            context: web
+            image: karst-console
+            arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       # Each leg now runs on a runner native to its own target architecture
@@ -450,7 +462,7 @@ jobs:
       - name: Build ${{ matrix.name }} image (${{ matrix.arch }})
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context || '.' }}
           file: ${{ matrix.file }}
           load: true
           push: false
@@ -492,6 +504,10 @@ jobs:
           - name: control
             file: deploy/images/karst-control.Dockerfile
             image: karst-control
+          - name: console
+            file: deploy/images/karst-console.Dockerfile
+            context: web
+            image: karst-console
     steps:
       - uses: actions/checkout@v4
       # Buildx needs QEMU to produce the arm64 variant from GitHub's amd64
@@ -513,7 +529,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context || '.' }}
           file: ${{ matrix.file }}
           push: true
           build-args: |
@@ -919,6 +935,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $msi = (Get-ChildItem "dist/windows/karst-*-x64.msi" | Select-Object -First 1).FullName
+          # Match a downloaded artifact: no build-directory cabinet beside it.
+          $downloadDir = Join-Path $env:RUNNER_TEMP "karst-msi-download"
+          New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
+          Copy-Item $msi $downloadDir
+          $msi = Join-Path $downloadDir (Split-Path -Leaf $msi)
           Write-Host "installing $msi"
           $proc = Start-Process msiexec.exe -ArgumentList "/i", $msi, "/quiet", "/norestart", "/l*v", "install.log" -Wait -PassThru
           if ($proc.ExitCode -ne 0) {

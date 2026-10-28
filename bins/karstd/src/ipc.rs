@@ -443,7 +443,13 @@ pub fn request(path: &Path, command: &Command) -> std::io::Result<String> {
 /// `karst_ipc::sys_windows::read`'s `Ok(0)` mapping for it.
 #[cfg(unix)]
 fn shutdown_write(stream: &UnixStream) -> std::io::Result<()> {
-    stream.shutdown(std::net::Shutdown::Write)
+    match stream.shutdown(std::net::Shutdown::Write) {
+        // Darwin can report ENOTCONN if a fast daemon has already replied
+        // and closed. The reply is still buffered: read it rather than
+        // replacing it with a half-close error. Propagate every other error.
+        Err(error) if error.kind() == std::io::ErrorKind::NotConnected => Ok(()),
+        result => result,
+    }
 }
 
 /// As above — a no-op on Windows, per the module's Windows section. The
@@ -733,6 +739,28 @@ mod tests {
 
         assert!(out.contains("error"), "got {out:?}");
         assert_eq!(server.join().expect("join"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_reply_survives_the_server_closing_before_the_client_half_close() {
+        let (mut client, mut server) = UnixStream::pair().expect("socket pair");
+        for stream in [&client, &server] {
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .expect("read timeout");
+        }
+        let worker = std::thread::spawn(move || {
+            serve(&mut server, |_| "reply = true\n".to_owned()).expect("serve")
+        });
+        writeln!(client, "status").expect("write command");
+        // Joining forces the peer to close before shutdown_write, instead
+        // of relying on scheduler timing to expose Darwin's ENOTCONN.
+        assert_eq!(worker.join().expect("server"), Some(Command::Status));
+        shutdown_write(&client).expect("half-close after peer close");
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).expect("buffered reply");
+        assert_eq!(reply, "reply = true\n");
     }
 
     #[test]

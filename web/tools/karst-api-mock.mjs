@@ -2,6 +2,7 @@
 // Copyright the Karst contributors.
 
 import http from "node:http";
+import { createHash } from "node:crypto";
 import { buildFixture } from "../fixtures/karst-api.mjs";
 
 // Two APIs are mocked here, because the console talks to two: /api/karst/v1 is
@@ -378,7 +379,19 @@ const server = http.createServer((request, response) => {
     });
   }
   const groupMatch = path.match(/^\/api\/groups\/([^/]+)$/);
-  if (groupMatch && method === "PUT") return readBody(request).then((body) => replace(groups, groupMatch[1], { name: body.name }, response));
+  const groupRevision = group => `"group-${createHash("sha256").update(JSON.stringify(group)).digest("hex")}"`;
+  if (groupMatch && method === "GET") {
+    const group = groups.find(group => group.id === groupMatch[1]);
+    if (!group) return error(response, 404, "not_found", "Group not found");
+    response.setHeader("ETag", groupRevision(group));
+    return json(response, 200, group);
+  }
+  if (path === "/api/peers" && method === "GET") return json(response,200,fixture.nodes.map(node=>({id:node.handle,name:node.name})));
+  if (groupMatch && method === "PUT") {
+    const group = groups.find(group => group.id === groupMatch[1]);
+    if (request.headers["if-match"] && request.headers["if-match"] !== groupRevision(group)) return error(response, 412, "precondition_failed", "group changed; reload before saving");
+    return readBody(request).then(body => replace(groups, groupMatch[1], { name: body.name, resources: body.resources ?? [], ...(body.peers ? { peers: body.peers.map(id=>({id,name:id})), peers_count:body.peers.length } : {}) }, response));
+  }
   if (groupMatch && method === "DELETE") return remove(groups, groupMatch[1], response);
 
   if (path === "/api/dns/settings" && method === "GET") return json(response, 200, dnsSettings);
@@ -469,9 +482,9 @@ const server = http.createServer((request, response) => {
   if (method === "GET" && karst === "/me/devices") return json(response, 200, memberDevices);
   if (method === "GET" && karst === "/invitations") return json(response, 200, invitations);
   if (method === "POST" && karst === "/invitations") return readBody(request).then(draft => {
-    if (!draft.name?.trim() || !draft.groups?.length) return error(response, 400, "invalid_argument", "Device label and groups are required");
+    if (!draft.for_user_id || !draft.name?.trim() || !draft.groups?.length) return error(response, 400, "invalid_argument", "Device label and groups are required");
     if (draft.domain_id && !domains.some(d => d.id === draft.domain_id)) return error(response, 400, "invalid_argument", "unknown domain_id");
-    const item = { id: id("invitation"), name: draft.name, groups: draft.groups, state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString(), ...(draft.domain_id ? { domain_id: draft.domain_id } : {}) };
+    const item = { assigned_user_id: draft.for_user_id, reusable: !!draft.reusable, usage_limit: draft.reusable ? draft.usage_limit ?? 0 : 1, used_times: 0, id: id("invitation"), name: draft.name, groups: draft.groups, state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString(), ...(draft.domain_id ? { domain_id: draft.domain_id } : {}) };
     invitations.push(item);
     return json(response, 200, { ...item, credential: "invitation-fixture-secret" });
   });
@@ -554,6 +567,7 @@ const server = http.createServer((request, response) => {
     if (method === "DELETE") { fixture.nodes.splice(index, 1); return noContent(response); }
   }
   if (method === "GET" && karst === "/policy/schema") return json(response, 200, policySchema);
+  if (method === "GET" && karst === "/relay-services/admission-targets") return json(response,200,[]);
   if (method === "GET" && karst === "/policy") return json(response, 200, fixture.policy);
   if (method === "GET" && karst === "/policy/versions") return json(response, 200, page(fixture.policyVersions, url));
   if (method === "GET" && /^\/policy\/versions\/\d+$/.test(karst)) {

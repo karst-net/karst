@@ -327,3 +327,65 @@ re-reviewed at each phase boundary and on any change to the trust boundaries in
 baseline. Until then, the published security whitepaper must identify itself
 as derived from the internally reviewed threat model and must not imply
 external review.
+
+
+### Form-managed group and relay access (ADR-0058 / #439)
+
+New grants use current account-scoped device-group membership, not display-name
+matches or copied user lists. The compiler denies inactive owners and missing
+memberships; membership source failure prevents compilation. Group mutations
+refresh account filters when registry grants exist. Writes keep immutable policy
+versions and resource revisions to reject concurrent overwrite.
+
+Relay discovery filtering is supplemental: an identity-bound roster writer
+filters actual admission. Applying restrictions requires its live capability
+lease. Roster replacement rechecks active sessions; writer failure empties
+admission via the existing 90-second relay lease plus polling. Capability
+freshness proves a successful roster write, not runtime forwarding health.
+Removal retains a denied backend-access record, preventing deletion from
+reopening legacy account-wide access. Shared associations must be consolidated
+before adopting managed restrictions. Unregistered tenants on a managed backend
+are denied; explicitly registered legacy tenants retain existing behavior.
+
+Resource association, backend permission, native exit offers and generated access
+grant share a database transaction. Managed grants cannot be edited through the
+generic policy API independently of their resource. The form review discloses
+the Gateway all-port ingress grant required by the current node-and-port filter
+contract. This is broader than internet-only access; destination-scoped Gateway
+ingress remains a limitation. Existing SSH gates remain independent, and explicit
+empty gates survive automatic serialization. Exit consent remains client-local.
+
+Legacy broad rules remain additive until explicitly migrated or removed. Older
+controllers reject the v3 publication marker during netmap projection. This does
+not fence a pre-feature admission exporter: operators must keep identity-bound
+writers upgraded and must not replace them with legacy unrestricted writers.
+Provider workload provisioning and
+authenticated remote roster delivery are not claimed by the registered-backend
+configuration workflow.
+
+### Local Relay installation handoff (ADR-0062)
+
+The console-generated local Compose installer carries public settings only and
+has no administrator API credential. The trusted host operator runs it with
+Docker privileges, preserving the existing privilege boundary. Settings are
+embedded as UTF-8 data rather than executable Python; subprocess arguments do
+not use a shell. Management configuration and Docker diagnostics can contain
+secrets and are captured rather than echoed. Existing trusted TLS/seed material
+is reused. Installation files and public receipts use private local modes.
+
+Before runtime changes the selected control image must report
+`managed-roster-v1` without access to deployment state. The installer stops the
+old writer before clearing admission. Its generated managed-only writer denies
+unconfigured and legacy tenants, applies existing account/group/owner checks,
+and preserves bounded roster refresh and expiry behavior. This closes the gap
+between installation, registration and saving access; it does not authenticate
+an arbitrary remote roster producer. Removing the overlay, downgrading control
+or substituting a legacy writer remains an operator-controlled bypass risk.
+
+Receipts are untrusted public registration metadata and never credentials or
+proof of readiness. The console strips unknown fields, reuses an existing
+registration only by matching its public key, and leaves account/identity
+validation and write authorization to the API. Group grants still require the
+reviewed transactional form. A failed installation records local retry state;
+no automatic rollback broadens access. Remote authenticated delivery, durable
+remote job auditing and applied-policy acknowledgment remain outstanding.

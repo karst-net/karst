@@ -173,7 +173,7 @@ func TestEnrollmentPortalThroughControl(t *testing.T) {
 	nodes, err := karstnode.NewStore(am.Store.(*store.SqlStore).GetDB())
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, nodes, router)
 	req := httptest.NewRequest(http.MethodPost, "/karst/v1/me/devices/enroll", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: user.AccountID, UserId: user.Id})
 	rec := httptest.NewRecorder()
@@ -225,9 +225,9 @@ func TestDeviceInvitationNeedsNoRecipientAccount(t *testing.T) {
 	ctx := context.Background()
 	group := &types.Group{ID: "invited-devices", AccountID: member.AccountID, Name: "Invited devices", Issued: "api"}
 	require.NoError(t, am.Store.CreateGroup(ctx, group))
-	_, err := am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "Laptop", []string{group.ID}, "")
+	_, err := am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "Laptop", []string{group.ID}, "", member.Id, false, 0)
 	require.Error(t, err, "members cannot issue administrative invitations")
-	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID}, "")
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID}, "", "owner", false, 0)
 	require.NoError(t, err)
 	stored := storedEnrollment(t, am, key.Key)
 	require.Empty(t, stored.OwnerUserID, "recipient does not need an account")
@@ -256,7 +256,7 @@ func TestDeviceInvitationNameBecomesPeerIdentity(t *testing.T) {
 	group := &types.Group{ID: "named-devices", AccountID: member.AccountID, Name: "Named devices", Issued: "api"}
 	require.NoError(t, am.Store.CreateGroup(ctx, group))
 
-	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Adrian's MacBook Pro!", []string{group.ID}, "")
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Adrian's MacBook Pro!", []string{group.ID}, "", "owner", false, 0)
 	require.NoError(t, err)
 
 	// The client's self-reported hostname must be ignored in favor of the
@@ -274,7 +274,7 @@ func TestDeviceInvitationRejectsUnnameableLabel(t *testing.T) {
 	group := &types.Group{ID: "unnameable", AccountID: member.AccountID, Name: "Unnameable", Issued: "api"}
 	require.NoError(t, am.Store.CreateGroup(ctx, group))
 
-	_, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "!!!", []string{group.ID}, "")
+	_, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "!!!", []string{group.ID}, "", "owner", false, 0)
 	require.Error(t, err, "a name with no letters or digits cannot become a DNS label")
 }
 
@@ -303,7 +303,7 @@ func TestDeviceInvitationIntoMeshDomainIsQualified(t *testing.T) {
 	engineering, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "engineering")
 	require.NoError(t, err)
 
-	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "build-box", []string{group.ID}, engineering.ID)
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "build-box", []string{group.ID}, engineering.ID, "owner", false, 0)
 	require.NoError(t, err)
 
 	device, err := enrollPeer(am, key.Key, "whatever-the-client-calls-itself")
@@ -340,7 +340,7 @@ func TestDeviceInvitationRejectsUnavailableEnrollmentDomain(t *testing.T) {
 			require.NoError(t, am.Store.CreateGroup(ctx, group))
 			d := meshdomain.NewDomain(member.AccountID, "", "engineering", "")
 			require.NoError(t, am.Store.CreateDomain(ctx, d))
-			key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "build-box", []string{group.ID}, d.ID)
+			key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "build-box", []string{group.ID}, d.ID, "owner", false, 0)
 			require.NoError(t, err)
 			originalStore := am.Store
 			lookupErr := errors.New("domain lookup unavailable")
@@ -421,7 +421,7 @@ func TestDeviceInvitationRechecksDomainBeforeIssuance(t *testing.T) {
 			return domain, err
 		},
 	}
-	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "build-box", []string{group.ID}, d.ID)
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "build-box", []string{group.ID}, d.ID, "owner", false, 0)
 	require.ErrorIs(t, err, lookupErr)
 	require.Nil(t, key)
 	after, err := am.Store.GetAccountSetupKeys(ctx, store.LockingStrengthNone, member.AccountID)
@@ -447,7 +447,7 @@ func TestDeviceInvitationDelegatedSubdomainAdmin(t *testing.T) {
 	// (enrollmentFixture's fixture user, types.NewRegularUser) -- without a
 	// delegation, issuing any invitation is refused, matching
 	// TestDeviceInvitationNeedsNoRecipientAccount.
-	_, err = am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "should-fail", []string{group.ID}, engineering.ID)
+	_, err = am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "should-fail", []string{group.ID}, engineering.ID, member.Id, false, 0)
 	require.Error(t, err)
 
 	_, err = domainManager.DelegateDomainAdmin(ctx, member.AccountID, "owner", engineering.ID, member.Id)
@@ -455,13 +455,13 @@ func TestDeviceInvitationDelegatedSubdomainAdmin(t *testing.T) {
 
 	// Now delegated for "engineering" specifically: can issue into it or a
 	// subdomain created under it, but not into the unrelated "sales" domain.
-	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "delegated-device", []string{group.ID}, engineering.ID)
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "delegated-device", []string{group.ID}, engineering.ID, member.Id, false, 0)
 	require.NoError(t, err)
 	device, err := enrollPeer(am, key.Key, "irrelevant-hostname")
 	require.NoError(t, err)
 	require.Equal(t, "delegated-device.engineering.acme", device.DNSLabel)
 
-	_, err = am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "should-still-fail", []string{group.ID}, sales.ID)
+	_, err = am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "should-still-fail", []string{group.ID}, sales.ID, member.Id, false, 0)
 	require.Error(t, err, "delegation to engineering must not reach the sibling sales domain")
 }
 
@@ -496,7 +496,7 @@ func TestGetAdminPeers_DelegatedAdminSeesOnlyDomainSubtree(t *testing.T) {
 		{"backend-node", backend.ID},
 		{"sales-node", sales.ID},
 	} {
-		key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", item.name, []string{group.ID}, item.domainID)
+		key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", item.name, []string{group.ID}, item.domainID, "owner", false, 0)
 		require.NoError(t, err)
 		_, err = enrollPeer(am, key.Key, item.name+"-client")
 		require.NoError(t, err)
@@ -536,7 +536,7 @@ func TestDeviceInvitationDelegatedAdminListsAndRevokesOwnDomainOnly(t *testing.T
 	require.NoError(t, err)
 
 	// A pre-existing root invitation the delegated admin has no relation to.
-	unrelated, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "root-device", []string{group.ID}, "")
+	unrelated, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "root-device", []string{group.ID}, "", "owner", false, 0)
 	require.NoError(t, err)
 
 	_, err = am.ListDeviceInvitations(ctx, member.AccountID, member.Id)
@@ -545,7 +545,7 @@ func TestDeviceInvitationDelegatedAdminListsAndRevokesOwnDomainOnly(t *testing.T
 	_, err = domainManager.DelegateDomainAdmin(ctx, member.AccountID, "owner", engineering.ID, member.Id)
 	require.NoError(t, err)
 
-	own, err := am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "own-device", []string{group.ID}, engineering.ID)
+	own, err := am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "own-device", []string{group.ID}, engineering.ID, member.Id, false, 0)
 	require.NoError(t, err)
 
 	// Stale/forged naming metadata cannot remove own access or expose an
@@ -595,7 +595,7 @@ func TestUpdatePeer_MovesBetweenDomainsAndRequalifiesLabel(t *testing.T) {
 	sales, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "sales")
 	require.NoError(t, err)
 
-	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "movable", []string{group.ID}, engineering.ID)
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "movable", []string{group.ID}, engineering.ID, "owner", false, 0)
 	require.NoError(t, err)
 	device, err := enrollPeer(am, key.Key, "irrelevant-hostname")
 	require.NoError(t, err)
@@ -657,7 +657,7 @@ func TestUpdatePeer_DomainMoveRequiresAuthorizationOnBothEnds(t *testing.T) {
 	_, err = domainManager.DelegateDomainAdmin(ctx, member.AccountID, "owner", engineering.ID, member.Id)
 	require.NoError(t, err)
 
-	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "scoped-device", []string{group.ID}, engineering.ID)
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "scoped-device", []string{group.ID}, engineering.ID, "owner", false, 0)
 	require.NoError(t, err)
 	device, err := enrollPeer(am, key.Key, "irrelevant-hostname")
 	require.NoError(t, err)
@@ -677,7 +677,7 @@ func TestUpdatePeer_DomainMoveRequiresAuthorizationOnBothEnds(t *testing.T) {
 
 	// ...nor move a peer already in sales into their own domain: the source
 	// end needs authorization just as much as the destination does.
-	salesKey, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "sales-device", []string{group.ID}, sales.ID)
+	salesKey, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "sales-device", []string{group.ID}, sales.ID, "owner", false, 0)
 	require.NoError(t, err)
 	salesDevice, err := enrollPeer(am, salesKey.Key, "another-irrelevant-hostname")
 	require.NoError(t, err)
@@ -695,7 +695,7 @@ func TestDeviceInvitationHTTPLifecycle(t *testing.T) {
 	nodes, err := karstnode.NewStore(am.Store.(*store.SqlStore).GetDB())
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, nodes, router)
 	request := func(method, path, body, user string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: user})
@@ -703,7 +703,7 @@ func TestDeviceInvitationHTTPLifecycle(t *testing.T) {
 		router.ServeHTTP(rec, req)
 		return rec
 	}
-	body := `{"name":"Laptop","groups":["http-invited"]}`
+	body := `{"name":"Laptop","groups":["http-invited"],"for_user_id":"owner"}`
 	denied := request(http.MethodPost, "/karst/v1/invitations", body, member.Id)
 	require.Equal(t, http.StatusForbidden, denied.Code)
 	created := request(http.MethodPost, "/karst/v1/invitations", body, "owner")
@@ -752,7 +752,7 @@ func TestDeviceInvitationHTTPDelegatedAdminReachesOwnDomainOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, domainManager, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, domainManager, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, nodes, router)
 	request := func(method, path, body, user string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: user})
@@ -762,7 +762,7 @@ func TestDeviceInvitationHTTPDelegatedAdminReachesOwnDomainOnly(t *testing.T) {
 	}
 
 	// Create into the delegated domain: no account-wide grant needed.
-	inDomain := request(http.MethodPost, "/karst/v1/invitations", `{"name":"eng-box","groups":["http-delegated"],"domain_id":"`+engineering.ID+`"}`, member.Id)
+	inDomain := request(http.MethodPost, "/karst/v1/invitations", `{"name":"eng-box","groups":["http-delegated"],"for_user_id":"owner","domain_id":"`+engineering.ID+`"}`, member.Id)
 	require.Equal(t, http.StatusOK, inDomain.Code, inDomain.Body.String())
 	var grant struct {
 		ID string `json:"id"`
@@ -770,7 +770,7 @@ func TestDeviceInvitationHTTPDelegatedAdminReachesOwnDomainOnly(t *testing.T) {
 	require.NoError(t, json.Unmarshal(inDomain.Body.Bytes(), &grant))
 
 	// The unrelated sales domain is out of reach.
-	outOfScope := request(http.MethodPost, "/karst/v1/invitations", `{"name":"sales-box","groups":["http-delegated"],"domain_id":"`+sales.ID+`"}`, member.Id)
+	outOfScope := request(http.MethodPost, "/karst/v1/invitations", `{"name":"sales-box","groups":["http-delegated"],"for_user_id":"owner","domain_id":"`+sales.ID+`"}`, member.Id)
 	require.Equal(t, http.StatusForbidden, outOfScope.Code, outOfScope.Body.String())
 
 	// The delegated admin sees their own invitation when listing.
@@ -789,7 +789,7 @@ func TestDeviceInvitationConcurrentRedemptionAndExpiry(t *testing.T) {
 	ctx := context.Background()
 	group := &types.Group{ID: "invitation-race", AccountID: member.AccountID, Name: "Invitation race", Issued: "api"}
 	require.NoError(t, am.Store.CreateGroup(ctx, group))
-	grant, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Concurrent device", []string{group.ID}, "")
+	grant, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Concurrent device", []string{group.ID}, "", "owner", false, 0)
 	require.NoError(t, err)
 	var wait sync.WaitGroup
 	outcomes := make(chan error, 8)
@@ -811,7 +811,7 @@ func TestDeviceInvitationConcurrentRedemptionAndExpiry(t *testing.T) {
 	}
 	require.Equal(t, 1, accepted)
 	require.Equal(t, 1, storedEnrollment(t, am, grant.Key).UsedTimes)
-	expired, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Expired device", []string{group.ID}, "")
+	expired, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Expired device", []string{group.ID}, "", "owner", false, 0)
 	require.NoError(t, err)
 	stored := storedEnrollment(t, am, expired.Key)
 	past := time.Now().Add(-time.Minute)
@@ -829,13 +829,13 @@ func TestDeviceInvitationIssuanceIsBounded(t *testing.T) {
 	group := &types.Group{ID: "invitation-limit", AccountID: member.AccountID, Name: "Invited", Issued: "api"}
 	require.NoError(t, am.Store.CreateGroup(ctx, group))
 	for i := 0; i < 20; i++ {
-		key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID}, "")
+		key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID}, "", "owner", false, 0)
 		require.NoError(t, err)
 		key.Revoked = true
 		_, err = am.SaveSetupKey(ctx, member.AccountID, key, "owner")
 		require.NoError(t, err)
 	}
-	_, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID}, "")
+	_, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID}, "", "owner", false, 0)
 	require.ErrorContains(t, err, "too many invitations")
 }
 
@@ -844,7 +844,7 @@ func TestDeviceInvitationCanBeRevokedAfterGroupRemoval(t *testing.T) {
 	ctx := context.Background()
 	group := &types.Group{ID: "removed-invitation-group", AccountID: member.AccountID, Name: "Invited", Issued: "api"}
 	require.NoError(t, am.Store.CreateGroup(ctx, group))
-	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID}, "")
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID}, "", "owner", false, 0)
 	require.NoError(t, err)
 	require.NoError(t, am.Store.DeleteGroup(ctx, member.AccountID, group.ID))
 	key.Revoked = true
@@ -864,7 +864,7 @@ func TestEnrollmentExplicitDefaultRoot(t *testing.T) {
 	require.Equal(t, "karst", root.DNSSuffix)
 	group := &types.Group{ID: "root-devices", AccountID: member.AccountID, Name: "Root devices", Issued: "api"}
 	require.NoError(t, am.Store.CreateGroup(ctx, group))
-	invitation, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "laptop", []string{group.ID}, "")
+	invitation, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "laptop", []string{group.ID}, "", "owner", false, 0)
 	require.NoError(t, err)
 	require.Equal(t, root.ID, storedEnrollment(t, am, invitation.Key).DomainID)
 	device, err := enrollPeer(am, invitation.Key, "client-hostname")
@@ -885,7 +885,7 @@ func TestEnrollmentExplicitDefaultRoot(t *testing.T) {
 	require.Equal(t, root.ID, child.ParentID)
 	require.Equal(t, "engineering", child.Path, "root suffix must never appear in a relative domain path")
 	require.Error(t, domains.DeleteDomain(ctx, member.AccountID, "owner", root.ID))
-	_, err = am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "unauthorized", []string{group.ID}, "")
+	_, err = am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "unauthorized", []string{group.ID}, "", member.Id, false, 0)
 	require.Error(t, err, "default selection must not grant a member root enrollment authority")
 }
 
@@ -901,7 +901,7 @@ func TestEnrollmentRejectsOverlongQualifiedName(t *testing.T) {
 	require.NoError(t, am.Store.SaveAccount(ctx, account))
 	group := &types.Group{ID: "long-name-devices", AccountID: account.Id, Name: "Long name devices", Issued: "api"}
 	require.NoError(t, am.Store.CreateGroup(ctx, group))
-	invitation, err := am.CreateDeviceInvitation(ctx, account.Id, "long-name-owner", strings.Repeat("n", 58), []string{group.ID}, "")
+	invitation, err := am.CreateDeviceInvitation(ctx, account.Id, "long-name-owner", strings.Repeat("n", 58), []string{group.ID}, "", "long-name-owner", false, 0)
 	require.NoError(t, err)
 	_, err = enrollPeer(am, invitation.Key, "long-device")
 	require.ErrorContains(t, err, "253")
@@ -918,7 +918,7 @@ func TestEnrollmentDefaultAndExistingInvitationAfterRootRename(t *testing.T) {
 	require.NoError(t, err)
 	group := &types.Group{ID: "renamed-root-devices", AccountID: member.AccountID, Name: "Root devices", Issued: "api"}
 	require.NoError(t, am.Store.CreateGroup(ctx, group))
-	invitation, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "laptop", []string{group.ID}, "")
+	invitation, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "laptop", []string{group.ID}, "", "owner", false, 0)
 	require.NoError(t, err)
 	preview, err := mgr.PreviewRootRename(ctx, member.AccountID, "owner", "corp.example")
 	require.NoError(t, err)
@@ -930,7 +930,7 @@ func TestEnrollmentDefaultAndExistingInvitationAfterRootRename(t *testing.T) {
 	suffix, err := am.GetDNSDomain(ctx, member.AccountID)
 	require.NoError(t, err)
 	require.Equal(t, "laptop.corp.example", device.FQDN(suffix))
-	after, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "fresh", []string{group.ID}, "")
+	after, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "fresh", []string{group.ID}, "", "owner", false, 0)
 	require.NoError(t, err)
 	require.Equal(t, root.ID, storedEnrollment(t, am, after.Key).DomainID)
 	personalKey, err := am.CreateEnrollmentKey(ctx, member.AccountID, member.Id)
@@ -958,7 +958,7 @@ func TestEnrollmentDomainDNSNamesInDelegatedViewsAfterRename(t *testing.T) {
 	_, err = mgr.CommitRootRename(ctx, member.AccountID, "owner", "corp.example", preview.Revision)
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/domains", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: member.Id})
 	response := httptest.NewRecorder()
@@ -988,7 +988,7 @@ func TestEnrollmentRootHTTPProtectedLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	mgr := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, router)
+	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	for _, method := range []string{http.MethodDelete, http.MethodPut, http.MethodPatch} {
 		req := httptest.NewRequest(method, "/karst/v1/domains/"+root.ID, strings.NewReader(`{"parent_id":"another-domain"}`))
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: "owner"})
@@ -1008,4 +1008,74 @@ func TestEnrollmentRootHTTPProtectedLifecycle(t *testing.T) {
 	domains, err := am.Store.GetAccountDomains(ctx, store.LockingStrengthNone, member.AccountID)
 	require.NoError(t, err)
 	require.Len(t, domains, 1)
+}
+
+// Exercise invitation assignment across HTTP issuance and real control login.
+// Reusable credentials must keep assigning the recipient after the first use.
+func TestAssignedInvitationThroughControl(t *testing.T) {
+	for _, reusable := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reusable=%t", reusable), func(t *testing.T) {
+			am, user := enrollmentFixture(t)
+			ctx := context.Background()
+			group := &types.Group{ID: "assigned-invitation", AccountID: user.AccountID, Name: "Assigned", Issued: "api"}
+			require.NoError(t, am.Store.CreateGroup(ctx, group))
+			membershipGroup := &types.Group{ID: "membership-only", AccountID: user.AccountID, Name: "Membership only", Issued: "api"}
+			require.NoError(t, am.Store.CreateGroup(ctx, membershipGroup))
+			user.AutoGroups = []string{membershipGroup.ID}
+			require.NoError(t, am.Store.SaveUser(ctx, user))
+			nodes, err := karstnode.NewStore(am.Store.(*store.SqlStore).GetDB())
+			require.NoError(t, err)
+			router := mux.NewRouter()
+			karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, nil, nil, nil, nil, nodes, router)
+			body := fmt.Sprintf(`{"name":"assigned-device","groups":["assigned-invitation"],"for_user_id":%q,"reusable":%t,"usage_limit":2}`, user.Id, reusable)
+			req := httptest.NewRequest(http.MethodPost, "/karst/v1/invitations", strings.NewReader(body))
+			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: user.AccountID, UserId: "owner"})
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			var grant struct {
+				ID             string `json:"id"`
+				Credential     string `json:"credential"`
+				AssignedUserID string `json:"assigned_user_id"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &grant))
+			require.Equal(t, user.Id, grant.AssignedUserID)
+			assignees, err := nodes.InvitationAssignees([]string{grant.ID})
+			require.NoError(t, err)
+			require.Equal(t, user.Id, assignees[grant.ID])
+			handler := karstcontrol.LoginHandler{Nodes: nodes, Accounts: am}
+			for i := 0; i < 3; i++ {
+				signer, err := karstidentity.Generate()
+				require.NoError(t, err)
+				kem, err := mlkem.GenerateKey1024()
+				require.NoError(t, err)
+				raw, err := pb.Marshal(&proto.KarstLoginRequest{SetupKey: grant.Credential, Meta: &proto.PeerSystemMeta{Hostname: fmt.Sprintf("device-%d", i)}, KemPublicKey: kem.EncapsulationKey().Bytes()})
+				require.NoError(t, err)
+				_, err = handler.Handle(ctx, nil, signer.Public(), raw)
+				if i > 0 && (!reusable || i == 2) {
+					require.Error(t, err, "usage limit must prevent another device")
+					continue
+				}
+				require.NoError(t, err)
+				peer, err := am.Store.GetPeerByPeerPubKey(ctx, store.LockingStrengthNone, karstnode.Handle(signer.Public()))
+				require.NoError(t, err)
+				require.Equal(t, user.Id, peer.UserID)
+				peerGroups, err := am.Store.GetPeerGroups(ctx, store.LockingStrengthNone, user.AccountID, peer.ID)
+				require.NoError(t, err)
+				groupIDs := make([]string, 0, len(peerGroups))
+				for _, assigned := range peerGroups {
+					groupIDs = append(groupIDs, assigned.ID)
+				}
+				require.Contains(t, groupIDs, group.ID, "invitation access groups must survive owner assignment")
+				require.NotContains(t, groupIDs, membershipGroup.ID, "owner defaults must not expand invitation access")
+				owner, err := nodes.EnrollmentOwner(grant.Credential)
+				require.NoError(t, err)
+				if reusable {
+					require.Equal(t, user.Id, owner)
+				} else {
+					require.Empty(t, owner)
+				}
+			}
+		})
+	}
 }

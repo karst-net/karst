@@ -139,6 +139,9 @@ type handler struct {
 	// controlPlaneLocation is this account's declared NOC-map position for
 	// the control plane -- see package cplocation's own doc comment.
 	controlPlaneLocation cpLocationReader
+	// invitationAssignees is who each device invitation is for -- nil in a
+	// deployment that has not configured a node store, see invitations.go.
+	invitationAssignees invitationAssigneeStore
 	// routes backs the "route" kind in nocComponents: which gateway groups
 	// are actually in use by an enabled exit or subnet route, and what to
 	// call that route. A narrow slice of the fork's own AccountManager, the
@@ -559,8 +562,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, invitationAssignees invitationAssigneeStore, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections, invitationAssignees: invitationAssignees}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -1197,6 +1200,18 @@ func (h *handler) meAccess(w http.ResponseWriter, r *http.Request) {
 			own = append(own, n)
 		}
 	}
+	if document.UsesRegistryGroups() {
+		if err := h.addRegistryMembership(r.Context(), user.AccountId, all); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		own = nil
+		for _, n := range all {
+			if n.User == user.UserId {
+				own = append(own, n)
+			}
+		}
+	}
 	type explanation struct {
 		Destination string    `json:"destination"`
 		Rule        int       `json:"rule"`
@@ -1213,7 +1228,7 @@ func (h *handler) meAccess(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, rule := range filter.Rules {
-			for _, destination := range rule.Dsts {
+			for _, destination := range append(append([]string{}, rule.Dsts...), rule.DstCidrs...) {
 				for _, port := range rule.Ports {
 					label := names[destination]
 					if label == "" {
@@ -3743,6 +3758,12 @@ func (h *handler) policyRollback(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
+	// Restoring history must obey the same current registry-reference and
+	// resource-managed grant checks as a new policy write.
+	if err := h.validateRegistryGrants(r.Context(), user.AccountId, previous.Document); err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
 	written, err := h.policy.Write(r.Context(), previous.Document, user.UserId, expected)
 	if errors.Is(err, karstpolicy.ErrVersionConflict) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "policy version changed"), w)
@@ -3831,6 +3852,10 @@ func (h *handler) policyWrite(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	if err := h.validateRegistryGrants(r.Context(), user.AccountId, request.Document); err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
 		return
 	}
 	version, err := h.policy.Write(r.Context(), request.Document, user.UserId, expected)
@@ -3976,6 +4001,12 @@ func (h *handler) policyPreview(w http.ResponseWriter, r *http.Request) {
 	} else if !errors.Is(currentErr, karstpolicy.ErrNoVersion) {
 		util.WriteError(r.Context(), currentErr, w)
 		return
+	}
+	if candidate.UsesRegistryGroups() || current.UsesRegistryGroups() {
+		if err := h.addRegistryMembership(r.Context(), user.AccountId, network); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
 	}
 	oldFlows, err := compiledFlows(current, network)
 	if err != nil {

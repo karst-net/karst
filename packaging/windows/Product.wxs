@@ -63,6 +63,9 @@
            UpgradeCode="08C4DC64-5FCA-4C1C-993D-98EAEEFD2A3B"
            Language="1033">
 
+    <!-- The uploaded MSI must install without the build directory's cab1.cab. -->
+    <MediaTemplate EmbedCab="yes" />
+
     <!--
       Criterion 6: upgrading replaces rather than duplicates. The
       UpgradeCode above is what ties every version together into one

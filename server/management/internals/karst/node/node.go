@@ -88,11 +88,11 @@ type Identity struct {
 	UpdatedAt            time.Time
 }
 
-// EnrollmentOwner binds the secret of a portal-issued, one-time setup key to
-// its authenticated owner until registration succeeds. The setup-key schema we
-// inherit does not carry an owner; storing only a SHA-256 digest here prevents
-// this Karst table from becoming another plaintext-key store.
+// EnrollmentOwner binds a portal or invitation credential to its device owner.
+// Only the SHA-256 digest is stored. Reusable invitations retain the binding
+// after successful registration so later devices receive the same owner.
 type EnrollmentOwner struct {
+	Reusable  bool   `gorm:"not null;default:false"`
 	KeyHash   string `gorm:"primaryKey;size:64"`
 	UserID    string `gorm:"not null;index"`
 	CreatedAt time.Time
@@ -117,11 +117,27 @@ type SessionObservation struct {
 	ObservedAt time.Time `gorm:"not null;index"`
 }
 
+// InvitationAssignee records which account member a device invitation was
+// issued for, keyed by the setup key's own ID rather than its secret hash
+// (unlike EnrollmentOwner, which must be looked up by secret at redemption
+// time): the console needs to display "this invitation is for Alice" on an
+// invitation list or a user's detail long after the plaintext secret shown
+// once at creation is gone. EnrollmentOwner remains the mechanism that
+// actually assigns the resulting peer's owner at redemption; this table is
+// for display only.
+type InvitationAssignee struct {
+	KeyID     string `gorm:"primaryKey;size:64"`
+	UserID    string `gorm:"not null;index"`
+	CreatedAt time.Time
+}
+
 func (SessionObservation) TableName() string { return "karst_session_observations" }
 
 func (Identity) TableName() string { return "karst_node_identities" }
 
 func (EnrollmentOwner) TableName() string { return "karst_enrollment_owners" }
+
+func (InvitationAssignee) TableName() string { return "karst_invitation_assignees" }
 
 // Store persists node identities.
 type Store struct{ db *gorm.DB }
@@ -131,7 +147,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("node: nil database")
 	}
-	if err := db.AutoMigrate(&Identity{}, &SessionObservation{}, &EnrollmentOwner{}, &DeviceSession{}); err != nil {
+	if err := db.AutoMigrate(&Identity{}, &SessionObservation{}, &EnrollmentOwner{}, &InvitationAssignee{}, &DeviceSession{}); err != nil {
 		return nil, fmt.Errorf("node: migrate: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -142,15 +158,14 @@ func enrollmentKeyHash(key string) string {
 	return fmt.Sprintf("%x", sum[:])
 }
 
-// BindEnrollmentKey records the portal user who may claim a one-time key.
-// Calling it twice intentionally replaces a still-unused binding; the key is
-// never returned by this package, and the account manager remains the source
-// of truth for expiry and single-use enforcement.
-func (s *Store) BindEnrollmentKey(key, userID string) error {
+// BindEnrollmentKey records the owner of a credential. The optional reusable
+// flag defaults to false for one-off portal keys. Rebinding replaces the
+// previous owner; expiry and usage limits remain enforced by the account manager.
+func (s *Store) BindEnrollmentKey(key, userID string, reusable ...bool) error {
 	if key == "" || userID == "" {
 		return errors.New("node: enrollment key and user are required")
 	}
-	owner := EnrollmentOwner{KeyHash: enrollmentKeyHash(key), UserID: userID}
+	owner := EnrollmentOwner{KeyHash: enrollmentKeyHash(key), UserID: userID, Reusable: len(reusable) > 0 && reusable[0]}
 	if err := s.db.Save(&owner).Error; err != nil {
 		return fmt.Errorf("node: bind enrollment key: %w", err)
 	}
@@ -175,15 +190,59 @@ func (s *Store) EnrollmentOwner(key string) (string, error) {
 	return owner.UserID, nil
 }
 
-// ConsumeEnrollmentKey removes an owner binding only after the inherited
-// account manager has accepted registration. Failed attempts keep their owner
+// ConsumeEnrollmentKey removes a one-off binding after accepted registration
+// and retains reusable bindings. Failed attempts keep their owner
 // association for a retry until the setup key itself expires.
 func (s *Store) ConsumeEnrollmentKey(key string) error {
 	if key == "" {
 		return nil
 	}
-	if err := s.db.Where("key_hash = ?", enrollmentKeyHash(key)).Delete(&EnrollmentOwner{}).Error; err != nil {
+	if err := s.db.Where("key_hash = ? AND reusable = ?", enrollmentKeyHash(key), false).Delete(&EnrollmentOwner{}).Error; err != nil {
 		return fmt.Errorf("node: consume enrollment key: %w", err)
+	}
+	return nil
+}
+
+// SetInvitationAssignee records which user a device invitation (identified
+// by its setup key ID) was issued for. Calling it twice replaces the prior
+// assignee, same as BindEnrollmentKey.
+func (s *Store) SetInvitationAssignee(keyID, userID string) error {
+	if keyID == "" || userID == "" {
+		return errors.New("node: invitation key id and user are required")
+	}
+	assignee := InvitationAssignee{KeyID: keyID, UserID: userID}
+	if err := s.db.Save(&assignee).Error; err != nil {
+		return fmt.Errorf("node: set invitation assignee: %w", err)
+	}
+	return nil
+}
+
+// InvitationAssignees batch-resolves assignees for a page of invitations, so
+// listing invitations costs one query rather than one per row.
+func (s *Store) InvitationAssignees(keyIDs []string) (map[string]string, error) {
+	result := make(map[string]string, len(keyIDs))
+	if len(keyIDs) == 0 {
+		return result, nil
+	}
+	var rows []InvitationAssignee
+	if err := s.db.Where("key_id IN ?", keyIDs).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("node: list invitation assignees: %w", err)
+	}
+	for _, row := range rows {
+		result[row.KeyID] = row.UserID
+	}
+	return result, nil
+}
+
+// DeleteInvitationAssignee removes the display record for a revoked or
+// expired invitation. Best-effort from the caller's perspective: a missing
+// row is not an error, since not every setup key is a device invitation.
+func (s *Store) DeleteInvitationAssignee(keyID string) error {
+	if keyID == "" {
+		return nil
+	}
+	if err := s.db.Where("key_id = ?", keyID).Delete(&InvitationAssignee{}).Error; err != nil {
+		return fmt.Errorf("node: delete invitation assignee: %w", err)
 	}
 	return nil
 }
