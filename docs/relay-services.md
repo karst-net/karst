@@ -156,9 +156,11 @@ address, region, or provider.
 
 This stage deliberately retains the legacy `/relays` API and separate client
 netmap field. It does not remove legacy configuration or introduce a new
-credential authority. Bulk configuration migration tooling, lifecycle
-operations, per-mode health/accounting, and full transport verification
-remain required by #404.
+credential authority. Bulk configuration migration tooling and per-mode
+health/accounting beyond what #440/#444 landed remain required by #446. See
+[relay-migration-verification.md](relay-migration-verification.md) for
+executed schema-compatibility and direct+Ponor transport verification, and
+what it does not yet cover.
 
 ## Installation handoff
 
