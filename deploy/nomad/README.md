@@ -49,11 +49,10 @@ deployment's state in place: point its variables at that deployment's
 directories and there is no data to migrate, the same way switching between
 compose releases never needs one.
 
-[`prod/Caddyfile`](prod/Caddyfile) is byte-for-byte the same content as
-[`../compose/prod/Caddyfile`](../compose/prod/Caddyfile) -- the pre-created
-`karst` Docker network gives `control`/`keycloak` the identical service-name
-DNS compose's own bridge network does, so nothing needed to change. Keep the
-two in sync if either one changes.
+[`prod/Caddyfile`](prod/Caddyfile) keeps the same edge routes as Compose,
+but proxies its catch-all to the console container. The portal and release
+files remain host-mounted. See [console rollout](prod/README.md) for image
+verification, deployment, smoke checks, and rollback.
 
 ## Component model
 
