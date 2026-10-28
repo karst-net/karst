@@ -91,7 +91,7 @@ pub struct Config {
     #[serde(default)]
     pub metrics: Option<Metrics>,
 
-    /// Outbound mesh dialling — §8. Absent means this relay only accepts mesh
+    /// Outbound mesh dialing — §8. Absent means this relay only accepts mesh
     /// connections and never opens one.
     #[serde(default)]
     pub mesh: Option<Mesh>,
@@ -175,11 +175,11 @@ pub(crate) fn parse_https_origin(value: &str) -> Option<(&str, u16)> {
 ///
 /// *Which* peers, and their addresses, come from the roster: they are admission
 /// facts and belong with the identity keys they are checked against. This is
-/// only what dialling needs that admission does not.
+/// only what dialing needs that admission does not.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Mesh {
-    /// The certificate to trust when dialling a mesh peer.
+    /// The certificate to trust when dialing a mesh peer.
     ///
     /// Required, with no fallback to system roots. §4.2 declines to trust
     /// certificates for relay identity, and a mesh that fell back to public

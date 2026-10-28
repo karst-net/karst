@@ -566,7 +566,7 @@ denial-of-service vector available to anyone else.
 For a planned restart, a relay SHOULD send `Restarting(reconnect_in_ms,
 try_for_ms)` before closing, and clients SHOULD wait `reconnect_in_ms` plus
 jitter before reconnecting and keep retrying for `try_for_ms`. Without the
-jitter a restart produces a synchronised reconnect storm, which is the failure
+jitter a restart produces a synchronized reconnect storm, which is the failure
 mode where a relay that was merely restarting becomes a relay that is down.
 
 ### 7.7 `ReflectOffer` — the UDP reflector
@@ -692,7 +692,7 @@ margin or the sample count.
   the RTTs measured so far describe a network it is no longer on. A node SHOULD
   measure every relay in the registry promptly rather than waiting for its
   ordinary rotation. It MUST still require §9.2's margin sustained across the
-  same number of consecutive measurements: measuring sooner is not a licence to
+  same number of consecutive measurements: measuring sooner is not a license to
   decide on less evidence.
 - **A relay that sends `Restarting` is not a dead relay.** See §7.6. Reconnect
   attempts made within `try_for_ms` of the notice MUST NOT count towards a
@@ -841,7 +841,7 @@ queries 1 and 3 **false**. ProVerif's trace:
 Queries 2 and 4 still pass, because only the client's signing input is
 weakened. That asymmetry is the point: the variant isolates one field.
 
-The lesson generalises past this protocol. **The client checks the relay's
+The lesson generalizes past this protocol. **The client checks the relay's
 identity in both versions** — §4.2's pinning is untouched. What the variant
 removes is the *binding* of that identity into what the client signs. Checking
 who you are talking to and binding it into your signature are different

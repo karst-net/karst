@@ -396,7 +396,7 @@ fn a_one_sided_dial_leaves_the_responder_passive() {
     both.feed(Side::A, resp, 10);
     assert!(both.a.established() && both.b.established());
 
-    // B answered; it never dialled, so it must not rekey.
+    // B answered; it never dialed, so it must not rekey.
     let b_out = Both::sends(both.b.poll(REKEY_AFTER_MS + 10, [0x22; 32]));
     assert!(
         b_out.is_empty(),

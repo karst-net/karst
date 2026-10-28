@@ -1275,7 +1275,7 @@ fn a_full_cone_admits_an_address_it_never_contacted() {
 /// any port; an address it has not contacted may not reach it at all.
 ///
 /// Both halves are asserted here, because either alone is satisfied by a
-/// neighbouring row: the first is also true of a full cone, and the second is
+/// neighboring row: the first is also true of a full cone, and the second is
 /// also true of a port-restricted one.
 #[test]
 #[ignore = "needs root and network namespaces"]

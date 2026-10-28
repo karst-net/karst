@@ -65,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      # The gitleaks *action* requires a paid licence for organisation-owned
+      # The gitleaks *action* requires a paid license for organization-owned
       # repositories; the gitleaks *tool* is MIT and has no such condition.
       # Running the binary directly keeps the scan free and pins the version,
       # so a new upstream release cannot change what CI enforces overnight.
@@ -122,7 +122,7 @@ jobs:
       # full explanation. `rust-toolchain.toml` pins 1.89 for the workspace
       # and cargo reads that file, so `targets:` here would add the target to
       # `stable` while the actual build runs under 1.89 and fails with
-      # "can't find crate for `core`". `rustup target add` honours the
+      # "can't find crate for `core`". `rustup target add` honors the
       # toolchain file, so it lands on the toolchain that actually compiles.
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
@@ -221,7 +221,7 @@ jobs:
   #
   # GitHub-hosted runners give passwordless sudo and a working /dev/net/tun.
   # The binary is built unprivileged and only the run is elevated, so no
-  # root-owned artefacts land in target/.
+  # root-owned artifacts land in target/.
   tun:
     name: Kernel datapath (privileged)
     runs-on: ubuntu-latest
@@ -284,7 +284,7 @@ jobs:
       # exit criterion in miniature. Without this job the daemon is only ever
       # tested against itself in-process.
       # Includes the interface-flap tests. One deliberately waits out
-      # REJECT_AFTER_TIME (~200 s) to prove a session that *expires* is re-dialled
+      # REJECT_AFTER_TIME (~200 s) to prove a session that *expires* is re-dialed
       # rather than left idle — the failure that would otherwise appear only
       # after a three-minute outage in production.
       - name: Two daemons over a veth pair
@@ -355,7 +355,7 @@ jobs:
       # builds with, while the job ran under 1.89 — which had only the host
       # target and failed with "can't find crate for `core`".
       #
-      # `rustup target add` honours the toolchain file, so it lands on the
+      # `rustup target add` honors the toolchain file, so it lands on the
       # toolchain that actually compiles. `scripts/build-macos-pkg.sh` does the
       # same for the same reason; that is why the packaging job was unaffected
       # and this one was not.
@@ -420,7 +420,7 @@ jobs:
           cargo test --locked -p karst-tun --features network-extension \
             --target aarch64-apple-darwin
       # Built unprivileged and only the run elevated, so no root-owned
-      # artefacts land in target/ — the same arrangement as the `tun` job.
+      # artifacts land in target/ — the same arrangement as the `tun` job.
       - name: Build the privileged utun suite
         run: |
           bin=$(cargo test -p karst-tun --test utun --no-run --message-format=json \
@@ -428,7 +428,7 @@ jobs:
           [ -n "$bin" ] || { echo "::error::could not locate the utun test binary"; exit 1; }
           echo "UTUN_TEST_BIN=$bin" >> "$GITHUB_ENV"
       # The kernel hands out utun units in order and each test takes one, so
-      # one at a time — the same reason the Linux TUN suite is serialised.
+      # one at a time — the same reason the Linux TUN suite is serialized.
       - name: Real utun devices (privileged)
         run: |
           sudo env PATH="$PATH" KARST_REQUIRE_PREREQUISITES=1 \
@@ -456,7 +456,7 @@ jobs:
 
   # PLAN.md §6's exit criterion is measured here and nowhere else.
   #
-  # The `tun` job above validates the *instrument* — that each NAT flavour
+  # The `tun` job above validates the *instrument* — that each NAT flavor
   # behaves the way its label says, with no Karst code involved. This runs the
   # product through it: a Go coordination server, a relay, and two daemons with
   # real TUN devices in separate namespaces, from first enrolment to a TCP
@@ -733,7 +733,7 @@ jobs:
           sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
             "$GATEWAY_BIN" --ignored --test-threads=1
 
-  # Licence allowlist — a GPL dependency reaching the MIT/Apache crates would
+  # License allowlist — a GPL dependency reaching the MIT/Apache crates would
   # break both App Store and kernel-datapath viability (ADR-0003, ADR-0007).
   deny:
     name: Dependency policy
@@ -923,7 +923,7 @@ jobs:
       - name: No PSK bytes reach a bug report
         run: cargo test -p karstd --test leakscan
 
-  # The deployment artefact is the one thing here with no test suite behind it,
+  # The deployment artifact is the one thing here with no test suite behind it,
   # and findings 42 and 43 are both about components that existed only where
   # something exercised them. This does not stand the stack up — that needs two
   # image builds — but it does refuse the ways it rots silently: a compose file
@@ -1051,7 +1051,7 @@ jobs:
           done
 
   compose:
-    name: Deployment artefact
+    name: Deployment artifact
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -1127,7 +1127,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Every source file declares its licence
+      - name: Every source file declares its license
         run: |
           fail=0
           while IFS= read -r f; do

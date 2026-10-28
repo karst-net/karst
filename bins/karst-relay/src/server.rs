@@ -97,7 +97,7 @@ pub struct Ctx {
     roster: RwLock<Arc<FileRoster>>,
     roster_updates: watch::Sender<u64>,
     /// `pub(crate)`: [`crate::quic`] needs it for the relay's own relay id in
-    /// log lines and for mesh dialling, exactly as this module does.
+    /// log lines and for mesh dialing, exactly as this module does.
     pub(crate) identity: Arc<Identity>,
     /// `pub(crate)`: [`crate::quic`] needs the same TLS configuration to
     /// derive its QUIC server config — ADR-0020. Never touched outside this
@@ -427,9 +427,9 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         // would be the same silent-failure shape ADR-0020 exists to avoid.
         let quic_tls = crate::quic::client_config(&client_tls)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
-        let dialler = crate::mesh::Dialler::new(ctx.identity.relay_id(), cfg.region.clone());
-        eprintln!("karst-relay: mesh dialling enabled");
-        tokio::spawn(mesh_loop(Arc::clone(&ctx), client_tls, quic_tls, dialler));
+        let dialer = crate::mesh::Dialer::new(ctx.identity.relay_id(), cfg.region.clone());
+        eprintln!("karst-relay: mesh dialing enabled");
+        tokio::spawn(mesh_loop(Arc::clone(&ctx), client_tls, quic_tls, dialer));
     }
 
     // Bound before the TCP listener and spawned rather than awaited, for the
@@ -742,7 +742,7 @@ pub(crate) async fn after_established<S: Stream>(
     peer: SocketAddr,
     ctx: Arc<Ctx>,
 ) {
-    // §8's regional boundary, on the accepting side. Guarding only the dialler
+    // §8's regional boundary, on the accepting side. Guarding only the dialer
     // would leave it holding on one side of every pair: an operator who put a
     // foreign relay in the list would simply be meshed *by* it instead.
     if let Admitted::Mesh { relay_id } = &admitted {
@@ -768,7 +768,7 @@ type Tls = tokio_rustls::server::TlsStream<TcpStream>;
 /// What the post-handshake loop needs of a stream.
 ///
 /// **Generic so an outbound mesh connection can use it.** `serve` accepts a
-/// TLS *server* stream; a relay dialling a mesh peer holds a TLS *client*
+/// TLS *server* stream; a relay dialing a mesh peer holds a TLS *client*
 /// stream, and everything after the handshake — framing, the hub, the write
 /// queue — is identical. Duplicating the loop for the second type would give
 /// the mesh path its own copy of the queue draining and the close handling,
@@ -1102,7 +1102,7 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     s
 }
 
-/// The HTTP upgrade a dialling relay sends — §4.1, the same request a node
+/// The HTTP upgrade a dialing relay sends — §4.1, the same request a node
 /// sends, because a mesh connection is an ordinary Ponor connection.
 const MESH_UPGRADE: &str = "GET /ponor HTTP/1.1\r\n\
      Host: relay\r\n\
@@ -1112,29 +1112,29 @@ const MESH_UPGRADE: &str = "GET /ponor HTTP/1.1\r\n\
 
 /// Dial the mesh peers this relay is responsible for — §8.
 ///
-/// **Only one side of a pair dials**, and `mesh::Dialler` decides which; see
+/// **Only one side of a pair dials**, and `mesh::Dialer` decides which; see
 /// its documentation for why, and for what happens if both do.
 pub async fn mesh_loop(
     ctx: Arc<Ctx>,
     client_tls: Arc<rustls::ClientConfig>,
     quic_tls: quinn::ClientConfig,
-    mut dialler: crate::mesh::Dialler,
+    mut dialer: crate::mesh::Dialer,
 ) {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        dialler.set_peers(
+        dialer.set_peers(
             ctx.roster
                 .read()
                 .map_or_else(|p| p.into_inner().mesh_dial_list(), |g| g.mesh_dial_list()),
         );
         let now = ctx.now_ms();
         let connected = |id: &crate::mesh::Id| ctx.with_hub(|hub| hub.has_mesh(id));
-        for due in dialler.due(now, &connected) {
+        for due in dialer.due(now, &connected) {
             let ctx = Arc::clone(&ctx);
             let tls = Arc::clone(&client_tls);
             let quic_tls = quic_tls.clone();
             // Outcomes are reported through the hub rather than back into the
-            // dialler: the task outlives this iteration, and `due` has already
+            // dialer: the task outlives this iteration, and `due` has already
             // marked the attempt so nothing dials it again meanwhile.
             // Boxed for the reason the inbound spawn is — `dial_mesh` runs the
             // same three stages and so carries the same large state machine.
@@ -1177,7 +1177,7 @@ async fn dial_mesh(
     // The name is only what TLS validates against the configured CA; §4.2 puts
     // the identity check on the ML-DSA-65 signature below, not here. It comes
     // from the roster rather than from the address, because a relay behind a
-    // load balancer is dialled at one and presents the other.
+    // load balancer is dialed at one and presents the other.
     let server_name = rustls::pki_types::ServerName::try_from(name.to_owned())
         .map_err(|e| format!("server name: {e}"))?;
     let connector = tokio_rustls::TlsConnector::from(Arc::clone(tls));

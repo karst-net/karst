@@ -50,7 +50,7 @@ func (h *handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 
 // getSettings returns the account's agent-network settings. Accounts that
 // haven't been bootstrapped yet read as the defaults with an empty cluster,
-// subdomain and endpoint; the manager synthesises that view.
+// subdomain and endpoint; the manager synthesizes that view.
 func (h *handler) getSettings(w http.ResponseWriter, r *http.Request) {
 	userAuth, err := nbcontext.GetUserAuthFromContext(r.Context())
 	if err != nil {

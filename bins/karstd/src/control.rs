@@ -587,7 +587,7 @@ impl Client {
     /// Reach the coordination server through a NAT64 prefix.
     ///
     /// A no-op unless the server is named by an **IPv4 literal** and this node
-    /// has a prefix: a hostname is synthesised by DNS64 during resolution, and
+    /// has a prefix: a hostname is synthesized by DNS64 during resolution, and
     /// a node with IPv4 needs no help. See [`crate::nat64::rewrite_url`].
     pub fn reach_via_nat64(&mut self, prefix: Option<karst_transport::Nat64Prefix>) {
         let reachable = crate::nat64::rewrite_url(prefix, &self.endpoint);

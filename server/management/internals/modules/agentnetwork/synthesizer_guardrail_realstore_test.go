@@ -14,7 +14,7 @@ import (
 )
 
 // decodeServiceGuardrailConfig pulls the llm_guardrail middleware config off the
-// synthesised service's single target.
+// synthesized service's single target.
 func decodeServiceGuardrailConfig(t *testing.T, svc *rpservice.Service) guardrailConfig {
 	t.Helper()
 	require.NotEmpty(t, svc.Targets, "synth service must carry a target")
@@ -25,7 +25,7 @@ func decodeServiceGuardrailConfig(t *testing.T, svc *rpservice.Service) guardrai
 			return cfg
 		}
 	}
-	t.Fatal("llm_guardrail middleware not present on synthesised service")
+	t.Fatal("llm_guardrail middleware not present on synthesized service")
 	return guardrailConfig{}
 }
 
@@ -39,7 +39,7 @@ func decodeMiddlewareRawConfig(t *testing.T, svc *rpservice.Service, id string) 
 			return mw.ConfigJSON
 		}
 	}
-	t.Fatalf("middleware %q not present on synthesised service", id)
+	t.Fatalf("middleware %q not present on synthesized service", id)
 	return nil
 }
 

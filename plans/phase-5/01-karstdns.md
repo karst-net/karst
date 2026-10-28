@@ -202,7 +202,7 @@ resolver parses attacker-controlled upstream responses.
 Three details that are easy to get wrong and each get a test:
 
 - **Case.** Compare names case-insensitively, and echo the question section
-  back byte-for-byte as asked. A client doing 0x20 randomisation drops an
+  back byte-for-byte as asked. A client doing 0x20 randomization drops an
   answer whose question section it cannot match.
 - **EDNS0.** Preserve the requester's payload size on forwarded queries, and
   set `TC` correctly on UDP truncation so the client retries over TCP. Listen

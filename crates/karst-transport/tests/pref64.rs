@@ -249,7 +249,7 @@ fn a_solicited_router_advertisement_yields_the_prefix_it_advertised() {
         let mut line = String::new();
         BufReader::new(stdout)
             .read_line(&mut line)
-            .expect("the router never signalled readiness");
+            .expect("the router never signaled readiness");
         assert!(line.starts_with("ready"), "the router said {line:?}");
     }
 

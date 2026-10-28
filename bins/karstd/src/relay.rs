@@ -152,7 +152,7 @@ impl Decoder {
     /// # Errors
     /// Returns a protocol error for an oversized, malformed, or out-of-order
     /// frame. The caller must close that connection rather than attempting to
-    /// resynchronise an authenticated byte stream after a framing failure.
+    /// resynchronize an authenticated byte stream after a framing failure.
     pub fn push(
         &mut self,
         bytes: &[u8],
@@ -627,7 +627,7 @@ impl Receiver {
     /// # Errors
     /// Returns an error when the TLS stream closes, I/O fails, or the relay
     /// sends malformed Ponor framing. A framing failure must close the
-    /// connection: an authenticated byte stream cannot be resynchronised.
+    /// connection: an authenticated byte stream cannot be resynchronized.
     pub async fn receive(
         &mut self,
         signer: &impl Signer,

@@ -926,7 +926,7 @@ whatever the operator already trusts.
 | Phase | Deliverable | Actuates anything? |
 |---|---|---|
 | **0 — Cost model and simulator** | The declarative schema (§2); an offline tool that replays recorded relay telemetry against a cost model and reports spend per pool, per meter, per edge. | No |
-| **0b — Re-homing hardening** | Close the client/relay gaps in *Verified: client re-homing* (move a busy connection, network-change trigger, `Restarting` sent and honoured, faster probing). Independently valuable; a prerequisite for Phase 2 scale-down. | No (client/relay behaviour only) |
+| **0b — Re-homing hardening** | Close the client/relay gaps in *Verified: client re-homing* (move a busy connection, network-change trigger, `Restarting` sent and honored, faster probing). Independently valuable; a prerequisite for Phase 2 scale-down. | No (client/relay behavior only) |
 | **1 — Advisor** | The planner and constraint set (§3, §4) running continuously, publishing "recommended vs actual" as metrics and a console view. Humans act on it. | No |
 | **2 — Reactive actuation** | Drivers (§5), enrollment (§6), circuit breaker. Scales on observed demand with headroom. | Yes, bounded |
 | **3 — Predictive scaling and pattern of life** | A forecaster behind the same planner interface: learns daily/weekly/seasonal demand per (region, aquifer) and leads the ramp. | Yes |

@@ -27,8 +27,8 @@ const apiKeyPlaceholder = "${API_KEY}" //nolint:gosec // template marker, not a 
 const gcpKeyfilePrefix = "keyfile::"
 
 // SynthesizedServiceIDPrefix prefixes the in-memory ID of every
-// reverse-proxy service synthesised from Agent Network state. One
-// synthesised service exists per (account, cluster); the suffix is the
+// reverse-proxy service synthesized from Agent Network state. One
+// synthesized service exists per (account, cluster); the suffix is the
 // account ID so the proxy can dedup mappings cleanly.
 const SynthesizedServiceIDPrefix = "agent-net-svc-"
 
@@ -58,7 +58,7 @@ var agentNetworkCaptureContentTypes = []string{
 	"text/event-stream",
 }
 
-// Middleware IDs the synthesised target chain registers, mirroring the
+// Middleware IDs the synthesized target chain registers, mirroring the
 // proxy-side built-in registry. Order matters: on_request runs in the
 // order they're listed; on_response runs in reverse, so cost_meter must
 // come BEFORE llm_response_parser in the slice so the parser populates
@@ -75,7 +75,7 @@ const (
 )
 
 // SynthesizeServicesForCluster walks every account's agent-network
-// settings row pinned to clusterAddr and synthesises the per-account
+// settings row pinned to clusterAddr and synthesizes the per-account
 // gateway service. Used by the proxy-mapping snapshot path where the
 // connecting proxy has a specific cluster address and cares about every
 // account that routes through it.
@@ -117,7 +117,7 @@ func SynthesizeServicesForCluster(ctx context.Context, s store.Store, clusterAdd
 
 // SynthesizeServiceForDomain resolves a single agent-network service by its
 // public endpoint domain. It lists the (few) settings rows on the domain's
-// cluster, matches the one whose endpoint equals the domain, and synthesises
+// cluster, matches the one whose endpoint equals the domain, and synthesizes
 // only that account — avoiding full per-account synthesis for every tenant on
 // the cluster, which is what auth/session paths previously paid. Returns nil
 // (no error) when no account owns the domain.
@@ -329,7 +329,7 @@ func backfillProviderSessionKeys(ctx context.Context, s store.Store, p *types.Pr
 	return nil
 }
 
-// pickServiceSessionKeys returns the keypair the synthesised gateway
+// pickServiceSessionKeys returns the keypair the synthesized gateway
 // service signs / verifies session JWTs with. The PoC reuses the first
 // enabled provider's keypair so existing session cookies survive
 // provider edits as long as the first-by-created_at provider stays in
@@ -347,7 +347,7 @@ func pickServiceSessionKeys(providers []*types.Provider) (priv, pub string, err 
 }
 
 // routerConfig mirrors the on-wire shape llm_router accepts. Kept
-// private so the synthesiser owns the contract; the proxy-side factory
+// private so the synthesizer owns the contract; the proxy-side factory
 // JSON-decodes the same shape.
 type routerConfig struct {
 	Providers []routerProviderRoute `json:"providers"`
@@ -559,7 +559,7 @@ type identityInjectJSONMetadata struct {
 // in this list, so the chain is safe to ship to all targets even when
 // no identity-stamping provider is configured.
 //
-// The caller passes groupIndex so we can mirror the synthesiser's own
+// The caller passes groupIndex so we can mirror the synthesizer's own
 // "drop orphans" rule — providers no enabled policy authorizes don't
 // reach the router, so injecting identity for them would never fire.
 // We could leave them in for symmetry, but skipping is cheaper and
@@ -948,7 +948,7 @@ func buildAccountService(
 		Enabled:      true,
 		Private:      true,
 		// AccessGroups gates tunnel-peer access (ValidateTunnelPeer) to the
-		// synthesised agent-network endpoint. Agents reach the gateway over
+		// synthesized agent-network endpoint. Agents reach the gateway over
 		// the WireGuard tunnel and are authorized by their peer→user group
 		// membership — the union of every enabled policy's source groups.
 		AccessGroups:      unionSourceGroups(enabledPolicies),
@@ -988,7 +988,7 @@ const (
 
 // providerAuthHeader builds the upstream auth header pair for a
 // provider from its catalog entry. The catalog declares which header
-// name and template a provider's API expects; the synthesiser
+// name and template a provider's API expects; the synthesizer
 // substitutes the provider's decrypted API key into the template and
 // returns the (name, value) pair the router middleware injects after
 // stripping the inbound vendor auth headers.
@@ -1066,7 +1066,7 @@ func unionSourceGroups(policies []*types.Policy) []string {
 	return out
 }
 
-// MergedGuardrails is the synthesiser's fold target. Only prompt capture is
+// MergedGuardrails is the synthesizer's fold target. Only prompt capture is
 // merged here — the model allowlist is emitted per-provider, and
 // token/budget/retention moved onto Policy.Limits and account Settings.
 type MergedGuardrails struct {

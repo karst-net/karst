@@ -160,7 +160,7 @@ func TestReconcile_PolicyRemoved_EmitsDelete(t *testing.T) {
 	policy := newReconcileTestPolicy(provider.ID, "grp-eng")
 
 	gomock.InOrder(
-		// First reconcile: provider + policy, synthesised.
+		// First reconcile: provider + policy, synthesized.
 		mockStore.EXPECT().GetAgentNetworkSettings(ctx, store.LockingStrengthNone, "acct-1").Return(newReconcileTestSettings(), nil),
 		mockStore.EXPECT().GetAccountAgentNetworkProviders(ctx, store.LockingStrengthNone, "acct-1").Return([]*types.Provider{provider}, nil),
 		mockStore.EXPECT().GetAccountAgentNetworkPolicies(ctx, store.LockingStrengthNone, "acct-1").Return([]*types.Policy{policy}, nil),
@@ -190,7 +190,7 @@ func TestReconcile_PolicyRemoved_EmitsDelete(t *testing.T) {
 	mgr.reconcileMu.Lock()
 	_, present := mgr.reconcileCache["acct-1"]
 	mgr.reconcileMu.Unlock()
-	assert.False(t, present, "cache for the account must be cleared once nothing is synthesised")
+	assert.False(t, present, "cache for the account must be cleared once nothing is synthesized")
 }
 
 func TestReconcile_NilProxyController_NoOp(t *testing.T) {

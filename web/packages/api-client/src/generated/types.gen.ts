@@ -85,7 +85,7 @@ export type RootRenamePreview = {
     domain_count: number;
     committed: boolean;
     /**
-     * No client application acknowledgement exists in the current protocol.
+     * No client application acknowledgment exists in the current protocol.
      */
     convergence: 'unobserved';
     examples: Array<{

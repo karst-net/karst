@@ -37,7 +37,7 @@ Two things constrain the design before any preference applies:
   *inside* an already-sealed transport packet's plaintext, the same way
   Bedrock's peer-head exchange (issue #59) already does with a
   `CONTROL_MARKER` byte (`0x00`, not a legal IP version) at the front of the
-  plaintext before anything that could be mistaken for tunnelled traffic.
+  plaintext before anything that could be mistaken for tunneled traffic.
 - **The ACL engine this should reuse already exists and is already
   bidirectional.** `server/management/internals/karst/policy/schema.go`
   compiles an account's `tag:`/`group:` rules into per-node ingress/egress

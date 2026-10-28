@@ -262,7 +262,7 @@ we use the DCO. **There is no CLA and no copyright assignment**, which is
 deliberate and means the project cannot unilaterally relicense.
 
 Security reports: [SECURITY.md](SECURITY.md), which includes an explicit safe
-harbour for good-faith research. Review is actively wanted — the specifications
+harbor for good-faith research. Review is actively wanted — the specifications
 carry a royalty-free implementation grant precisely so that a second
 implementation can exist to disagree with this one.
 

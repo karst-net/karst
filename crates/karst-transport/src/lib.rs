@@ -16,7 +16,7 @@
 //! also what limited the datapath: PLAN.md §3.4 measured 63% of the profile in
 //! the kernel at ~46,000 packets per second per direction, with no userspace
 //! hotspot above 6%. [`UdpTransport::send_batch`] and
-//! [`UdpTransport::recv_batch`] amortise the syscall across up to [`BATCH`]
+//! [`UdpTransport::recv_batch`] amortize the syscall across up to [`BATCH`]
 //! datagrams, and [`UdpTransport::send_segmented`] hands the kernel one buffer
 //! to split (UDP GSO).
 //!
@@ -32,7 +32,7 @@
 //! `sendmmsg`, `recvmmsg` and UDP GSO are Linux interfaces with no portable
 //! equivalent. The batched *API* is portable anyway: [`portable`] implements
 //! the same two calls as a loop over `sendto`/`recvfrom`, so a caller writes
-//! one datapath and gets the syscall amortisation where the kernel offers it.
+//! one datapath and gets the syscall amortization where the kernel offers it.
 //! Only [`UdpTransport::send_segmented`] and [`RouterSocket`] remain
 //! Linux-only, because neither has a meaningful unaccelerated form — a
 //! caller must fall back to `send_batch` for the first, and the second is
@@ -59,7 +59,7 @@ use std::time::Duration;
 
 /// Datagrams per batched call.
 ///
-/// 32 is enough to amortise a `sendmmsg` almost completely — the marginal gain
+/// 32 is enough to amortize a `sendmmsg` almost completely — the marginal gain
 /// past it is small, and every slot costs a `sockaddr_storage` (128 B) plus an
 /// `mmsghdr` in a per-thread buffer that is allocated once.
 ///
@@ -203,7 +203,7 @@ impl UdpTransport {
     /// within the prefix is reported as the IPv4 address it stands for. The
     /// rest of Karst therefore goes on holding, comparing and advertising plain
     /// IPv4 addresses on a host that cannot send an IPv4 packet — which is the
-    /// only arrangement that works, because a synthesised address means nothing
+    /// only arrangement that works, because a synthesized address means nothing
     /// outside this network and a node that advertised one would be telling
     /// every peer to reach it somewhere that does not exist.
     ///
@@ -330,7 +330,7 @@ impl UdpTransport {
     /// send path can call it unconditionally.
     fn route(&self, peer: SocketAddr) -> SocketAddr {
         match self.nat64 {
-            Some(prefix) => prefix.synthesise_socket(peer),
+            Some(prefix) => prefix.synthesize_socket(peer),
             None => peer,
         }
     }
@@ -440,7 +440,7 @@ impl UdpTransport {
         };
         let routed: Vec<(&[u8], SocketAddr)> = datagrams
             .iter()
-            .map(|(d, peer)| (*d, prefix.synthesise_socket(*peer)))
+            .map(|(d, peer)| (*d, prefix.synthesize_socket(*peer)))
             .collect();
         self.send_batch_raw(&routed)
     }
@@ -760,14 +760,14 @@ mod tests {
     /// A NAT64 socket sends to `prefix::v4` and reports the sender as IPv4 —
     /// **over a real socket pair**, with no translator in sight.
     ///
-    /// The trick is a prefix whose synthesised addresses this host already
+    /// The trick is a prefix whose synthesized addresses this host already
     /// routes. `::/96` is one: it embeds `0.0.0.1` as `::1`, so a send
     /// addressed in plain IPv4 genuinely leaves through the prefix and
     /// genuinely arrives on loopback, and the source that comes back is a real
     /// `::1` that only the extraction can turn into `0.0.0.1`.
     ///
     /// **The obvious choice, `::ffff:0:0/96`, does not work and the reason is
-    /// worth keeping.** Its synthesised form is the v4-mapped address, which
+    /// worth keeping.** Its synthesized form is the v4-mapped address, which
     /// [`canonical`] already rewrites one line earlier — so the test passes
     /// whether or not NAT64 extraction is wired to the receive path at all.
     /// This version was written first, and removing the extraction did not fail

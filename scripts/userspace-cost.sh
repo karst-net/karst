@@ -29,7 +29,7 @@
 #     sudo scripts/userspace-cost.sh [--seconds N] [--rtt-count N] [--keep]
 #
 # Needs root (namespaces and TUN devices), and a release build. Everything runs
-# on this host; nothing is dialled.
+# on this host; nothing is dialed.
 
 set -euo pipefail
 

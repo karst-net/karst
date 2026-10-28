@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn no_metric_names_a_node() {
         // `ponor-v1.md` §11 bounds what a relay operator learns. An endpoint
-        // labelled by node id would publish the tailnet's membership to
+        // labeled by node id would publish the tailnet's membership to
         // anything that could reach it, which is a disclosure rather than a
         // cardinality problem — though it is that too.
         let text = render(&snapshot());

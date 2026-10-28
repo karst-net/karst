@@ -48,13 +48,13 @@ func TestSynthesizedService_WireShape(t *testing.T) {
 	assert.Equal(t, testEndpoint, mapping.GetDomain(), "domain matches settings.Endpoint() output")
 
 	// Mode + listen port — addMapping at proxy/server.go switches on Mode.
-	assert.Equal(t, "http", mapping.GetMode(), "synthesised services are HTTP mode")
+	assert.Equal(t, "http", mapping.GetMode(), "synthesized services are HTTP mode")
 	assert.Equal(t, int32(0), mapping.GetListenPort(), "no custom listen port for HTTP services")
 
 	// Auth token + private/tunnel shape: agent-network endpoints authenticate
 	// inbound agents via ValidateTunnelPeer against AccessGroups, not OIDC.
 	assert.Equal(t, "test-token", mapping.GetAuthToken(), "auth token round-trips for proxy CreateProxyPeer")
-	assert.True(t, mapping.GetPrivate(), "synthesised services are private (tunnel-peer auth via AccessGroups)")
+	assert.True(t, mapping.GetPrivate(), "synthesized services are private (tunnel-peer auth via AccessGroups)")
 	require.NotNil(t, mapping.GetAuth(), "auth payload carries the session key")
 	assert.False(t, mapping.GetAuth().GetOidc(), "OIDC is off for tunnel-auth agent-network services")
 

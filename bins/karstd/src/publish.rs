@@ -41,7 +41,7 @@ const MAX_CONNECTIONS: usize = 64;
 
 /// How long to wait for the backend to accept a forwarded connection.
 ///
-/// The overlay peer is already connected by the time this is dialled, so a
+/// The overlay peer is already connected by the time this is dialed, so a
 /// backend that is slow to answer holds a mesh connection open. Short, because
 /// the destination is a local service the operator configured.
 const BACKEND_TIMEOUT: Duration = Duration::from_secs(10);

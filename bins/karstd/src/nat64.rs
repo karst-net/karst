@@ -10,7 +10,7 @@
 //! # Why the first question is not obvious
 //!
 //! Synthesis is not free to apply speculatively. A host that has working IPv4
-//! *and* a NAT64 translator would, if it synthesised, send every IPv4 flow
+//! *and* a NAT64 translator would, if it synthesized, send every IPv4 flow
 //! through the translator — and so learn a reflexive address belonging to the
 //! translator rather than to itself, advertise it, and be reached there by
 //! peers that could have reached it directly. That is slower and more fragile
@@ -34,7 +34,7 @@
 //! # Discovery
 //!
 //! RFC 7050: resolve `ipv4only.arpa` for AAAA. The name has two A records and
-//! no AAAA of its own, so an AAAA answer can only have been synthesised by a
+//! no AAAA of its own, so an AAAA answer can only have been synthesized by a
 //! DNS64 resolver — and the prefix is what remains once the well-known address
 //! is taken back out.
 //!
@@ -67,7 +67,7 @@ const IPV4ONLY_ARPA: &str = "ipv4only.arpa";
 /// What the operator asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
-    /// Never synthesise. A node that knows it is not behind a translator, or
+    /// Never synthesize. A node that knows it is not behind a translator, or
     /// one whose operator would rather it failed visibly than reached the mesh
     /// through a path they did not choose.
     Off,
@@ -102,7 +102,7 @@ impl<'de> serde::Deserialize<'de> for Mode {
     }
 }
 
-/// The prefix this node should synthesise through, or `None` for none.
+/// The prefix this node should synthesize through, or `None` for none.
 ///
 /// Reports what it decided and why on the way, because every outcome here is
 /// invisible otherwise: a node that quietly declined to discover a prefix and a
@@ -131,9 +131,9 @@ pub fn resolve(mode: Mode, listen: SocketAddr) -> Option<Nat64Prefix> {
 
 /// Rewrite a `host:port` so this node can reach it — the relay's address form.
 ///
-/// **A name is left alone, and that is not a shortcut.** DNS64 synthesises for
+/// **A name is left alone, and that is not a shortcut.** DNS64 synthesizes for
 /// names already; that is what it is for. Only a literal arrives at a node
-/// unsynthesised, because nothing looked it up. So a relay named
+/// unsynthesized, because nothing looked it up. So a relay named
 /// `relay.example.com` needs nothing from this function and a relay named
 /// `51.75.10.10` needs everything.
 #[must_use]
@@ -142,7 +142,7 @@ pub fn rewrite_authority(prefix: Option<Nat64Prefix>, address: &str) -> String {
         return address.to_owned();
     };
     match address.parse::<SocketAddr>() {
-        Ok(addr) if addr.is_ipv4() => prefix.synthesise_socket(addr).to_string(),
+        Ok(addr) if addr.is_ipv4() => prefix.synthesize_socket(addr).to_string(),
         _ => address.to_owned(),
     }
 }
@@ -161,15 +161,15 @@ pub fn rewrite_url(prefix: Option<Nat64Prefix>, url: &str) -> String {
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, tail) = rest.split_at(end);
     let Some((host, port)) = authority.rsplit_once(':') else {
-        // No port. A bare IPv4 literal still needs synthesising, and the result
+        // No port. A bare IPv4 literal still needs synthesizing, and the result
         // has to be bracketed or it is not a URL.
         return match authority.parse::<std::net::Ipv4Addr>() {
-            Ok(v4) => format!("{scheme}://[{}]{tail}", prefix.synthesise(v4)),
+            Ok(v4) => format!("{scheme}://[{}]{tail}", prefix.synthesize(v4)),
             Err(_) => url.to_owned(),
         };
     };
     match host.parse::<std::net::Ipv4Addr>() {
-        Ok(v4) => format!("{scheme}://[{}]:{port}{tail}", prefix.synthesise(v4)),
+        Ok(v4) => format!("{scheme}://[{}]:{port}{tail}", prefix.synthesize(v4)),
         Err(_) => url.to_owned(),
     }
 }
@@ -335,7 +335,7 @@ fn has_ipv4() -> bool {
 }
 
 /// Ask every configured resolver for `ipv4only.arpa`, and take the first
-/// synthesised answer.
+/// synthesized answer.
 fn discover() -> Option<Nat64Prefix> {
     for server in nameservers() {
         match query_aaaa(server, IPV4ONLY_ARPA) {
@@ -566,7 +566,7 @@ mod tests {
 
     /// `off` means off, on any datapath, and does not go near the network.
     #[test]
-    fn off_never_synthesises() {
+    fn off_never_synthesizes() {
         for listen in ["0.0.0.0:51820", "[::]:51820"] {
             assert_eq!(resolve(Mode::Off, listen.parse().unwrap()), None);
         }
@@ -604,12 +604,12 @@ mod tests {
     }
 
     #[test]
-    fn a_dns64_answer_yields_the_prefix_it_was_synthesised_with() {
+    fn a_dns64_answer_yields_the_prefix_it_was_synthesized_with() {
         let prefix: Nat64Prefix = "64:ff9b::/96".parse().unwrap();
-        let synthesised = prefix.synthesise(karst_transport::WKA);
-        let msg = response(0x1234, 0, &[synthesised]);
+        let synthesized = prefix.synthesize(karst_transport::WKA);
+        let msg = response(0x1234, 0, &[synthesized]);
         let answers = decode_aaaa(&msg, 0x1234).expect("a well-formed response");
-        assert_eq!(answers, vec![synthesised]);
+        assert_eq!(answers, vec![synthesized]);
         assert_eq!(
             answers
                 .iter()
@@ -706,7 +706,7 @@ mod tests {
             "a URL with no port still names a host"
         );
 
-        // **A name is left alone**: DNS64 already synthesises for names, and
+        // **A name is left alone**: DNS64 already synthesizes for names, and
         // rewriting one here would be both wrong and impossible.
         assert_eq!(
             rewrite_authority(p, "relay.example.com:8443"),

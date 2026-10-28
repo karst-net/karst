@@ -559,7 +559,7 @@ fn bind_service(nodes: &[&Node], address: &str) -> TcpListener {
 
 // ── the SOCKS5 client, which is the whole attachment surface ────────────────
 
-/// Speak RFC 1928 to the daemon's loopback listener and return the tunnelled
+/// Speak RFC 1928 to the daemon's loopback listener and return the tunneled
 /// stream. This is exactly what a sidecar's workload does.
 fn socks_connect(proxy: SocketAddr, target: SocketAddr) -> Result<TcpStream, String> {
     let mut stream = TcpStream::connect(proxy).map_err(|e| format!("connecting to SOCKS: {e}"))?;
@@ -772,12 +772,12 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
     let target: SocketAddr = format!("{OVERLAY_PEER}:{SERVICE_PORT}")
         .parse()
         .expect("target");
-    let mut tunnelled = socks_connect_when_ready(proxy, target, &both);
+    let mut tunneled = socks_connect_when_ready(proxy, target, &both);
 
-    tunnelled.write_all(&request).expect("send the request");
-    tunnelled.flush().expect("flush the request");
+    tunneled.write_all(&request).expect("send the request");
+    tunneled.flush().expect("flush the request");
     let mut received = vec![0u8; PAYLOAD];
-    tunnelled
+    tunneled
         .read_exact(&mut received)
         .unwrap_or_else(|e| panic!("reading the reply through userspace mode: {e}"));
 
@@ -890,16 +890,16 @@ fn a_half_closed_request_still_receives_its_reply() {
     let target: SocketAddr = format!("{OVERLAY_PEER_2}:{SERVICE_PORT_2}")
         .parse()
         .expect("target");
-    let mut tunnelled = socks_connect_when_ready(proxy, target, &both);
+    let mut tunneled = socks_connect_when_ready(proxy, target, &both);
 
-    tunnelled.write_all(&request).expect("send the request");
-    tunnelled.flush().expect("flush the request");
-    tunnelled
+    tunneled.write_all(&request).expect("send the request");
+    tunneled.flush().expect("flush the request");
+    tunneled
         .shutdown(std::net::Shutdown::Write)
         .expect("half-close the request");
 
     let mut received = Vec::new();
-    tunnelled
+    tunneled
         .read_to_end(&mut received)
         .unwrap_or_else(|e| panic!("reading the reply after a half-close: {e}{}", report(&both)));
     assert_eq!(
@@ -1002,21 +1002,21 @@ fn a_bulk_transfer_is_not_stop_and_wait() {
     let target: SocketAddr = format!("{OVERLAY_PEER_3}:{SERVICE_PORT_3}")
         .parse()
         .expect("target");
-    let mut tunnelled = socks_connect_when_ready(proxy, target, &both);
+    let mut tunneled = socks_connect_when_ready(proxy, target, &both);
 
     let chunk = vec![0x7eu8; 64 * 1024];
     let started = Instant::now();
     let mut written = 0usize;
     while written < BULK {
-        tunnelled.write_all(&chunk).expect("send bulk");
+        tunneled.write_all(&chunk).expect("send bulk");
         written += chunk.len();
     }
-    tunnelled.flush().expect("flush");
-    tunnelled
+    tunneled.flush().expect("flush");
+    tunneled
         .shutdown(std::net::Shutdown::Write)
         .expect("half-close");
     let mut counted = [0u8; 8];
-    tunnelled
+    tunneled
         .read_exact(&mut counted)
         .unwrap_or_else(|e| panic!("reading the receiver's count: {e}{}", report(&both)));
     let elapsed = started.elapsed();
@@ -1066,7 +1066,7 @@ fn a_published_service_inside_userspace_mode_is_reachable_from_the_mesh() {
         return;
     }
 
-    // Bound before the daemon starts: the published port is dialled the moment
+    // Bound before the daemon starts: the published port is dialed the moment
     // a peer connects, and a backend that is not listening yet would be a race
     // rather than a result.
     let backend = TcpListener::bind(format!("127.0.0.1:{BACKEND_PORT}")).expect("bind backend");

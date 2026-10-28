@@ -42,7 +42,7 @@ fn reassembly_id_of(actions: &[Action]) -> u32 {
 }
 
 #[test]
-fn two_freshly_dialled_sessions_do_not_pick_the_same_first_reassembly_id() {
+fn two_freshly_dialed_sessions_do_not_pick_the_same_first_reassembly_id() {
     let a_keys = keys(1, 2);
     let b_keys = keys(3, 4);
 

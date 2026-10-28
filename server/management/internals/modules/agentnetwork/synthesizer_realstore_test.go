@@ -16,7 +16,7 @@ import (
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
-// decodeServiceRouterConfig finds the llm_router middleware on the synthesised
+// decodeServiceRouterConfig finds the llm_router middleware on the synthesized
 // service's single target and decodes its config — the model→provider routing
 // table the proxy authorizes against.
 func decodeServiceRouterConfig(t *testing.T, svc *rpservice.Service) routerConfig {
@@ -29,7 +29,7 @@ func decodeServiceRouterConfig(t *testing.T, svc *rpservice.Service) routerConfi
 			return cfg
 		}
 	}
-	t.Fatal("llm_router middleware not present on synthesised service")
+	t.Fatal("llm_router middleware not present on synthesized service")
 	return routerConfig{}
 }
 

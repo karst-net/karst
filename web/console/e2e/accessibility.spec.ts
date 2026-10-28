@@ -263,7 +263,7 @@ test("groups can be created and renamed, and provider groups cannot", async ({ p
   await page.getByLabel("New group name").fill("contractors-2026");
   await page.getByRole("button", { name: "Save name" }).click();
   await expect(page.locator("tbody tr").filter({ hasText: "contractors-2026" })).toBeVisible();
-  // A group synchronised from an identity provider is a copy. Offering an
+  // A group synchronized from an identity provider is a copy. Offering an
   // identity edit (rename/delete) for it would produce a rejection the admin
   // cannot act on -- but its NOC-map location is a Karst-owned annotation,
   // not an edit to the provider-synced record, so that control still shows.

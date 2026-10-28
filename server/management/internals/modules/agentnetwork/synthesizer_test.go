@@ -65,7 +65,7 @@ func newSynthTestPolicy(providerID, sourceGroupID, guardrailID string) *types.Po
 	return policy
 }
 
-// expectSynthBaseInputs wires the four reads the new synthesiser issues
+// expectSynthBaseInputs wires the four reads the new synthesizer issues
 // in the happy path: settings, providers, policies, guardrails.
 func expectSynthBaseInputs(mockStore *store.MockStore, ctx context.Context, settings *types.Settings, providers []*types.Provider, policies []*types.Policy, guardrails []*types.Guardrail) {
 	if settings == nil {
@@ -150,9 +150,9 @@ func TestSynthesizeServices_HappyPath(t *testing.T) {
 	assert.Equal(t, testAccountID, svc.AccountID, "service inherits account ID")
 	assert.Equal(t, testEndpoint, svc.Domain, "domain is settings.Endpoint() (subdomain.cluster)")
 	assert.Equal(t, testCluster, svc.ProxyCluster, "proxy cluster comes from settings")
-	assert.Equal(t, rpservice.ModeHTTP, svc.Mode, "synthesised services are HTTP mode")
-	assert.True(t, svc.Private, "synthesised services are always private")
-	assert.True(t, svc.Enabled, "synthesised services are enabled when emitted")
+	assert.Equal(t, rpservice.ModeHTTP, svc.Mode, "synthesized services are HTTP mode")
+	assert.True(t, svc.Private, "synthesized services are always private")
+	assert.True(t, svc.Enabled, "synthesized services are enabled when emitted")
 	assert.Equal(t, []string{"grp-eng", "grp-ops"}, svc.AccessGroups,
 		"access groups union both policies' source groups (tunnel-peer auth)")
 
@@ -283,7 +283,7 @@ func TestSynthesizeServices_DisabledProvider_NoService(t *testing.T) {
 
 	services, err := SynthesizeServices(ctx, mockStore, testAccountID)
 	require.NoError(t, err)
-	assert.Empty(t, services, "disabled provider must not synthesise a service")
+	assert.Empty(t, services, "disabled provider must not synthesize a service")
 }
 
 func TestSynthesizeServices_DisabledPolicy_NoService(t *testing.T) {
@@ -1082,7 +1082,7 @@ func TestSynthesizeServices_BackfillsMissingSessionKeys(t *testing.T) {
 	mockStore.EXPECT().
 		GetAccountAgentNetworkPolicies(ctx, store.LockingStrengthNone, testAccountID).
 		Return([]*types.Policy{policy}, nil)
-	// Backfill must persist the new keys before synthesising.
+	// Backfill must persist the new keys before synthesizing.
 	mockStore.EXPECT().
 		SaveAgentNetworkProvider(ctx, gomock.Any()).
 		DoAndReturn(func(_ context.Context, p *types.Provider) error {
@@ -1097,8 +1097,8 @@ func TestSynthesizeServices_BackfillsMissingSessionKeys(t *testing.T) {
 	services, err := SynthesizeServices(ctx, mockStore, testAccountID)
 	require.NoError(t, err)
 	require.Len(t, services, 1, "synthesis must complete after backfill")
-	assert.NotEmpty(t, services[0].SessionPrivateKey, "synthesised service inherits the freshly-minted private key")
-	assert.NotEmpty(t, services[0].SessionPublicKey, "synthesised service inherits the freshly-minted public key")
+	assert.NotEmpty(t, services[0].SessionPrivateKey, "synthesized service inherits the freshly-minted private key")
+	assert.NotEmpty(t, services[0].SessionPublicKey, "synthesized service inherits the freshly-minted public key")
 }
 
 func TestSynthesizeServices_HTTPUpstream_KeepsExplicitPort(t *testing.T) {
@@ -1179,7 +1179,7 @@ func TestSynthesizeServices_SkipTLSVerification_FlowsToRouter(t *testing.T) {
 	mockStore := store.NewMockStore(ctrl)
 
 	// A provider fronting a self-hosted / internal gateway opts into skipping
-	// upstream TLS verification; the synthesiser must carry it into the router
+	// upstream TLS verification; the synthesizer must carry it into the router
 	// route so the proxy dials that upstream insecurely.
 	provider := newSynthTestProvider()
 	provider.SkipTLSVerification = true

@@ -391,7 +391,7 @@ func nonceFor(seq uint64) []byte {
 	return n[:]
 }
 
-// Seal wraps a marshalled inner message in an envelope.
+// Seal wraps a marshaled inner message in an envelope.
 func (c *Channel) Seal(nodeID, plaintext []byte) (*proto.KarstEnvelope, error) {
 	if c.sendSeq == ^uint64(0) {
 		return nil, ErrSeqExhausted

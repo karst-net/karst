@@ -1623,7 +1623,7 @@ func TestInjectPrivateServicePolicies_ProxyPeerGetsInboundRule(t *testing.T) {
 			break
 		}
 	}
-	require.NotNil(t, found, "expected synthesised private-access policy in account.Policies")
+	require.NotNil(t, found, "expected synthesized private-access policy in account.Policies")
 	require.Len(t, found.Rules, 1, "policy should have exactly one rule")
 	rule := found.Rules[0]
 	assert.Equal(t, []string{"grp-admins"}, rule.Sources, "sources should be group IDs verbatim")
@@ -1662,7 +1662,7 @@ func TestInjectPrivateServicePolicies_NotPrivate_NoPolicy(t *testing.T) {
 	account.Services[0].Private = false
 
 	account.InjectProxyPolicies(ctx)
-	assert.False(t, hasPrivateAccessPolicy(account, "svc-1"), "non-private service must not synthesise an access policy")
+	assert.False(t, hasPrivateAccessPolicy(account, "svc-1"), "non-private service must not synthesize an access policy")
 }
 
 func TestInjectPrivateServicePolicies_EmptyAccessGroups_NoPolicy(t *testing.T) {
@@ -1671,7 +1671,7 @@ func TestInjectPrivateServicePolicies_EmptyAccessGroups_NoPolicy(t *testing.T) {
 	account.Services[0].AccessGroups = nil
 
 	account.InjectProxyPolicies(ctx)
-	assert.False(t, hasPrivateAccessPolicy(account, "svc-1"), "private service with no access groups must not synthesise a policy")
+	assert.False(t, hasPrivateAccessPolicy(account, "svc-1"), "private service with no access groups must not synthesize a policy")
 }
 
 func TestInjectPrivateServicePolicies_NoProxyPeers_NoPolicy(t *testing.T) {
@@ -1680,7 +1680,7 @@ func TestInjectPrivateServicePolicies_NoProxyPeers_NoPolicy(t *testing.T) {
 	delete(account.Peers, "proxy-peer")
 
 	account.InjectProxyPolicies(ctx)
-	assert.False(t, hasPrivateAccessPolicy(account, "svc-1"), "policy must not synthesise when the cluster has no proxy peers")
+	assert.False(t, hasPrivateAccessPolicy(account, "svc-1"), "policy must not synthesize when the cluster has no proxy peers")
 }
 
 func privateServiceTestAccount(t *testing.T) *Account {

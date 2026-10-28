@@ -112,7 +112,7 @@ real hardware:
    a UAMDM-enrolled test device and confirm the same two things this step
    used to check locally: `Karst.app`'s menu shows "VPN configuration
    managed by your organization," and System Settings shows the profile's
-   "Remove Configuration" control greyed out or password-gated.
+   "Remove Configuration" control grayed out or password-gated.
 3. **Kill-switch traffic test — the most important one.** With the
    profile active and the tunnel connected, force the engine to fail
    mid-session (kill the extension process, or corrupt its

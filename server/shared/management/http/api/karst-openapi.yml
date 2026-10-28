@@ -1242,7 +1242,7 @@ components:
         device_count: {type: integer, minimum: 0}
         domain_count: {type: integer, minimum: 0}
         committed: {type: boolean}
-        convergence: {type: string, enum: [unobserved], description: 'No client application acknowledgement exists in the current protocol.'}
+        convergence: {type: string, enum: [unobserved], description: 'No client application acknowledgment exists in the current protocol.'}
         examples:
           type: array
           maxItems: 10

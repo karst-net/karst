@@ -124,17 +124,17 @@ func (c *Controller) OnPeerDisconnected(ctx context.Context, accountID string, p
 }
 
 // injectAllProxyPolicies prepares an account for the per-peer network-map
-// computation. It prepends the in-memory agent-network services synthesised
+// computation. It prepends the in-memory agent-network services synthesized
 // from the account's current provider/policy state to account.Services so
 // the existing InjectProxyPolicies + injectPrivateServicePolicies walks pick
-// them up alongside persisted reverse-proxy services. Synthesised services
+// them up alongside persisted reverse-proxy services. Synthesized services
 // are never persisted; the account is loaded fresh per cycle so re-prepending
 // is safe and idempotent. Accounts without agent-network providers get an
 // empty synth slice — no behavior change.
 func (c *Controller) injectAllProxyPolicies(ctx context.Context, account *types.Account) {
 	synth, err := c.repo.SynthesizeAgentNetworkServices(ctx, account.Id)
 	if err != nil {
-		log.WithContext(ctx).Warnf("synthesise agent-network services for account %s: %v", account.Id, err)
+		log.WithContext(ctx).Warnf("synthesize agent-network services for account %s: %v", account.Id, err)
 	} else if len(synth) > 0 {
 		account.Services = append(synth, account.Services...)
 	}
@@ -356,7 +356,7 @@ func (c *Controller) sendUpdateForAffectedPeers(ctx context.Context, accountID s
 	semaphore := make(chan struct{}, 10)
 
 	// The affected-peer path MUST mirror sendUpdateAccountPeers (line 171)
-	// here: injectAllProxyPolicies prepends the synthesised agent-network
+	// here: injectAllProxyPolicies prepends the synthesized agent-network
 	// services BEFORE InjectProxyPolicies + private-service policies run.
 	// Previously this path called only account.InjectProxyPolicies, which
 	// skipped the synth-services prepend — so peer-level changes

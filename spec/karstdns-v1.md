@@ -35,7 +35,7 @@ carry an empty relative path: `laptop` plus zone `karst` resolves as
 `build.engineering.karst`. Explicit-root provisioning, migration, and suffix
 projection are implemented under [#362](https://github.com/karst-net/karst/issues/362);
 root rename uses the authorized preview/commit API and console confirmation.
-Client application acknowledgements are not present: convergence is unobserved. The qualified-name grammar fits the
+Client application acknowledgments are not present: convergence is unobserved. The qualified-name grammar fits the
 existing resolver/wire format.
 
 The agreed root-rename contract changes `zone`, leaving qualified

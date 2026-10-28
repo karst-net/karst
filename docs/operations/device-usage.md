@@ -26,7 +26,7 @@ karst-control --config /path/to/config.json admin usage devices status --account
 karst-control --config /path/to/config.json admin usage devices enable --account-id ACCOUNT --actor OPERATOR --all-writers-instrumented
 ```
 
-The acknowledgement flag asserts that every writer is instrumented; the command
+The acknowledgment flag asserts that every writer is instrumented; the command
 cannot discover other replicas. Configuration is stored in the database and
 survives process restarts. Enabling snapshots current membership, with coverage
 starting now. It does not backfill earlier usage. Repeated enable calls retain

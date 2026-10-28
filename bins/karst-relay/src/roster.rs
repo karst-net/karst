@@ -118,13 +118,13 @@ struct MeshRow {
     /// Where to reach this relay, if this relay should dial it.
     ///
     /// **Configure the whole mesh list on every relay, addresses included.**
-    /// `mesh::Dialler` decides which side dials — the lower id — so a symmetric
+    /// `mesh::Dialer` decides which side dials — the lower id — so a symmetric
     /// file works everywhere and an asymmetric one is a configuration puzzle
     /// with a silent failure mode: the pair simply never meshes.
     ///
     /// Optional, because a relay behind a load balancer may be dial-in only.
     /// A peer with no address is still admitted when it dials in; it is only
-    /// never dialled.
+    /// never dialed.
     #[serde(default)]
     dial: Option<String>,
     /// The name its certificate is issued for, when that differs from `dial`.
@@ -135,7 +135,7 @@ struct MeshRow {
     region: String,
     /// Dial this peer over QUIC rather than TCP+TLS — ADR-0020. Off by
     /// default: a mesh peer not yet running a QUIC listener must not be
-    /// dialled as though it were.
+    /// dialed as though it were.
     #[serde(default)]
     quic: bool,
 }
@@ -162,7 +162,7 @@ pub struct FileRoster {
     /// a connection as well as the side that opens one, or an operator who put
     /// a foreign relay in the list simply gets meshed by it instead.
     region: HashMap<Id, String>,
-    /// Mesh peers with an address, for `mesh::Dialler`.
+    /// Mesh peers with an address, for `mesh::Dialer`.
     ///
     /// Held here rather than on `RelayEntry`, which is a `karst-relay-proto`
     /// type describing *admission*. Where to dial a relay is a deployment fact
@@ -253,7 +253,7 @@ impl std::fmt::Debug for FileRoster {
 impl FileRoster {
     /// The mesh peers this roster gives an address for.
     ///
-    /// Every relay in a region should carry the whole list; `mesh::Dialler`
+    /// Every relay in a region should carry the whole list; `mesh::Dialer`
     /// decides which side actually dials, so the same file works everywhere.
     #[must_use]
     pub fn mesh_dial_list(&self) -> Vec<crate::mesh::Peer> {
@@ -459,7 +459,7 @@ mod tests {
     }
 
     /// A mesh row's address is optional, and a row without one is still
-    /// admitted — it is only never dialled.
+    /// admitted — it is only never dialed.
     ///
     /// Deliberate: a relay behind a load balancer may be dial-in only, and
     /// refusing to admit one nobody can dial would make the common cloud
@@ -476,7 +476,7 @@ mod tests {
 
         assert_eq!(r.mesh_count(), 2, "both are admissible");
         let dial = r.mesh_dial_list();
-        assert_eq!(dial.len(), 1, "only the row with an address is dialled");
+        assert_eq!(dial.len(), 1, "only the row with an address is dialed");
         let first = dial.first().expect("one dialable peer");
         assert_eq!(first.addr, "r2.test:8443");
         assert_eq!(first.id, relay_id(&pk(2)));

@@ -1795,7 +1795,7 @@ type AgentNetworkAccessLog struct {
 	// SelectedPolicyId Agent-network policy id that authorized (or denied) the request.
 	SelectedPolicyId *string `json:"selected_policy_id,omitempty"`
 
-	// ServiceId ID of the synthesised agent-network service that handled the request.
+	// ServiceId ID of the synthesized agent-network service that handled the request.
 	ServiceId string `json:"service_id"`
 
 	// SessionId Conversation / coding-session identifier that groups related requests. Sourced from the client's session marker (e.g. OpenAI Codex client_metadata.session_id, Claude Code metadata.user_id). Empty for clients that send none.
@@ -4743,7 +4743,7 @@ type ProxyCluster struct {
 	// Online Whether at least one proxy in the cluster has heartbeated within the active window
 	Online bool `json:"online"`
 
-	// Private True when at least one connected proxy in this cluster is running embedded in a netbird client (`netbird proxy`) and serving over a WireGuard tunnel. Lets the dashboard distinguish per-peer / private clusters from centralised ones.
+	// Private True when at least one connected proxy in this cluster is running embedded in a netbird client (`netbird proxy`) and serving over a WireGuard tunnel. Lets the dashboard distinguish per-peer / private clusters from centralized ones.
 	Private *bool `json:"private,omitempty"`
 
 	// RequireSubdomain Whether services on this cluster must include a subdomain label

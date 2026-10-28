@@ -720,7 +720,7 @@ func TestVectors(t *testing.T) {
 			// A relay registry, which no vector carried until now. Its version
 			// MUST differ from "one peer": if the registry were not hashed,
 			// publishing a relay would leave every node told "unchanged" and
-			// the relay would never be dialled by anyone.
+			// the relay would never be dialed by anyone.
 			name: "the same netmap with a relay registry",
 			resp: &proto.KarstNetmapResponse{
 				PskEpoch:  9,

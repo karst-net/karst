@@ -342,13 +342,13 @@ Three layers, in increasing cost:
 
    `0x00` is the control marker and `0x01` selects the head claim. The marker is
    zero because zero is not a legal IP version, so a control frame can never be
-   confused with a tunnelled packet and vice versa.
+   confused with a tunneled packet and vice versa.
 
    **It is inside the AEAD, and that is not a stylistic choice.** PHREATIC's
    outer message-type byte (`phreatic-v1.md` §8) is written before the
    ciphertext with an empty AAD, so it is unauthenticated. Discriminating on a
    new outer type would let anyone who can flip one bit in flight redirect a
-   tunnelled packet into the control handler, or a control frame into the host.
+   tunneled packet into the control handler, or a control frame into the host.
    The length prefix is needed for the same layer's reason: §8 pads the
    plaintext and carries no length of its own.
 
