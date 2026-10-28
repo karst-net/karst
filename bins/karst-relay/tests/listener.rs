@@ -259,7 +259,7 @@ async fn connect(h: &Harness) -> (Conn, Option<rustls::NamedGroup>) {
 /// A relay that can also be meshed with another.
 ///
 /// `start` builds one relay from a roster of clients. A mesh needs each relay
-/// to hold the *other's* identity key as well, and the dialling side needs its
+/// to hold the *other's* identity key as well, and the dialing side needs its
 /// address and its certificate — none of which exists until both are running.
 /// So this keeps the parts and wires them in a second step.
 struct Meshable {
@@ -289,8 +289,8 @@ async fn start_meshable(tag: &str, nodes: &[(&Identity, &str)]) -> Meshable {
 }
 
 impl Meshable {
-    /// Roster `other` on both sides and start dialling it from whichever side
-    /// `mesh::Dialler` says is responsible.
+    /// Roster `other` on both sides and start dialing it from whichever side
+    /// `mesh::Dialer` says is responsible.
     fn mesh_with(&mut self, other: &Meshable) {
         self.mesh_with_region(other, "default");
     }
@@ -311,20 +311,20 @@ impl Meshable {
             me.ctx.replace_roster(reloaded);
         }
 
-        // The dialler decides which side acts; start one on both and let the
+        // The dialer decides which side acts; start one on both and let the
         // rule pick, exactly as `run` does.
         for (me, them) in [(&*self, other), (other, &*self)] {
             let ca = me.dir.join("mesh-ca.pem");
             std::fs::write(&ca, them.harness.ca_pem.clone()).expect("write ca");
             let tls = karst_relay::tls::client_config(&ca).expect("client tls");
             let quic_tls = karst_relay::quic::client_config(&tls).expect("client quic tls");
-            let dialler =
-                karst_relay::mesh::Dialler::new(me.harness.relay.relay_id(), "default".to_owned());
+            let dialer =
+                karst_relay::mesh::Dialer::new(me.harness.relay.relay_id(), "default".to_owned());
             tokio::spawn(karst_relay::server::mesh_loop(
                 Arc::clone(&me.ctx),
                 tls,
                 quic_tls,
-                dialler,
+                dialer,
             ));
         }
     }
@@ -898,8 +898,8 @@ async fn the_metrics_listener_answers_only_its_own_path() {
 /// the HTTP upgrade, a Ponor handshake with `role = MESH`, presence gossip, and
 /// a `Forward` delivered to a client on the other relay. It is the only place
 /// the outbound half is exercised at all — `serve` accepts a TLS *server*
-/// stream and a dialling relay holds a *client* one, so this is also what keeps
-/// the generalised connection loop honest.
+/// stream and a dialing relay holds a *client* one, so this is also what keeps
+/// the generalized connection loop honest.
 #[tokio::test]
 async fn two_relays_mesh_and_a_packet_crosses() {
     let alice = identity(0x61);

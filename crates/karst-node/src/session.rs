@@ -89,7 +89,7 @@ impl Handshake {
             return false;
         }
         // Exponential backoff, capped. Real deployments MUST jitter this to
-        // avoid synchronised retry storms after a shared outage; the simulation
+        // avoid synchronized retry storms after a shared outage; the simulation
         // keeps it deterministic on purpose.
         self.backoff_ms = self.backoff_ms.saturating_mul(2).min(RETRY_MAX_MS);
         self.next_retry_ms = now_ms.saturating_add(self.backoff_ms);
@@ -400,7 +400,7 @@ impl Session {
     /// The live transport session, if there is one.
     ///
     /// Handing out an `Arc` is what lets a caller encrypt and decrypt **without
-    /// holding this session's lock**: [`TransportSession`] synchronises itself,
+    /// holding this session's lock**: [`TransportSession`] synchronizes itself,
     /// and the expensive part — the AEAD — needs no exclusive access at all.
     /// A caller clones this under the lock (one refcount bump) and then does the
     /// work outside it. See PLAN.md §3.4 for what holding the lock cost.

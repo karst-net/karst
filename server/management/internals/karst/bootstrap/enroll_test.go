@@ -34,7 +34,7 @@ import (
 // userAuthFor is what MintBootstrapKey passes and what a verified JWT reduces
 // to: a subject and nothing else. The domain is left empty on purpose — in
 // single-account mode the manager fills it in, and that filling-in is the
-// behaviour TestAnIdPUserLandsInTheBootstrapAccount exists to pin.
+// behavior TestAnIdPUserLandsInTheBootstrapAccount exists to pin.
 func userAuthFor(subject string) auth.UserAuth {
 	return auth.UserAuth{UserId: subject}
 }

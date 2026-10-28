@@ -227,7 +227,7 @@ every field name, old sections and new alike.
   beyond the aggregate `relay_dropped` counter: `address`/`uri`,
   `reachable`, and `since_seconds` (how long the connection has held its
   current state). Only relays and TURN servers this node has actually
-  attempted to reach appear; one that was never dialled has no entry.
+  attempted to reach appear; one that was never dialed has no entry.
 
 ## 6. Redaction
 

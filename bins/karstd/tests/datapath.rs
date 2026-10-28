@@ -524,7 +524,7 @@ fn counters_do_not_lose_updates_under_concurrency() {
 /// packet loss expires the session at `REJECT_AFTER_TIME`, and the tunnel is
 /// then permanently dead rather than down for a round trip.
 #[test]
-fn an_expired_session_is_re_dialled() {
+fn an_expired_session_is_re_dialed() {
     let a_cfg = config_for("redial", 0xA1, 0xB1, A_ADDR, Some(B_ADDR));
     let b_cfg = config_for("redial-b", 0xB1, 0xA1, B_ADDR, None);
     let a = Engine::new(&Arc::new(a_cfg));
@@ -535,13 +535,13 @@ fn an_expired_session_is_re_dialled() {
     assert!(a.established(0));
 
     // Past REJECT_AFTER_TIME with no successful rekey the session expires, and
-    // the same tick must already be re-dialling — not leaving the peer idle.
+    // the same tick must already be re-dialing — not leaving the peer idle.
     let expired = karst_noise::transport::REJECT_AFTER_MS + 1_000;
     let out = a.poll(expired, seed);
     assert_eq!(
         out.datagrams.len(),
         3,
-        "an idle peer with an endpoint must be re-dialled (HandshakeInit is three fragments)"
+        "an idle peer with an endpoint must be re-dialed (HandshakeInit is three fragments)"
     );
 
     // And it must actually recover, end to end.
@@ -556,10 +556,10 @@ fn an_expired_session_is_re_dialled() {
     assert!(a.established(0), "the tunnel must come back on its own");
 }
 
-/// A peer with no endpoint must not be re-dialled: there is nowhere to send,
+/// A peer with no endpoint must not be re-dialed: there is nowhere to send,
 /// and a handshake storm at every tick would be the result.
 #[test]
-fn a_peer_without_an_endpoint_is_not_re_dialled() {
+fn a_peer_without_an_endpoint_is_not_re_dialed() {
     let cfg = config_for("nodial", 0xB1, 0xA1, B_ADDR, None);
     let e = Engine::new(&Arc::new(cfg));
     for t in 0..20u64 {
@@ -1054,7 +1054,7 @@ allowed_ips = ["10.77.0.2/32"]
 /// rearm; this is the case #77 was filed over, where nothing is established
 /// yet and the two ends' `psk_epoch` genuinely disagree.
 ///
-/// Modelled at the responder: `b`'s current epoch is one ahead of `a`'s, with
+/// Modeled at the responder: `b`'s current epoch is one ahead of `a`'s, with
 /// `psk_previous` on `b`'s side matching what `a`'s `psk` still is — the
 /// state both ends are actually in for the seconds between the coordination
 /// server rotating and every node's netmap catching up.

@@ -29,7 +29,7 @@ import (
 // ensureSessionKeys mints an ed25519 session keypair on the provider
 // when one is missing. Idempotent: skips when both fields are already
 // populated (e.g. update or migrated rows). The keys are used by the
-// synthesised reverse-proxy service to sign / verify session JWTs
+// synthesized reverse-proxy service to sign / verify session JWTs
 // after a successful OIDC handshake.
 func ensureSessionKeys(p *types.Provider) error {
 	if p.SessionPrivateKey != "" && p.SessionPublicKey != "" {
@@ -122,10 +122,10 @@ type managerImpl struct {
 	permissionsManager permissions.Manager
 	proxyController    proxy.Controller
 
-	// reconcileCache holds the last set of synthesised proxy mappings
+	// reconcileCache holds the last set of synthesized proxy mappings
 	// per account so reconcile can emit precise Create/Update/Delete
 	// updates instead of a full re-push on every mutation. Keyed by
-	// accountID, then by synthesised service ID.
+	// accountID, then by synthesized service ID.
 	reconcileMu    sync.Mutex
 	reconcileCache map[string]map[string]*proto.ProxyMapping
 
@@ -137,7 +137,7 @@ type managerImpl struct {
 
 // NewManager constructs the persistent Agent Network manager. The
 // manager persists provider/policy/guardrail configuration and, on
-// every mutation, reconciles the in-memory synthesised reverse-proxy
+// every mutation, reconciles the in-memory synthesized reverse-proxy
 // services with the proxy cluster via proxyController. Pass nil for
 // proxyController to disable the reconcile push (useful in tests).
 func NewManager(
@@ -184,7 +184,7 @@ func (m *managerImpl) CreateProvider(ctx context.Context, userID string, provide
 		}
 	}
 
-	// An empty api_key would silently produce a synthesised service
+	// An empty api_key would silently produce a synthesized service
 	// that 401s on every upstream request. Surface the misconfiguration
 	// at create time instead.
 	if strings.TrimSpace(provider.APIKey) == "" {
@@ -566,7 +566,7 @@ func (m *managerImpl) DeleteBudgetRule(ctx context.Context, accountID, userID, r
 // existing row the cluster and subdomain are immutable: a differing
 // settings.Cluster is rejected rather than silently ignored so callers never
 // observe a value other than what they sent. Because the collection toggles
-// change the synthesised service config (prompt-capture gating, access-log
+// change the synthesized service config (prompt-capture gating, access-log
 // emission), a reconcile is triggered so the proxy and peer network maps
 // converge on the new state.
 func (m *managerImpl) UpdateSettings(ctx context.Context, userID string, settings *types.Settings) (*types.Settings, error) {

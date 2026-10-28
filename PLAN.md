@@ -238,7 +238,7 @@ does not ship — this is a hard gate, not a best-effort task.
 The **PSK-absent fallback (§2.6) must be modeled explicitly** — a
 downgrade-to-zero-PSK attack is the obvious thing an adversary would reach for.
 
-**The rule generalised, 2026-08-14: every Karst protocol gets a ProVerif model
+**The rule generalized, 2026-08-14: every Karst protocol gets a ProVerif model
 before it ships, and every model gets a deliberately-broken sibling.** All three
 now have one — PHREATIC, KARST-CONTROL and Ponor — and in each case the exercise
 paid for itself: `phreatic-v1.md` §13.3, `karst-control-v1.md` §9, and
@@ -470,7 +470,7 @@ other.
 Poly1305. The §9.2 fragment MAC cost roughly *five times the AEAD it gates*,
 because §9.2's cost argument ("1–2 µs against the 20–50 µs ML-KEM decapsulation
 it gates") was computed for the handshake and never revisited for the data path,
-where there is no ML-KEM to amortise against. The MAC now covers the header
+where there is no ML-KEM to amortize against. The MAC now covers the header
 only; spec §13.8 records the full security argument, and flags it for external
 review as the one change made on performance grounds.
 
@@ -502,7 +502,7 @@ datapath still performs:
 | | Sender | Receiver |
 |---|---|---|
 | TUN | 1 `read` | 1 `write` |
-| UDP | 1 `sendto` | `recvmmsg`, amortised ✅ |
+| UDP | 1 `sendto` | `recvmmsg`, amortized ✅ |
 
 `recvmmsg` is the only one of the four that batching reached. A single flow
 hands the engine one packet at a time, so `sendmmsg` has nothing to group —
@@ -566,7 +566,7 @@ the link.
 
 #### Change 7 — the lock, again
 
-`TransportSession` now synchronises itself: an `AtomicU64` for the nonce counter
+`TransportSession` now synchronizes itself: an `AtomicU64` for the nonce counter
 and a `Mutex` around the replay window alone. `seal` and `open` take `&self`, so
 the engine clones an `Arc` under the peer lock — one refcount bump — and runs the
 cryptography with no lock held. §8 is unaffected: decryption still completes
@@ -591,7 +591,7 @@ engineering. The bond is 3×1G and hashes a flow to one slave, so a single flow
 has 1 Gbps of wire. The tunnel's 1280-byte inner MTU carries 1240 bytes of TCP
 payload per 1402 bytes of wire time (1336 UDP + 8 + 20 IP + 14 Ethernet + 4 FCS
 + 20 preamble/IFG), which is 88.4% — a **884 Mbps ceiling**. The same model
-predicts 941 Mbps for the untunnelled 1500-byte path against 943 measured, so
+predicts 941 Mbps for the untunneled 1500-byte path against 943 measured, so
 it is trustworthy.
 
 **Aggregate does not rescue it, and an earlier draft of this section was wrong
@@ -988,7 +988,7 @@ onwards, anchored on the week of 2026-08-10.
 - Licensing in place per [ADR-0007](docs/adr/0007-licensing.md): SPDX headers on
   every file, `LICENSES/` texts fetched from canonical sources, DCO sign-off
   check in CI, and `cargo deny` / `go-licenses` allowlists enforced.
-- `SECURITY.md` with a disclosure policy and an explicit safe harbour for
+- `SECURITY.md` with a disclosure policy and an explicit safe harbor for
   good-faith research.
 - ✅ **Trademark clearance for "Karst" — complete, 2026-08-09**
   ([ADR-0010](docs/adr/0010-project-name-and-component-naming.md)). Remaining:
@@ -1120,7 +1120,7 @@ onwards, anchored on the week of 2026-08-10.
   once per session; the TUN write path uses `write_vectored`. **No measurable
   throughput change** — run-to-run spread exceeds the effect — but strictly less
   work per packet, and it ruled allocation out as the constraint.
-- ✅ **AEAD moved outside the per-peer lock.** `TransportSession` synchronises
+- ✅ **AEAD moved outside the per-peer lock.** `TransportSession` synchronizes
   itself — an atomic nonce counter, a mutex around the replay window alone — so
   `seal`/`open` take `&self` and the engine holds the peer lock only long enough
   to clone an `Arc`. **Measured: ~530 → ~707 Mbps (+33%)**, and multi-flow no
@@ -1191,7 +1191,7 @@ onwards, anchored on the week of 2026-08-10.
     forged response changes nothing.
 - ✅ **Process-restart recovery** — a killed node rebuilds its tunnel unaided,
   including recovering from its own stale control socket. Under privileged CI.
-- ✅ **An idle peer is re-dialled** — found while checking soak readiness.
+- ✅ **An idle peer is re-dialed** — found while checking soak readiness.
   `connect_all` runs once at startup, so a session that expired
   (`REJECT_AFTER_TIME`, reachable via a single rekey lost to packet loss) or
   whose handshake gave up returned to `Idle` and **stayed there for the life of
@@ -1206,7 +1206,7 @@ onwards, anchored on the week of 2026-08-10.
     device's descriptor — the session is unchanged either side, since no key
     material was involved;
   - **an outage that outlives the session** (200 s, past `REJECT_AFTER_TIME`):
-    the session expires, and the peer is re-dialled and rebuilds the tunnel.
+    the session expires, and the peer is re-dialed and rebuilds the tunnel.
     This one is the reason the re-dial fix above matters — without it the
     session sat in `Idle` and the tunnel never returned.
 - ✅ **The simultaneous-rekey race — found only by the 12-hour soak, and the
@@ -1259,12 +1259,12 @@ onwards, anchored on the week of 2026-08-10.
 
   The replacement is **hardware-independent and falsifiable**:
 
-  > `ceiling = (measured untunnelled single-flow goodput) × 88.4%`, where 88.4%
+  > `ceiling = (measured untunneled single-flow goodput) × 88.4%`, where 88.4%
   > = 1240 bytes of TCP payload per 1402 bytes of wire time. Karst must reach
   > **≥ 75%** of that ceiling.
 
   The 88.4% figure is not a fudge factor — the same model predicts 941 Mbps for
-  the untunnelled 1500-byte path against 943 measured. On this link the ceiling
+  the untunneled 1500-byte path against 943 measured. On this link the ceiling
   is 884 Mbps and the bar is 663 Mbps.
 
   **The absolute ≥ 1 Gbps number is not abandoned, it is deferred to Phase 7**,
@@ -1456,7 +1456,7 @@ onwards, anchored on the week of 2026-08-10.
   Handshake cost, asserted in `TestHandshakeSizes`: `ChannelHello` 4541 B,
   `ChannelInit` 7437 B registering and 5485 B in steady state — ~12 KB to open
   a channel against PHREATIC's 4614 B per session, affordable because it is
-  amortised over a long-lived stream rather than paid per peer per rekey.
+  amortized over a long-lived stream rather than paid per peer per rekey.
 
   **Per-pair PSK derivation landed** — `server/management/internals/karst/psk/`,
   implementing §2.6's `psk(A,B,epoch) = KDF(master, min(A,B), max(A,B), epoch)`
@@ -2275,7 +2275,7 @@ onwards, anchored on the week of 2026-08-10.
   build, and the dependency was replaced with `rustls-pki-types`' `PemObject`
   rather than allowlisted.
 
-  Still open: **outbound mesh dialling** (the listener admits `role = MESH`
+  Still open: **outbound mesh dialing** (the listener admits `role = MESH`
   peers, so the receiving half is done, but nothing dials a configured peer
   yet), Prometheus metrics, `Restarting` on graceful shutdown, and roster
   reload without a restart — which §13.2 makes the consequential one.
@@ -2321,7 +2321,7 @@ onwards, anchored on the week of 2026-08-10.
   **The field had to enter both content hashes, and that is the part that would
   have failed silently.** The netmap version and the per-peer digest are hashes
   over routable data. A home relay that moved without changing the digest would
-  never be delivered as a delta, and every other node would go on dialling a
+  never be delivered as a delta, and every other node would go on dialing a
   relay the peer had left — a change that appears to apply and does not, which
   is exactly what the filter fields' own comment warns about.
 
@@ -2349,7 +2349,7 @@ onwards, anchored on the week of 2026-08-10.
   willingness to ask.
 
   **A move is published immediately rather than on the refresh timer.** Between
-  a node changing relay and its peers hearing about it, every peer is dialling a
+  a node changing relay and its peers hearing about it, every peer is dialing a
   relay this node has left, so the packets are not late — they are delivered
   nowhere.
 
@@ -2393,7 +2393,7 @@ onwards, anchored on the week of 2026-08-10.
   connection temporary.
 
   ✅ **Alternatives are measured, and the choice can move.** Each round the
-  daemon measures the relay it holds and **one** alternative, dialled for the
+  daemon measures the relay it holds and **one** alternative, dialed for the
   purpose and let go again; when §9.2's margin is sustained the home connection
   follows the choice.
 
@@ -2421,7 +2421,7 @@ onwards, anchored on the week of 2026-08-10.
   for the whole aquifer. Every unit test passed; the daemon-level test that
   drives a round at a time is what caught it.
 
-  **A move keeps the old relay reachable meanwhile.** Peers go on dialling it
+  **A move keeps the old relay reachable meanwhile.** Peers go on dialing it
   until the netmap reaches them, and in that window their packets are not late,
   they are delivered nowhere. So the relay being left is handed to the
   on-demand pool above, which holds it exactly as long as traffic keeps arriving
@@ -2490,7 +2490,7 @@ onwards, anchored on the week of 2026-08-10.
 
   ✅ **Simultaneous open, 2026-08-20** — GitHub issue [#39](https://github.com/karst-net/karst/issues/39), found by ADR-0012's
   userspace gate. Every handshake test in the tree was asymmetric: one side
-  dialled, the other answered. But `connect_all` runs on **both** nodes, so any
+  dialed, the other answered. But `connect_all` runs on **both** nodes, so any
   pair that knows both endpoints opens simultaneously, and answering the peer's
   `HandshakeInit` was throwing away this node's own handshake in flight. The
   peer's `HandshakeResponse` then had nothing to complete, and the pair settled
@@ -2503,7 +2503,7 @@ onwards, anchored on the week of 2026-08-10.
   Sampling one would have passed against the defect five times in six — which
   is roughly what happened before the diagnosis: the gate passed on its first
   run and failed the next three.
-- ✅ **`karst-relay`'s operational surface.** Metrics, mesh dialling and its I/O
+- ✅ **`karst-relay`'s operational surface.** Metrics, mesh dialing and its I/O
   are done — the entries below. The two items that were outstanding are closed,
   one by building it and one by finding the claim about it was wrong:
 
@@ -2588,7 +2588,7 @@ onwards, anchored on the week of 2026-08-10.
     server and relay, and `deploy/compose/README.md` says so in those words
     rather than letting a reader discover it after the third command.
 
-  ✅ **Mesh dialling, end to end.** `mesh.rs` decides which peers are due and
+  ✅ **Mesh dialing, end to end.** `mesh.rs` decides which peers are due and
   how long to wait; `server.rs` dials them. **Two relays mesh and a packet
   crosses between them**, which is the only test that exercises the outbound
   half at all.
@@ -2615,19 +2615,19 @@ onwards, anchored on the week of 2026-08-10.
   identity key and nothing about our topology.
 
   Two properties the tests pin that are easy to get wrong. A dial in flight is
-  not dialled again on the next tick — `due` marks the attempt as it hands it
+  not dialed again on the next tick — `due` marks the attempt as it hands it
   out, or every tick between a dial and its outcome starts another. And backoff
   **survives a roster reload**, or a relay refreshing on a timer retries a dead
   peer at full rate for ever, the reload undoing the state meant to slow it.
 
-  The I/O half needed the post-handshake loop **generalised over the stream
-  type**. `serve` accepts a TLS *server* stream and a dialling relay holds a
+  The I/O half needed the post-handshake loop **generalized over the stream
+  type**. `serve` accepts a TLS *server* stream and a dialing relay holds a
   *client* one, while everything after the handshake — framing, the hub, the
   write queue — is identical. A second copy for the outbound path would have
   given mesh its own queue draining and close handling, free to drift from the
   one every client uses.
 
-  **The trust anchor for dialling is required and there are no system roots.**
+  **The trust anchor for dialing is required and there are no system roots.**
   §4.2 declines to rest relay identity on certificates, so a mesh that fell back
   to public roots would quietly accept anything a public CA had issued for the
   name — the exact trust that section refuses. It also keeps a `WebPKI` bundle
@@ -2636,14 +2636,14 @@ onwards, anchored on the week of 2026-08-10.
   balancer is reached at one and presents the other.
 
   Checked against two defects, both of which the end-to-end row catches and no
-  unit test could: making **both** sides dial fails it, and disabling the dialler
+  unit test could: making **both** sides dial fails it, and disabling the dialer
   fails it.
 
   ✅ **§8's regional boundary, enforced on both sides.** Mesh is within a
   region because cross-region relay-to-relay forwarding would make every
   relay's bandwidth spendable by every other region's operator. A relay refuses
   both to dial and to admit a peer whose region differs — guarding only the
-  dialler would leave the boundary holding on one side of every pair, so an
+  dialer would leave the boundary holding on one side of every pair, so an
   operator who listed a foreign relay would simply be meshed *by* it instead.
 
   Stated for what it is: a guard against **misconfiguration**, not against a
@@ -3183,7 +3183,7 @@ onwards, anchored on the week of 2026-08-10.
   would have differed under any NAT at all.
 
   Neither was a bug in the product and both would have made the matrix lie. The
-  generalisation is worth stating: **a positive assertion failing for a bad
+  generalization is worth stating: **a positive assertion failing for a bad
   fixture is loud, and a negative one is silent.** Negative assertions are the
   ones to mutate, and every one in this file now has been.
 
@@ -3812,7 +3812,7 @@ onwards, anchored on the week of 2026-08-10.
 
   It was restated because it was measured to be unachievable, not because it was
   inconvenient. GitHub issue [#29](https://github.com/karst-net/karst/issues/29) carries the measurement and the arithmetic;
-  the short version is that two randomising NATs square the search space, so the
+  the short version is that two randomizing NATs square the search space, so the
   birthday paradox's √N saving still leaves ~170,000 probes per side for a
   99.9% success rate, and 0.01% after twenty seconds of trying. Tailscale
   reaches the same conclusion and relays the same case. A criterion that no
@@ -3919,11 +3919,11 @@ onwards, anchored on the week of 2026-08-10.
   could not name it.
 
   The fix is **one rule at one boundary, plus two string rewrites**. The datapath
-  socket synthesises `prefix::v4` on send and extracts it on receive, so the
+  socket synthesizes `prefix::v4` on send and extracts it on receive, so the
   engine above goes on holding plain IPv4 addresses on a host that cannot send
   an IPv4 packet; the relay address and control URL are rewritten once, where
   the configuration becomes real. A *name* is left alone in both, because DNS64
-  already synthesises for names — only a literal arrives unsynthesised.
+  already synthesizes for names — only a literal arrives unsynthesized.
 
   The prefix is learned by **RFC 8781's PREF64 first and RFC 7050 second**, and
   gated: `auto` will not ask unless the datapath is IPv6 *and* the host holds no
@@ -3951,7 +3951,7 @@ onwards, anchored on the week of 2026-08-10.
   at both ends.
 
   **What the row cannot see, and what does see it.** With the receive-side
-  extraction deleted the row still passes — a synthesised address is one the
+  extraction deleted the row still passes — a synthesized address is one the
   NAT64 node really can reach, so its own paths keep working. What breaks is
   `Pong.observed`: it hands an IPv4 peer an address inside its own translator's
   prefix, the peer publishes that as its reflexive candidate, and every
@@ -4544,7 +4544,7 @@ The plan is decision-complete; what remains is execution.
 2. ✅ **Threat model drafted** ([docs/THREAT-MODEL.md](docs/THREAT-MODEL.md)).
    Circulate with the ADR set for review and sign-off.
 3. ✅ **Monorepo and CI scaffolded**, `SECURITY.md` with the good-faith-research
-   safe harbour included. Verified: `cargo fmt --check`, `cargo clippy -D
+   safe harbor included. Verified: `cargo fmt --check`, `cargo clippy -D
    warnings` and `cargo test` pass across 13 crates; crate `karst-cli` produces
    the binary `karst` as intended.
 5. ✅ **[`spec/phreatic-v1.md`](spec/phreatic-v1.md) drafted** (Draft 0.1).

@@ -462,7 +462,7 @@ func TestLookupFuncReturnsNilForUnknown(t *testing.T) {
 // used and therefore proved nothing.
 //
 // The label matters because the data plane hashes public keys too — ADR-0005's
-// peer_id_hint over the KEM key. Two unlabelled hashes of related material is
+// peer_id_hint over the KEM key. Two unlabeled hashes of related material is
 // how a correlation channel gets built by accident.
 func TestHandleMatchesTheSpecifiedConstruction(t *testing.T) {
 	k := newIdentity(t)
@@ -477,7 +477,7 @@ func TestHandleMatchesTheSpecifiedConstruction(t *testing.T) {
 		t.Fatalf("handle construction changed:\n got %s\nwant %s", got, want)
 	}
 
-	// And an unlabelled hash must not produce the same handle.
+	// And an unlabeled hash must not produce the same handle.
 	bare := sha256.Sum256(pub)
 	if node.Handle(pub) == base64.StdEncoding.EncodeToString(bare[:]) {
 		t.Fatal("handle is a bare hash: the domain label is not being used")

@@ -11,7 +11,7 @@ use base64ct::{Base64, Encoding};
 use sha2::{Digest, Sha256};
 
 /// Domain label. Not decorative: the data plane also hashes public keys
-/// (ADR-0005's `peer_id_hint`, over the *KEM* key), and two unlabelled hashes
+/// (ADR-0005's `peer_id_hint`, over the *KEM* key), and two unlabeled hashes
 /// of related material is how a correlation channel gets built by accident.
 const HANDLE_CONTEXT: &[u8] = b"karst-node-handle-v1";
 

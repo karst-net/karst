@@ -34,7 +34,7 @@ We will tell you honestly if a report is a duplicate, out of scope, or already
 a documented accepted risk. We would rather say "we already know" than let a
 report sit unanswered.
 
-## Safe harbour for good-faith research
+## Safe harbor for good-faith research
 
 If you make a good-faith effort to comply with this policy, we will:
 
@@ -105,7 +105,7 @@ checksum.
 
 **What this does and does not get you.** The key is distributed in the same
 repository as the code it signs, so anyone who can rewrite this repository can
-replace the key along with the artifacts. That makes the signature a defence
+replace the key along with the artifacts. That makes the signature a defense
 against a compromised release runner, a substituted download, or a hostile
 mirror — not against a compromised repository. Cross-check the fingerprint
 above against a second source before trusting it for anything consequential.

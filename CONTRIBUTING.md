@@ -26,6 +26,15 @@ project cannot unilaterally relicense. That constraint is intentional —
   lists only benefits is not finished — record the costs and what you rejected.
 - **Do not open a public issue for a security bug.** See [SECURITY.md](SECURITY.md).
 
+## Spelling
+
+Use American English in project prose, comments, user-facing text, and new
+identifiers (for example, artifact, behavior, color, license, and synchronize).
+Keep references consistent when renaming workflow jobs or artifact names.
+Preserve official names, external API and protocol identifiers, canonical
+license texts, and upstream-generated support code. Update generated API
+comments together with their source schema descriptions.
+
 ## Checks
 
 ```sh

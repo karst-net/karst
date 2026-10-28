@@ -388,7 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             submenu.addItem(NSMenuItem.separator())
         }
-        // Managed: shown, not changeable (no action greys the item out).
+        // Managed: shown, not changeable (no action grays the item out).
         let off = NSMenuItem(title: "Off", action: exitManaged ? nil : #selector(runExitDisable), keyEquivalent: "")
         off.target = self
         off.state = status.selectedExit == nil ? .on : .off
@@ -448,7 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch ExitNodeAuthorization.request() {
         case .success(let granted):
             authorization = granted
-        case .failure(.cancelled):
+        case .failure(.canceled):
             return
         case .failure(let failure):
             showAlert(title: "Exit Node Not Changed", message: failure.localizedDescription)

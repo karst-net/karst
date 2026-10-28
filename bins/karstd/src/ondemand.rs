@@ -9,8 +9,8 @@
 //! > the node runs.
 //!
 //! Sans-io, like `home.rs` beside it: this decides *whether* a relay needs
-//! dialling and *when* a connection has outlived its traffic, and `run.rs` does
-//! the dialling. Keeping the decision here is what makes it testable at all —
+//! dialing and *when* a connection has outlived its traffic, and `run.rs` does
+//! the dialing. Keeping the decision here is what makes it testable at all —
 //! the alternative is a test that has to open TLS connections to observe a
 //! timer.
 
@@ -28,7 +28,7 @@ pub trait Channel {
     /// A worker that has given up — the relay went away and its backoff ran
     /// out — leaves a handle nothing reads. Without this the pool would keep
     /// handing datagrams to it, and a relay that had come back would never be
-    /// dialled again.
+    /// dialed again.
     fn live(&self) -> bool;
 }
 
@@ -68,7 +68,7 @@ impl<T: Channel> Pool<T> {
         }
     }
 
-    /// The connection for `relay`, or `None` when one must be dialled.
+    /// The connection for `relay`, or `None` when one must be dialed.
     ///
     /// Counts the traffic as it goes: a caller asking for a connection is a
     /// caller about to use it, and the two must not be separate steps — a
@@ -79,7 +79,7 @@ impl<T: Channel> Pool<T> {
         Some(&entry.channel)
     }
 
-    /// Hold a newly dialled connection, replacing any dead one for that relay.
+    /// Hold a newly dialed connection, replacing any dead one for that relay.
     ///
     /// `last` is shared with the reader so that inbound traffic counts too.
     pub fn insert(&mut self, relay: RelayId, channel: T, last: Arc<AtomicU64>) {
@@ -158,7 +158,7 @@ mod tests {
     /// a TLS and ML-DSA-65 handshake per datagram, which is worse than not
     /// having the second rule at all.
     #[test]
-    fn a_relay_is_dialled_once_and_then_reused() {
+    fn a_relay_is_dialed_once_and_then_reused() {
         let mut pool = pool();
         assert!(pool.route(relay(1), 0).is_none(), "nothing is open yet");
         pool.insert(relay(1), live(), Arc::new(AtomicU64::new(0)));
@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(pool.expire(1_000), 1);
         assert!(
             pool.route(relay(1), 1_000).is_none(),
-            "a closed connection must be dialled again, not reused"
+            "a closed connection must be dialed again, not reused"
         );
     }
 

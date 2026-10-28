@@ -19,7 +19,7 @@
 //! is the network's, and the daemon is entitled to know neither. So the
 //! translation happens at the socket boundary, in both directions, and the
 //! engine goes on comparing plain IPv4 addresses — which matters more than it
-//! sounds, because a node that let a synthesised address escape into
+//! sounds, because a node that let a synthesized address escape into
 //! `Pong.observed` would be advertising an address meaningful only inside its
 //! own network (GitHub issue [#50](https://github.com/karst-net/karst/issues/50) is the same mistake in its other spelling).
 //!
@@ -38,7 +38,7 @@ use std::str::FromStr;
 /// The prefix lengths RFC 6052 §2.2 defines. Nothing else is a NAT64 prefix.
 ///
 /// **Refusing the rest is the point.** A /96 assumption applied to a /64 prefix
-/// does not fail — it synthesises a well-formed address for the wrong host, and
+/// does not fail — it synthesizes a well-formed address for the wrong host, and
 /// the only symptom is that nothing answers.
 const LEGAL: [u8; 6] = [32, 40, 48, 56, 64, 96];
 
@@ -47,7 +47,7 @@ const PREF64_OPTION: u8 = 38;
 
 /// The IPv4 address RFC 7050 §3 reserves for prefix discovery. `ipv4only.arpa`
 /// has exactly this A record and no AAAA of its own, so any AAAA a resolver
-/// returns for it was synthesised — and the prefix is what is left when this is
+/// returns for it was synthesized — and the prefix is what is left when this is
 /// taken back out.
 pub const WKA: Ipv4Addr = Ipv4Addr::new(192, 0, 0, 170);
 /// The second reserved address. A resolver may return either or both, and RFC
@@ -80,7 +80,7 @@ impl fmt::Display for PrefixError {
                 f,
                 "{n} is not a NAT64 prefix length — RFC 6052 §2.2 defines \
                  32, 40, 48, 56, 64 and 96, and assuming one of those for a \
-                 prefix of any other length synthesises a valid address for \
+                 prefix of any other length synthesizes a valid address for \
                  the wrong host"
             ),
             Self::NotAPrefix => f.write_str("bits are set beyond the prefix length"),
@@ -116,7 +116,7 @@ impl Nat64Prefix {
             return Err(PrefixError::Length(len));
         }
         let base = addr.octets();
-        // The host part must be empty. A caller that passes a whole synthesised
+        // The host part must be empty. A caller that passes a whole synthesized
         // address by mistake gets told, rather than getting a prefix whose low
         // bits silently corrupt every address built from it.
         let bits = usize::from(len);
@@ -145,7 +145,7 @@ impl Nat64Prefix {
     /// 64..72 are reserved and **must be zero**, so an address straddling them
     /// is split around the gap.
     #[must_use]
-    pub fn synthesise(&self, v4: Ipv4Addr) -> Ipv6Addr {
+    pub fn synthesize(&self, v4: Ipv4Addr) -> Ipv6Addr {
         let mut out = self.base;
         let v4 = v4.octets();
         // Where each of the four IPv4 octets lands, per §2.2's diagram. Byte 8
@@ -200,16 +200,16 @@ impl Nat64Prefix {
 
     /// Rewrite an address so this host can reach it, leaving IPv6 alone.
     #[must_use]
-    pub fn synthesise_socket(&self, addr: SocketAddr) -> SocketAddr {
+    pub fn synthesize_socket(&self, addr: SocketAddr) -> SocketAddr {
         match addr.ip() {
             std::net::IpAddr::V4(v4) => {
-                SocketAddr::new(std::net::IpAddr::V6(self.synthesise(v4)), addr.port())
+                SocketAddr::new(std::net::IpAddr::V6(self.synthesize(v4)), addr.port())
             }
             std::net::IpAddr::V6(_) => addr,
         }
     }
 
-    /// Undo [`Self::synthesise_socket`], leaving anything else alone.
+    /// Undo [`Self::synthesize_socket`], leaving anything else alone.
     #[must_use]
     pub fn extract_socket(&self, addr: SocketAddr) -> SocketAddr {
         match addr.ip() {
@@ -397,9 +397,9 @@ mod tests {
             ("2001:db8:122:344::/96", "2001:db8:122:344::192.0.2.33"),
         ] {
             let p: Nat64Prefix = prefix.parse().unwrap();
-            let got = p.synthesise(v4);
+            let got = p.synthesize(v4);
             let want: Ipv6Addr = want.parse().unwrap();
-            assert_eq!(got, want, "{prefix} synthesised {got}, expected {want}");
+            assert_eq!(got, want, "{prefix} synthesized {got}, expected {want}");
             assert_eq!(
                 p.extract(got),
                 Some(v4),
@@ -416,7 +416,7 @@ mod tests {
             let p = Nat64Prefix::new(Ipv6Addr::from_str("2001:db8::").unwrap(), len)
                 .or_else(|_| Nat64Prefix::new(Ipv6Addr::UNSPECIFIED, len))
                 .unwrap();
-            let got = p.synthesise(Ipv4Addr::BROADCAST);
+            let got = p.synthesize(Ipv4Addr::BROADCAST);
             assert_eq!(
                 got.octets().get(8),
                 Some(&0u8),
@@ -444,7 +444,7 @@ mod tests {
         );
     }
 
-    /// A whole synthesised address passed where a prefix was meant.
+    /// A whole synthesized address passed where a prefix was meant.
     #[test]
     fn an_address_with_a_host_part_is_not_a_prefix() {
         assert_eq!(
@@ -487,7 +487,7 @@ mod tests {
         for prefix in ["64:ff9b::/96", "2001:db8::/32", "2001:db8:122:344::/64"] {
             let p: Nat64Prefix = prefix.parse().unwrap();
             let v4: SocketAddr = "51.75.10.20:51820".parse().unwrap();
-            let synth = p.synthesise_socket(v4);
+            let synth = p.synthesize_socket(v4);
             assert!(synth.is_ipv6(), "{prefix} did not produce an IPv6 address");
             assert_eq!(synth.port(), 51820, "{prefix} lost the port");
             assert_eq!(p.extract_socket(synth), v4, "{prefix} did not round-trip");
@@ -582,7 +582,7 @@ mod tests {
     }
 
     /// An RA with no PREF64 yields nothing, and so does a message that is not
-    /// an RA at all — a Neighbour Advertisement's bytes are not options.
+    /// an RA at all — a Neighbor Advertisement's bytes are not options.
     #[test]
     fn only_a_router_advertisement_carrying_the_option_yields_a_prefix() {
         assert_eq!(
@@ -590,7 +590,7 @@ mod tests {
             None
         );
         let mut not_an_ra = advertisement(&pref64(600, 0, "64:ff9b::"));
-        not_an_ra[0] = 136; // Neighbour Advertisement
+        not_an_ra[0] = 136; // Neighbor Advertisement
         assert_eq!(Nat64Prefix::from_router_advertisement(&not_an_ra), None);
     }
 
@@ -633,9 +633,9 @@ mod tests {
     }
 
     /// RFC 7050 §3: the prefix is whatever is left when the well-known address
-    /// is taken out of a synthesised AAAA for `ipv4only.arpa`.
+    /// is taken out of a synthesized AAAA for `ipv4only.arpa`.
     #[test]
-    fn a_prefix_is_recovered_from_a_synthesised_ipv4only_arpa_answer() {
+    fn a_prefix_is_recovered_from_a_synthesized_ipv4only_arpa_answer() {
         for (prefix, wka) in [
             ("64:ff9b::/96", WKA),
             ("64:ff9b::/96", WKA2),
@@ -644,7 +644,7 @@ mod tests {
             ("2001:db8:122::/48", WKA),
         ] {
             let p: Nat64Prefix = prefix.parse().unwrap();
-            let answer = p.synthesise(wka);
+            let answer = p.synthesize(wka);
             assert_eq!(
                 Nat64Prefix::from_ipv4only_arpa(answer),
                 Some(p),
@@ -657,13 +657,13 @@ mod tests {
     /// An AAAA that embeds neither reserved address is not a DNS64 synthesis,
     /// and believing it would hand the daemon a prefix that translates nothing.
     #[test]
-    fn an_unsynthesised_answer_yields_no_prefix() {
+    fn an_unsynthesized_answer_yields_no_prefix() {
         let real: Ipv6Addr = "2001:db8::1".parse().unwrap();
         assert_eq!(Nat64Prefix::from_ipv4only_arpa(real), None);
         // A synthesis of some *other* address is equally not an answer: the
         // whole method rests on knowing which IPv4 address went in.
         let p = Nat64Prefix::well_known();
-        let decoy = p.synthesise(Ipv4Addr::new(192, 0, 0, 172));
+        let decoy = p.synthesize(Ipv4Addr::new(192, 0, 0, 172));
         assert_eq!(Nat64Prefix::from_ipv4only_arpa(decoy), None);
     }
 

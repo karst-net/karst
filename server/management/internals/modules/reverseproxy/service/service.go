@@ -73,7 +73,7 @@ type TargetOptions struct {
 	CaptureMaxRequestBytes  int64              `json:"capture_max_request_bytes,omitempty"`
 	CaptureMaxResponseBytes int64              `json:"capture_max_response_bytes,omitempty"`
 	CaptureContentTypes     []string           `gorm:"serializer:json" json:"capture_content_types,omitempty"`
-	// AgentNetwork marks targets synthesised from Agent Network state. The
+	// AgentNetwork marks targets synthesized from Agent Network state. The
 	// proxy uses it to gate agent-network-specific behavior (access log
 	// tagging, observability, etc.).
 	AgentNetwork bool `json:"agent_network,omitempty"`

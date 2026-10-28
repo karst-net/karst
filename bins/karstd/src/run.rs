@@ -6,7 +6,7 @@
 //! Two blocking reads have to proceed independently: a packet from the host and
 //! a datagram from a peer arrive on unrelated schedules, and neither may be
 //! starved by the other. That is two threads plus a timer, sharing the engine
-//! by reference — **not behind a lock**. The engine synchronises per peer
+//! by reference — **not behind a lock**. The engine synchronizes per peer
 //! internally, and an outer mutex here would serialize the whole datapath,
 //! which is precisely the bottleneck PLAN.md §3.4 measured.
 //!
@@ -840,7 +840,7 @@ fn run_engine(
 
     // Everything a Ponor connection needs that does not depend on *which* relay
     // it is. Built before the scope, because the on-demand connections of
-    // §9.1's second rule are dialled while the daemon runs and each needs the
+    // §9.1's second rule are dialed while the daemon runs and each needs the
     // same set.
     let relay_common = relay_identity
         .zip(relay_out)
@@ -1739,7 +1739,7 @@ impl SweepTracker {
 /// **Both halves are needed for §9.2 to be able to say anything.** The
 /// incumbent's number alone can only confirm the choice already made; a
 /// challenger needs its own, on the same rounds, or the sustained-margin rule
-/// has nothing to compare. So one alternative at a time is dialled and measured
+/// has nothing to compare. So one alternative at a time is dialed and measured
 /// for a window long enough for the hysteresis to act ([`crate::home::Rotation`]),
 /// and let go again — a Ponor connection to every relay in the registry would
 /// cost a TLS and ML-DSA-87 handshake apiece and defeat the point of choosing
@@ -1943,7 +1943,7 @@ enum Relayed {
     /// Nothing to write: a request that this connection exist, and go on
     /// existing while something keeps asking. It is how the relay this node is
     /// *leaving* stays reachable across a §9.2 move, and how an alternative
-    /// under measurement is dialled before there is anything to send it.
+    /// under measurement is dialed before there is anything to send it.
     Hold,
 }
 
@@ -2290,7 +2290,7 @@ fn home_target(
         // Where it already is.
         Some(id) if id == current => None,
         // §9.2 moved it. A choice the registry no longer carries cannot be
-        // dialled — `retain` keeps the selector from holding one, so this is
+        // dialed — `retain` keeps the selector from holding one, so this is
         // belt and braces, and staying put is the right answer to it anyway.
         Some(id) => registry.iter().find(|r| r.relay_id == id).cloned(),
         // No choice at all: either nothing has been measured yet, or the
@@ -2345,7 +2345,7 @@ fn next_relay(current: RelayId, registry: &[crate::netmap::Relay]) -> Option<cra
 /// to do about either is to try somewhere else. Without this a node whose
 /// registry listed a relay it was not admitted to first would retry that one
 /// for the life of the process, and the relays it *was* admitted to would never
-/// be dialled — nothing measures a relay it has no connection to.
+/// be dialed — nothing measures a relay it has no connection to.
 fn abandon_relay(context: &mut RelayContext<'_>) {
     let Some(next) = next_relay(context.relay.relay_id, &context.common.engine.relays()) else {
         return;
@@ -2373,7 +2373,7 @@ fn abandon_relay(context: &mut RelayContext<'_>) {
 ///
 /// **The old relay is where every peer still believes this node is**, and will
 /// go on believing until the netmap reaches them. The move is published at once
-/// (`refresh_netmap`), but between the two a peer dialling the old relay finds
+/// (`refresh_netmap`), but between the two a peer dialing the old relay finds
 /// nobody there, and its packets are not late — they are delivered nowhere. So
 /// the old relay is held as an on-demand connection: traffic arriving there
 /// still lands, and the pool lets it go once none does. §9.2's argument, one
@@ -3022,7 +3022,7 @@ const ON_DEMAND_IDLE_MS: u64 = 120_000;
 /// Hold the connections §9.1's second rule needs, and only for as long as it
 /// needs them.
 ///
-/// One thread owning the whole set rather than a shared map: dialling a relay is
+/// One thread owning the whole set rather than a shared map: dialing a relay is
 /// a TLS and ML-DSA-87 handshake, and the datapath thread that happened to send
 /// the first packet to a peer must not be the thread that waits for it. Every
 /// datagram arrives here already addressed to a relay — the engine decided that
@@ -3121,12 +3121,12 @@ fn on_demand_hub<'scope>(
                 continue;
             };
             // **Why, not just what.** All three of §9.1's on-demand reasons
-            // share this queue, and "dialling a relay" without the reason is
+            // share this queue, and "dialing a relay" without the reason is
             // the kind of line that looks like an explanation and answers
             // nothing — an operator reading it cannot tell a peer being
             // reached from a relay being measured.
             tracing::warn!(
-                "karstd: dialling {} {}",
+                "karstd: dialing {} {}",
                 relay.address,
                 match item {
                     Relayed::Packet { .. } => "to reach a peer that published it as its home relay",
@@ -5545,7 +5545,7 @@ fn refresh_netmap(
             .chosen();
         // **A move is published at once rather than on the timer, and so is a
         // push.** Between the node changing relay and its peers hearing about
-        // it, every peer is dialling a relay this node has left, so the
+        // it, every peer is dialing a relay this node has left, so the
         // packets are not merely late — they are delivered nowhere. A whole
         // refresh interval of that is the one case where waiting for the next
         // tick is not free, and a deprovisioning notice is the other.
@@ -6873,13 +6873,13 @@ mod relay_queue_tests {
         assert!(matches!(item, Relayed::Packet { .. }));
     }
 
-    /// **A peer on a relay this node has not dialled cannot stall every other
+    /// **A peer on a relay this node has not dialed cannot stall every other
     /// peer.** Reaching it costs a TLS and ML-DSA-87 handshake before the first
     /// datagram moves, and if that backlog shared the home connection's queue it
     /// would be occupying the space the traffic that *does* have a connection is
     /// waiting in.
     #[test]
-    fn a_relay_that_is_not_dialled_yet_cannot_fill_the_home_queue() {
+    fn a_relay_that_is_not_dialed_yet_cannot_fill_the_home_queue() {
         let (sender, mut home, _on_demand) = sender(2);
         let peer = [0xAA; karst_relay_proto::consts::ID_LEN];
         let elsewhere = [0xBB; karst_relay_proto::consts::ID_LEN];
@@ -6896,7 +6896,7 @@ mod relay_queue_tests {
         sender.send_via(None, peer, b"and the home connection still has room");
         assert!(
             matches!(home.try_recv(), Ok(Relayed::Packet { .. })),
-            "the home connection's queue was consumed by a relay nothing has dialled"
+            "the home connection's queue was consumed by a relay nothing has dialed"
         );
     }
 }
@@ -7084,7 +7084,7 @@ mod probe_tests {
     }
 
     /// One round measures the incumbent on the connection it is already on, and
-    /// one alternative on a connection dialled for it. Both are needed: §9.2
+    /// one alternative on a connection dialed for it. Both are needed: §9.2
     /// compares them against each other in the same round.
     #[test]
     fn a_round_measures_the_incumbent_and_one_alternative() {
@@ -7152,7 +7152,7 @@ mod probe_tests {
         assert_eq!(
             pinged_elsewhere(&mut q),
             None,
-            "a node with one relay dialled something"
+            "a node with one relay dialed something"
         );
     }
 
@@ -7516,11 +7516,11 @@ mod probe_tests {
         assert_eq!(
             target.address,
             relay(2).address,
-            "dialled without an address"
+            "dialed without an address"
         );
     }
 
-    /// A choice naming a relay the registry does not carry cannot be dialled:
+    /// A choice naming a relay the registry does not carry cannot be dialed:
     /// there is no address, TLS name or pinned key for it. Staying is the only
     /// answer that keeps this node reachable.
     #[test]
@@ -7776,7 +7776,7 @@ mod probe_tests {
         }
     }
 
-    /// **The relay this node is leaving stays reachable.** Peers go on dialling
+    /// **The relay this node is leaving stays reachable.** Peers go on dialing
     /// it until the netmap reaches them, and in that window their packets are
     /// not late — they are delivered nowhere. So the move hands the old relay
     /// to the on-demand pool, which lets it go once nothing arrives there.

@@ -122,7 +122,7 @@ have unknown terms.
   clearance is a Phase 0 exit criterion.
 - License allowlists in CI (`cargo deny`, `go-licenses`) from Phase 0, before a
   transitive GPL dependency becomes expensive to unwind.
-- `SECURITY.md` with a disclosure policy and an explicit **safe harbour for
+- `SECURITY.md` with a disclosure policy and an explicit **safe harbor for
   good-faith research**. A project optimizing for security and community should
   not leave researchers guessing about legal exposure.
 - Publishing cryptographic source requires a notification email to BIS and NSA

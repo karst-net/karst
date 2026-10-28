@@ -125,7 +125,7 @@ pub struct PeerEntry<'a> {
     ///
     /// Routable content, so it is covered by the digest: a peer that moved
     /// relay whose digest did not change would never be delivered, and every
-    /// other node would keep dialling a relay it had left.
+    /// other node would keep dialing a relay it had left.
     pub home_relay: &'a [u8],
     pub allowed_ips: &'a [String],
 }

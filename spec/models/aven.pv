@@ -129,7 +129,7 @@ query attacker(new secretProbe).
 
 (* ─── A: the prober ────────────────────────────────────────────────────── *)
 
-(* Parameterised by which peer it is talking to, so the same process runs for
+(* Parameterized by which peer it is talking to, so the same process runs for
    the honest peer B and for the attacker-controlled peer C. Running it for
    both is what makes query 1 non-trivial: A must not confuse the two. *)
 let prober(peer_tag: bitstring, k: key) =

@@ -35,7 +35,7 @@ post-quantum. The driving threat is **harvest-now-decrypt-later**: traffic
 captured today and decrypted once a cryptanalytically-relevant quantum computer
 exists (PLAN.md §1.1).
 
-NIST finalised the core standards in August 2024 — FIPS 203 (ML-KEM), FIPS 204
+NIST finalized the core standards in August 2024 — FIPS 203 (ML-KEM), FIPS 204
 (ML-DSA), FIPS 205 (SLH-DSA) — which makes this a selection problem rather than
 a research problem. The task is choosing parameter sets and filling the gaps
 the standards do not cover.
@@ -73,7 +73,7 @@ hierarchy: the root of trust would have been the *weakest* link in the system.
 Corrected to **SLH-DSA-SHA2-192s**. The signature grows from 7856 B to 16224 B,
 which is irrelevant — Bedrock signatures are produced rarely, by humans, on
 offline media, and never travel in a handshake (ADR-0005). There is no reason
-to economise on the one key that anchors everything else.
+to economize on the one key that anchors everything else.
 
 ### Why each choice
 

@@ -51,7 +51,7 @@ invented proper nouns get themed names and standard technical terms do not.
 ### 1.2 What AVEN does not do
 
 - **It carries no user data.** Only probes and candidate lists. A working path
-  is handed to PHREATIC; AVEN never sees a tunnelled packet.
+  is handed to PHREATIC; AVEN never sees a tunneled packet.
 - **It derives no keys.** Its authentication key comes from the netmap (§5).
 - **It does not decide whether two nodes may talk.** That is the ACL's job,
   enforced by the packet filter at both ends (PLAN.md §4.3).
@@ -463,7 +463,7 @@ measured rather than reasoned — the first implementation used 30 seconds and a
 packet capture showed the mapped port moving between reflections on an otherwise
 idle flow.
 
-The rule generalises: **a reflexive address is only true for as long as the
+The rule generalizes: **a reflexive address is only true for as long as the
 binding that produced it is alive**, and nothing tells the node how long that
 is. An implementation SHOULD refresh at well under the shortest timeout it
 expects to meet rather than at the timeout itself. What is normative: a node MUST rate-limit
@@ -1165,7 +1165,7 @@ must not be carried across to AVEN, where the MAC's job is different.
    **Partly resolved by §7.7**, which specifies the random-port search for the
    hard/easy pairing and holds it inside §7.5's existing budget rather than
    raising it. What stays open here is the hard/hard case, and it is open in the
-   sense of being *closed to this technique*: two randomising NATs square the
+   sense of being *closed to this technique*: two randomizing NATs square the
    search space, so the birthday paradox's √N saving still leaves roughly
    170,000 probes per side for 99.9% — about 28 minutes at 100 packets per
    second — and 0.01% after twenty seconds of trying. That is not a rate to

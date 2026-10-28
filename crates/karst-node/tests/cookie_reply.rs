@@ -32,8 +32,8 @@ fn peer_of(k: &StaticKeys) -> Arc<PeerPublic> {
     })
 }
 
-/// An initiator session, dialled but not yet answered — `Handshaking`.
-fn dialling() -> (Session, u32) {
+/// An initiator session, dialed but not yet answered — `Handshaking`.
+fn dialing() -> (Session, u32) {
     let a_keys = keys(1, 2);
     let b_keys = keys(3, 4);
     let mut a = Session::new(Arc::clone(&a_keys), peer_of(&b_keys), 7, 1);
@@ -63,7 +63,7 @@ fn reply_fragment(b_keys: &StaticKeys, receiver_index: u32, cookie: &[u8; COOKIE
 
 #[test]
 fn a_valid_cookie_reply_triggers_a_retry_under_mac2() {
-    let (mut a, reassembly_id) = dialling();
+    let (mut a, reassembly_id) = dialing();
     let b_keys = keys(3, 4);
     let cookie = [0x11; COOKIE_LEN];
     let datagram = reply_fragment(&b_keys, reassembly_id, &cookie);
@@ -108,7 +108,7 @@ fn a_valid_cookie_reply_triggers_a_retry_under_mac2() {
 /// `Some(vec![])`.
 #[test]
 fn a_reply_signed_with_the_wrong_key_is_ignored() {
-    let (mut a, reassembly_id) = dialling();
+    let (mut a, reassembly_id) = dialing();
     let wrong_keys = keys(9, 9); // not the session's peer
     let cookie = [0x22; COOKIE_LEN];
     let datagram = reply_fragment(&wrong_keys, reassembly_id, &cookie);
@@ -126,7 +126,7 @@ fn a_reply_signed_with_the_wrong_key_is_ignored() {
 /// not counted as a MAC failure.
 #[test]
 fn a_reply_for_a_different_attempt_is_ignored() {
-    let (mut a, reassembly_id) = dialling();
+    let (mut a, reassembly_id) = dialing();
     let b_keys = keys(3, 4);
     let cookie = [0x33; COOKIE_LEN];
     // A plausible but wrong receiver_index — an off-path attacker replaying
@@ -144,7 +144,7 @@ fn a_reply_for_a_different_attempt_is_ignored() {
 fn a_reply_with_no_outstanding_handshake_is_ignored() {
     let a_keys = keys(1, 2);
     let b_keys = keys(3, 4);
-    // Idle: never dialled, so `reassembly_id` is still its initial value.
+    // Idle: never dialed, so `reassembly_id` is still its initial value.
     let mut a = Session::new(a_keys, peer_of(&b_keys), 7, 1);
     let cookie = [0x44; COOKIE_LEN];
     let datagram = reply_fragment(&b_keys, 0, &cookie);
@@ -158,7 +158,7 @@ fn a_reply_with_no_outstanding_handshake_is_ignored() {
 
 #[test]
 fn a_tampered_cookie_reply_body_is_ignored() {
-    let (mut a, reassembly_id) = dialling();
+    let (mut a, reassembly_id) = dialing();
     let b_keys = keys(3, 4);
     let cookie = [0x55; COOKIE_LEN];
     let mut datagram = reply_fragment(&b_keys, reassembly_id, &cookie);

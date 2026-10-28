@@ -278,7 +278,7 @@ impl ResultCode {
             // client sent an address that does not match its own packet
             // source, which is a bug in the client and retrying it unchanged
             // reproduces it exactly. `tests/gateway.rs` gets a real 12 out of
-            // miniupnpd by mutating the encoder, which is how the mislabelling
+            // miniupnpd by mutating the encoder, which is how the mislabeling
             // was found.
             Self::Pcp(c) => matches!(c, 7 | 8 | 11 | 13),
         }

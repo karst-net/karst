@@ -672,7 +672,7 @@ async fn a_real_offline_ceremony_admits_only_covered_aquifer_members() {
 /// **The fail-closed path.** Two peers, one countersigned, enforcement on: the
 /// uncovered one is not in the datapath configuration at all.
 ///
-/// Not "is refused when dialled" — *absent*. A peer that is not in the
+/// Not "is refused when dialed" — *absent*. A peer that is not in the
 /// configuration cannot be handshaked with, so enforcement holds by
 /// construction rather than by a check in the session path that could be
 /// forgotten or reordered.

@@ -181,7 +181,7 @@ NetBird's 32-byte WireGuard key), a 1,000-peer aquifer would push 3.2 MB to
 every notified peer on every membership change. Delta push must be built.
 
 The risk profile also **inverted** against prediction: the identity refactor is
-small and localised (24 of 1403 files, **1.7%**, against a 30% threshold),
+small and localized (24 of 1403 files, **1.7%**, against a 30% threshold),
 while the ongoing divergence cost is the real exposure.
 
 Net effect on the estimate: **unchanged at 8–12 weeks**, with composition

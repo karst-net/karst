@@ -785,7 +785,7 @@ func TestReportedHomeRelayIsRecorded(t *testing.T) {
 	}
 
 	// A node that loses its relay reports none, and the record must follow it
-	// down: peers left dialling a relay this node no longer holds reach
+	// down: peers left dialing a relay this node no longer holds reach
 	// nothing, and a stale entry is indistinguishable from a live one.
 	if _, err := requestNetmapReporting(t, f, nil); err != nil {
 		t.Fatalf("netmap: %v", err)
@@ -828,7 +828,7 @@ func TestHomeRelayReachesPeers(t *testing.T) {
 
 // A move must be delivered. The digest and the version both cover the field,
 // so a peer that changes relay comes back in the delta — without that, the
-// server answers "unchanged" forever and every other node keeps dialling a
+// server answers "unchanged" forever and every other node keeps dialing a
 // relay the peer has left.
 func TestHomeRelayMoveIsDelivered(t *testing.T) {
 	f := newNetmapFixture(t, 3)
@@ -855,7 +855,7 @@ func TestHomeRelayMoveIsDelivered(t *testing.T) {
 // A value that cannot be a relay id is refused rather than stored.
 //
 // Silently ignoring it would leave the node believing it had published a relay
-// while its peers dialled the old one — unreachable, with nothing anywhere
+// while its peers dialed the old one — unreachable, with nothing anywhere
 // saying why.
 func TestMalformedHomeRelayIsRefused(t *testing.T) {
 	f := newNetmapFixture(t, 1)

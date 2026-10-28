@@ -2174,7 +2174,7 @@ type RelayUsageReportCoverage string
 type RootRenamePreview struct {
 	Committed bool `json:"committed"`
 
-	// Convergence No client application acknowledgement exists in the current protocol.
+	// Convergence No client application acknowledgment exists in the current protocol.
 	Convergence RootRenamePreviewConvergence `json:"convergence"`
 	DeviceCount int                          `json:"device_count"`
 	DomainCount int                          `json:"domain_count"`
@@ -2191,7 +2191,7 @@ type RootRenamePreview struct {
 	RootId   string `json:"root_id"`
 }
 
-// RootRenamePreviewConvergence No client application acknowledgement exists in the current protocol.
+// RootRenamePreviewConvergence No client application acknowledgment exists in the current protocol.
 type RootRenamePreviewConvergence string
 
 // ScalerLatencyBreach defines model for ScalerLatencyBreach.

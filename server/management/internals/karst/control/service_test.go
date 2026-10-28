@@ -38,7 +38,7 @@ import (
 
 // These run over a real gRPC server on a real (in-memory) socket, with real
 // ML-KEM-768 and ML-DSA-65 — not in-process calls. The point is to catch the
-// things that only appear once messages are marshalled and streamed: the
+// things that only appear once messages are marshaled and streamed: the
 // server having to speak first, oneof handling, and stream lifecycle.
 
 type fixture struct {

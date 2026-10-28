@@ -26,7 +26,7 @@ transport.
 Ponor's frame protocol (`crates/karst-relay-proto`) is already sans-I/O: the
 handshake state machines (`RelayHandshake`/`ClientHandshake`), the relay's
 `Hub` (keyed by an opaque `ConnId`, queueing pre-encoded frame bytes) and the
-mesh `Dialler` (which only ever produces an address and a name to dial) never
+mesh `Dialer` (which only ever produces an address and a name to dial) never
 touch a socket type. What they lean on the transport for is exactly what
 TCP+TLS supplies today: an ordered, reliable, confidential and
 integrity-protected byte stream. Ponor derives no session key of its own —

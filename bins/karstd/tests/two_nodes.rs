@@ -845,7 +845,7 @@ fn the_tunnel_recovers_from_a_tun_interface_flap() {
 
 /// **A flap long enough to outlive the session.** Past `REJECT_AFTER_TIME` the
 /// keys must not be used, so the session closes — and the peer must then be
-/// re-dialled rather than left idle forever.
+/// re-dialed rather than left idle forever.
 ///
 /// This is the path that `connect_all`-at-startup left broken: without a
 /// re-dial on the timer, an outage longer than three minutes ended the tunnel

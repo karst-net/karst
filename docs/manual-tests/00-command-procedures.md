@@ -296,7 +296,7 @@ docs/operations/macos-managed-device-mdm.md for background.
 
    Reopen the menu bar item; confirm "VPN configuration managed by your
    organization" appears, and check System Settings → Network →
-   [profile] for a greyed-out or password-gated removal control.
+   [profile] for a grayed-out or password-gated removal control.
 3. With that device's tunnel connected, kill the engine mid-session (stop
    the `KarstPacketTunnel` process, or corrupt its state directory's
    `config.toml`/`control.sock`) and from a separate app try:

@@ -202,7 +202,7 @@ enum ClientState {
 
 /// The connecting side of the handshake.
 ///
-/// Used by a node dialling a relay ([`Role::Client`]) and by a relay dialling
+/// Used by a node dialing a relay ([`Role::Client`]) and by a relay dialing
 /// a mesh peer ([`Role::Mesh`]); the two differ only in the role byte and in
 /// which key directory the responder consults.
 #[derive(Debug)]

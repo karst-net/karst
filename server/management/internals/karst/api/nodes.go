@@ -364,7 +364,7 @@ func (h *handler) healthFor(ctx context.Context, id string) relayHealth {
 	}
 	reportedAt := record.ReportedAt
 	// Sessions counts client connections specifically — mesh peers are
-	// infrastructure this relay dials or is dialled by, not sessions an
+	// infrastructure this relay dials or is dialed by, not sessions an
 	// admin reading this field would recognize as one.
 	sessions := record.LocalClients
 	bytes := int(record.BytesTotal)

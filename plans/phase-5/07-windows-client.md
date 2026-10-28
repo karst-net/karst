@@ -109,7 +109,7 @@ The IP Helper API: `CreateUnicastIpAddressEntry`, `CreateIpForwardEntry2`,
 
 Unlike macOS ([06](06-macos-client.md) §2), do **not** shell out to `netsh`
 here. On Windows the API is well-documented, stable, and directly callable,
-while `netsh` output parsing is locale-dependent — it returns localised text on
+while `netsh` output parsing is locale-dependent — it returns localized text on
 a non-English install, and a self-hoster in Germany is not a hypothetical.
 
 Set the interface metric low enough that mesh routes win, and set

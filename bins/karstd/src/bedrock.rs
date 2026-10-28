@@ -662,7 +662,7 @@ mod mode_tests {
 
 /// The marker byte for a Karst inner control frame.
 ///
-/// Zero is not a legal IP version, so it cannot collide with a tunnelled
+/// Zero is not a legal IP version, so it cannot collide with a tunneled
 /// packet: `karst_tun::ip::addresses` already returns `None` for it and the
 /// engine already drops such payloads. That makes this a discriminator with no
 /// ambiguity to resolve rather than a reserved value someone has to remember.
@@ -670,7 +670,7 @@ mod mode_tests {
 /// It lives **inside** the AEAD. The transport's outer type byte is written
 /// before the ciphertext with an empty AAD and is therefore unauthenticated;
 /// discriminating on it would let anyone who can flip one bit in flight
-/// redirect a tunnelled packet into the control handler.
+/// redirect a tunneled packet into the control handler.
 pub const CONTROL_MARKER: u8 = 0x00;
 
 /// Control frame kind: a claim about the sender's verified Bedrock head.
@@ -695,7 +695,7 @@ pub fn encode_head_claim(hash: &[u8], seq: u64) -> Vec<u8> {
 /// Decode a head claim from a decrypted, padded plaintext.
 ///
 /// Returns `None` for anything that is not a well-formed claim, including a
-/// tunnelled IP packet — the caller uses that to route between the two.
+/// tunneled IP packet — the caller uses that to route between the two.
 #[must_use]
 pub fn decode_head_claim(plaintext: &[u8]) -> Option<(Vec<u8>, u64)> {
     if plaintext.first() != Some(&CONTROL_MARKER) || plaintext.get(1) != Some(&CONTROL_BEDROCK_HEAD)
@@ -818,7 +818,7 @@ mod head_tests {
         assert_eq!(seq, 3);
     }
 
-    /// A tunnelled IP packet must never be mistaken for a control frame. The
+    /// A tunneled IP packet must never be mistaken for a control frame. The
     /// marker is zero precisely because zero is not a legal IP version.
     #[test]
     fn ip_packets_are_not_control_frames() {

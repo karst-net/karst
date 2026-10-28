@@ -877,7 +877,7 @@ impl Hub {
 
     /// Whether a mesh connection to this relay already exists.
     ///
-    /// Asked by the dialler rather than tracked there, so there is one answer
+    /// Asked by the dialer rather than tracked there, so there is one answer
     /// to the question instead of two that can disagree.
     #[must_use]
     pub fn has_mesh(&self, relay_id: &Id) -> bool {

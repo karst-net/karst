@@ -63,7 +63,7 @@ type ProxyTokenChecker interface {
 
 // ProxyServiceServer implements the ProxyService gRPC server
 // AgentNetworkSynthesizer produces in-memory reverse-proxy services from
-// Agent Network provider/policy state for the proxy snapshot path; synthesised
+// Agent Network provider/policy state for the proxy snapshot path; synthesized
 // services never appear in the reverseproxy_services table.
 type AgentNetworkSynthesizer interface {
 	SynthesizeServicesForCluster(ctx context.Context, clusterAddr string) ([]*rpservice.Service, error)
@@ -91,7 +91,7 @@ type ProxyServiceServer struct {
 	mu sync.RWMutex
 	// Manager for reverse proxy operations
 	serviceManager rpservice.Manager
-	// agentNetworkSynth produces synthesised reverse-proxy services from
+	// agentNetworkSynth produces synthesized reverse-proxy services from
 	// Agent Network state. Optional — when nil the snapshot path only ships
 	// persisted services.
 	agentNetworkSynth AgentNetworkSynthesizer
@@ -236,7 +236,7 @@ func (s *ProxyServiceServer) SetServiceManager(manager rpservice.Manager) {
 	s.serviceManager = manager
 }
 
-// SetAgentNetworkSynthesizer wires the agent-network service synthesiser.
+// SetAgentNetworkSynthesizer wires the agent-network service synthesizer.
 // Optional — when nil the snapshot path skips agent-network synthesis. The
 // modules layer injects this after both the proxy server and the agent-network
 // manager are constructed.
@@ -255,7 +255,7 @@ func (s *ProxyServiceServer) SetAgentNetworkLimitsService(svc AgentNetworkLimits
 	s.mu.Unlock()
 }
 
-// agentNetworkSynthesizer returns the synthesiser under read lock.
+// agentNetworkSynthesizer returns the synthesizer under read lock.
 func (s *ProxyServiceServer) agentNetworkSynthesizer() AgentNetworkSynthesizer {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -773,25 +773,25 @@ func (s *ProxyServiceServer) snapshotServiceMappings(ctx context.Context, conn *
 	}
 
 	if synth := s.agentNetworkSynthesizer(); synth != nil {
-		var synthesised []*rpservice.Service
+		var synthesized []*rpservice.Service
 		var serr error
-		// Account-scoped connections synthesise only their own account, so the
+		// Account-scoped connections synthesize only their own account, so the
 		// snapshot can never carry another tenant's mappings (which embed the
 		// upstream auth header derived from that tenant's provider API key).
 		// Global connections still see the whole cluster.
 		if conn.accountID != nil {
-			synthesised, serr = synth.SynthesizeServicesForAccount(ctx, *conn.accountID)
+			synthesized, serr = synth.SynthesizeServicesForAccount(ctx, *conn.accountID)
 		} else {
-			synthesised, serr = synth.SynthesizeServicesForCluster(ctx, conn.address)
+			synthesized, serr = synth.SynthesizeServicesForCluster(ctx, conn.address)
 		}
 		if serr != nil {
 			// Surface a real synthesis failure instead of silently shipping an
 			// incomplete snapshot (which would drop the account's agent-network
 			// routes). Consistent with the persisted-services error above; the
 			// proxy retries the snapshot on connection error.
-			return nil, fmt.Errorf("synthesise agent-network services: %w", serr)
+			return nil, fmt.Errorf("synthesize agent-network services: %w", serr)
 		}
-		services = append(services, synthesised...)
+		services = append(services, synthesized...)
 	}
 
 	oidcCfg := s.GetOIDCValidationConfig()
@@ -1890,10 +1890,10 @@ func (s *ProxyServiceServer) getServiceByDomain(ctx context.Context, domain stri
 		return service, nil
 	}
 
-	// Fall back to the Agent Network synthesiser scoped directly to the domain's
-	// account. Synthesised services are never persisted, so they must resolve
+	// Fall back to the Agent Network synthesizer scoped directly to the domain's
+	// account. Synthesized services are never persisted, so they must resolve
 	// here for OIDC / session / tunnel-peer flows against agent-network
-	// endpoints. Resolving by domain synthesises only the owning account rather
+	// endpoints. Resolving by domain synthesizes only the owning account rather
 	// than every tenant on the cluster.
 	if synth := s.agentNetworkSynthesizer(); synth != nil {
 		svc, serr := synth.SynthesizeServiceForDomain(ctx, domain)

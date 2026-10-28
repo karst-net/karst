@@ -330,8 +330,8 @@ pub const RESTART_JITTER_FLOOR_MS: u64 = 1_000;
 ///
 /// **Sans-clock**, like the rest of this module: the caller supplies the time
 /// and the entropy. The notice does two things. It sets how long to wait before
-/// redialling — `reconnect_in_ms` plus jitter, so a restart is not a
-/// synchronised reconnect storm — and it opens a window, `try_for_ms` long,
+/// redialing — `reconnect_in_ms` plus jitter, so a restart is not a
+/// synchronized reconnect storm — and it opens a window, `try_for_ms` long,
 /// during which a failed connect is the relay still coming back rather than
 /// evidence it is dead. Without the second part the 3-attempt abandon path
 /// would read a relay that was merely restarting as one to leave, and walk the

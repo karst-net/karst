@@ -19,7 +19,7 @@ type Repository interface {
 	GetPeerByID(ctx context.Context, accountID string, peerID string) (*peer.Peer, error)
 	GetAccountZones(ctx context.Context, accountID string) ([]*zones.Zone, error)
 	// SynthesizeAgentNetworkServices returns the in-memory reverse-proxy
-	// services synthesised from the account's agent-network provider/policy
+	// services synthesized from the account's agent-network provider/policy
 	// state. Empty for accounts without agent-network providers.
 	SynthesizeAgentNetworkServices(ctx context.Context, accountID string) ([]*service.Service, error)
 }

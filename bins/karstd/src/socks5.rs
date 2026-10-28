@@ -273,7 +273,7 @@ mod tests {
         // ADR-0012 refuses names deliberately: resolving one through the host
         // resolver is an unreviewed path around Karst's packet and policy
         // boundary. The length and the name are still read, so the refusal is
-        // a protocol answer rather than a desynchronised stream.
+        // a protocol answer rather than a desynchronized stream.
         let mut req = GREETING.to_vec();
         req.extend_from_slice(&[5, 1, 0, 3, 11]);
         req.extend_from_slice(b"example.com");

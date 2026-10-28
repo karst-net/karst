@@ -195,7 +195,7 @@ handle = BASE64(SHA-256("karst-node-handle-v1" ‖ identity_pk))
 ```
 
 44 characters. The label is not decorative: the data plane also hashes public
-keys (ADR-0005's `peer_id_hint`, over the *KEM* key), and two unlabelled hashes
+keys (ADR-0005's `peer_id_hint`, over the *KEM* key), and two unlabeled hashes
 of related material is how a correlation channel gets built by accident.
 
 The length is deliberate — it matches a base64 X25519 key, so the handle drops
@@ -252,7 +252,7 @@ a diff rather than as drift:
 
 Once per connection, not per message. Roughly 12 KB to open a channel, against
 PHREATIC's 4614 B to open a data-plane session — the control channel can afford
-it because it is amortised over a long-lived stream rather than paid per peer
+it because it is amortized over a long-lived stream rather than paid per peer
 per rekey.
 
 ### 5.3 KarstEnvelope — everything afterwards

@@ -25,7 +25,7 @@ type parserRedactConfig struct {
 
 // TestSynthesizeServices_RealStore_ParserConfigsCarryRedactPii is the
 // management-side contract test for the request/response parser redaction
-// wiring. When settings.RedactPii is true, the synthesised middleware chain
+// wiring. When settings.RedactPii is true, the synthesized middleware chain
 // MUST stamp redact_pii=true on both llm_request_parser and llm_response_parser
 // configs — otherwise the parsers ship raw prompts / completions to the
 // access log even though the account has opted in. This is exactly the live

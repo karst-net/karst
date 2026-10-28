@@ -62,7 +62,7 @@ network DNS projections commit in one transaction, advancing naming and network
 revisions without rewriting relative peer names, IDs, invitations or authority.
 
 The console reports **committed configuration**, never an acknowledged fleet
-cutover. The current client protocol provides no application acknowledgement, so
+cutover. The current client protocol provides no application acknowledgment, so
 client convergence is explicitly **unobserved**. Online Karst clients poll the
 persisted DNS configuration; streaming management clients are also notified.
 Restart or a missed notification does not discard the committed suffix. Existing

@@ -261,7 +261,7 @@ fn an_off_path_spoofer_gets_no_more_than_the_amplification_bound_allows() {
     );
 
     // One more, address-unvalidated, from a spoofed source that will never
-    // read the reply — modelling the attacker rather than a real peer.
+    // read the reply — modeling the attacker rather than a real peer.
     let key = FragMacKey::new(&mac1_key(&kem_pk_bytes(0xB1)));
     let fake_msg = vec![0xCDu8; 3210];
     let frags = fragment(MessageType::HandshakeInit, 999, &fake_msg, &key).expect("fragments");

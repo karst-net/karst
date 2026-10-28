@@ -2,7 +2,7 @@ name: Build deliverables
 
 on:
   # Packaging is deliberately push-only: pull requests exercise the same
-  # source through CI without creating downloadable distribution artefacts.
+  # source through CI without creating downloadable distribution artifacts.
   push:
 
 permissions:
@@ -111,7 +111,7 @@ jobs:
           ls -l dist/packages
       # The same build, published twice under consecutive versions. It exists
       # only so `packages-verify` has something to upgrade *to*; it is never
-      # released, and it is a separate artefact so it cannot be mistaken for
+      # released, and it is a separate artifact so it cannot be mistaken for
       # one. An upgrade path that is only ever exercised by real releases is
       # one that gets tested for the first time by users.
       #
@@ -242,7 +242,7 @@ jobs:
           name: enrollment-desktop-${{ matrix.pending }}-${{ github.sha }}
           path: /tmp/karst-enrollment-desktop-results
 
-  # The console and portal, built and packaged as a release artefact — #249.
+  # The console and portal, built and packaged as a release artifact — #249.
   # GETTING-STARTED.md §7 only ever documented building these from source
   # (Node 22+, pnpm, a `git clone`), which is not an option for anyone
   # restricted to released artifacts, including every path #107's
@@ -291,10 +291,10 @@ jobs:
           path: dist/web/karst-web.tar.gz
           if-no-files-found: error
 
-  # ## The artefacts a release is actually made of
+  # ## The artifacts a release is actually made of
   #
   # plans/phase-5/09-exit-criteria.md §5 lists checksums, a detached signature
-  # and a per-artefact SBOM alongside the packages themselves, and singles the
+  # and a per-artifact SBOM alongside the packages themselves, and singles the
   # checksums out: the portal's download page tells users to verify, and the
   # docs explain how, so the file has to exist and be right.
   #
@@ -304,7 +304,7 @@ jobs:
   # still be able to produce and check everything else. The distinction that
   # matters is that a *tag* must not be able to produce an unsigned release, so
   # the signature is required there.
-  release-artefacts:
+  release-artifacts:
     name: Checksums, signatures and SBOMs
     needs: [packages, packages-verify, packages-systemd, enrollment-desktop, macos-package, web-assets]
     runs-on: ubuntu-latest
@@ -317,20 +317,20 @@ jobs:
           pattern: linux-packages-*-${{ github.sha }}
           path: dist/release
           merge-multiple: true
-      # The macOS packages belong in the same set: each is an artefact of the
+      # The macOS packages belong in the same set: each is an artifact of the
       # release, each needs a checksum for the same reason, and the portal's
       # download page has to be able to offer the right one for a visitor's
       # Mac. On a push they are unsigned and Gatekeeper will refuse them — see
       # the macos-package job — which is a reason not to publish that build,
       # not a reason to leave it out of the set the release is assembled from.
       # Pattern-based like the Linux packages above: the macos-package job is
-      # a matrix of one artefact per architecture, not a single upload.
+      # a matrix of one artifact per architecture, not a single upload.
       - uses: actions/download-artifact@v4
         with:
           pattern: macos-package-*-${{ github.sha }}
           path: dist/release
           merge-multiple: true
-      # The console/portal tarball — #249. An operator artefact, like
+      # The console/portal tarball — #249. An operator artifact, like
       # karst-control and karst-relay above, not something release-manifest.sh
       # lists on the portal's own end-user download page (it names exactly
       # one file, not a matrix, so no `pattern:` needed).
@@ -342,7 +342,7 @@ jobs:
         run: |
           cd dist/release
           # Sorted, so the file is byte-identical for identical inputs and a
-          # diff between two releases is about the artefacts and not the order
+          # diff between two releases is about the artifacts and not the order
           # the runner happened to download them in.
           # `.sha256` files are the macOS job's own single-file checksum; listing
           # a checksum file inside the checksum file helps nobody.
@@ -375,7 +375,7 @@ jobs:
           go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
           mkdir -p dist/release/sbom
           # One SBOM per shipped binary rather than one for the workspace: an
-          # SBOM is a claim about an artefact, and "something in this repository
+          # SBOM is a claim about an artifact, and "something in this repository
           # depends on it" is not that claim.
           cargo cyclonedx --format json --all
           for binary in karstd karst-cli karst-relay; do
@@ -384,7 +384,7 @@ jobs:
           (cd server && "$(go env GOPATH)/bin/cyclonedx-gomod" app -json -main cmd/karst-control \
             -output ../dist/release/sbom/karst-control.cdx.json)
           ls -l dist/release/sbom
-      # The portal's download page reads this. Generated from the artefacts in
+      # The portal's download page reads this. Generated from the artifacts in
       # this directory rather than written by hand, so a checksum on the page
       # cannot disagree with the file it describes — and generated *here*,
       # after the macOS package has been collected, so it lists everything a
@@ -396,7 +396,7 @@ jobs:
       - name: Upload the release set
         uses: actions/upload-artifact@v4
         with:
-          name: release-artefacts-${{ github.sha }}
+          name: release-artifacts-${{ github.sha }}
           path: dist/release/**
           if-no-files-found: error
 
@@ -582,7 +582,7 @@ jobs:
   # ## Why signing is conditional and not required here
   #
   # The Developer ID certificates come from an Apple Developer Program
-  # organisation membership that takes weeks to obtain and can stall on a
+  # organization membership that takes weeks to obtain and can stall on a
   # legal-entity mismatch (plans/phase-5/06-macos-client.md §7). Until it
   # lands, and on every push to a fork afterwards, `secrets.*` is empty. The
   # choice is between building nothing and building an unsigned package that
@@ -593,7 +593,7 @@ jobs:
   #
   # **Notarization runs on tags only.** It is slow and rate-limited, so a
   # per-push notarization queue is a per-push wait; and `--require-signing`
-  # goes with it, so a tag can never quietly produce an unsigned artefact.
+  # goes with it, so a tag can never quietly produce an unsigned artifact.
   macos-package:
     name: macOS package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -627,8 +627,8 @@ jobs:
       # No `targets:` input on purpose. It would add them to `stable`, which is
       # not the toolchain that builds: `rust-toolchain.toml` pins 1.89 and
       # cargo reads the file. `scripts/build-macos-pkg.sh` runs its own
-      # `rustup target add`, which honours the pin — do not "simplify" that
-      # away in favour of this action, which is exactly the mistake the `macos`
+      # `rustup target add`, which honors the pin — do not "simplify" that
+      # away in favor of this action, which is exactly the mistake the `macos`
       # job in ci.yml made.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -879,7 +879,7 @@ jobs:
   # the same property `windows-core` in ci.yml relies on for
   # `karst-secure-storage`'s ACL tests.
   #
-  # Deliberately not yet in `release-artefacts`' `needs:` — unlike the
+  # Deliberately not yet in `release-artifacts`' `needs:` — unlike the
   # Linux and macOS jobs, this is the first real run of a WiX package this
   # project has ever built, and gating the whole release pipeline on it
   # before it has proven green even once would be the wrong order to learn
@@ -1128,7 +1128,7 @@ jobs:
   # what is still missing rather than uploading something that will be
   # rejected. `scripts/appstore-submit-macos.sh` carries the real command
   # sequence, so the remaining work is real-hardware verification, not
-  # producing an artefact or working out how to submit one.
+  # producing an artifact or working out how to submit one.
   #
   # It never blocks a release: `continue-on-error`, because a submission that
   # cannot yet succeed must not turn a good build red.
@@ -1140,7 +1140,7 @@ jobs:
     # Tags only. Deliberately *not* also gated on the certificates being
     # present: a job-level `if:` cannot see the `secrets` context, and the
     # script checks for them itself and exits cleanly with an explanation when
-    # they are absent — which is the more useful behaviour anyway, since the
+    # they are absent — which is the more useful behavior anyway, since the
     # explanation is the whole point of this job today.
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
@@ -1168,7 +1168,7 @@ jobs:
           ./scripts/appstore-submit-macos.sh dist/macos/karst-appstore-macos-arm64.pkg
 
   # The point of everything above: a page a person can actually click
-  # "Download" on. `release-artefacts` only produces a workflow artifact,
+  # "Download" on. `release-artifacts` only produces a workflow artifact,
   # which needs a GitHub login and the Actions UI to find — not something to
   # hand a user. This job takes that same signed, checksummed, SBOM'd set and
   # publishes it as a GitHub Release attached to the tag.
@@ -1177,14 +1177,14 @@ jobs:
     # Matches publish-images: `v`-prefixed tags only, so a stray tag that does
     # not name a version cannot publish a release for one.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: release-artefacts
+    needs: release-artifacts
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-artefacts-${{ github.sha }}
+          name: release-artifacts-${{ github.sha }}
           path: dist/release
       - name: Publish
         env:
@@ -1212,7 +1212,7 @@ jobs:
           # release: a prior attempt of this same step can also have created
           # one and then failed partway through uploading assets. Either way,
           # erroring out here leaves a tag that is already public with none
-          # of its signed artefacts attached, which is a worse outcome than
+          # of its signed artifacts attached, which is a worse outcome than
           # converging on the existing release — so detect it and fall back
           # to editing it and uploading (clobbering any stale asset of the
           # same name) instead of failing.

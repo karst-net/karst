@@ -14,7 +14,7 @@ import (
 
 // TestSynthesizeServices_RealStore_LogCollectionOff_SuppressesAccessLog drives the
 // happy default: account settings ship with EnableLogCollection=false, so the
-// synthesised target opts out of access-log emission (DisableAccessLog=true) and
+// synthesized target opts out of access-log emission (DisableAccessLog=true) and
 // the proto mapping the proxy receives reflects that.
 func TestSynthesizeServices_RealStore_LogCollectionOff_SuppressesAccessLog(t *testing.T) {
 	ctx := context.Background()

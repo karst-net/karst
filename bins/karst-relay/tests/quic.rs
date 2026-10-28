@@ -153,7 +153,7 @@ struct Bound {
 }
 
 /// As [`start`], but keeping the [`Ctx`] a mesh test needs to reload the
-/// roster and start dialling from.
+/// roster and start dialing from.
 async fn start_with_ctx(tag: &str, nodes: &[(&Identity, &str)], quic: bool) -> (Harness, Arc<Ctx>) {
     let Bound {
         harness,
@@ -547,7 +547,7 @@ async fn two_relays_mesh_over_quic_and_a_packet_crosses() {
     let (h1, ctx1) = start_with_ctx("mesh-quic-1", &both, true).await;
     let (h2, ctx2) = start_with_ctx("mesh-quic-2", &both, true).await;
 
-    // Roster each relay with the other as a QUIC mesh peer, dialled at its
+    // Roster each relay with the other as a QUIC mesh peer, dialed at its
     // QUIC address — the "same port either way" convention ADR-0020 assumes
     // collapses to two ports here only because the test binds TCP and QUIC
     // independently; a real deployment configures one `listen` for both.
@@ -579,19 +579,19 @@ async fn two_relays_mesh_over_quic_and_a_packet_crosses() {
         me_ctx.replace_roster(reloaded);
     }
 
-    // Start dialling from both sides; `Dialler::dials` picks the one whose
+    // Start dialing from both sides; `Dialer::dials` picks the one whose
     // relay id sorts lower, exactly as `run` does — the test does not need to
     // know which that is.
     for (ctx, me_h, them_h) in [(&ctx1, &h1, &h2), (&ctx2, &h2, &h1)] {
         let ca_path = them_h.ca_path.clone();
         let tls = tls::client_config(&ca_path).expect("client tls");
         let quic_tls = karst_relay::quic::client_config(&tls).expect("client quic tls");
-        let dialler = karst_relay::mesh::Dialler::new(me_h.relay.relay_id(), "default".to_owned());
+        let dialer = karst_relay::mesh::Dialer::new(me_h.relay.relay_id(), "default".to_owned());
         tokio::spawn(karst_relay::server::mesh_loop(
             Arc::clone(ctx),
             tls,
             quic_tls,
-            dialler,
+            dialer,
         ));
     }
 

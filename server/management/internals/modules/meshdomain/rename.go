@@ -15,7 +15,7 @@ type RenamePreview struct {
 	DomainCount    int             `json:"domain_count"`
 	Examples       []RenameExample `json:"examples"`
 	Committed      bool            `json:"committed"`
-	// No client application acknowledgement exists in the current protocol.
+	// No client application acknowledgment exists in the current protocol.
 	Convergence string `json:"convergence"`
 }
 

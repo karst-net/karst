@@ -21,13 +21,13 @@ final class ExitNodeAuthorization {
     static let rightName = "dev.karst.exit-node.consent"
 
     enum Failure: LocalizedError {
-        case cancelled
+        case canceled
         case denied
         case failed(OSStatus)
 
         var errorDescription: String? {
             switch self {
-            case .cancelled: return nil
+            case .canceled: return nil
             case .denied: return "Changing the exit node needs an administrator of this Mac."
             case .failed(let status): return "Could not obtain authorization (OSStatus \(status))."
             }
@@ -67,7 +67,7 @@ final class ExitNodeAuthorization {
             break
         case errAuthorizationCanceled:
             AuthorizationFree(reference, [])
-            return .failure(.cancelled)
+            return .failure(.canceled)
         case errAuthorizationDenied:
             AuthorizationFree(reference, [])
             return .failure(.denied)

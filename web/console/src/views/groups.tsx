@@ -8,7 +8,7 @@ import { GroupDeletion } from "./group-deletion";
 import { api, ApiError, type Group, type GroupSnapshot } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
-// A group synchronised from an identity provider is a copy, not a source. The
+// A group synchronized from an identity provider is a copy, not a source. The
 // server rejects an edit to one, and the rejection arrives too late to be
 // useful — so the console does not offer the button in the first place and says
 // why in the row itself.
@@ -80,7 +80,7 @@ export function Groups() {
 
   return <section>
     <h3>Groups</h3>
-    <p className="lede">Groups are what access rules name. Groups synchronised from an identity provider are managed there and are read-only here.</p>
+    <p className="lede">Groups are what access rules name. Groups synchronized from an identity provider are managed there and are read-only here.</p>
     <div className="actions"><button className="primary" onClick={() => setCreating("")}>Create group</button></div>
     <Notice message={message} />
     {groups.length === 0

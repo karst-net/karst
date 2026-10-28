@@ -67,7 +67,7 @@ tests and their helper remained opt-in.
 Validation did not modify the workstation's resolver settings or claim a live
 Windows/Linux/macOS fleet cutover. Operators verify the selected host mechanism
 and DNS status during rollout. The current protocol has no client application
-acknowledgement: the console correctly reports committed configuration and
+acknowledgment: the console correctly reports committed configuration and
 **unobserved** client convergence. Offline clients update after reconnect; external
 caches can retain answers for their TTL. There are no automatic old-suffix aliases.
 
