@@ -1944,9 +1944,11 @@ fn spawn_relay(net: &mut Aquifer, tag: &str, port: u16, reflect: bool) -> String
     let identity = karst_relay::sign::Identity::load_or_create(&relay_key).expect("relay identity");
     let relay_pk = hex(identity.public_key());
 
+    let executable =
+        std::env::var("KARST_AQUIFER_RELAY_BIN").unwrap_or_else(|_| bin("karst-relay"));
     net.spawn_service(
         NS_PUB,
-        &bin("karst-relay"),
+        &executable,
         &["--config", &relay_conf.to_string_lossy()],
         &format!("relay{tag}.log"),
     );

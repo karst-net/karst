@@ -25,8 +25,12 @@ shutil.copy2(executables[0], products / "aquifer")
 # The executable is target/<profile>/deps/aquifer-HASH, so these are the
 # products from that same build even when CARGO_TARGET_DIR is customized.
 profile = Path(executables[0]).parent.parent
-for name in ("karstd", "karst", "karst-relay"):
+for name in ("karstd", "karst"):
     shutil.copy2(profile / name, products / name)
+source = Path(os.environ.get("KARST_AQUIFER_RELAY_BIN", profile / "karst-relay"))
+if not source.is_file():
+    raise SystemExit(f"relay executable not found: {source}")
+shutil.copy2(source, products / "karst-relay")
 for node in ("A", "B"):
     source = Path(os.environ.get(f"KARST_AQUIFER_NODE_{node}_BIN", profile / "karstd"))
     if not source.is_file():
@@ -50,6 +54,7 @@ docker run --rm --network none \
     --mount "type=bind,src=$products,dst=/products,readonly" \
     -e KARST_AQUIFER_BIN_DIR=/products \
     -e KARST_AQUIFER_TESTSERVER=/products/karst-testserver \
+    -e KARST_AQUIFER_RELAY_BIN=/products/karst-relay \
     -e KARST_AQUIFER_NODE_A_BIN=/products/karstd-a \
     -e KARST_AQUIFER_NODE_B_BIN=/products/karstd-b \
     -e KARST_REQUIRE_PREREQUISITES=1 \
