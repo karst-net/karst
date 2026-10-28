@@ -1,7 +1,11 @@
-# Same content as ../../compose/prod/Caddyfile -- the `karst` Docker network
-# (see karst.nomad.hcl's comments) gives control/keycloak the identical
-# service-name DNS compose's own bridge network does, so this file needed no
-# changes at all beyond living in this directory. Keep the two in sync.
+# Based on ../../compose/prod/Caddyfile -- the `karst` Docker network (see
+# karst.nomad.hcl's comments) gives control/keycloak the identical
+# service-name DNS compose's own bridge network does. One deliberate
+# difference from compose: the catch-all route below reverse-proxies to the
+# `console` container (karst.nomad.hcl's own group, image built from
+# deploy/images/karst-console.Dockerfile) instead of serving
+# web/console/dist as a bind-mounted static root -- compose still does the
+# latter. Keep both in sync for everything except that one route.
 #
 # Everything this deployment exposes externally shares this one port: the
 # console's static assets, its REST API, and the gRPC control channel node
@@ -57,8 +61,6 @@ https://{$KARST_CONSOLE_HOST}:33073 {
 	}
 
 	handle {
-		root * /srv/console
-		try_files {path} /index.html
-		file_server
+		reverse_proxy console:80
 	}
 }
