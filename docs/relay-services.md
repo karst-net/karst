@@ -7,8 +7,9 @@ option ADR-0056 originally left open) was dropped. The first control
 implementation adds explicit, account-scoped service associations;
 service-driven netmap publication is opt-in. The reference
 [Compose deployment adapter](../deploy/compose/README.md#relay-deployment-adapter)
-manages the local Ponor process separately from account publication. Other
-platform adapters and full transport verification remain tracked in #404.
+and the bare-metal [systemd adapter](../deploy/systemd/README.md#relay-deployment-adapter)
+each manage the local Ponor process separately from account publication. A
+Kubernetes adapter and full transport verification remain tracked in #446.
 
 ## Console
 

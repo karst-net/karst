@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+# Copy to relay-service.toml (default location: /etc/karst/relay-service.toml)
+# after GETTING-STARTED.md §6.1. Process configuration only: account
+# publication uses the Relay Services API.
+schema_version = 1
+
+[ponor]
+enabled = true
