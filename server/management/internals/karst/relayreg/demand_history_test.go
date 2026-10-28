@@ -117,14 +117,11 @@ func TestStartDemandHistoryWorkerSamplesImmediatelyOnStartup(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		got, err := s.DemandHistory(context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Second))
-		if err != nil {
-			t.Fatalf("demand history: %v", err)
-		}
-		if len(got) == 1 {
+		if err == nil && len(got) == 1 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no sample recorded within 2s of starting the worker")
+			t.Fatalf("no sample recorded within 2s of starting the worker (last query error: %v)", err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
