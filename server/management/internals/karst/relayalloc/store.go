@@ -232,6 +232,27 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 	return &allocation, nil
 }
 
+// Get returns one allocation by id, scoped to the caller's account. The
+// HTTP API a later PR adds uses this so a retried action (the
+// reconciliation loop calling the same step twice after a crash or
+// timeout between its own tick and the server's response) can tell
+// whether it already landed before attempting another compare-and-set
+// Transition against a state that has since moved on.
+func (s *Store) Get(ctx context.Context, id string) (*Allocation, error) {
+	account, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var current Allocation
+	if err := s.db.WithContext(ctx).Where("account_id = ? AND id = ?", account, id).First(&current).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &current, nil
+}
+
 // List returns every allocation in the caller's account, regardless of
 // state -- used both by the console and, via the HTTP API a later PR adds,
 // by the Rust reconciliation loop's own polling.

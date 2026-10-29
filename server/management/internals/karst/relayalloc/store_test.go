@@ -319,6 +319,26 @@ func TestDeleteOnlyFromRequestedOrDeprovisioned(t *testing.T) {
 	require.NoError(t, e.store.Delete(ctx, other.ID, other.Revision))
 }
 
+func TestGetIsAccountScoped(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+
+	got, err := e.store.Get(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, *created, *got)
+
+	_, err = e.store.Get(WithAccount(context.Background(), "b"), created.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = e.store.Get(ctx, "missing")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = e.store.Get(context.Background(), created.ID)
+	require.ErrorIs(t, err, ErrNoAccount)
+}
+
 func TestListIsAccountScoped(t *testing.T) {
 	e := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
