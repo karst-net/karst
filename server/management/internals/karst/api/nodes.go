@@ -824,24 +824,33 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 				return
 			}
 			// ADR-0045 §6/§7b: the Scaler role exists to mint relay-enroll
-			// tokens and to ask for a relay it enrolled to be de-enrolled,
-			// nothing else. roles.Scaler's own Create grant on
-			// modules.KarstControl is coarser than that (this RBAC model's
-			// only module granularity covers every mutation under
-			// /karst/v1, not just these two routes — see roles.Scaler's own
-			// doc comment), so this hard allowlist is what actually keeps
-			// the role narrow, independent of whatever a future endpoint
-			// added under this same module gate would otherwise permit it
-			// to reach. relayDeenroll is deliberately a POST
-			// (operations.Create), not the DELETE relaysDelete already is
-			// -- roles.Scaler's own Delete grant stays false; see
-			// relayDeenroll's own doc comment (issue #319) for why this is
-			// a request shaped like a Create rather than a widened Delete
-			// grant.
+			// tokens and to ask for a relay it enrolled to be de-enrolled.
+			// ADR-0063/#455 extends it to drive its own admin-triggered
+			// relay allocations one step at a time (poll pending, record a
+			// Driver::create result, grant, revoke, confirm deprovisioned,
+			// or report a step failed) — never anything else. roles.Scaler's
+			// own Create grant on modules.KarstControl is coarser than that
+			// (this RBAC model's only module granularity covers every
+			// mutation under /karst/v1, not just this named set of routes —
+			// see roles.Scaler's own doc comment), so this hard allowlist is
+			// what actually keeps the role narrow, independent of whatever a
+			// future endpoint added under this same module gate would
+			// otherwise permit it to reach. Deliberately NOT allowlisted:
+			// relay-services' own routes — granting/revoking an allocation's
+			// access calls relayservice in-process from inside the
+			// relay-allocations handler itself (see
+			// RegisterRelayAllocationEndpoints), so the Scaler role never
+			// needs, and is never given, direct relay-services access.
+			// relayDeenroll is deliberately a POST (operations.Create), not
+			// the DELETE relaysDelete already is -- roles.Scaler's own
+			// Delete grant stays false; see relayDeenroll's own doc comment
+			// (issue #319) for why this is a request shaped like a Create
+			// rather than a widened Delete grant. Every relay-allocations
+			// action below follows the same shape for the same reason.
 			if role, ok := nbcontext.RoleFromContext(ctx); ok && types.UserRole(role) == types.UserRoleScaler {
 				path := strings.TrimPrefix(r.URL.Path, "/api")
-				if path != relayEnrollTokensPath && path != relayDeenrollPath {
-					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll tokens or request relay de-enrollment"), w)
+				if path != relayEnrollTokensPath && path != relayDeenrollPath && path != relayAllocationsPendingPath && !relayAllocationScalerActionPath.MatchString(path) {
+					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll tokens, request relay de-enrollment, or drive its own relay allocations"), w)
 					return
 				}
 			}

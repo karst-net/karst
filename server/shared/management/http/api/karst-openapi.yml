@@ -627,6 +627,159 @@ paths:
       responses:
         '200': {description: Updated mode configuration, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /relay-allocations:
+    get:
+      operationId: listRelayAllocations
+      tags: [relays]
+      description: ADR-0063 admin-triggered relay allocation records, in every lifecycle state.
+      responses:
+        '200': {description: Relay allocations, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayAllocation'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createRelayAllocation
+      tags: [relays]
+      description: Persist the request as requested, with no provider call inside the transaction. A reconciliation loop drives it forward.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+      responses:
+        '201': {description: Allocation requested, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-allocations/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: revision, in: query, required: true, schema: {type: integer, minimum: 0}}
+    delete:
+      operationId: deleteRelayAllocation
+      tags: [relays]
+      description: Remove the row outright. Only legal once nothing was ever provisioned (requested) or everything was already torn down (deprovisioned); any other state must go through /deprovision first.
+      responses:
+        '204': {description: Allocation removed}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-allocations/{id}/deprovision:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: deprovisionRelayAllocation
+      tags: [relays]
+      description: Move a ready or failed allocation into revoking -- the console's own entry point into ADR-0063's reversed teardown order.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, acknowledge_deprovision]
+              properties:
+                revision: {type: integer, minimum: 0}
+                acknowledge_deprovision: {type: boolean, enum: [true]}
+      responses:
+        '200': {description: Deprovision requested, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        '409': {description: Allocation revision changed, or it is still in progress.}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-allocations/pending:
+    post:
+      operationId: pollPendingRelayAllocations
+      tags: [relays]
+      description: Scaler-role only (karstAuthorization's own hard allowlist). Every allocation the reconciliation loop still has work to do on.
+      responses:
+        '200': {description: Pending allocations, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayAllocation'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-allocations/{id}/provisioning:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: recordRelayAllocationProvisioning
+      tags: [relays]
+      description: Scaler-role only. Records a Driver::create result -- bookkeeping only, no grant call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision, instance_id]
+              properties:
+                expected_revision: {type: integer, minimum: 0}
+                instance_id: {type: string, minLength: 1}
+      responses:
+        '200': {description: Provisioning recorded, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-allocations/{id}/grant:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: grantRelayAllocation
+      tags: [relays]
+      description: Scaler-role only. Looks up the now-registered relay by tls_server_name and calls relayservice.Create in-process. 404 specifically means not registered yet -- keep polling.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision, tls_server_name]
+              properties:
+                expected_revision: {type: integer, minimum: 0}
+                tls_server_name: {type: string, minLength: 1}
+      responses:
+        '200': {description: Granted (or already ready/granting -- idempotent retry), content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        '404': {description: Relay has not registered yet; retry later.}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-allocations/{id}/revoke:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: revokeRelayAllocation
+      tags: [relays]
+      description: Scaler-role only. Withdraws the grant via relayservice.Delete in-process before compute teardown begins -- ADR-0063's reversed order.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [expected_revision], properties: {expected_revision: {type: integer, minimum: 0}}}
+      responses:
+        '200': {description: Revoked (or already deprovisioning/deprovisioned -- idempotent retry), content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-allocations/{id}/deprovisioned:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: confirmRelayAllocationDeprovisioned
+      tags: [relays]
+      description: Scaler-role only. Records that Driver::drain/destroy already completed -- bookkeeping only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [expected_revision], properties: {expected_revision: {type: integer, minimum: 0}}}
+      responses:
+        '200': {description: Deprovisioned, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-allocations/{id}/failed:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: reportRelayAllocationFailed
+      tags: [relays]
+      description: Scaler-role only. Reports failure of whichever step the allocation was on; the "from" state is read from the row itself, not accepted from the caller.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision, reason]
+              properties:
+                expected_revision: {type: integer, minimum: 0}
+                reason: {type: string, minLength: 1}
+      responses:
+        '200': {description: Failure recorded, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /relays:
     get:
       operationId: listRelays
@@ -1584,6 +1737,27 @@ components:
           required: [ponor_present]
           properties:
             ponor_present: {type: boolean, description: Referenced Ponor registry entry exists in this account; not a health result.}
+    RelayAllocation:
+      type: object
+      required: [name, infra_connection_id, location, permitted_groups]
+      additionalProperties: false
+      properties:
+        id: {type: string, readOnly: true, description: Server-generated; never accepted from callers.}
+        name: {type: string, minLength: 1}
+        infra_connection_id: {type: string, minLength: 1, description: Existing account-local infrastructure connection ID.}
+        location: {type: string, minLength: 1, description: Region/zone/namespace code from that connection's own discovery.}
+        relay_transport: {type: boolean, default: false, description: The only capability this workflow grants in v1 -- required true.}
+        egress_v4: {type: boolean, default: false, description: Not yet supported; rejected if set until Gateway-identity binding is designed.}
+        egress_v6: {type: boolean, default: false, description: Not yet supported; rejected if set until Gateway-identity binding is designed.}
+        permitted_groups: {type: array, minItems: 1, items: {type: string}, description: Stable account group IDs granted access once ready.}
+        state: {type: string, readOnly: true, enum: [requested, provisioning, granting, ready, revoking, deprovisioning, deprovisioned, failed]}
+        failed_step: {type: string, readOnly: true, enum: [requested, provisioning, granting, revoking, deprovisioning], description: Only meaningful while state is failed.}
+        failure_reason: {type: string, readOnly: true}
+        instance_id: {type: string, readOnly: true, description: The Driver-reported compute instance, once provisioning recorded one.}
+        relay_id: {type: string, readOnly: true, description: The relay registry ID, once granted.}
+        revision: {type: integer, minimum: 0, readOnly: true, description: Expected revision for the next compare-and-set action against this allocation.}
+        created_at: {type: string, format: date-time, readOnly: true}
+        updated_at: {type: string, format: date-time, readOnly: true}
     RelayCreate:
       type: object
       required: [address, identity_key, region]
