@@ -156,8 +156,19 @@ func validateDraft(draft Allocation) error {
 	if strings.TrimSpace(draft.Location) == "" {
 		return fmt.Errorf("%w: location is required", ErrInvalid)
 	}
-	if !draft.RelayTransport && !draft.EgressV4 && !draft.EgressV6 {
-		return fmt.Errorf("%w: choose at least one capability", ErrInvalid)
+	if !draft.RelayTransport {
+		return fmt.Errorf("%w: relay transport capability is required", ErrInvalid)
+	}
+	// ADR-0063's own field list has no Gateway-identity picker, but
+	// relayservice.configureAccess -- the exact function "granting" must
+	// reuse -- hard-requires a GatewayHandle bound to an already-enrolled
+	// Linux peer whenever egress is requested, with no path around that.
+	// Rather than grant with no handle and let that validation fail the
+	// allocation every time, egress stays rejected up front until a later
+	// issue designs how a freshly-provisioned host's own Gateway identity
+	// gets bound.
+	if draft.EgressV4 || draft.EgressV6 {
+		return fmt.Errorf("%w: egress is not yet supported by relay allocation", ErrInvalid)
 	}
 	if len(draft.PermittedGroups) == 0 {
 		return fmt.Errorf("%w: choose at least one permitted group -- default is no access", ErrInvalid)

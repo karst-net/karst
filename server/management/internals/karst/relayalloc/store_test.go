@@ -118,6 +118,25 @@ func TestCreateRejectsNoCapabilityAndNoGroup(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalid)
 }
 
+func TestCreateRejectsEgressUntilGatewayBindingIsDesigned(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+
+	v4 := e.draft()
+	v4.EgressV4 = true
+	_, err := e.store.Create(ctx, v4)
+	require.ErrorIs(t, err, ErrInvalid)
+
+	v6 := e.draft()
+	v6.EgressV6 = true
+	_, err = e.store.Create(ctx, v6)
+	require.ErrorIs(t, err, ErrInvalid)
+
+	var count int64
+	require.NoError(t, e.db.Model(&Allocation{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
 func TestCreateIgnoresCallerSuppliedIdentityFields(t *testing.T) {
 	e := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
