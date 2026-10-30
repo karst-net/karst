@@ -121,6 +121,7 @@ test("an unavailable service API reports failure instead of an empty healthy vie
 test("relay group access and exit service are configured through one reviewed form", async ({page}) => {
   let submitted: Record<string, unknown> | undefined;
   let services: Record<string, unknown>[] = [];
+  await page.route("**/api/groups",route => route.fulfill({json:[{id:"group-sre",name:"sre"}]}));
   await page.route("**/api/karst/v1/relays",route => route.fulfill({json:[{id:"ponor",address:"203.0.113.1:443",region:"Denver",health:{admission_state:"confirmed"}}]}));
   await page.route("**/api/karst/v1/nodes?**",route => route.fulfill({json:{items:[{handle:"gateway-key",name:"Gateway host",platform:"Linux"}],next_cursor:null}}));
   await page.route("**/api/karst/v1/relay-services**",async route => {
@@ -147,6 +148,7 @@ test("relay group access and exit service are configured through one reviewed fo
 });
 
 test("relay group restriction cannot be applied without admission enforcement", async ({page}) => {
+  await page.route("**/api/groups",route => route.fulfill({json:[{id:"group-sre",name:"sre"}]}));
   await page.route("**/api/karst/v1/relays",route => route.fulfill({json:[{id:"ponor",address:"203.0.113.1:443",region:"Denver",health:{admission_state:"confirmed"}}]}));
   await page.route("**/api/karst/v1/relay-services**",route => route.fulfill({json:new URL(route.request().url()).pathname.endsWith("/publication")?{mode:"services"}:[]}));
   await page.goto("/#/relays");
