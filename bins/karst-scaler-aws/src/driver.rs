@@ -226,6 +226,11 @@ impl Driver for AwsDriver {
                         id,
                         pool_id: pool_id.to_owned(),
                         state,
+                        // list() has no create-time context to recover
+                        // this from and no caller needs it from here --
+                        // only create()'s own return value is ever
+                        // correlated against.
+                        tls_server_name: None,
                     })
                 })
                 .collect())
@@ -302,6 +307,7 @@ impl Driver for AwsDriver {
                     id,
                     pool_id: pool_id.to_owned(),
                     state: InstanceState::Running,
+                    tls_server_name: Some(bundle.tls_server_name),
                 });
             }
             Ok(created)

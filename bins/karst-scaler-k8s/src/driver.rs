@@ -167,6 +167,13 @@ impl Driver for K8sDriver {
                     id,
                     pool_id: pool_id.to_owned(),
                     state: InstanceState::Running,
+                    // list() has no create-time context to recover this
+                    // from and no caller needs it from here -- only
+                    // create()'s own return value is ever correlated
+                    // against (ADR-0063's allocation loop reads it off
+                    // the Instance create() just handed back, not a
+                    // later list()).
+                    tls_server_name: None,
                 })
                 .collect())
         })
@@ -199,10 +206,11 @@ impl Driver for K8sDriver {
                 )
                 .map_err(DriverError::Other)?;
                 let address = pod_address(pool_id, ordinal, &self.namespace);
+                let tls_server_name = pod_fqdn(pool_id, ordinal, &self.namespace);
                 let bundle = EnrollBundle {
                     control_api_base: self.control_api_base.clone(),
                     token,
-                    tls_server_name: pod_fqdn(pool_id, ordinal, &self.namespace),
+                    tls_server_name: tls_server_name.clone(),
                     address: Some(address),
                 };
                 let text = bundle
@@ -213,6 +221,7 @@ impl Driver for K8sDriver {
                     id: pod_name(pool_id, ordinal),
                     pool_id: pool_id.to_owned(),
                     state: InstanceState::Running,
+                    tls_server_name: Some(tls_server_name),
                 });
             }
 
