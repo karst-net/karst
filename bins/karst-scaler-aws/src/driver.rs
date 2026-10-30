@@ -222,10 +222,24 @@ impl Driver for AwsDriver {
                         }
                         _ => InstanceState::Draining,
                     };
+                    // Read straight off this same DescribeInstances
+                    // response's own tags -- no second API call, and
+                    // crucially survives a `karst-scaler allocate`
+                    // restart between create() and a later list(): the
+                    // same reason destroy() already reads this tag back
+                    // instead of trusting anything remembered in process
+                    // memory from create() (see describe_tls_server_name).
+                    let tls_server_name = i
+                        .tags()
+                        .iter()
+                        .find(|t| t.key() == Some(TLS_SERVER_NAME_TAG_KEY))
+                        .and_then(|t| t.value())
+                        .map(str::to_owned);
                     Some(Instance {
                         id,
                         pool_id: pool_id.to_owned(),
                         state,
+                        tls_server_name,
                     })
                 })
                 .collect())
@@ -302,6 +316,7 @@ impl Driver for AwsDriver {
                     id,
                     pool_id: pool_id.to_owned(),
                     state: InstanceState::Running,
+                    tls_server_name: Some(bundle.tls_server_name),
                 });
             }
             Ok(created)

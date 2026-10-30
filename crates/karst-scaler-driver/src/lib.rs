@@ -35,6 +35,19 @@ pub struct Instance {
     pub id: String,
     pub pool_id: String,
     pub state: InstanceState,
+    /// The deterministic enrollment-correlation name a driver computed
+    /// before this instance even existed (ADR-0063, issue #455) — `Some`
+    /// from any driver that can compute one ahead of boot (`AwsDriver`,
+    /// in the sibling `karst-scaler-aws` crate, already derives this from
+    /// its own enrollment token before calling `RunInstances`; `K8sDriver`
+    /// in `karst-scaler-k8s` already derives a pod's own FQDN the same
+    /// way), `None` from [`NoopDriver`], which has nothing real to enroll.
+    /// A one-off allocation reconciliation loop uses this to correlate a
+    /// freshly created `Instance` back to the registry row it will
+    /// eventually produce, without first knowing the relay's own
+    /// identity-derived id — pool reconciliation (`drive_loop.rs`) has no
+    /// use for it and ignores the field entirely.
+    pub tls_server_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +183,7 @@ impl Driver for NoopDriver {
                 id: format!("noop-{}", self.next_id),
                 pool_id: pool_id.to_owned(),
                 state: InstanceState::Running,
+                tls_server_name: None,
             };
             self.instances.push(instance.clone());
             created.push(instance);
@@ -223,6 +237,16 @@ mod tests {
         for instance in &listed {
             assert_eq!(instance.state, InstanceState::Running);
         }
+    }
+
+    #[test]
+    fn noop_driver_never_reports_a_tls_server_name() {
+        // NoopDriver has nothing real to enroll (module doc) -- unlike
+        // AwsDriver/K8sDriver, which both already compute one before
+        // create() returns.
+        let mut d = NoopDriver::new();
+        let created = d.create("p", 1).expect("creates");
+        assert_eq!(created[0].tls_server_name, None);
     }
 
     #[test]

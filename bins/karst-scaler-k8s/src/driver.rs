@@ -17,7 +17,8 @@ use serde_json::json;
 use karst_scaler_driver::{Driver, DriverError, Instance, InstanceState};
 
 use crate::bundle::{
-    bundle_secret_name, pod_address, pod_fqdn, pod_name, secret_key, EnrollBundle,
+    bundle_secret_name, fqdn_for_pod_name, pod_address, pod_fqdn, pod_name, secret_key,
+    EnrollBundle,
 };
 use crate::enroll;
 
@@ -163,10 +164,21 @@ impl Driver for K8sDriver {
             Ok(pods
                 .into_iter()
                 .filter_map(|p| p.metadata.name)
-                .map(|id| Instance {
-                    id,
-                    pool_id: pool_id.to_owned(),
-                    state: InstanceState::Running,
+                .map(|id| {
+                    // Unlike AwsDriver, no second data source to read
+                    // back from -- but the FQDN is deterministic from
+                    // the pod's own name plus this driver's own
+                    // namespace, so it recomputes exactly rather than
+                    // needing to remember one, surviving a
+                    // `karst-scaler allocate` restart the same way
+                    // AwsDriver's own tag read does.
+                    let tls_server_name = fqdn_for_pod_name(&id, pool_id, &self.namespace);
+                    Instance {
+                        id,
+                        pool_id: pool_id.to_owned(),
+                        state: InstanceState::Running,
+                        tls_server_name: Some(tls_server_name),
+                    }
                 })
                 .collect())
         })
@@ -199,10 +211,11 @@ impl Driver for K8sDriver {
                 )
                 .map_err(DriverError::Other)?;
                 let address = pod_address(pool_id, ordinal, &self.namespace);
+                let tls_server_name = pod_fqdn(pool_id, ordinal, &self.namespace);
                 let bundle = EnrollBundle {
                     control_api_base: self.control_api_base.clone(),
                     token,
-                    tls_server_name: pod_fqdn(pool_id, ordinal, &self.namespace),
+                    tls_server_name: tls_server_name.clone(),
                     address: Some(address),
                 };
                 let text = bundle
@@ -213,6 +226,7 @@ impl Driver for K8sDriver {
                     id: pod_name(pool_id, ordinal),
                     pool_id: pool_id.to_owned(),
                     state: InstanceState::Running,
+                    tls_server_name: Some(tls_server_name),
                 });
             }
 
