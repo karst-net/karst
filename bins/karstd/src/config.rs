@@ -1332,6 +1332,11 @@ impl Config {
         let routes = AllowedIps::build(pairs).map_err(ConfigError::Conflict)?;
         // Compiled against the same peer order the datapath indexes by, since a
         // rule names peers by handle and the engine knows them by position.
+        if netmap.packet_filter.iter().any(|r| !r.dst_cidrs.is_empty())
+            && (!cfg!(target_os = "linux") || local.network_mode == NetworkMode::Userspace)
+        {
+            return Err(ConfigError::Unusable("destination-scoped Gateway ingress requires Linux TUN mode and its kernel INPUT guard".to_owned()));
+        }
         let filter = PacketFilter::compile(&netmap.packet_filter, &netmap.egress_filter, &handles);
         // The independent SSH gate, compiled the same way and against the same
         // peer order, but never merged into `filter` (§3.1).
@@ -2865,6 +2870,7 @@ mod netmap_tests {
                 wire_peer("bbb", "beta", "100.64.0.3"),
             ],
             vec![pb::KarstFilterRule {
+                dst_cidrs: Vec::new(),
                 srcs: vec!["bbb".to_owned()],
                 ports: vec![pb::KarstPortRange {
                     first: 22,
@@ -3038,6 +3044,7 @@ mod skip_tests {
             vec![broken, wire_peer("bbb", "beta", "100.64.0.3")],
             vec![
                 pb::KarstFilterRule {
+                    dst_cidrs: Vec::new(),
                     srcs: vec!["bbb".to_owned()],
                     ports: vec![pb::KarstPortRange {
                         first: 22,
@@ -3045,6 +3052,7 @@ mod skip_tests {
                     }],
                 },
                 pb::KarstFilterRule {
+                    dst_cidrs: Vec::new(),
                     srcs: vec!["aaa".to_owned()],
                     ports: vec![pb::KarstPortRange {
                         first: 80,

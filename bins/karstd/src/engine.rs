@@ -1960,7 +1960,7 @@ impl Engine {
         // or a crashed daemon left nftables rules behind. Apply before the
         // flow table too, so an established transit flow cannot bypass it.
         if dir == Direction::In
-            && !roster.config.gateway_forwarding
+            && (!roster.config.gateway_forwarding || !roster.config.filter.scoped_ready())
             && ip::destination(packet).is_some_and(|destination| {
                 !roster
                     .config
@@ -1973,7 +1973,20 @@ impl Engine {
             return false;
         }
         let verdict = match dir {
-            Direction::In => roster.config.filter.ingress(peer, packet),
+            Direction::In => {
+                let local = ip::destination(packet).is_some_and(|destination| {
+                    roster
+                        .config
+                        .addresses
+                        .iter()
+                        .any(|a| a.addr == destination)
+                });
+                if local {
+                    roster.config.filter.ingress(peer, packet)
+                } else {
+                    roster.config.filter.ingress_forward(peer, packet)
+                }
+            }
             Direction::Out => {
                 // `to`'s own advertised ranges, so an egress node-handle grant
                 // cannot double as unrestricted permission to route arbitrary

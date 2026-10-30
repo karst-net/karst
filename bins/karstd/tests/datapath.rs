@@ -594,6 +594,7 @@ fn with_filter(
 
 fn rule(srcs: &[&str], first: u32, last: u32) -> pb::KarstFilterRule {
     pb::KarstFilterRule {
+        dst_cidrs: Vec::new(),
         srcs: srcs.iter().map(|s| (*s).to_owned()).collect(),
         ports: vec![pb::KarstPortRange { first, last }],
     }

@@ -373,6 +373,33 @@ version bindings. #404 must introduce additive/versioned projections and
 explicit legacy/new-setting conflict checks before consolidating APIs or
 persistence; see the [migration contract](../docs/COMPONENT-ARCHITECTURE.md#migration-contract-for-404).
 
+### 5.4.1 Destination-scoped Gateway ingress (schema 1)
+
+A netmap request's `gateway_ingress_schema = 1` declares support for forwarding-
+only inbound destination scope. For `packet_filter`, a nonempty
+`KarstFilterRule.dst_cidrs` requires source identity AND actual destination CIDR
+AND destination port to match. It never grants local delivery, including to the
+Gateway's non-overlay addresses, or inner control-channel services. Empty CIDRs
+retain the existing ordinary ingress semantics. On `egress_filter`, CIDRs remain
+alternatives to node destinations; the two directions must not share an
+unqualified evaluator. `ssh_filter` cannot contain scoped rules.
+
+A controller MUST reject a request whose schema is not exactly 1 before serving
+scoped rules, even if the requested content version is already current. Scoped
+responses set `gateway_ingress_schema = 1`. An agent MUST reject an unknown
+response schema, or scoped rules without schema 1, before changing its held map.
+Full, delta and cached maps carry the same scope. A schema declaration is not
+software attestation. Controllers MUST NOT downgrade scope into ordinary machine
+ingress to accommodate an older agent.
+
+Inbound CIDRs are hashed as length-prefixed strings after the rule's sources
+and before its ports, in transmitted order. Empty scope contributes no bytes;
+legacy maps retain their versions. An old decoder that ignores scope cannot
+reproduce a scoped map's hash. Persisted grants use `gateway` separately from
+machine targets; older controllers reject the unknown field through strict
+policy parsing. See ADR-0064 for Linux INPUT enforcement, readiness, additive
+policy composition, and migration limits.
+
 ### 5.5 Network-map version
 
 `version` is the leading eight bytes, interpreted big-endian, of SHA-256 over
@@ -385,7 +412,7 @@ hold no netmap" in a request. Let `LP(x)` be a four-byte big-endian length of
 LP(node_id) || LP(dns_name) || LP(addresses[0]) || ... ||
 each peer's LP(node_id, kem_public_key, dns_name, endpoint,
                allowed_ips[0], ...) ||
-each ingress filter rule's LP(sources..., BE32(first) || BE32(last), ...) ||
+each ingress filter rule's LP(sources..., dst_cidrs..., BE32(first) || BE32(last), ...) ||
 LP("karst-egress-filter") ||
 each egress filter rule's LP(destinations..., BE32(first) || BE32(last), ...) ||
 LP("karst-ssh-filter") || BE32(ssh_filter_present ? 1 : 0) ||

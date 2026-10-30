@@ -213,6 +213,7 @@ fn pair(a_filter: PacketFilter, b_filter: PacketFilter) -> (Node, Node) {
 fn permissive_filter() -> PacketFilter {
     let handles = vec![b"peer".to_vec()]; // this test's one-peer rosters
     let rule = pb::KarstFilterRule {
+        dst_cidrs: Vec::new(),
         srcs: vec!["peer".to_owned()],
         ports: vec![pb::KarstPortRange {
             first: u32::from(filetransfer::SERVICE_PORT),

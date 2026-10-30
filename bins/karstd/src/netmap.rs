@@ -479,6 +479,7 @@ impl Relay {
 pub enum Error {
     /// The cached bytes are not a `KarstNetmapResponse`.
     Malformed(String),
+    GatewayIngressSchema(u32),
     /// A PSK field was present but not 32 bytes.
     PskLength {
         /// Which peer, as a lossy handle.
@@ -511,6 +512,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::GatewayIngressSchema(v) => write!(f, "unsupported Gateway ingress schema {v}"),
             Self::Malformed(m) => write!(f, "malformed netmap: {m}"),
             Self::PskLength { peer, len } => {
                 write!(f, "peer {peer}: psk is {len} bytes, expected {PSK_LEN}")
@@ -955,6 +957,13 @@ impl Netmap {
         // `delta`: the server sets only one, and treating an unchanged response
         // as an empty delta would be harmless while treating it as a full
         // netmap would drop every peer.
+        if resp.gateway_ingress_schema > 1
+            || (resp.packet_filter.iter().any(|r| !r.dst_cidrs.is_empty())
+                && resp.gateway_ingress_schema != 1)
+            || resp.ssh_filter.iter().any(|r| !r.dst_cidrs.is_empty())
+        {
+            return Err(Error::GatewayIngressSchema(resp.gateway_ingress_schema));
+        }
         if resp.unchanged {
             return Ok(Outcome::Unchanged);
         }
@@ -1073,7 +1082,7 @@ impl Netmap {
             .zip(&in_ports)
             .map(|(r, ports)| FilterRuleView {
                 nodes: &r.srcs,
-                dst_cidrs: &[],
+                dst_cidrs: &r.dst_cidrs,
                 ports,
             })
             .collect();
@@ -1093,7 +1102,7 @@ impl Netmap {
             .zip(&ssh_ports)
             .map(|(r, ports)| FilterRuleView {
                 nodes: &r.srcs,
-                dst_cidrs: &[],
+                dst_cidrs: &r.dst_cidrs,
                 ports,
             })
             .collect();
@@ -1220,6 +1229,9 @@ impl Netmap {
             compliance_tenant_id: String::new(),
             compliance_device_id: String::new(),
             compliance_policy_revision: String::new(),
+            gateway_ingress_schema: u32::from(
+                self.packet_filter.iter().any(|r| !r.dst_cidrs.is_empty()),
+            ),
             version: self.version,
             psk_epoch: self.psk_epoch,
             node_id: self.node_id.clone(),
@@ -1258,6 +1270,44 @@ mod tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
+
+    #[test]
+    fn scoped_ingress_is_hashed_cached_and_rejects_unknown_schemas() {
+        let response = pb::KarstNetmapResponse {
+            gateway_ingress_schema: 1,
+            packet_filter: vec![pb::KarstFilterRule {
+                srcs: vec!["client".to_owned()],
+                dst_cidrs: vec!["0.0.0.0/0".to_owned()],
+                ports: vec![pb::KarstPortRange {
+                    first: 0,
+                    last: 65535,
+                }],
+            }],
+            ..Default::default()
+        };
+        let mut held = Netmap::new();
+        let scoped = sealed(response.clone(), &held);
+        let mut legacy = response.clone();
+        legacy.packet_filter.first_mut().unwrap().dst_cidrs.clear();
+        let legacy = sealed(legacy, &held);
+        assert_ne!(scoped.version, legacy.version);
+        for schema in [0, 2] {
+            let mut invalid = scoped.clone();
+            invalid.gateway_ingress_schema = schema;
+            assert!(matches!(
+                held.apply(invalid),
+                Err(Error::GatewayIngressSchema(_))
+            ));
+            assert!(held.packet_filter.is_empty());
+        }
+        held.apply(scoped).unwrap();
+        let restored = Netmap::decode(&held.encode()).unwrap();
+        assert_eq!(
+            restored.packet_filter.first().unwrap().dst_cidrs,
+            vec!["0.0.0.0/0"]
+        );
+        assert_eq!(restored.version, held.version);
+    }
 
     fn wire_peer(id: &str, ip: &str) -> pb::KarstNetmapPeer {
         pb::KarstNetmapPeer {
@@ -1578,6 +1628,7 @@ mod tests {
         let mut filtered = Netmap::new();
         let mut resp = full(vec![wire_peer("aaa", "100.64.0.2")]);
         resp.packet_filter = vec![pb::KarstFilterRule {
+            dst_cidrs: Vec::new(),
             srcs: vec!["aaa".to_owned()],
             ports: vec![pb::KarstPortRange {
                 first: 22,
@@ -1603,6 +1654,7 @@ mod tests {
         let mut gated = Netmap::new();
         let mut resp = full(vec![wire_peer("aaa", "100.64.0.2")]);
         resp.ssh_filter = vec![pb::KarstFilterRule {
+            dst_cidrs: Vec::new(),
             srcs: vec!["aaa".to_owned()],
             ports: vec![pb::KarstPortRange {
                 first: 22,

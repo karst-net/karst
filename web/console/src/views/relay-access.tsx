@@ -12,6 +12,8 @@ export function RelayAccess({ service, relayId, onClose, onSaved }: { service?: 
   const relays = useResource(api.relays);
   const targets = useResource(api.relayAdmissionTargets);
   const publication = useResource(api.relayPublication);
+  const policySchema = useResource(api.policySchema);
+  const scopedGatewaySupported = Boolean((policySchema.value?.properties as { grants?: { items?: { properties?: { gateway?: unknown } } } } | undefined)?.grants?.items?.properties?.gateway);
   const machines = useResource(async () => { const result = await api.nodes(); while (result.next_cursor) { const next = await api.nodes(result.next_cursor); result.items.push(...next.items); result.next_cursor = next.next_cursor; } return result; });
   const [draft, setDraft] = useState<ManagedRelayService>(service ? { id: service.id, ponor_id: service.ponor_id, access_managed: true, allowed_groups: service.allowed_groups ?? [], gateway_handle: service.gateway_handle ?? "", exit_ipv4: service.exit_ipv4 ?? false, exit_ipv6: service.exit_ipv6 ?? false, metric: service.metric || 9999, revision: service.revision ?? 0 } : { id: "", ponor_id: relayId ?? "", access_managed: true, allowed_groups: [], metric: 9999 });
   const [busy, setBusy] = useState(false);
@@ -19,7 +21,7 @@ export function RelayAccess({ service, relayId, onClose, onSaved }: { service?: 
   const [acknowledged, setAcknowledged] = useState(false);
   const [message, setMessage] = useState<string>();
   const supported = targets.value?.some(target => target.relay_id === draft.ponor_id) ?? false;
-  const ready = publication.value?.mode === "services" && supported && (draft.allowed_groups?.length ?? 0) > 0 && Boolean(draft.id.trim()) && (!(draft.exit_ipv4 || draft.exit_ipv6) || Boolean(draft.gateway_handle && machines.value?.items.some(node => node.handle === draft.gateway_handle)));
+  const ready = publication.value?.mode === "services" && supported && (draft.allowed_groups?.length ?? 0) > 0 && Boolean(draft.id.trim()) && (!(draft.exit_ipv4 || draft.exit_ipv6) || Boolean(scopedGatewaySupported && draft.gateway_handle && machines.value?.items.some(node => node.handle === draft.gateway_handle)));
   const save = async () => {
     setBusy(true); setMessage(undefined);
     try { if (service) await api.setRelayAccess(draft); else await api.addRelayService({ ...draft, id: draft.id.trim() }); onSaved(); }
@@ -31,6 +33,8 @@ export function RelayAccess({ service, relayId, onClose, onSaved }: { service?: 
     {groups.error && <Failure message={groups.error} retry={groups.reload} />}
     {relays.error && <Failure message={relays.error} retry={relays.reload} />}
     {targets.error && <Failure message={targets.error} retry={targets.reload} />}
+    {policySchema.error && <Failure message={policySchema.error} retry={policySchema.reload} />}
+    {(draft.exit_ipv4 || draft.exit_ipv6) && !policySchema.loading && !scopedGatewaySupported && <p role="alert">Upgrade the control service to support destination-scoped Gateway ingress before configuring internet egress.</p>}
     {publication.error && <Failure message={publication.error} retry={publication.reload} />}
     {publication.value?.mode === "legacy" && <p role="status">Preview and enable service publication on the Relays page before applying group access. Existing relay publication stays unchanged until then.</p>}
     {!review ? <form onSubmit={event => { event.preventDefault(); setReview(true); setAcknowledged(false); }}>
@@ -45,7 +49,7 @@ export function RelayAccess({ service, relayId, onClose, onSaved }: { service?: 
     </form> : <>
       <p>Relay: <strong>{draft.id}</strong>. Allowed groups: {draft.allowed_groups?.map(id => groups.value?.find(group => group.id === id)?.name ?? "Unavailable group").join(", ")}.</p>
       <p>Internet egress: {draft.exit_ipv4 ? "IPv4 " : ""}{draft.exit_ipv6 ? "IPv6 " : ""}{!draft.exit_ipv4 && !draft.exit_ipv6 ? "Disabled" : `through ${machines.value?.items.find(node => node.handle === draft.gateway_handle)?.name ?? "the selected Gateway"}`}.</p>
-      <p>{(draft.exit_ipv4 || draft.exit_ipv6) && "The selected groups also gain access to all ports on the Gateway machine. An existing additional SSH gate still applies. "}Applying changes updates admission on the next roster refresh and may disconnect existing clients. Exit routes are offers requiring local client consent. Configuration is saved atomically; running readiness is reported separately.</p>
+      <p>{(draft.exit_ipv4 || draft.exit_ipv6) && "The selected groups gain destination-only forwarding through the Gateway. This grants no access to services on the Gateway machine. Upgrade the Gateway agent to support scoped ingress before applying. "}Applying changes updates admission on the next roster refresh and may disconnect existing clients. Exit routes are offers requiring local client consent. Configuration is saved atomically; running readiness is reported separately.</p>
       <label><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the allowed groups and internet access.</label>
       <div className="actions"><button disabled={busy} onClick={() => setReview(false)}>Back</button><button className="primary" disabled={busy || !acknowledged || !ready} onClick={() => void save()}>Apply relay configuration</button></div>
     </>}

@@ -22,6 +22,10 @@ type Grant struct {
 	Networks     []string `json:"networks,omitempty"`
 	Ports        string   `json:"ports"`
 	SSH          bool     `json:"ssh,omitempty"`
+	// Gateway scopes Networks to forwarded ingress through this node. It never
+	// grants access to the Gateway machine itself. Older controllers reject
+	// this unknown persisted field rather than compiling a broader grant.
+	Gateway string `json:"gateway,omitempty"`
 }
 
 func contains(values []string, value string) bool {
@@ -62,6 +66,11 @@ func (d *Document) validateGrants() error {
 			return fmt.Errorf("%w: grant needs a unique ID and name", ErrInvalid)
 		}
 		ids[g.ID] = true
+		if g.Gateway != "" {
+			if len(g.Networks) == 0 || len(g.TargetNodes)+len(g.TargetGroups) != 0 || g.SSH || strings.ContainsAny(g.Gateway, ":*\n\r") {
+				return fmt.Errorf("%w: Gateway grants require networks and cannot grant machine or SSH access", ErrInvalid)
+			}
+		}
 		if len(g.SourceGroups) == 0 || len(g.TargetGroups)+len(g.TargetNodes)+len(g.Networks) == 0 {
 			return fmt.Errorf("%w: grant needs source groups and a destination", ErrInvalid)
 		}

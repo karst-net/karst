@@ -552,6 +552,14 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if err != nil {
 		return nil, err
 	}
+	for _, rule := range filter {
+		if len(rule.DstCidrs) != 0 {
+			if req.GetGatewayIngressSchema() != 1 {
+				return nil, status.Error(codes.FailedPrecondition, "Gateway destination-scoped ingress requires gateway_ingress_schema 1; upgrade the agent")
+			}
+			resp.GatewayIngressSchema = 1
+		}
+	}
 	resp.PacketFilter = filter
 	resp.EgressFilter = egress
 	resp.SshFilter = sshFilter
@@ -712,7 +720,7 @@ func (h *NetmapHandler) compileFilter(ctx context.Context, self string, peers []
 
 	out := make([]*proto.KarstFilterRule, 0, len(compiled.Rules))
 	for _, r := range compiled.Rules {
-		out = append(out, &proto.KarstFilterRule{Srcs: r.Srcs, Ports: portRanges(r.Ports)})
+		out = append(out, &proto.KarstFilterRule{Srcs: r.Srcs, DstCidrs: r.DstCidrs, Ports: portRanges(r.Ports)})
 	}
 	eg := make([]*proto.KarstEgressRule, 0, len(compiledEgress.Rules))
 	for _, r := range compiledEgress.Rules {
@@ -1104,6 +1112,9 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 	for _, r := range resp.GetPacketFilter() {
 		for _, src := range r.GetSrcs() {
 			writeField(h, []byte(src))
+		}
+		for _, cidr := range r.GetDstCidrs() {
+			writeField(h, []byte(cidr))
 		}
 		writePorts(h, r.GetPorts())
 	}

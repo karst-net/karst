@@ -312,8 +312,11 @@ func parsePorts(spec string) ([]PortRange, error) {
 // of Srcs to this node is permitted on Ports.
 type FilterRule struct {
 	// Srcs are node handles, or "*".
-	Srcs  []string    `json:"srcs"`
-	Ports []PortRange `json:"ports"`
+	Srcs []string `json:"srcs"`
+	// Nonempty DstCidrs require BOTH the source and forwarded destination to
+	// match; these rules never authorize local machine services.
+	DstCidrs []string    `json:"dst_cidrs,omitempty"`
+	Ports    []PortRange `json:"ports"`
 	// Provenance is retained for server-side explanation and deliberately is
 	// not serialized into the node packet-filter contract.
 	Provenance Provenance `json:"-"`
@@ -365,6 +368,33 @@ func (d *Document) Compile(target Node, all []Node) (*Filter, error) {
 		}
 	}
 
+	for _, grant := range d.Grants {
+		if target.Inactive || grant.Gateway != target.Handle || grant.Gateway == "" {
+			continue
+		}
+		var selectors []string
+		for _, id := range grant.SourceGroups {
+			selectors = append(selectors, "group-id:"+id)
+		}
+		srcs := d.resolveSources(selectors, all)
+		if len(srcs) == 0 {
+			continue
+		}
+		ports, err := parsePorts(grant.Ports)
+		if err != nil {
+			return nil, err
+		}
+		var prefixes []string
+		for _, network := range grant.Networks {
+			prefix, err := netip.ParsePrefix(network)
+			if err != nil {
+				return nil, err
+			}
+			prefixes = append(prefixes, prefix.Masked().String())
+		}
+		sort.Strings(prefixes)
+		f.Rules = append(f.Rules, FilterRule{Srcs: srcs, DstCidrs: prefixes, Ports: ports})
+	}
 	f.Rules = normalize(f.Rules)
 	return f, nil
 }
@@ -670,6 +700,9 @@ func normalize(rules []FilterRule) []FilterRule {
 		if s := strings.Join(rules[a].Srcs, ","); s != strings.Join(rules[b].Srcs, ",") {
 			return s < strings.Join(rules[b].Srcs, ",")
 		}
+		if aCIDRs, bCIDRs := strings.Join(rules[a].DstCidrs, ","), strings.Join(rules[b].DstCidrs, ","); aCIDRs != bCIDRs {
+			return aCIDRs < bCIDRs
+		}
 		return rules[a].Ports[0].First < rules[b].Ports[0].First
 	})
 	return rules
@@ -681,7 +714,31 @@ func normalize(rules []FilterRule) []FilterRule {
 // this exists so policy can be tested server-side and so `karst policy test`
 // (§4.3) has something to run against.
 func (f *Filter) Permits(src string, port uint16) bool {
+	return f.permits(src, port, netip.Addr{}, false)
+}
+
+// PermitsForward checks a packet classified as forwarded rather than local delivery.
+func (f *Filter) PermitsForward(src string, destination netip.Addr, port uint16) bool {
+	return f.permits(src, port, destination, true)
+}
+
+func (f *Filter) permits(src string, port uint16, destination netip.Addr, forwarded bool) bool {
 	for _, r := range f.Rules {
+		if len(r.DstCidrs) != 0 {
+			matched := false
+			if forwarded && destination.IsValid() {
+				for _, cidr := range r.DstCidrs {
+					prefix, err := netip.ParsePrefix(cidr)
+					if err == nil && prefix.Contains(destination) {
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
 		matched := false
 		for _, s := range r.Srcs {
 			if s == Wildcard || s == src {

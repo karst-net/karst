@@ -38,7 +38,7 @@ export function Access() {
   }, [resource.value]);
   const allGroups = groups.value ?? [];
   const names = (ids: string[]) => ids.map(id => allGroups.find(g => g.id === id)?.name ?? "Unavailable group").join(", ");
-  const describe = (grant: AccessGrant) => [...(grant.target_groups?.length ? [names(grant.target_groups)] : []), ...(grant.target_nodes ?? []).map(id => machines.value?.items.find(n => n.handle === id)?.name ?? "Unavailable machine"), ...(grant.networks ?? []).map(network => network === "0.0.0.0/0" ? "Internet (IPv4)" : network === "::/0" ? "Internet (IPv6)" : network)].join(", ");
+  const describe = (grant: AccessGrant) => [...(grant.gateway ? [`Forward through ${machines.value?.items.find(n => n.handle === grant.gateway)?.name ?? "Unavailable Gateway"}`] : []),...(grant.target_groups?.length ? [names(grant.target_groups)] : []), ...(grant.target_nodes ?? []).map(id => machines.value?.items.find(n => n.handle === id)?.name ?? "Unavailable machine"), ...(grant.networks ?? []).map(network => network === "0.0.0.0/0" ? "Internet (IPv4)" : network === "::/0" ? "Internet (IPv6)" : network)].join(", ");
   const preview = async (candidate: AccessDocument) => {
     setBusy(true); setNotice(undefined);
     try {

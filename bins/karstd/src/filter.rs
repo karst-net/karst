@@ -30,6 +30,7 @@
 
 use std::collections::BTreeSet;
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use karst_control_client::transport::pb;
 use karst_tun::ip;
@@ -94,10 +95,10 @@ impl NodeSet {
 
 /// One compiled rule.
 ///
-/// `dst_prefixes` is only ever populated on an egress rule (a destination
-/// network a policy grants directly — see `karst_control.proto`'s
-/// `KarstEgressRule.dst_cidrs`); an ingress or SSH-gate rule always compiles
-/// with it empty, so `permits` below is a no-op change for those directions.
+/// `dst_prefixes` holds outbound destination alternatives, or forwarding-only
+/// ingress constraints in `PacketFilter`'s separate forwarding list. Ordinary
+/// machine-ingress and SSH rules always leave it empty. Forwarding rules use
+/// their own conjunctive evaluator rather than `Rule::permits`.
 #[derive(Debug, Clone)]
 struct Rule {
     nodes: NodeSet,
@@ -165,6 +166,9 @@ pub struct PacketFilter {
     /// default deny, which is a completely different thing.
     ingress: Option<Vec<Rule>>,
     egress: Option<Vec<Rule>>,
+    forwarding: Vec<Rule>,
+    scoped_ready: AtomicBool,
+    kernel_guard_required: AtomicBool,
 }
 
 impl std::fmt::Debug for PacketFilter {
@@ -178,6 +182,9 @@ impl std::fmt::Debug for PacketFilter {
         f.debug_struct("PacketFilter")
             .field("ingress", &describe(&self.ingress))
             .field("egress", &describe(&self.egress))
+            .field("forwarding", &self.forwarding.len())
+            .field("scoped_ready", &self.scoped_ready)
+            .field("kernel_guard_required", &self.kernel_guard_required)
             .finish()
     }
 }
@@ -199,6 +206,9 @@ impl PacketFilter {
         Self {
             ingress: None,
             egress: None,
+            forwarding: Vec::new(),
+            scoped_ready: AtomicBool::new(false),
+            kernel_guard_required: AtomicBool::new(false),
         }
     }
 
@@ -216,13 +226,29 @@ impl PacketFilter {
     ) -> Self {
         let inbound = ingress
             .iter()
+            .filter(|r| r.dst_cidrs.is_empty())
             .filter_map(|r| compile_rule(&r.srcs, &r.ports, handles))
             .collect();
         let outbound = egress
             .iter()
             .filter_map(|r| compile_egress_rule(&r.dsts, &r.dst_cidrs, &r.ports, handles))
             .collect();
+        let forwarding = ingress
+            .iter()
+            .filter(|r| !r.dst_cidrs.is_empty())
+            .filter_map(|r| {
+                let mut rule = compile_rule(&r.srcs, &r.ports, handles)?;
+                rule.dst_prefixes = r.dst_cidrs.iter().filter_map(|c| c.parse().ok()).collect();
+                if rule.dst_prefixes.is_empty() {
+                    return None;
+                }
+                Some(rule)
+            })
+            .collect();
         Self {
+            forwarding,
+            scoped_ready: AtomicBool::new(false),
+            kernel_guard_required: AtomicBool::new(false),
             ingress: Some(inbound),
             egress: Some(outbound),
         }
@@ -236,14 +262,66 @@ impl PacketFilter {
     /// have come from that peer.
     #[must_use]
     pub fn ingress(&self, from: PeerIndex, packet: &[u8]) -> Verdict {
-        // `true`: no gateway-forwarding ambiguity exists on this side. A
-        // packet's destination here is always this node's own address, never
-        // `from`'s, so "does `from` own the destination" would ask the wrong
-        // question entirely — it must not gate an ingress node-handle grant
-        // the way it gates an egress one. `dst_prefixes` is empty on every
-        // ingress rule regardless (see `Rule`'s own doc comment), so this
-        // flag is moot for the CIDR side either way.
+        // Ordinary ingress grants match authenticated sources. Scoped grants
+        // live in a separate list and are evaluated only by ingress_forward.
         Self::evaluate(self.ingress.as_deref(), from, packet, None)
+    }
+
+    /// Evaluate forwarding-only rules after local delivery has been excluded.
+    #[must_use]
+    pub fn ingress_forward(&self, from: PeerIndex, packet: &[u8]) -> Verdict {
+        let regular = self.ingress(from, packet);
+        if regular != Verdict::Denied {
+            return regular;
+        }
+        let Some(ports) = ip::ports(packet) else {
+            return Verdict::Unclassifiable;
+        };
+        let Some(destination) = ip::destination(packet) else {
+            return Verdict::Unclassifiable;
+        };
+        if self.forwarding.iter().any(|r| {
+            r.nodes.contains(from)
+                && r.dst_prefixes.iter().any(|p| p.contains(destination))
+                && r.ports.iter().any(|p| p.contains(ports.destination))
+        }) {
+            Verdict::Permit
+        } else {
+            Verdict::Denied
+        }
+    }
+
+    #[must_use]
+    pub fn has_scoped_ingress(&self) -> bool {
+        !self.forwarding.is_empty()
+    }
+
+    pub fn require_kernel_guard(&self, required: bool) {
+        self.kernel_guard_required
+            .store(required, Ordering::Release);
+    }
+
+    pub fn set_scoped_ready(&self, ready: bool) {
+        self.scoped_ready.store(ready, Ordering::Release);
+    }
+
+    #[must_use]
+    pub fn scoped_ready(&self) -> bool {
+        !(self.has_scoped_ingress() || self.kernel_guard_required.load(Ordering::Acquire))
+            || self.scoped_ready.load(Ordering::Acquire)
+    }
+
+    /// Ordinary machine-ingress ranges, for the kernel INPUT guard. Scoped
+    /// forwarding rules are deliberately absent.
+    pub fn machine_ports(&self, peer: PeerIndex) -> Vec<(u16, u16)> {
+        match &self.ingress {
+            None => vec![(0, u16::MAX)],
+            Some(rules) => rules
+                .iter()
+                .filter(|r| r.nodes.contains(peer))
+                .flat_map(|r| r.ports.iter().map(|p| (p.first, p.last)))
+                .collect(),
+        }
     }
 
     /// May we send this packet to `to`?
@@ -351,7 +429,10 @@ impl PacketFilter {
     /// How many rules each direction carries, for `karst status`.
     #[must_use]
     pub fn rule_counts(&self) -> Option<(usize, usize)> {
-        Some((self.ingress.as_ref()?.len(), self.egress.as_ref()?.len()))
+        Some((
+            self.ingress.as_ref()?.len() + self.forwarding.len(),
+            self.egress.as_ref()?.len(),
+        ))
     }
 }
 
@@ -400,6 +481,7 @@ impl SshFilter {
         }
         let compiled = rules
             .iter()
+            .filter(|r| r.dst_cidrs.is_empty())
             .filter_map(|r| compile_rule(&r.srcs, &r.ports, handles))
             .collect();
         Self(Some(compiled))
@@ -458,9 +540,8 @@ fn node_set(nodes: &[String], handles: &[Vec<u8>]) -> NodeSet {
 
 /// Compile one ingress or SSH-gate rule, or `None` if it grants nothing.
 ///
-/// These directions have no CIDR concept (see `Rule`'s own doc comment): who
-/// may reach *this node* is always a question about peers, never about an
-/// external network.
+/// This compiles only source identities and ports. Forwarding-only ingress
+/// compilation adds destination constraints to its separate rule list.
 fn compile_rule(
     nodes: &[String],
     ports: &[pb::KarstPortRange],
@@ -553,6 +634,7 @@ mod tests {
 
     fn rule(srcs: &[&str], ports: Vec<pb::KarstPortRange>) -> pb::KarstFilterRule {
         pb::KarstFilterRule {
+            dst_cidrs: Vec::new(),
             srcs: srcs.iter().map(|s| (*s).to_owned()).collect(),
             ports,
         }
@@ -669,6 +751,46 @@ mod tests {
         assert!(none.contains("unrestricted"), "{none}");
         assert!(empty.contains("deny-all"), "{empty}");
         assert_ne!(none, empty);
+    }
+
+    #[test]
+    fn scoped_ingress_requires_source_destination_and_port_and_never_machine_services() {
+        let mut scoped = rule(&["alice"], vec![port(443, 443)]);
+        scoped.dst_cidrs = vec!["8.8.8.0/24".to_owned(), "2001:4860::/32".to_owned()];
+        let f = PacketFilter::compile(&[scoped.clone()], &[], &handles());
+        assert!(f.has_scoped_ingress());
+        assert!(!f.scoped_ready());
+        assert_eq!(
+            f.ingress_forward(0, &tcp_to([8, 8, 8, 8], 443)),
+            Verdict::Permit
+        );
+        assert_eq!(
+            f.ingress_forward(1, &tcp_to([8, 8, 8, 8], 443)),
+            Verdict::Denied
+        );
+        assert_eq!(
+            f.ingress_forward(0, &tcp_to([9, 9, 9, 9], 443)),
+            Verdict::Denied
+        );
+        assert_eq!(
+            f.ingress_forward(0, &tcp_to([8, 8, 8, 8], 22)),
+            Verdict::Denied
+        );
+        let destination = "2001:4860::8888"
+            .parse::<std::net::Ipv6Addr>()
+            .unwrap()
+            .octets();
+        assert_eq!(
+            f.ingress_forward(0, &tcp6_to(destination, 443)),
+            Verdict::Permit
+        );
+        assert_eq!(f.ingress(0, &tcp_to([8, 8, 8, 8], 443)), Verdict::Denied);
+        assert_eq!(f.ingress_service(0, 443), Verdict::Denied);
+        assert!(f.machine_ports(0).is_empty());
+        scoped.dst_cidrs = vec!["invalid".to_owned()];
+        let invalid = PacketFilter::compile(&[scoped], &[], &handles());
+        assert_eq!(invalid.ingress(0, &tcp(443)), Verdict::Denied);
+        assert_eq!(invalid.ingress_forward(0, &tcp(443)), Verdict::Denied);
     }
 
     // ── matching ────────────────────────────────────────────────────────────

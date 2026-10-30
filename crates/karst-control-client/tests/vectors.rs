@@ -206,6 +206,8 @@ struct VersionPeer {
 
 #[derive(Deserialize, Debug, Clone)]
 struct VersionRule {
+    #[serde(default)]
+    dst_cidrs: Vec<String>,
     srcs: Option<Vec<String>>,
     ports: Option<Vec<VersionPortRange>>,
 }
@@ -592,13 +594,15 @@ fn routes_of(c: &VersionCase) -> &[VersionRoute] {
 fn filter_views<'a>(
     nodes: &'a [Vec<String>],
     ports: &'a [Vec<(u32, u32)>],
+    wire: &'a [VersionRule],
 ) -> Vec<FilterRuleView<'a>> {
     nodes
         .iter()
         .zip(ports.iter())
-        .map(|(nodes, ports)| FilterRuleView {
+        .zip(wire)
+        .map(|((nodes, ports), rule)| FilterRuleView {
             nodes,
-            dst_cidrs: &[],
+            dst_cidrs: &rule.dst_cidrs,
             ports,
         })
         .collect()
@@ -665,9 +669,21 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
     let inbound_nodes = rule_nodes(c.packet_filter.as_deref().unwrap_or_default());
     let outbound_nodes = rule_nodes(c.egress_filter.as_deref().unwrap_or_default());
     let ssh_nodes = rule_nodes(c.ssh_filter.as_deref().unwrap_or_default());
-    let rules = filter_views(&inbound_nodes, &held.ports);
-    let egress = filter_views(&outbound_nodes, &held.egress_ports);
-    let ssh = filter_views(&ssh_nodes, &held.ssh_ports);
+    let rules = filter_views(
+        &inbound_nodes,
+        &held.ports,
+        c.packet_filter.as_deref().unwrap_or_default(),
+    );
+    let egress = filter_views(
+        &outbound_nodes,
+        &held.egress_ports,
+        c.egress_filter.as_deref().unwrap_or_default(),
+    );
+    let ssh = filter_views(
+        &ssh_nodes,
+        &held.ssh_ports,
+        c.ssh_filter.as_deref().unwrap_or_default(),
+    );
 
     let relays: Vec<RelayView<'_>> = relays_of(c)
         .iter()
