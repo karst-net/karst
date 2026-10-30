@@ -482,6 +482,11 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	router := &handler{
 		login:      &control.LoginHandler{Nodes: nodes, Accounts: peerLoginer, OIDC: oidc},
 		compliance: &control.ComplianceHandler{Store: complianceStore, Peers: peers},
+		// Draft is nil: no persisted admin policy-write API exists yet
+		// (policy.ComplianceDraft's own doc comment is why). This serves a
+		// real, structurally valid, always-empty-guardrail snapshot --
+		// proving the wire path end to end with zero enforcement effect.
+		permit: &control.PermitHandler{Store: complianceStore, Peers: peers},
 		netmap: &control.NetmapHandler{
 			ComplianceIngestion: true,
 			Nodes:               nodes,
@@ -780,6 +785,7 @@ func (s *storePeers) AccountPrefixes(ctx context.Context, accountID string) (uin
 // keeps the envelope free of message-type knowledge for now.
 type handler struct {
 	compliance *control.ComplianceHandler
+	permit     *control.PermitHandler
 	login      *control.LoginHandler
 	netmap     *control.NetmapHandler
 	bedrock    *control.BedrockHandler
@@ -807,6 +813,11 @@ func (h *handler) Handle(ctx context.Context, nodeID, identityPub, payload []byt
 			return nil, errors.New("karst: compliance is not configured on this server")
 		}
 		return h.compliance.Handle(ctx, nodeID, identityPub, body)
+	case control.KindCompliancePermit:
+		if h.permit == nil {
+			return nil, errors.New("karst: compliance permits are not configured on this server")
+		}
+		return h.permit.Handle(ctx, nodeID, identityPub, body)
 	case KindBedrock:
 		if h.bedrock == nil {
 			return nil, errors.New("karst: bedrock is not configured on this server")
