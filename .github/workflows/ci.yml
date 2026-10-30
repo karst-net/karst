@@ -335,13 +335,13 @@ jobs:
   #     for work it never did — so `KARST_REQUIRE_PREREQUISITES` makes the skip
   #     fatal, exactly as it does for the Linux privileged suites.
   #
-  # `macos-14` is Apple Silicon; the x86-64 half is cross-compiled and its
-  # tests do not run. That asymmetry is worth stating rather than hiding: what
-  # is verified on Intel is that it builds, and the rest is the release
-  # walkthrough's manual step.
+  # `macos-15` is Apple Silicon (`macos-14` retired November 2026); the
+  # x86-64 half is cross-compiled and its tests do not run. That asymmetry is
+  # worth stating rather than hiding: what is verified on Intel is that it
+  # builds, and the rest is the release walkthrough's manual step.
   macos:
     name: macOS client
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-protoc@v3
