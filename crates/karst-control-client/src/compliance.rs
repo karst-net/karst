@@ -24,7 +24,12 @@ use crate::transport::pb::{
 const MAX_VALIDITY_MILLIS: u32 = 120_000;
 
 /// Trusted enrollment and policy context from the authenticated transaction.
-#[derive(Debug)]
+/// `Clone` because a caller refreshes it from the live netmap response at
+/// most once per advertisement and otherwise reuses it across many permit
+/// requests until the next one arrives -- unlike `PendingPermitRequest`/
+/// `PermitSnapshot`, duplicating these plain, non-secret strings carries no
+/// single-use-nonce or mutable-expiry invariant to protect.
+#[derive(Clone, Debug)]
 pub struct PermitContext {
     pub tenant_id: String,
     pub device_id: String,

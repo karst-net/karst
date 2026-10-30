@@ -555,6 +555,27 @@ message KarstNetmapResponse {
   // as a capability advertisement; only a response on the live channel counts.
   uint32 compliance_ingestion_schema = 22;
 
+  // Permit-snapshot support (KindCompliancePermit, request kind 6). Sent
+  // even on unchanged responses, excluded from the policy content hash, and
+  // reset on reconnect -- same rules as compliance_ingestion_schema, which
+  // this does not imply or depend on either direction. Zero/unknown versions
+  // must not trigger kind-6 requests. A present schema 1 means the server
+  // will *serve* a structurally valid snapshot, never that any guardrail is
+  // actually configured or enforced -- see PermitHandler's own doc comment.
+  uint32 compliance_permit_schema = 24;
+
+  // This node's own trusted compliance context, present only alongside
+  // compliance_permit_schema == 1: the authenticated tenant/device/handle
+  // binding and the current policy revision a permit snapshot must echo
+  // back. No prior wire message gives a node its own tenant_id/device_id --
+  // KarstLoginResponse carries only node_id/peer_ip/dns_name -- and
+  // policy_revision is server state a node has no other way to learn in
+  // advance. Reused verbatim as PermitContext's fields (handle is this
+  // node's own, already locally known); never a claim about another peer.
+  string compliance_tenant_id = 25;
+  string compliance_device_id = 26;
+  string compliance_policy_revision = 27;
+
   reserved 8;  // never assigned; reserved so the gap stops looking accidental.
   reserved 16; // was KarstTurnServer turn_servers; Karst dropped standalone TURN support in favor of Relay-only transport fallback.
   reserved 23; // was KarstExternalTurnConfig external_turn (issue #420); reverted because turns: (RFC 7065) has no post-quantum-safe TLS suite in any real-world TURN server implementation, and every other transport Karst uses (direct, Ponor) holds a strict PQ bar this one could not meet. Revisit if that changes.

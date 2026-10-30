@@ -136,6 +136,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         peers.push(Peer {
             name: format!("peer{}", spec.byte),
             node_id: handle(&[spec.byte; 2592]).into_bytes(),
+            handle: handle(&[spec.byte; 2592]),
             public: Arc::new(karst_noise::handshake::PeerPublic {
                 kem_pk: peer_keys.kem_pk.clone(),
 

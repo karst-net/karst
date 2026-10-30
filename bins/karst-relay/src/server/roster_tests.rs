@@ -101,7 +101,15 @@ async fn wait_for_membership(ctx: &Ctx, count: usize) {
 
 #[tokio::test]
 async fn roster_lease_expiry_refuses_admission_and_refresh_restores_it() {
-    tokio::time::timeout(Duration::from_secs(20), Box::pin(exercise_roster_lease()))
+    // GitHub issue #468: this exercise's own real work (a 3-second mandatory
+    // lease wait, real TLS handshakes, 20ms-granularity file-watch polling)
+    // left too little margin against ordinary CI scheduling contention under
+    // the previous 20-second budget -- observed finishing at ~23.3-23.4s on
+    // the runs that timed out, consistently just over, not wildly unbounded.
+    // This is a safety-margin bump only: the lease duration and poll interval
+    // this test actually verifies, below, are unchanged -- "no operator can
+    // shorten it" still holds.
+    tokio::time::timeout(Duration::from_secs(45), Box::pin(exercise_roster_lease()))
         .await
         .expect("lease regression completed");
 }

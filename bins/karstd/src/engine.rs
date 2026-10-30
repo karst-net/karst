@@ -412,6 +412,18 @@ pub struct Engine {
     /// passed in per call because the comparison happens on the inbound
     /// datapath, where there is no other route to it.
     bedrock: RwLock<Option<Arc<crate::bedrock::Log>>>,
+    /// This node's current compliance permit snapshot (#363,
+    /// spec/device-compliance-v1.md's proposed enforcement contract), if
+    /// any. `None` until the control client has ever installed one, and
+    /// `None` again on reconnect/capability withdrawal/an invalid trusted
+    /// context -- see `control::PermitUpdate`'s own doc comment. A `Mutex`
+    /// rather than `RwLock<Arc<_>>` like `roster`: unlike a netmap
+    /// reconfigure, a snapshot's own `ingress_satisfied`/`egress_satisfied`
+    /// need `&mut self` (they track clock-rollback/expiry internally), so
+    /// nothing here can clone it out and evaluate against a stale copy. Held
+    /// only across one lookup per protected packet, the same way `flows`/
+    /// `ssh_admissions` already are.
+    compliance_permit: Mutex<Option<karst_control_client::compliance::PermitSnapshot>>,
     /// The one key every inbound fragment is verified with — §13.7. Pre-keyed
     /// so the HMAC schedule is not rebuilt per packet.
     in_mac_key: FragMacKey,
@@ -466,6 +478,7 @@ impl Engine {
         Self {
             roster: RwLock::new(Arc::new(roster)),
             bedrock: RwLock::new(None),
+            compliance_permit: Mutex::new(None),
             in_mac_key,
             cookie: Mutex::new(None),
             stats: Counters::default(),
@@ -1106,6 +1119,20 @@ impl Engine {
     #[must_use]
     pub fn bedrock(&self) -> Option<Arc<crate::bedrock::Log>> {
         self.bedrock.read().ok().and_then(|slot| slot.clone())
+    }
+
+    /// Apply a [`crate::control::PermitUpdate`] from the latest `sync`.
+    /// `Unchanged` leaves whatever is held alone; `Fresh` replaces it
+    /// (dropping the old one, never merging); `Lost` clears it -- see
+    /// `PermitUpdate`'s own doc comment on why that case exists at all
+    /// rather than waiting on the old snapshot's own expiry.
+    pub fn set_compliance_permit(&self, update: crate::control::PermitUpdate) {
+        use crate::control::PermitUpdate;
+        match update {
+            PermitUpdate::Unchanged => {}
+            PermitUpdate::Fresh(snapshot) => *Self::lock(&self.compliance_permit) = Some(snapshot),
+            PermitUpdate::Lost => *Self::lock(&self.compliance_permit) = None,
+        }
     }
 
     /// Send this node's verified head to a peer, if it has not already been
@@ -1963,6 +1990,16 @@ impl Engine {
         match verdict {
             Verdict::Permit => {
                 if let Some(slot) = roster.peers.get(peer) {
+                    // The independent compliance gate (#363): a third
+                    // mandatory check, alongside the general ACL permit
+                    // above and the SSH gate below, never instead of either.
+                    // Never cached per flow, unlike the SSH gate just below
+                    // -- spec/device-compliance-v1.md's proposed enforcement
+                    // contract requires every protected packet to pass this,
+                    // not just the one that opened the flow.
+                    if !self.compliance_permits(roster, dir, peer, packet) {
+                        return false;
+                    }
                     // The independent SSH gate (§3.1): a second, separately
                     // evaluated check for a new inbound flow to port 22, on
                     // top of the general ingress filter's permit above —
@@ -2010,6 +2047,60 @@ impl Engine {
             }
         }
         false
+    }
+
+    /// The independent compliance gate (#363). `true` when nothing is held
+    /// (no guardrail configured anywhere yet -- see `control::PermitHandler`'s
+    /// own doc comment on why that is every real deployment today) or the
+    /// packet's protocol cannot be classified as TCP/UDP, which a compliance
+    /// guardrail's own wire protocol has no third case for either. Reads
+    /// `crate::compliance::elapsed_now()` directly rather than accepting
+    /// `now_ms`: that parameter is this engine's own millisecond clock, a
+    /// different basis than the permit snapshot's request-relative one.
+    fn compliance_permits(
+        &self,
+        roster: &Roster,
+        dir: Direction,
+        peer: PeerIndex,
+        packet: &[u8],
+    ) -> bool {
+        use karst_control_client::compliance::Protocol;
+        let mut guard = Self::lock(&self.compliance_permit);
+        let Some(snapshot) = guard.as_mut() else {
+            return true;
+        };
+        let Some(ports) = ip::ports(packet) else {
+            return true;
+        };
+        let Some(destination) = ip::destination(packet) else {
+            return true;
+        };
+        let protocol = match ports.protocol {
+            6 => Protocol::Tcp,
+            17 => Protocol::Udp,
+            _ => return true,
+        };
+        let now = crate::compliance::elapsed_now();
+        match dir {
+            Direction::In => {
+                let Some(source) = roster
+                    .config
+                    .peers
+                    .get(peer)
+                    .map(|p| p.handle.as_str())
+                    .filter(|h| !h.is_empty())
+                else {
+                    // A static-roster peer (empty handle) or an index the
+                    // config no longer has -- compliance is a netmap-only
+                    // feature with nothing to say about either.
+                    return true;
+                };
+                snapshot.ingress_satisfied(source, destination, protocol, ports.destination, now)
+            }
+            Direction::Out => {
+                snapshot.egress_satisfied(destination, protocol, ports.destination, now)
+            }
+        }
     }
 
     /// Whether `peer` may open this new flow to port 22, consulting the
