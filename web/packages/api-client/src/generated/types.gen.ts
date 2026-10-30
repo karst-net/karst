@@ -546,6 +546,58 @@ export type RelayServiceView = RelayService & {
     ponor_present: boolean;
 };
 
+export type RelayAllocation = {
+    /**
+     * Server-generated; never accepted from callers.
+     */
+    readonly id?: string;
+    name: string;
+    /**
+     * Existing account-local infrastructure connection ID.
+     */
+    infra_connection_id: string;
+    /**
+     * Region/zone/namespace code from that connection's own discovery.
+     */
+    location: string;
+    /**
+     * The only capability this workflow grants in v1 -- required true.
+     */
+    relay_transport?: boolean;
+    /**
+     * Not yet supported; rejected if set until Gateway-identity binding is designed.
+     */
+    egress_v4?: boolean;
+    /**
+     * Not yet supported; rejected if set until Gateway-identity binding is designed.
+     */
+    egress_v6?: boolean;
+    /**
+     * Stable account group IDs granted access once ready.
+     */
+    permitted_groups: Array<string>;
+    readonly state?: 'requested' | 'provisioning' | 'granting' | 'ready' | 'revoking' | 'deprovisioning' | 'deprovisioned' | 'failed';
+    /**
+     * Only meaningful while state is failed.
+     */
+    readonly failed_step?: 'requested' | 'provisioning' | 'granting' | 'revoking' | 'deprovisioning';
+    readonly failure_reason?: string;
+    /**
+     * The Driver-reported compute instance
+     */
+    readonly instance_id?: string;
+    /**
+     * The relay registry ID
+     */
+    readonly relay_id?: string;
+    /**
+     * Expected revision for the next compare-and-set action against this allocation.
+     */
+    readonly revision?: number;
+    readonly created_at?: string;
+    readonly updated_at?: string;
+};
+
 export type RelayCreate = {
     address: string;
     identity_key: string;
@@ -960,6 +1012,34 @@ export type DeviceEnrollmentWritable = {
 
 export type NodePageWritable = Page & {
     items: Array<NodeWritable>;
+};
+
+export type RelayAllocationWritable = {
+    name: string;
+    /**
+     * Existing account-local infrastructure connection ID.
+     */
+    infra_connection_id: string;
+    /**
+     * Region/zone/namespace code from that connection's own discovery.
+     */
+    location: string;
+    /**
+     * The only capability this workflow grants in v1 -- required true.
+     */
+    relay_transport?: boolean;
+    /**
+     * Not yet supported; rejected if set until Gateway-identity binding is designed.
+     */
+    egress_v4?: boolean;
+    /**
+     * Not yet supported; rejected if set until Gateway-identity binding is designed.
+     */
+    egress_v6?: boolean;
+    /**
+     * Stable account group IDs granted access once ready.
+     */
+    permitted_groups: Array<string>;
 };
 
 export type RelayWritable = RelayCreate & {
@@ -2418,6 +2498,304 @@ export type SetRelayServiceModesResponses = {
 };
 
 export type SetRelayServiceModesResponse = SetRelayServiceModesResponses[keyof SetRelayServiceModesResponses];
+
+export type ListRelayAllocationsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/relay-allocations';
+};
+
+export type ListRelayAllocationsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListRelayAllocationsError = ListRelayAllocationsErrors[keyof ListRelayAllocationsErrors];
+
+export type ListRelayAllocationsResponses = {
+    /**
+     * Relay allocations
+     */
+    200: Array<RelayAllocation>;
+};
+
+export type ListRelayAllocationsResponse = ListRelayAllocationsResponses[keyof ListRelayAllocationsResponses];
+
+export type CreateRelayAllocationData = {
+    body: RelayAllocationWritable;
+    path?: never;
+    query?: never;
+    url: '/relay-allocations';
+};
+
+export type CreateRelayAllocationErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateRelayAllocationError = CreateRelayAllocationErrors[keyof CreateRelayAllocationErrors];
+
+export type CreateRelayAllocationResponses = {
+    /**
+     * Allocation requested
+     */
+    201: RelayAllocation;
+};
+
+export type CreateRelayAllocationResponse = CreateRelayAllocationResponses[keyof CreateRelayAllocationResponses];
+
+export type DeleteRelayAllocationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query: {
+        revision: number;
+    };
+    url: '/relay-allocations/{id}';
+};
+
+export type DeleteRelayAllocationErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteRelayAllocationError = DeleteRelayAllocationErrors[keyof DeleteRelayAllocationErrors];
+
+export type DeleteRelayAllocationResponses = {
+    /**
+     * Allocation removed
+     */
+    204: void;
+};
+
+export type DeleteRelayAllocationResponse = DeleteRelayAllocationResponses[keyof DeleteRelayAllocationResponses];
+
+export type DeprovisionRelayAllocationData = {
+    body: {
+        revision: number;
+        acknowledge_deprovision: true;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/relay-allocations/{id}/deprovision';
+};
+
+export type DeprovisionRelayAllocationErrors = {
+    /**
+     * Allocation revision changed
+     */
+    409: unknown;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeprovisionRelayAllocationError = DeprovisionRelayAllocationErrors[keyof DeprovisionRelayAllocationErrors];
+
+export type DeprovisionRelayAllocationResponses = {
+    /**
+     * Deprovision requested
+     */
+    200: RelayAllocation;
+};
+
+export type DeprovisionRelayAllocationResponse = DeprovisionRelayAllocationResponses[keyof DeprovisionRelayAllocationResponses];
+
+export type PollPendingRelayAllocationsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/relay-allocations/pending';
+};
+
+export type PollPendingRelayAllocationsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type PollPendingRelayAllocationsError = PollPendingRelayAllocationsErrors[keyof PollPendingRelayAllocationsErrors];
+
+export type PollPendingRelayAllocationsResponses = {
+    /**
+     * Pending allocations
+     */
+    200: Array<RelayAllocation>;
+};
+
+export type PollPendingRelayAllocationsResponse = PollPendingRelayAllocationsResponses[keyof PollPendingRelayAllocationsResponses];
+
+export type RecordRelayAllocationProvisioningData = {
+    body: {
+        expected_revision: number;
+        instance_id: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/relay-allocations/{id}/provisioning';
+};
+
+export type RecordRelayAllocationProvisioningErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type RecordRelayAllocationProvisioningError = RecordRelayAllocationProvisioningErrors[keyof RecordRelayAllocationProvisioningErrors];
+
+export type RecordRelayAllocationProvisioningResponses = {
+    /**
+     * Provisioning recorded
+     */
+    200: RelayAllocation;
+};
+
+export type RecordRelayAllocationProvisioningResponse = RecordRelayAllocationProvisioningResponses[keyof RecordRelayAllocationProvisioningResponses];
+
+export type GrantRelayAllocationData = {
+    body: {
+        expected_revision: number;
+        tls_server_name: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/relay-allocations/{id}/grant';
+};
+
+export type GrantRelayAllocationErrors = {
+    /**
+     * Relay has not registered yet; retry later.
+     */
+    404: unknown;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GrantRelayAllocationError = GrantRelayAllocationErrors[keyof GrantRelayAllocationErrors];
+
+export type GrantRelayAllocationResponses = {
+    /**
+     * Granted (or already ready/granting -- idempotent retry)
+     */
+    200: RelayAllocation;
+};
+
+export type GrantRelayAllocationResponse = GrantRelayAllocationResponses[keyof GrantRelayAllocationResponses];
+
+export type RevokeRelayAllocationData = {
+    body: {
+        expected_revision: number;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/relay-allocations/{id}/revoke';
+};
+
+export type RevokeRelayAllocationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type RevokeRelayAllocationError = RevokeRelayAllocationErrors[keyof RevokeRelayAllocationErrors];
+
+export type RevokeRelayAllocationResponses = {
+    /**
+     * Revoked (or already deprovisioning/deprovisioned -- idempotent retry)
+     */
+    200: RelayAllocation;
+};
+
+export type RevokeRelayAllocationResponse = RevokeRelayAllocationResponses[keyof RevokeRelayAllocationResponses];
+
+export type ConfirmRelayAllocationDeprovisionedData = {
+    body: {
+        expected_revision: number;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/relay-allocations/{id}/deprovisioned';
+};
+
+export type ConfirmRelayAllocationDeprovisionedErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ConfirmRelayAllocationDeprovisionedError = ConfirmRelayAllocationDeprovisionedErrors[keyof ConfirmRelayAllocationDeprovisionedErrors];
+
+export type ConfirmRelayAllocationDeprovisionedResponses = {
+    /**
+     * Deprovisioned
+     */
+    200: RelayAllocation;
+};
+
+export type ConfirmRelayAllocationDeprovisionedResponse = ConfirmRelayAllocationDeprovisionedResponses[keyof ConfirmRelayAllocationDeprovisionedResponses];
+
+export type ReportRelayAllocationFailedData = {
+    body: {
+        expected_revision: number;
+        reason: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/relay-allocations/{id}/failed';
+};
+
+export type ReportRelayAllocationFailedErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ReportRelayAllocationFailedError = ReportRelayAllocationFailedErrors[keyof ReportRelayAllocationFailedErrors];
+
+export type ReportRelayAllocationFailedResponses = {
+    /**
+     * Failure recorded
+     */
+    200: RelayAllocation;
+};
+
+export type ReportRelayAllocationFailedResponse = ReportRelayAllocationFailedResponses[keyof ReportRelayAllocationFailedResponses];
 
 export type ListRelaysData = {
     body?: never;
