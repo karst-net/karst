@@ -74,6 +74,7 @@ fn node(
     let peers = vec![Peer {
         name: format!("peer{peer}"),
         node_id: handle(&[peer; 2592]).into_bytes(),
+        handle: handle(&[peer; 2592]),
         public: Arc::new(PeerPublic {
             kem_pk: peer_keys.kem_pk.clone(),
             psk: [0x77; 32],

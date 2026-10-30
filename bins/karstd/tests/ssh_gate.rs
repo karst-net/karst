@@ -130,6 +130,7 @@ fn server_config(filter: PacketFilter, ssh_filter: SshFilter) -> Arc<Config> {
         peers: vec![Peer {
             name: "client".to_owned(),
             node_id: Vec::new(),
+            handle: String::new(),
             public: Arc::new(karst_noise::handshake::PeerPublic {
                 kem_pk: peer_keys.kem_pk.clone(),
                 psk: [0x77; 32],

@@ -5695,6 +5695,12 @@ fn refresh_netmap(
         // moved, and the two advance independently — a log that grew while the
         // netmap stood still is the ordinary case after a countersignature.
         engine.set_bedrock(client.bedrock_snapshot());
+        // Drained unconditionally, the same way and for the same reason
+        // set_bedrock above is: even a failed sync may have set Lost (a
+        // reconnect that itself failed still means the old snapshot's
+        // context is no longer trustworthy), and a successful one may have
+        // nothing new to report (Unchanged, a no-op here).
+        engine.set_compliance_permit(client.take_permit_update());
         // ADR-0045 §4b's other direction: project the allowlist this sync
         // just confirmed (or reconfirmed, on an `Unchanged` response) so
         // `anchor_probe::run` has a current view without ever touching
@@ -6152,6 +6158,7 @@ mod route_tests {
             peers.push(crate::config::Peer {
                 name: format!("p{index}"),
                 node_id: Vec::new(),
+                handle: String::new(),
                 public: std::sync::Arc::new(karst_noise::handshake::PeerPublic {
                     kem_pk: {
                         use karst_crypto::kem::{keypair_from_seed, KemKind};

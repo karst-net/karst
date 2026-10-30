@@ -867,6 +867,15 @@ pub struct Peer {
     pub name: String,
     /// Server-assigned node handle, used to bind AVEN tags to this peer.
     pub node_id: Vec<u8>,
+    /// `node_id` decoded once as text rather than on every packet -- the
+    /// same reasoning `engine.rs`'s own `relay_id` precomputation documents
+    /// ("converted once here rather than on every packet"). The base64
+    /// handle string a compliance permit's source list names, used by
+    /// `Engine::permit`'s compliance gate check. Empty for a static-roster
+    /// peer (`node_id` is empty there too): compliance is a netmap-only,
+    /// server-coordinated feature, and an empty handle safely matches no
+    /// real source rather than needing a separate case.
+    pub handle: String,
     /// Cryptographic material.
     ///
     /// Shared rather than owned so a `Session` can hold it without borrowing
@@ -1636,6 +1645,7 @@ impl Peer {
         Ok(Self {
             name,
             node_id: entry.node_id.clone(),
+            handle: String::from_utf8_lossy(&entry.node_id).into_owned(),
             public: Arc::new(PeerPublic { kem_pk, psk }),
             endpoint,
             allowed_ips,
@@ -1716,6 +1726,7 @@ impl Peer {
         Ok(Self {
             name,
             node_id: Vec::new(),
+            handle: String::new(),
             public: Arc::new(PeerPublic { kem_pk, psk }),
             endpoint: section.endpoint,
             // A static roster has no route-offer/gateway-merge step at all —

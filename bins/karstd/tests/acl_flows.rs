@@ -90,6 +90,7 @@ fn config_for(
         peers: vec![Peer {
             name: "peer".to_owned(),
             node_id: Vec::new(),
+            handle: String::new(),
             public: Arc::new(karst_noise::handshake::PeerPublic {
                 kem_pk: peer_keys.kem_pk.clone(),
 
@@ -302,6 +303,153 @@ fn a_policy_change_revokes_flows_it_opened() {
         !client.permits_for_test(Direction::In, 0, &reply, 2),
         "a connection kept working after the policy that allowed it was withdrawn"
     );
+}
+
+/// The independent compliance gate (#363): a third mandatory check on top of
+/// the general ACL and SSH gate this whole file is otherwise about. An empty
+/// permit snapshot (today's real production shape, per
+/// `control::PermitHandler`'s own doc comment) must change nothing; an
+/// installed gate with no passing source must deny what the ACL alone would
+/// permit; a passing source must restore it; and traffic the gate's own
+/// protocol/port/destination does not cover must stay unconstrained by it.
+mod compliance_gate {
+    use karst_control_client::compliance::{PendingPermitRequest, PermitContext};
+    use karst_control_client::handle::handle;
+    use karst_control_client::transport::pb::{
+        karst_compliance_permit_gate::Protocol as WireProtocol, KarstCompliancePermitGate,
+        KarstCompliancePermitSnapshot, KarstComplianceSourcePermit, KarstPortRange,
+    };
+
+    use super::*;
+
+    const SELF_SEED: u8 = 9;
+    const PEER_SEED: u8 = 7;
+    const PROTECTED_PORT: u16 = 443;
+
+    fn fixture() -> (Engine, String, String) {
+        let self_handle = handle(&[SELF_SEED; 2592]);
+        let peer_handle = handle(&[PEER_SEED; 2592]);
+        let mut cfg = config_for(
+            SELF_SEED,
+            PEER_SEED,
+            "100.64.0.9/24",
+            "100.64.0.10/32",
+            PacketFilter::unrestricted(),
+        );
+        Arc::get_mut(&mut cfg).expect("unique config").peers[0]
+            .handle
+            .clone_from(&peer_handle);
+        (Engine::new(&cfg), self_handle, peer_handle)
+    }
+
+    fn accepted_snapshot(
+        self_handle: &str,
+        gate_sources: Vec<KarstComplianceSourcePermit>,
+    ) -> karst_control_client::compliance::PermitSnapshot {
+        let context = PermitContext {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-self".into(),
+            handle: self_handle.to_owned(),
+            policy_revision: "revision-1".into(),
+        };
+        let nonce = [5u8; 32];
+        // Matching the engine's own clock (`karstd::compliance::elapsed_now`)
+        // is required, not optional: `PermitSnapshot` tracks clock-rollback
+        // internally, so a `started`/`accept` time disconnected from what
+        // `permits_for_test` will actually read as `now` looks exactly like
+        // a reversed clock and permanently invalidates the snapshot before
+        // the gate logic this test means to exercise ever runs.
+        let started = karstd::compliance::elapsed_now();
+        let pending = PendingPermitRequest::new(context, nonce, started).expect("context");
+        let snapshot = KarstCompliancePermitSnapshot {
+            schema_version: 1,
+            request_nonce: nonce.to_vec(),
+            tenant_id: "tenant-a".into(),
+            enforcer_device_id: "device-self".into(),
+            enforcer_handle: self_handle.to_owned(),
+            policy_revision: "revision-1".into(),
+            valid_for_millis: 120_000,
+            ingress: vec![KarstCompliancePermitGate {
+                guardrail_id: "guardrail-1".into(),
+                // A_IP, the literal destination every test packet in this
+                // module carries -- not the fixture's own interface address,
+                // which only the (irrelevant here) gateway_forwarding/
+                // local-delivery check at the top of `permit` cares about.
+                destination_cidrs: vec!["100.64.0.2/32".into()],
+                protocol: WireProtocol::Tcp as i32,
+                ports: Some(KarstPortRange {
+                    first: u32::from(PROTECTED_PORT),
+                    last: u32::from(PROTECTED_PORT),
+                }),
+                sources: gate_sources,
+            }],
+            egress: Vec::new(),
+        };
+        pending
+            .accept(&snapshot, karstd::compliance::elapsed_now())
+            .expect("valid snapshot")
+    }
+
+    #[test]
+    fn no_installed_snapshot_changes_nothing() {
+        let (engine, _self_handle, _peer_handle) = fixture();
+        assert!(engine.permits_for_test(
+            Direction::In,
+            0,
+            &tcp(B_IP, EPHEMERAL, A_IP, PROTECTED_PORT),
+            0
+        ));
+    }
+
+    #[test]
+    fn a_gate_with_no_passing_source_denies_what_the_acl_alone_permits() {
+        let (engine, self_handle, _peer_handle) = fixture();
+        engine.set_compliance_permit(karstd::control::PermitUpdate::Fresh(accepted_snapshot(
+            &self_handle,
+            Vec::new(),
+        )));
+        assert!(!engine.permits_for_test(
+            Direction::In,
+            0,
+            &tcp(B_IP, EPHEMERAL, A_IP, PROTECTED_PORT),
+            0
+        ));
+    }
+
+    #[test]
+    fn a_passing_source_restores_what_an_empty_gate_denied() {
+        let (engine, self_handle, peer_handle) = fixture();
+        let passing = vec![KarstComplianceSourcePermit {
+            handle: peer_handle,
+            device_id: "device-peer".into(),
+            evidence_generation: 1,
+            valid_for_millis: 60_000,
+        }];
+        engine.set_compliance_permit(karstd::control::PermitUpdate::Fresh(accepted_snapshot(
+            &self_handle,
+            passing,
+        )));
+        assert!(engine.permits_for_test(
+            Direction::In,
+            0,
+            &tcp(B_IP, EPHEMERAL, A_IP, PROTECTED_PORT),
+            0
+        ));
+    }
+
+    #[test]
+    fn traffic_outside_the_gates_own_port_is_unconstrained_by_it() {
+        let (engine, self_handle, _peer_handle) = fixture();
+        engine.set_compliance_permit(karstd::control::PermitUpdate::Fresh(accepted_snapshot(
+            &self_handle,
+            Vec::new(),
+        )));
+        // Same source, same destination, a port the gate never named: the
+        // unrestricted ACL still permits it, and compliance has nothing to
+        // say about it either -- "no matching guardrail leaves unprotected
+        // traffic unconstrained."
+        assert!(engine.permits_for_test(Direction::In, 0, &tcp(B_IP, EPHEMERAL, A_IP, 8080), 0));
+    }
 }
 
 #[test]

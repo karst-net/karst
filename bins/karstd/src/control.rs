@@ -47,6 +47,7 @@ const KIND_LOGIN: u8 = 1;
 const KIND_NETMAP: u8 = 2;
 const KIND_BEDROCK: u8 = 3;
 const KIND_COMPLIANCE: u8 = 5;
+const KIND_COMPLIANCE_PERMIT: u8 = 6;
 
 /// How often the netmap is refetched.
 ///
@@ -346,6 +347,22 @@ impl karst_relay_proto::Verifier for RelayVerifier {
 
 // ── the client ──────────────────────────────────────────────────────────────
 
+/// What changed to this node's held compliance permit snapshot since the
+/// last call to [`Client::take_permit_update`]. The caller (`run.rs`) must
+/// act on `Lost` by dropping whatever the engine currently holds, not by
+/// waiting for that snapshot's own expiry -- see
+/// [`crate::compliance::permit_context`]'s module doc on why reconnect,
+/// capability withdrawal and an invalid trusted context all produce this.
+#[derive(Debug)]
+pub enum PermitUpdate {
+    /// Nothing changed this cycle.
+    Unchanged,
+    /// A fresh snapshot to install, replacing whatever is currently held.
+    Fresh(karst_control_client::compliance::PermitSnapshot),
+    /// Drop whatever is currently held; nothing live to replace it with.
+    Lost,
+}
+
 /// A node's relationship with its coordination server.
 pub struct Client {
     endpoint: String,
@@ -370,6 +387,20 @@ pub struct Client {
     compliance_ingestion_schema: u32,
     last_compliance_attempt: Option<std::time::Instant>,
     compliance_reconnect: bool,
+    // Permit-snapshot client state (spec/device-compliance-v1.md's proposed
+    // authorization contract, #363). permit_context is this node's own
+    // trusted tenant/device/handle/revision binding, advertised on the
+    // netmap alongside compliance_permit_schema -- see `fetch`'s own
+    // extraction and `crate::compliance::permit_context`'s doc comment on
+    // why it needs that rather than deriving it locally.
+    compliance_permit_schema: u32,
+    permit_context: Option<karst_control_client::compliance::PermitContext>,
+    last_permit_attempt: Option<std::time::Instant>,
+    permit_reconnect: bool,
+    /// What `take_permit_update` hands the caller next -- a fresh snapshot,
+    /// nothing changed, or a signal to drop whatever the engine currently
+    /// holds. Never restored from a cache, the same as every field above.
+    pending_permit: PermitUpdate,
     /// Notified whenever the held connection's reader task decodes a push
     /// envelope. Outlives any one `Connection` — created once here and handed
     /// to every `Connection::open` call — so a caller `select!`ing on it does
@@ -570,6 +601,11 @@ impl Client {
             compliance_ingestion_schema: 0,
             last_compliance_attempt: None,
             compliance_reconnect: false,
+            compliance_permit_schema: 0,
+            permit_context: None,
+            last_permit_attempt: None,
+            permit_reconnect: false,
+            pending_permit: PermitUpdate::Unchanged,
             pushed: Arc::new(tokio::sync::Notify::new()),
             push_telemetry: Arc::new(karst_control_client::transport::PushTelemetry::default()),
             kem_public: keys.kem_pk.to_bytes().clone(),
@@ -697,6 +733,18 @@ impl Client {
         if !self.compliance_reconnect {
             self.last_compliance_attempt = None;
         }
+        self.compliance_permit_schema = 0;
+        self.permit_context = None;
+        if !self.permit_reconnect {
+            self.last_permit_attempt = None;
+        }
+        // A reconnect means a new authenticated transaction; the previous
+        // snapshot's binding was for the old one, and the trusted context it
+        // would be refreshed against may itself have changed while
+        // disconnected. Drop it now rather than let it ride on its own
+        // expiry -- `crate::compliance::permit_context`'s own doc comment on
+        // why dropping on reconnect is the caller's job, not this module's.
+        self.pending_permit = PermitUpdate::Lost;
         let registering = self.node_id.is_empty();
         let mut conn = Connection::open(
             self.endpoint.clone(),
@@ -723,6 +771,7 @@ impl Client {
             self.login(&mut conn).await?;
         }
         self.compliance_reconnect = false;
+        self.permit_reconnect = false;
         self.conn = Some(conn);
         Ok(())
     }
@@ -810,23 +859,88 @@ impl Client {
                 return Ok(outcome);
             }
         }
+        if self.compliance_permit_schema == 1
+            && crate::compliance::permit_due(self.last_permit_attempt, std::time::Instant::now())
+        {
+            self.last_permit_attempt = Some(std::time::Instant::now());
+            let result = tokio::time::timeout(
+                crate::compliance::PERMIT_REQUEST_TIMEOUT,
+                self.request_permit(&mut conn),
+            )
+            .await;
+            if let Ok(Ok(snapshot)) = result {
+                self.pending_permit = PermitUpdate::Fresh(snapshot);
+            } else {
+                // Same reasoning as the compliance-report failure above:
+                // never reuse a connection a timed-out or refused request may
+                // have left desynced. The held snapshot (if any) is
+                // untouched -- its own expiry, not this failure, is what
+                // bounds how long it keeps being honored.
+                self.permit_reconnect = true;
+                tracing::warn!("compliance permit request failed; reconnecting on the next sync");
+                return Ok(outcome);
+            }
+        }
         self.conn = Some(conn);
         Ok(outcome)
     }
 
-    /// Use a shorter poll only when a live server advertises ingestion support.
+    /// Takes whatever permit update is pending, leaving `Unchanged` behind.
+    /// Called once per `sync` by the caller that owns the engine
+    /// (`run.rs`), the same way `bedrock_snapshot`/`to_config` are.
+    pub fn take_permit_update(&mut self) -> PermitUpdate {
+        std::mem::replace(&mut self.pending_permit, PermitUpdate::Unchanged)
+    }
+
+    /// Use a shorter poll when a live server advertises ingestion or permit
+    /// support, whichever asks for the tighter interval.
     #[must_use]
     pub fn refresh_interval(&self) -> Duration {
         // Restore the push stream promptly after a failed report; the next
         // connection keeps the report retry interval to avoid a reconnect loop.
-        if self.compliance_reconnect {
+        if self.compliance_reconnect || self.permit_reconnect {
             return Duration::from_secs(1);
         }
+        let mut interval = REFRESH;
         if self.compliance_ingestion_schema == 1 {
-            crate::compliance::REPORT_INTERVAL
-        } else {
-            REFRESH
+            interval = interval.min(crate::compliance::REPORT_INTERVAL);
         }
+        if self.compliance_permit_schema == 1 {
+            interval = interval.min(crate::compliance::PERMIT_REFRESH_INTERVAL);
+        }
+        interval
+    }
+
+    /// Request and validate a fresh permit snapshot over the held
+    /// connection. `permit_context` must already be populated -- the caller
+    /// only invokes this when `compliance_permit_schema == 1`, which is
+    /// exactly when `fetch` populated it from the same live response.
+    async fn request_permit(
+        &self,
+        conn: &mut Connection,
+    ) -> Result<karst_control_client::compliance::PermitSnapshot, Error> {
+        use karst_control_client::compliance::PendingPermitRequest;
+        use prost::Message as _;
+        let context = self
+            .permit_context
+            .clone()
+            .ok_or_else(|| Error::Protocol("compliance permit context missing".into()))?;
+        let started = crate::compliance::elapsed_now();
+        let pending = PendingPermitRequest::new(context, crate::random_seed(), started)
+            .map_err(|e| Error::Protocol(e.to_string()))?;
+        let raw = self
+            .request(
+                conn,
+                KIND_COMPLIANCE_PERMIT,
+                &pending.request().encode_to_vec(),
+            )
+            .await?;
+        let reply = pb::KarstCompliancePermitSnapshot::decode(raw.as_slice())
+            .map_err(|e| Error::Protocol(format!("permit response: {e}")))?;
+        let now = crate::compliance::elapsed_now();
+        pending
+            .accept(&reply, now)
+            .map_err(|e| Error::Protocol(e.to_string()))
     }
 
     async fn report_compliance(&self, conn: &mut Connection) -> Result<(), Error> {
@@ -1198,9 +1312,26 @@ impl Client {
             .map_err(|e| Error::Protocol(format!("netmap response: {e}")))?;
 
         let compliance_schema = resp.compliance_ingestion_schema;
+        // Extracted before `resp` is consumed below, the same way
+        // `compliance_schema` is -- `Netmap` never tracks live compliance
+        // state itself; `to_wire_full`'s own hardcoded zeros are why ("never
+        // trust caches as a capability advertisement").
+        let permit_context = (resp.compliance_permit_schema == 1)
+            .then(|| {
+                crate::compliance::permit_context(
+                    resp.compliance_tenant_id.clone(),
+                    resp.compliance_device_id.clone(),
+                    self.identity.handle(),
+                    resp.compliance_policy_revision.clone(),
+                )
+            })
+            .flatten();
+        let permit_schema = u32::from(permit_context.is_some());
         match self.netmap.apply(resp) {
             Ok(outcome) => {
                 self.compliance_ingestion_schema = compliance_schema;
+                self.compliance_permit_schema = permit_schema;
+                self.permit_context = permit_context;
                 Ok(outcome)
             }
             Err(e @ crate::netmap::Error::VersionMismatch { .. }) => {
@@ -2194,5 +2325,6 @@ mod tests {
         assert_eq!(KIND_LOGIN, 1);
         assert_eq!(KIND_NETMAP, 2);
         assert_eq!(KIND_COMPLIANCE, 5);
+        assert_eq!(KIND_COMPLIANCE_PERMIT, 6);
     }
 }

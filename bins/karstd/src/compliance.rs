@@ -1,26 +1,102 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! Fresh, self-reported version observations. This module makes no compliance
-//! verdict and collects no disk, screen-lock, management or endpoint-security data.
+//! Fresh, self-reported version observations, and the permit-snapshot client
+//! side (spec/device-compliance-v1.md's "proposed authorization and
+//! enforcement contract"). This module makes no compliance verdict itself
+//! and collects no disk, screen-lock, management or endpoint-security data;
+//! [`PermitSnapshot`](karst_control_client::compliance::PermitSnapshot) is
+//! the reference verdict evaluator, consulted by [`crate::engine`].
+use karst_control_client::compliance::PermitContext;
 use karst_control_client::transport::pb::{
     karst_compliance_observation::Status, KarstComplianceObservation as Observation,
     KarstComplianceReport,
 };
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant, SystemTime};
 
 /// Poll/report every 30 seconds on supporting servers, leaving headroom below
 /// the 60-second reporting target. Only live capability advertisements count.
 pub const REPORT_INTERVAL: Duration = Duration::from_secs(30);
 /// Entire challenge/collect/submit round; a timed-out stream must be discarded.
 pub const REPORT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Refresh a permit every 30 seconds (spec's own target), independent of
+/// `REPORT_INTERVAL` even though the two happen to share a value today --
+/// a future change to one must not accidentally couple to the other.
+pub const PERMIT_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+/// Entire request/accept round; a timed-out stream must be discarded, the
+/// same reasoning `REPORT_TIMEOUT` documents.
+pub const PERMIT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const COLLECTION_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(any(target_os = "linux", test))]
 const MAX_OS_RELEASE: u64 = 16 * 1024;
 
-pub(crate) fn report_due(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
-    last.is_none_or(|last| now.saturating_duration_since(last) >= REPORT_INTERVAL)
+pub(crate) fn report_due(last: Option<Instant>, now: Instant) -> bool {
+    due(last, now, REPORT_INTERVAL)
+}
+
+pub(crate) fn permit_due(last: Option<Instant>, now: Instant) -> bool {
+    due(last, now, PERMIT_REFRESH_INTERVAL)
+}
+
+fn due(last: Option<Instant>, now: Instant, interval: Duration) -> bool {
+    last.is_none_or(|last| now.saturating_duration_since(last) >= interval)
+}
+
+/// A nonempty `compliance_permit_schema == 1` trust context, or `None` if
+/// the server omitted any field -- schema `1` with a missing field is a
+/// server bug, not a reason to construct and later fail on a
+/// [`PendingPermitRequest`](karst_control_client::compliance::PendingPermitRequest)
+/// that was never going to validate. The real security check is still
+/// `PendingPermitRequest::new`'s own `valid_id`/`valid_handle`; this is only
+/// a cheap, correct filter so an obviously-unusable advertisement does not
+/// get treated as "permits are live" for cadence-gating purposes.
+pub(crate) fn permit_context(
+    tenant_id: String,
+    device_id: String,
+    handle: String,
+    policy_revision: String,
+) -> Option<PermitContext> {
+    if tenant_id.is_empty()
+        || device_id.is_empty()
+        || handle.is_empty()
+        || policy_revision.is_empty()
+    {
+        return None;
+    }
+    Some(PermitContext {
+        tenant_id,
+        device_id,
+        handle,
+        policy_revision,
+    })
+}
+
+/// One process-wide, suspend-aware elapsed-time origin, shared by every
+/// caller of [`elapsed_now`] -- the control loop (requesting/accepting
+/// permits) and the datapath (evaluating them) must read the same clock, or
+/// a snapshot's request-relative deadlines mean different things to each.
+static ORIGIN: OnceLock<(Instant, SystemTime)> = OnceLock::new();
+
+/// Elapsed time since this process's first call to this function, immune to
+/// a monotonic clock that does not advance across suspend on some platforms
+/// (`karst_control_client::compliance`'s own module doc: "`Instant` is not a
+/// portable substitute"). Takes both a monotonic and a wall-clock reading and
+/// keeps whichever shows more elapsed time -- the same "larger gap wins"
+/// idiom [`crate::wake::Detector`] uses to tell a real suspend from an
+/// ordinary clock adjustment, applied here to a duration instead of a gap.
+/// A wall-clock-only *rollback* cannot move this backward, since the
+/// monotonic reading never does; `PermitSnapshot`'s own permanent-invalidation
+/// rule for a backward sample is a defense against a caller that did not use
+/// this function, not a case this one can produce.
+pub fn elapsed_now() -> Duration {
+    let (origin_instant, origin_wall) = *ORIGIN.get_or_init(|| (Instant::now(), SystemTime::now()));
+    let by_monotonic = Instant::now().saturating_duration_since(origin_instant);
+    let by_wall = SystemTime::now()
+        .duration_since(origin_wall)
+        .unwrap_or(Duration::ZERO);
+    by_monotonic.max(by_wall)
 }
 
 fn observation(status: Status, version: String) -> Observation {
@@ -350,5 +426,38 @@ mod tests {
                     .contains(&observed.status)
             );
         }
+    }
+
+    #[test]
+    fn permit_cadence_has_exact_boundaries_independent_of_report_cadence() {
+        let now = Instant::now();
+        assert!(permit_due(None, now));
+        assert!(!permit_due(Some(now), now));
+        assert!(!permit_due(
+            Some(now),
+            now + PERMIT_REFRESH_INTERVAL
+                .checked_sub(Duration::from_nanos(1))
+                .expect("positive refresh interval")
+        ));
+        assert!(permit_due(Some(now), now + PERMIT_REFRESH_INTERVAL));
+    }
+
+    #[test]
+    fn a_permit_context_needs_every_field_nonempty() {
+        let full = |t: &str, d: &str, h: &str, r: &str| {
+            permit_context(t.into(), d.into(), h.into(), r.into())
+        };
+        assert!(full("t", "d", "h", "r").is_some());
+        assert!(full("", "d", "h", "r").is_none());
+        assert!(full("t", "", "h", "r").is_none());
+        assert!(full("t", "d", "", "r").is_none());
+        assert!(full("t", "d", "h", "").is_none());
+    }
+
+    #[test]
+    fn elapsed_now_is_monotonic_and_shared_across_calls() {
+        let a = elapsed_now();
+        let b = elapsed_now();
+        assert!(b >= a);
     }
 }
