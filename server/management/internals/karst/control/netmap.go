@@ -63,9 +63,15 @@ type PeerLister interface {
 type NetmapHandler struct {
 	// ComplianceIngestion advertises schema 1 only when its handler/store are wired.
 	ComplianceIngestion bool
-	Nodes               *node.Store
-	Peers               PeerLister
-	PSK                 *psk.Deriver
+	// CompliancePermit advertises compliance_permit_schema 1 only when
+	// PermitHandler is wired -- independent of ComplianceIngestion, which it
+	// neither implies nor depends on either direction (PermitHandler's own
+	// doc comment). A present schema 1 means the server will *serve* a
+	// structurally valid snapshot, never that any guardrail is configured.
+	CompliancePermit bool
+	Nodes            *node.Store
+	Peers            PeerLister
+	PSK              *psk.Deriver
 	// Epoch is the current PSK rotation epoch (CurrentEpoch's pure function of
 	// the clock). Atomic because an EpochScheduler goroutine keeps it live for
 	// the life of the process (epoch.go) while every netmap build reads it
@@ -413,6 +419,21 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	}
 	if h.ComplianceIngestion {
 		resp.ComplianceIngestionSchema = 1
+	}
+	if h.CompliancePermit {
+		resp.CompliancePermitSchema = 1
+		// No prior wire message gives a node its own tenant_id/device_id, and
+		// policy_revision is server state it has no other way to learn in
+		// advance -- PermitHandler's own doc comment on why Draft is nil
+		// today is why this is always UnconfiguredComplianceRevision for now.
+		// If PermitHandler.Draft is ever wired to a real source, this must be
+		// updated alongside it -- both read the same tenant's revision, and
+		// a netmap advertising one revision while PermitHandler compiles
+		// another would let a client validate a snapshot against the wrong
+		// expectation.
+		resp.ComplianceTenantId = accountID
+		resp.ComplianceDeviceId = selfPeer.ID
+		resp.CompliancePolicyRevision = UnconfiguredComplianceRevision
 	}
 	resp.DnsConfig, err = h.dnsConfig(ctx, accountID, selfPeer.ID)
 	if err != nil {
