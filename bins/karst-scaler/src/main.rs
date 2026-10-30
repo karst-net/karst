@@ -56,6 +56,8 @@ use karst_scaler::{simulate, usage};
 
 mod advise_config;
 mod advise_loop;
+mod allocate_config;
+mod allocate_loop;
 mod drive_loop;
 mod metrics_http;
 
@@ -69,6 +71,7 @@ fn main() -> ExitCode {
         ["check", cost_model] => run_check(cost_model),
         ["advise", advise_config] => run_advise(advise_config),
         ["drive", advise_config] => run_drive(advise_config),
+        ["allocate", allocate_config] => run_allocate(allocate_config),
         _ => {
             usage_text();
             return ExitCode::FAILURE;
@@ -109,7 +112,18 @@ fn usage_text() {
                               check (see breaker.rs); requires a [breaker]
                               section in ADVISE_CONFIG.toml. Today the
                               underlying driver is always the no-op one
-                              -- see driver.rs"
+                              -- see driver.rs
+  allocate ALLOCATE_CONFIG.toml
+                              ADR-0063/#455: polls the control server for
+                              pending admin-triggered relay allocations
+                              and drives each one through requested ->
+                              provisioning -> granting -> ready, or ->
+                              revoking -> deprovisioning ->
+                              deprovisioned on teardown, forever. Not a
+                              pool: see allocate_loop's own module doc
+                              for why this is a sibling to drive, not a
+                              mode of it. v1 is AWS-only (driver.kind =
+                              \"aws\")."
     );
 }
 
@@ -161,6 +175,42 @@ fn run_drive(advise_config_path: &str) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     drive_loop::run(&config, &mut driver)
+}
+
+/// ADR-0063/#455: AWS only in v1 -- `karst-scaler-k8s` provisions cluster
+/// workloads, not a single named host with its own address/TLS identity
+/// the way `AwsDriver` does, and the LXD connection type (#430) has no
+/// provisioning driver at all yet. Both are plausible later targets, not
+/// v1 (ADR-0063's own "Negative" consequences).
+fn run_allocate(allocate_config_path: &str) -> Result<(), String> {
+    // Same reasoning as `load_drive_config`'s own identical line: ureq's
+    // TLS backend needs a crypto provider installed process-wide before
+    // the first HTTPS request.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let cfg = allocate_config::AllocateConfig::load(Path::new(allocate_config_path))
+        .map_err(|e| format!("reading {allocate_config_path}: {e}"))?;
+    let pat = std::fs::read_to_string(&cfg.pat_file)
+        .map_err(|e| format!("reading {}: {e}", cfg.pat_file))?
+        .trim()
+        .to_owned();
+    let control_api_base = cfg.control_api_base.trim_end_matches('/').to_owned();
+
+    if cfg.driver.kind != "aws" {
+        return Err(format!(
+            "{allocate_config_path}: driver.kind = {:?} is not supported by allocate yet \
+             (v1 is AWS-only -- ADR-0063)",
+            cfg.driver.kind
+        ));
+    }
+    let mut driver = build_aws_driver(&cfg.driver, &control_api_base)?;
+
+    let config = allocate_loop::Config {
+        control_api_base,
+        pat,
+        poll_interval: Duration::from_secs(cfg.poll_interval_secs),
+    };
+    allocate_loop::run(&config, driver.as_mut())
 }
 
 #[cfg(feature = "k8s")]
