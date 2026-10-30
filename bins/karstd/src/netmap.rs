@@ -1214,6 +1214,12 @@ impl Netmap {
         pb::KarstNetmapResponse {
             // Live advertisement only; offline caches cannot enable reports.
             compliance_ingestion_schema: 0,
+            // Same rule: an offline cache must never resurrect permit support
+            // or a stale trusted context as if it came from a live response.
+            compliance_permit_schema: 0,
+            compliance_tenant_id: String::new(),
+            compliance_device_id: String::new(),
+            compliance_policy_revision: String::new(),
             version: self.version,
             psk_epoch: self.psk_epoch,
             node_id: self.node_id.clone(),
