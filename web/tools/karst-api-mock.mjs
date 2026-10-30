@@ -55,6 +55,12 @@ const policySchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   type: "object",
   properties: {
+    grants: { type: "array", items: { type: "object", properties: {
+      id: { type: "string" }, name: { type: "string" }, source_groups: { type: "array" },
+      target_groups: { type: "array" }, target_nodes: { type: "array" }, networks: { type: "array" },
+      gateway: { type: "string" }, ports: { type: "string" }, ssh: { type: "boolean" },
+    } } },
+    groupBindings: { type: "object" },
     groups: { type: "object" },
     tagOwners: { type: "object" },
     acls: { type: "array", items: { type: "object", properties: { action: { const: "accept" }, src: { type: "array" }, dst: { type: "array" } } } },
