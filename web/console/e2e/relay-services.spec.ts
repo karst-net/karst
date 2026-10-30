@@ -4,6 +4,13 @@
 import { expect, test } from "@playwright/test";
 import { AxeBuilder } from "@axe-core/playwright";
 
+// Keep group choices local: the empty-account suite resets the shared mock.
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/groups", route => route.fulfill({ json: [
+    { id: "group-sre", name: "sre", peers_count: 18, resources_count: 0, issued: "api" },
+  ] }));
+});
+
 test("acknowledged mode withdrawal keeps Ponor and backend records intact", async ({ page }) => {
   let service = { id: "primary", ponor_id: "ponor", ponor_present: true, ponor_disabled: false };
   let submitted: unknown;
