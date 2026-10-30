@@ -717,6 +717,69 @@ func (e RelayAlertCandidateThresholdPercent) Valid() bool {
 	}
 }
 
+// Defines values for RelayAllocationFailedStep.
+const (
+	RelayAllocationFailedStepDeprovisioning RelayAllocationFailedStep = "deprovisioning"
+	RelayAllocationFailedStepGranting       RelayAllocationFailedStep = "granting"
+	RelayAllocationFailedStepProvisioning   RelayAllocationFailedStep = "provisioning"
+	RelayAllocationFailedStepRequested      RelayAllocationFailedStep = "requested"
+	RelayAllocationFailedStepRevoking       RelayAllocationFailedStep = "revoking"
+)
+
+// Valid indicates whether the value is a known member of the RelayAllocationFailedStep enum.
+func (e RelayAllocationFailedStep) Valid() bool {
+	switch e {
+	case RelayAllocationFailedStepDeprovisioning:
+		return true
+	case RelayAllocationFailedStepGranting:
+		return true
+	case RelayAllocationFailedStepProvisioning:
+		return true
+	case RelayAllocationFailedStepRequested:
+		return true
+	case RelayAllocationFailedStepRevoking:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayAllocationState.
+const (
+	RelayAllocationStateDeprovisioned  RelayAllocationState = "deprovisioned"
+	RelayAllocationStateDeprovisioning RelayAllocationState = "deprovisioning"
+	RelayAllocationStateFailed         RelayAllocationState = "failed"
+	RelayAllocationStateGranting       RelayAllocationState = "granting"
+	RelayAllocationStateProvisioning   RelayAllocationState = "provisioning"
+	RelayAllocationStateReady          RelayAllocationState = "ready"
+	RelayAllocationStateRequested      RelayAllocationState = "requested"
+	RelayAllocationStateRevoking       RelayAllocationState = "revoking"
+)
+
+// Valid indicates whether the value is a known member of the RelayAllocationState enum.
+func (e RelayAllocationState) Valid() bool {
+	switch e {
+	case RelayAllocationStateDeprovisioned:
+		return true
+	case RelayAllocationStateDeprovisioning:
+		return true
+	case RelayAllocationStateFailed:
+		return true
+	case RelayAllocationStateGranting:
+		return true
+	case RelayAllocationStateProvisioning:
+		return true
+	case RelayAllocationStateReady:
+		return true
+	case RelayAllocationStateRequested:
+		return true
+	case RelayAllocationStateRevoking:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RelayCapCurrency.
 const (
 	RelayCapCurrencyUSD RelayCapCurrency = "USD"
@@ -1113,6 +1176,21 @@ func (e ListPostureSessionsParamsPosture) Valid() bool {
 	case ListPostureSessionsParamsPostureStale:
 		return true
 	case ListPostureSessionsParamsPostureUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision.
+const (
+	DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovisionTrue DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision = true
+)
+
+// Valid indicates whether the value is a known member of the DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision enum.
+func (e DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision) Valid() bool {
+	switch e {
+	case DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovisionTrue:
 		return true
 	default:
 		return false
@@ -1949,6 +2027,54 @@ type RelayAlertFeed struct {
 	PeriodStart     time.Time `json:"period_start"`
 }
 
+// RelayAllocation defines model for RelayAllocation.
+type RelayAllocation struct {
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+
+	// EgressV4 Not yet supported; rejected if set until Gateway-identity binding is designed.
+	EgressV4 *bool `json:"egress_v4,omitempty"`
+
+	// EgressV6 Not yet supported; rejected if set until Gateway-identity binding is designed.
+	EgressV6 *bool `json:"egress_v6,omitempty"`
+
+	// FailedStep Only meaningful while state is failed.
+	FailedStep    *RelayAllocationFailedStep `json:"failed_step,omitempty"`
+	FailureReason *string                    `json:"failure_reason,omitempty"`
+
+	// Id Server-generated; never accepted from callers.
+	Id *string `json:"id,omitempty"`
+
+	// InfraConnectionId Existing account-local infrastructure connection ID.
+	InfraConnectionId string `json:"infra_connection_id"`
+
+	// InstanceId The Driver-reported compute instance
+	InstanceId *string `json:"instance_id,omitempty"`
+
+	// Location Region/zone/namespace code from that connection's own discovery.
+	Location string `json:"location"`
+	Name     string `json:"name"`
+
+	// PermittedGroups Stable account group IDs granted access once ready.
+	PermittedGroups []string `json:"permitted_groups"`
+
+	// RelayId The relay registry ID
+	RelayId *string `json:"relay_id,omitempty"`
+
+	// RelayTransport The only capability this workflow grants in v1 -- required true.
+	RelayTransport *bool `json:"relay_transport,omitempty"`
+
+	// Revision Expected revision for the next compare-and-set action against this allocation.
+	Revision  *int                  `json:"revision,omitempty"`
+	State     *RelayAllocationState `json:"state,omitempty"`
+	UpdatedAt *time.Time            `json:"updated_at,omitempty"`
+}
+
+// RelayAllocationFailedStep Only meaningful while state is failed.
+type RelayAllocationFailedStep string
+
+// RelayAllocationState defines model for RelayAllocation.State.
+type RelayAllocationState string
+
 // RelayCap defines model for RelayCap.
 type RelayCap struct {
 	AcknowledgedInterruption bool             `json:"acknowledged_interruption"`
@@ -2475,6 +2601,48 @@ type ListPostureSessionsParams struct {
 // ListPostureSessionsParamsPosture defines parameters for ListPostureSessions.
 type ListPostureSessionsParamsPosture string
 
+// DeleteRelayAllocationParams defines parameters for DeleteRelayAllocation.
+type DeleteRelayAllocationParams struct {
+	Revision int `form:"revision" json:"revision"`
+}
+
+// DeprovisionRelayAllocationJSONBody defines parameters for DeprovisionRelayAllocation.
+type DeprovisionRelayAllocationJSONBody struct {
+	AcknowledgeDeprovision DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision `json:"acknowledge_deprovision"`
+	Revision               int                                                      `json:"revision"`
+}
+
+// DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision defines parameters for DeprovisionRelayAllocation.
+type DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision bool
+
+// ConfirmRelayAllocationDeprovisionedJSONBody defines parameters for ConfirmRelayAllocationDeprovisioned.
+type ConfirmRelayAllocationDeprovisionedJSONBody struct {
+	ExpectedRevision int `json:"expected_revision"`
+}
+
+// ReportRelayAllocationFailedJSONBody defines parameters for ReportRelayAllocationFailed.
+type ReportRelayAllocationFailedJSONBody struct {
+	ExpectedRevision int    `json:"expected_revision"`
+	Reason           string `json:"reason"`
+}
+
+// GrantRelayAllocationJSONBody defines parameters for GrantRelayAllocation.
+type GrantRelayAllocationJSONBody struct {
+	ExpectedRevision int    `json:"expected_revision"`
+	TlsServerName    string `json:"tls_server_name"`
+}
+
+// RecordRelayAllocationProvisioningJSONBody defines parameters for RecordRelayAllocationProvisioning.
+type RecordRelayAllocationProvisioningJSONBody struct {
+	ExpectedRevision int    `json:"expected_revision"`
+	InstanceId       string `json:"instance_id"`
+}
+
+// RevokeRelayAllocationJSONBody defines parameters for RevokeRelayAllocation.
+type RevokeRelayAllocationJSONBody struct {
+	ExpectedRevision int `json:"expected_revision"`
+}
+
 // SetRelayPublicationJSONBody defines parameters for SetRelayPublication.
 type SetRelayPublicationJSONBody struct {
 	AcknowledgeConnectivityChange SetRelayPublicationJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
@@ -2604,6 +2772,27 @@ type ValidatePolicyJSONRequestBody = PolicyWrite
 
 // CreateAllowedRegionJSONRequestBody defines body for CreateAllowedRegion for application/json ContentType.
 type CreateAllowedRegionJSONRequestBody = AllowedRegion
+
+// CreateRelayAllocationJSONRequestBody defines body for CreateRelayAllocation for application/json ContentType.
+type CreateRelayAllocationJSONRequestBody = RelayAllocation
+
+// DeprovisionRelayAllocationJSONRequestBody defines body for DeprovisionRelayAllocation for application/json ContentType.
+type DeprovisionRelayAllocationJSONRequestBody DeprovisionRelayAllocationJSONBody
+
+// ConfirmRelayAllocationDeprovisionedJSONRequestBody defines body for ConfirmRelayAllocationDeprovisioned for application/json ContentType.
+type ConfirmRelayAllocationDeprovisionedJSONRequestBody ConfirmRelayAllocationDeprovisionedJSONBody
+
+// ReportRelayAllocationFailedJSONRequestBody defines body for ReportRelayAllocationFailed for application/json ContentType.
+type ReportRelayAllocationFailedJSONRequestBody ReportRelayAllocationFailedJSONBody
+
+// GrantRelayAllocationJSONRequestBody defines body for GrantRelayAllocation for application/json ContentType.
+type GrantRelayAllocationJSONRequestBody GrantRelayAllocationJSONBody
+
+// RecordRelayAllocationProvisioningJSONRequestBody defines body for RecordRelayAllocationProvisioning for application/json ContentType.
+type RecordRelayAllocationProvisioningJSONRequestBody RecordRelayAllocationProvisioningJSONBody
+
+// RevokeRelayAllocationJSONRequestBody defines body for RevokeRelayAllocation for application/json ContentType.
+type RevokeRelayAllocationJSONRequestBody RevokeRelayAllocationJSONBody
 
 // CreateRelayServiceJSONRequestBody defines body for CreateRelayService for application/json ContentType.
 type CreateRelayServiceJSONRequestBody = RelayService

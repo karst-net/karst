@@ -251,6 +251,29 @@ func (s *Store) DeleteByTLSServerName(ctx context.Context, tlsServerName string)
 	return s.Delete(ctx, existing.ID)
 }
 
+// FindByTLSServerName looks up the registry entry whose TLSServerName
+// matches exactly, scoped to the caller's account -- the read-side
+// counterpart to DeleteByTLSServerName (#329), for ADR-0063's "wait for
+// the relay to register" step: the tls_server_name a Driver computes
+// before an instance even exists (bundle::tls_server_name in
+// bins/karst-scaler-aws) is the one identifier the allocation
+// reconciliation loop can correlate against without yet knowing the
+// relay's own identity-derived id.
+func (s *Store) FindByTLSServerName(ctx context.Context, tlsServerName string) (*StoredRelay, error) {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var existing StoredRelay
+	if err := s.db.Where("account_id = ? AND tls_server_name = ?", accountID, tlsServerName).First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("relay registry: find by tls_server_name: %w", err)
+	}
+	return &existing, nil
+}
+
 // FindByID looks up every registered relay with this id, across every
 // account — ADR-0021. Unlike every other method here, deliberately not
 // account-scoped: a relay authenticates a telemetry report by proving

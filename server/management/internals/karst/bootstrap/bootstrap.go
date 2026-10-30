@@ -49,6 +49,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
+	"github.com/netbirdio/netbird/management/internals/karst/relayalloc"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
@@ -295,6 +296,13 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		return nil, fmt.Errorf("karst: relay service store: %w", err)
 	}
 	relayServiceStore.LifecycleAgents = nodes
+	// ADR-0063/#455: the admin-triggered relay allocation record and its
+	// own state machine, independent of relayServiceStore's access state
+	// and the scaler's pool state. See relayalloc's own package doc.
+	relayAllocationStore, err := relayalloc.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: relay allocation store: %w", err)
+	}
 	knownEventsStore, err := knownevents.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: known events store: %w", err)
@@ -443,6 +451,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, nodes, router)
 		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager(), Audit: auditLog})
+		karstapi.RegisterRelayAllocationEndpoints(router, s.PermissionsManager(), relayAllocationStore, relayStore, relayServiceStore, karstapi.RelayAllocationOptions{Audit: auditLog})
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)

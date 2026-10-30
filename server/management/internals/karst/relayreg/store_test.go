@@ -357,6 +357,42 @@ func TestDeleteByTLSServerNameIsScopedToTheAskingAccount(t *testing.T) {
 	}
 }
 
+func TestFindByTLSServerNameReturnsTheMatchingEntry(t *testing.T) {
+	s := newTestStore(t)
+	ctx := WithAccount(context.Background(), "acct-a")
+	kept := mustCreateWithTLSServerName(t, s, "acct-a", 0xaa, "pool-eeeeee.aws.karst.internal")
+	mustCreateWithTLSServerName(t, s, "acct-a", 0xbb, "pool-ffffff.aws.karst.internal")
+
+	found, err := s.FindByTLSServerName(ctx, "pool-eeeeee.aws.karst.internal")
+	if err != nil {
+		t.Fatalf("find by tls_server_name: %v", err)
+	}
+	if found.ID != kept.ID {
+		t.Fatalf("got %+v, want the relay at pool-eeeeee...", found)
+	}
+}
+
+func TestFindByTLSServerNameOfAnUnknownNameIsErrNotFound(t *testing.T) {
+	s := newTestStore(t)
+	ctx := WithAccount(context.Background(), "acct-a")
+	mustCreateWithTLSServerName(t, s, "acct-a", 0xcc, "pool-gggggg.aws.karst.internal")
+
+	_, err := s.FindByTLSServerName(ctx, "pool-never-registered.aws.karst.internal")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("find by tls_server_name: got %v, want ErrNotFound", err)
+	}
+}
+
+func TestFindByTLSServerNameIsScopedToTheAskingAccount(t *testing.T) {
+	s := newTestStore(t)
+	mustCreateWithTLSServerName(t, s, "acct-a", 0xdd, "pool-hhhhhh.aws.karst.internal")
+
+	_, err := s.FindByTLSServerName(WithAccount(context.Background(), "acct-b"), "pool-hhhhhh.aws.karst.internal")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("find by tls_server_name across accounts: got %v, want ErrNotFound", err)
+	}
+}
+
 func TestDeleteByAddressRemovesTheMatchingEntry(t *testing.T) {
 	s := newTestStore(t)
 	ctx := WithAccount(context.Background(), "acct-a")

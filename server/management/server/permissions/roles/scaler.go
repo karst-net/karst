@@ -9,16 +9,22 @@ import (
 	"github.com/netbirdio/netbird/management/server/types"
 )
 
-// Scaler is ADR-0045 §7 Phase 2's role for karst-scaler's own `drive` loop.
-// Create access on modules.KarstControl — this RBAC model's only module
-// granularity, same limitation [Advisor]'s own doc comment names — is
-// wider than this role is actually meant to reach (every mutation under
-// /karst/v1, not just minting a relay-enroll token, or requesting a relay
-// de-enrollment), so karstAuthorization (nodes.go) additionally
-// hard-allowlists this role to exactly the `/karst/v1/relays/enroll-tokens`
-// and `/karst/v1/relays/deenroll` routes, overriding what the module-level
-// grant below would otherwise permit. That allowlist, not this struct, is
-// what actually keeps this role narrow; see its own doc comment for why.
+// Scaler is ADR-0045 §7 Phase 2's role for karst-scaler's own `drive` loop,
+// extended by ADR-0063/#455 for the sibling `allocate` loop that drives
+// admin-triggered relay allocations. Create access on modules.KarstControl
+// — this RBAC model's only module granularity, same limitation [Advisor]'s
+// own doc comment names — is wider than this role is actually meant to
+// reach (every mutation under /karst/v1, not just minting a relay-enroll
+// token, requesting a relay de-enrollment, or driving one allocation
+// through its own steps), so karstAuthorization (nodes.go) additionally
+// hard-allowlists this role to exactly `/karst/v1/relays/enroll-tokens`,
+// `/karst/v1/relays/deenroll`, `/karst/v1/relay-allocations/pending`, and
+// `/karst/v1/relay-allocations/{id}/{provisioning,grant,revoke,deprovisioned,failed}`,
+// overriding what the module-level grant below would otherwise permit —
+// relay-services' own routes are deliberately not included; see
+// RegisterRelayAllocationEndpoints' own doc comment for why. That
+// allowlist, not this struct, is what actually keeps this role narrow; see
+// its own doc comment for why.
 //
 // Delete stays false even though relayDeenroll removes a relayreg.Store row
 // (ADR-0045 §7, issue #319): the route is a POST, deliberately shaped as a
