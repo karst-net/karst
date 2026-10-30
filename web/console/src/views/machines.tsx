@@ -2,7 +2,7 @@
 // Copyright the Karst contributors.
 
 import { useEffect, useMemo, useState } from "react";
-import type { Node } from "@karst-net/api-client";
+import type { Node, NodeCompliance } from "@karst-net/api-client";
 import { Dialog, EmptyState, Observed, Status, type StatusState } from "@karst-net/ui";
 import { api, type MeshDomain } from "../api";
 import { domainDNSName, peerDNSName } from "../domains";
@@ -29,6 +29,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
   const [renaming, setRenaming] = useState<{ node: Node; name: string }>();
   const [moving, setMoving] = useState<{ node: Node; domainId: string }>();
   const [paths, setPaths] = useState<{ node: Node; value?: Paths; error?: string }>();
+  const [compliance, setCompliance] = useState<{ node: Node; value?: NodeCompliance; error?: string }>();
   const [domains, setDomains] = useState<MeshDomain[]>([]);
   useEffect(() => {
     let active = true;
@@ -70,6 +71,11 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
     setPaths({ node });
     try { setPaths({ node, value: await api.nodePaths(node.handle) }); }
     catch (error) { setPaths({ node, error: (error as Error).message }); }
+  };
+  const showCompliance = async (node: Node) => {
+    setCompliance({ node });
+    try { setCompliance({ node, value: await api.nodeCompliance(node.handle) }); }
+    catch (error) { setCompliance({ node, error: (error as Error).message }); }
   };
   return <section>
     <h2>Machines</h2>
@@ -116,7 +122,10 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
               <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
               <td><Status state={statusFor(node.posture.status)} label={node.posture.status.replaceAll("_", " ")} /></td>
               <td><Observed at={node.last_seen_at} /></td>
-              <td><button onClick={() => void showPaths(node)}>Paths</button></td>
+              <td><div className="actions">
+                <button onClick={() => void showPaths(node)}>Paths</button>
+                <button onClick={() => void showCompliance(node)}>Compliance</button>
+              </div></td>
             </tr>)}
           </Rows>}
     </>}
@@ -159,6 +168,26 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
         </Rows>}
       <p className="lede">Sent/received are running totals for this session, as this machine last reported them — not a live rate.</p>
       <div className="actions"><button onClick={() => setPaths(undefined)}>Close</button></div>
+    </Dialog>}
+
+    {compliance && <Dialog open title={`Compliance — ${compliance?.node.name ?? ""}`} onClose={() => setCompliance(undefined)}>
+      {compliance?.error ? <p role="alert">{compliance.error}</p> : !compliance?.value ? <p>Loading compliance evidence…</p> : (() => {
+        const value = compliance.value;
+        if (value.status === "unconfigured") return <p>Device compliance is not configured for this account.</p>;
+        if (value.status === "unreported") return <p>No compliance evidence has been reported by this device yet.</p>;
+        return <>
+          <Rows head={<><th>Field</th><th>Value</th></>}>
+            <tr><td>Platform</td><td>{value.platform ?? "—"}{value.distribution ? ` (${value.distribution})` : ""}</td></tr>
+            <tr><td>Client version</td><td>{value.client_version ?? "—"}{value.client_version_status && value.client_version_status !== "collected" ? ` — ${value.client_version_status.replaceAll("-", " ")}` : ""}</td></tr>
+            <tr><td>OS version</td><td>{value.os_version ?? "—"}{value.os_version_status && value.os_version_status !== "collected" ? ` — ${value.os_version_status.replaceAll("-", " ")}` : ""}</td></tr>
+            <tr><td>Collector version</td><td>{value.collector_version ?? "—"}</td></tr>
+            <tr><td>Report generation</td><td>{value.generation ?? "—"}</td></tr>
+            <tr><td>Received</td><td><Observed at={value.received_at} /></td></tr>
+          </Rows>
+          <p className="lede">Self-reported evidence only, not a pass/fail verdict: this account has no compliance requirements configured yet.</p>
+        </>;
+      })()}
+      <div className="actions"><button onClick={() => setCompliance(undefined)}>Close</button></div>
     </Dialog>}
 
   </section>;

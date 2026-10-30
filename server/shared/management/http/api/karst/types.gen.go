@@ -612,6 +612,90 @@ func (e NocComponentKind) Valid() bool {
 	}
 }
 
+// Defines values for NodeComplianceClientVersionStatus.
+const (
+	NodeComplianceClientVersionStatusCollected       NodeComplianceClientVersionStatus = "collected"
+	NodeComplianceClientVersionStatusCollectionError NodeComplianceClientVersionStatus = "collection-error"
+	NodeComplianceClientVersionStatusUnsupported     NodeComplianceClientVersionStatus = "unsupported"
+)
+
+// Valid indicates whether the value is a known member of the NodeComplianceClientVersionStatus enum.
+func (e NodeComplianceClientVersionStatus) Valid() bool {
+	switch e {
+	case NodeComplianceClientVersionStatusCollected:
+		return true
+	case NodeComplianceClientVersionStatusCollectionError:
+		return true
+	case NodeComplianceClientVersionStatusUnsupported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NodeComplianceOsVersionStatus.
+const (
+	NodeComplianceOsVersionStatusCollected       NodeComplianceOsVersionStatus = "collected"
+	NodeComplianceOsVersionStatusCollectionError NodeComplianceOsVersionStatus = "collection-error"
+	NodeComplianceOsVersionStatusUnsupported     NodeComplianceOsVersionStatus = "unsupported"
+)
+
+// Valid indicates whether the value is a known member of the NodeComplianceOsVersionStatus enum.
+func (e NodeComplianceOsVersionStatus) Valid() bool {
+	switch e {
+	case NodeComplianceOsVersionStatusCollected:
+		return true
+	case NodeComplianceOsVersionStatusCollectionError:
+		return true
+	case NodeComplianceOsVersionStatusUnsupported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NodeCompliancePlatform.
+const (
+	NodeCompliancePlatformDarwin  NodeCompliancePlatform = "darwin"
+	NodeCompliancePlatformLinux   NodeCompliancePlatform = "linux"
+	NodeCompliancePlatformWindows NodeCompliancePlatform = "windows"
+)
+
+// Valid indicates whether the value is a known member of the NodeCompliancePlatform enum.
+func (e NodeCompliancePlatform) Valid() bool {
+	switch e {
+	case NodeCompliancePlatformDarwin:
+		return true
+	case NodeCompliancePlatformLinux:
+		return true
+	case NodeCompliancePlatformWindows:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NodeComplianceStatus.
+const (
+	NodeComplianceStatusReported     NodeComplianceStatus = "reported"
+	NodeComplianceStatusUnconfigured NodeComplianceStatus = "unconfigured"
+	NodeComplianceStatusUnreported   NodeComplianceStatus = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the NodeComplianceStatus enum.
+func (e NodeComplianceStatus) Valid() bool {
+	switch e {
+	case NodeComplianceStatusReported:
+		return true
+	case NodeComplianceStatusUnconfigured:
+		return true
+	case NodeComplianceStatusUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NodePostureStatus.
 const (
 	NodePostureStatusLatticeOnly NodePostureStatus = "lattice_only"
@@ -1849,6 +1933,32 @@ type Node struct {
 	Tags       []string    `json:"tags"`
 	UserId     string      `json:"user_id"`
 }
+
+// NodeCompliance Self-reported device compliance evidence (ADR-0055), retained for this node. No pass/fail verdict is included: no compliance requirements are configurable yet (see spec/device-compliance-v1.md), and a server verdict synthesized from absent requirements would read as a false green status in the console.
+type NodeCompliance struct {
+	ClientVersion       *string                            `json:"client_version,omitempty"`
+	ClientVersionStatus *NodeComplianceClientVersionStatus `json:"client_version_status,omitempty"`
+	CollectorVersion    *string                            `json:"collector_version,omitempty"`
+	Distribution        *string                            `json:"distribution,omitempty"`
+	Generation          *int                               `json:"generation,omitempty"`
+	OsVersion           *string                            `json:"os_version,omitempty"`
+	OsVersionStatus     *NodeComplianceOsVersionStatus     `json:"os_version_status,omitempty"`
+	Platform            *NodeCompliancePlatform            `json:"platform,omitempty"`
+	ReceivedAt          *time.Time                         `json:"received_at,omitempty"`
+	Status              NodeComplianceStatus               `json:"status"`
+}
+
+// NodeComplianceClientVersionStatus defines model for NodeCompliance.ClientVersionStatus.
+type NodeComplianceClientVersionStatus string
+
+// NodeComplianceOsVersionStatus defines model for NodeCompliance.OsVersionStatus.
+type NodeComplianceOsVersionStatus string
+
+// NodeCompliancePlatform defines model for NodeCompliance.Platform.
+type NodeCompliancePlatform string
+
+// NodeComplianceStatus defines model for NodeCompliance.Status.
+type NodeComplianceStatus string
 
 // NodePage defines model for NodePage.
 type NodePage struct {

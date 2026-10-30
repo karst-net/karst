@@ -541,7 +541,7 @@ const server = http.createServer((request, response) => {
   if (memberDevice && method === "PATCH") return readBody(request).then((body) => { const device = memberDevices.find((item) => item.handle === memberDevice[1]); if (!device) return error(response, 404, "not_found", "device not found"); if (typeof body.name !== "string" || !body.name.trim()) return error(response, 400, "invalid_argument", "name is required"); device.name = body.name.trim(); return json(response, 200, device); });
   if (memberDevice && method === "DELETE") { const index = memberDevices.findIndex((item) => item.handle === memberDevice[1]); if (index < 0) return error(response, 404, "not_found", "device not found"); memberDevices.splice(index, 1); return noContent(response); }
 
-  const nodeMatch = karst.match(/^\/nodes\/([^/]+)(?:\/(paths|posture))?$/);
+  const nodeMatch = karst.match(/^\/nodes\/([^/]+)(?:\/(paths|posture|compliance))?$/);
   const relayMatch = karst.match(/^\/relays\/([^/]+)(?:\/health)?$/);
 
   if (method === "GET" && karst === "/nodes") return json(response, 200, page(fixture.nodes, url));
@@ -551,6 +551,12 @@ const server = http.createServer((request, response) => {
     const node = fixture.nodes[index];
     if (method === "GET" && nodeMatch[2] === "paths") return json(response, 200, { observed_at: fixture.asOf, paths: [{ peer_handle: fixture.nodes[1].handle, kind: "relay", endpoint: null, relay_id: fixture.relays[0]?.id ?? null, since: null, observed_at: fixture.asOf, tx_bytes: 1_234_567, rx_bytes: 7_654_321 }] });
     if (method === "GET" && nodeMatch[2] === "posture") return json(response, 200, node.posture);
+    // ADR-0055: self-reported evidence only, no pass/fail verdict. The
+    // fixture's first node has reported; the rest are unreported, which
+    // exercises both console states without a per-node fixture field.
+    if (method === "GET" && nodeMatch[2] === "compliance") return json(response, 200, index === 0
+      ? { status: "reported", platform: "linux", distribution: "ubuntu", client_version_status: "collected", client_version: "1.4.0", os_version_status: "collected", os_version: "22.04", collector_version: "1.4.0", generation: 3, received_at: fixture.asOf }
+      : { status: "unreported" });
     if (method === "GET") return json(response, 200, node);
     // Name and domain_id (ADR-0032), nothing else, exactly as the contract's
     // updateNode enforces: a console that offered tags here would pass
