@@ -1604,3 +1604,47 @@ func TestCompliancePermitAdvertisementIsLiveOnUnchangedResponses(t *testing.T) {
 		t.Fatal("trusted permit context survived withdrawal")
 	}
 }
+
+// TestCompliancePolicyRevisionHookOverridesTheDefault proves
+// NetmapHandler.CompliancePolicyRevision -- added for #363's end-to-end
+// permit test, which needs the netmap to advertise a real revision matching
+// a real Draft rather than the hardcoded default every other deployment
+// still gets.
+func TestCompliancePolicyRevisionHookOverridesTheDefault(t *testing.T) {
+	f := newNetmapFixture(t, 1)
+	f.handler.CompliancePermit = true
+
+	t.Run("nil hook keeps today's exact behavior", func(t *testing.T) {
+		resp := requestNetmap(t, f, 0)
+		if resp.CompliancePolicyRevision != control.UnconfiguredComplianceRevision {
+			t.Fatalf("got %q", resp.CompliancePolicyRevision)
+		}
+	})
+
+	t.Run("a real revision is advertised", func(t *testing.T) {
+		f.handler.CompliancePolicyRevision = func(context.Context, string) (string, error) { return "test-revision-1", nil }
+		resp := requestNetmap(t, f, 0)
+		if resp.CompliancePolicyRevision != "test-revision-1" {
+			t.Fatalf("got %q", resp.CompliancePolicyRevision)
+		}
+	})
+
+	t.Run("an empty string still falls back to the default", func(t *testing.T) {
+		f.handler.CompliancePolicyRevision = func(context.Context, string) (string, error) { return "", nil }
+		resp := requestNetmap(t, f, 0)
+		if resp.CompliancePolicyRevision != control.UnconfiguredComplianceRevision {
+			t.Fatalf("got %q", resp.CompliancePolicyRevision)
+		}
+	})
+
+	t.Run("an error fails the whole request closed", func(t *testing.T) {
+		f.handler.CompliancePolicyRevision = func(context.Context, string) (string, error) {
+			return "", errors.New("boom")
+		}
+		defer func() { f.handler.CompliancePolicyRevision = nil }()
+		_, err := requestNetmapReporting(t, f, nil)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+}

@@ -69,9 +69,19 @@ type NetmapHandler struct {
 	// doc comment). A present schema 1 means the server will *serve* a
 	// structurally valid snapshot, never that any guardrail is configured.
 	CompliancePermit bool
-	Nodes            *node.Store
-	Peers            PeerLister
-	PSK              *psk.Deriver
+	// CompliancePolicyRevision, when set, supplies the real revision to
+	// advertise alongside CompliancePermit instead of
+	// UnconfiguredComplianceRevision -- for a caller that has wired
+	// PermitHandler.Draft to an actual source and needs the netmap to
+	// advertise the matching revision, not the hardcoded default every other
+	// production deployment still gets. nil preserves today's exact
+	// behavior. An empty string return (not an error) also falls back to
+	// UnconfiguredComplianceRevision, the same way PermitHandler's own Draft
+	// callback treats an empty TenantID as "nothing configured."
+	CompliancePolicyRevision func(ctx context.Context, tenantID string) (string, error)
+	Nodes                    *node.Store
+	Peers                    PeerLister
+	PSK                      *psk.Deriver
 	// Epoch is the current PSK rotation epoch (CurrentEpoch's pure function of
 	// the clock). Atomic because an EpochScheduler goroutine keeps it live for
 	// the life of the process (epoch.go) while every netmap build reads it
@@ -433,7 +443,17 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		// expectation.
 		resp.ComplianceTenantId = accountID
 		resp.ComplianceDeviceId = selfPeer.ID
-		resp.CompliancePolicyRevision = UnconfiguredComplianceRevision
+		revision := UnconfiguredComplianceRevision
+		if h.CompliancePolicyRevision != nil {
+			r, err := h.CompliancePolicyRevision(ctx, accountID)
+			if err != nil {
+				return nil, fmt.Errorf("compliance policy revision: %w", err)
+			}
+			if r != "" {
+				revision = r
+			}
+		}
+		resp.CompliancePolicyRevision = revision
 	}
 	resp.DnsConfig, err = h.dnsConfig(ctx, accountID, selfPeer.ID)
 	if err != nil {

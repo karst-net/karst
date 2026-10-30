@@ -255,6 +255,7 @@ const (
 
 type router struct {
 	compliance  *complianceFixture
+	permit      *permitFixture
 	rootDomains *rootDomainFixture
 	netmap      *control.NetmapHandler
 	bedrock     *control.BedrockHandler
@@ -319,6 +320,11 @@ func (r *router) Handle(ctx context.Context, nodeID, identityPub, payload []byte
 			return nil, errors.New("compliance is not configured on this fixture")
 		}
 		return r.compliance.handle(ctx, nodeID, identityPub, body)
+	case control.KindCompliancePermit:
+		if r.permit == nil {
+			return nil, errors.New("compliance permits are not configured on this fixture")
+		}
+		return r.permit.handler.Handle(ctx, nodeID, identityPub, body)
 	case kindBedrock:
 		if r.bedrock == nil {
 			return nil, errors.New("bedrock is not configured on this fixture")
@@ -560,6 +566,9 @@ func buildNetmapServer(preload int, dnsZone string, sshPolicy string, gatewayVer
 		}
 	}
 	if err := installComplianceFixture(r, db); err != nil {
+		return nil, err
+	}
+	if err := installPermitFixture(r); err != nil {
 		return nil, err
 	}
 	return r, nil
