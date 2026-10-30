@@ -422,6 +422,18 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	}
 	if h.CompliancePermit {
 		resp.CompliancePermitSchema = 1
+		// No prior wire message gives a node its own tenant_id/device_id, and
+		// policy_revision is server state it has no other way to learn in
+		// advance -- PermitHandler's own doc comment on why Draft is nil
+		// today is why this is always UnconfiguredComplianceRevision for now.
+		// If PermitHandler.Draft is ever wired to a real source, this must be
+		// updated alongside it -- both read the same tenant's revision, and
+		// a netmap advertising one revision while PermitHandler compiles
+		// another would let a client validate a snapshot against the wrong
+		// expectation.
+		resp.ComplianceTenantId = accountID
+		resp.ComplianceDeviceId = selfPeer.ID
+		resp.CompliancePolicyRevision = UnconfiguredComplianceRevision
 	}
 	resp.DnsConfig, err = h.dnsConfig(ctx, accountID, selfPeer.ID)
 	if err != nil {
