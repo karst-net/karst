@@ -577,7 +577,8 @@ jobs:
   # binaries cannot execute on an Apple Silicon runner without Rosetta, and
   # this job installs its own package and runs the binaries inside it as its
   # verification step. `macos-15-intel` is GitHub's last Intel image
-  # (retiring alongside macOS 15, not before); `macos-14` is Apple Silicon.
+  # (retiring alongside macOS 15, not before); `macos-15` is Apple Silicon
+  # (`macos-14` retired November 2026).
   #
   # ## Why signing is conditional and not required here
   #
@@ -602,7 +603,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
+            runner: macos-15
           - arch: x86_64
             runner: macos-15-intel
     env:
@@ -812,17 +813,18 @@ jobs:
   # Unsigned, always, for now: no Apple Developer Program Mac App Store
   # certificates exist in this environment yet (unlike the Developer-ID
   # build, which already has `APPLE_CERT_P12`/etc. configured) — this job
-  # exists to prove the artifact actually builds on a real macos-14 runner,
-  # the same bar `macos-package` itself had to clear first before any
-  # signing credentials existed for it. Signing/provisioning-profile
-  # plumbing is a real follow-up once real Mac App Store credentials exist,
-  # not invented speculatively here against secrets nobody has set.
+  # exists to prove the artifact actually builds on a real macos-15 runner
+  # (`macos-14` retired November 2026), the same bar `macos-package` itself
+  # had to clear first before any signing credentials existed for it.
+  # Signing/provisioning-profile plumbing is a real follow-up once real Mac
+  # App Store credentials exist, not invented speculatively here against
+  # secrets nobody has set.
   #
   # arm64 only for this pass, matching `app-store`'s own existing scope
   # below (Apple Silicon is what a Store submission would actually target).
   macos-appstore-package:
     name: macOS App Store package (arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Compute release version
@@ -1135,7 +1137,7 @@ jobs:
   app-store:
     name: Mac App Store (stub)
     needs: macos-appstore-package
-    runs-on: macos-14
+    runs-on: macos-15
     continue-on-error: true
     # Tags only. Deliberately *not* also gated on the certificates being
     # present: a job-level `if:` cannot see the `secrets` context, and the

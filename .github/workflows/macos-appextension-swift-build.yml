@@ -28,7 +28,7 @@ on:
 jobs:
   packet-tunnel-app-extension:
     name: KarstPacketTunnelAppExtension swift build
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +47,7 @@ jobs:
 
   app-store-host-app:
     name: KarstAppStore swift build
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
