@@ -1590,3 +1590,281 @@ async fn compliance_timeout_discards_the_stream_before_reconnecting() {
         Outcome::Unchanged
     ));
 }
+
+/// #363, spec/device-compliance-v1.md stage 6: the first real Go-control /
+/// Rust-datapath test for the permit protocol, not a hand-built snapshot.
+///
+/// A real Go test server issues real compliance permits compiled from real
+/// self-reported evidence two real `karstd` clients submit over the wire,
+/// and a real `Engine` enforces the result on the packet path -- proving
+/// the whole chain PR1/PR2 built actually agrees end to end, and measuring
+/// the real revocation bound (spec target: 120 seconds after the last
+/// permit issuance) rather than asserting it from reading the code.
+///
+/// Real time budget: a handful of real round trips (sub-second) plus one
+/// real wait through the 30-second permit refresh cadence while measuring
+/// how long a policy change (raising a device below the gate's own
+/// evidence-generation requirement) takes to reach enforcement -- a worst
+/// case around 150s if that measurement loop runs long, typically much
+/// less. Consistent with this suite's existing scale: every row here is
+/// `--ignored` and already needs a live Go toolchain and real sockets.
+#[tokio::test]
+#[ignore = "needs a Go toolchain; run with --ignored"]
+#[allow(clippy::too_many_lines)]
+async fn compliance_permit_issuance_enforcement_and_revocation_bound_are_real_end_to_end() {
+    use std::io::{Read as _, Write as _};
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
+
+    use karstd::control::PermitUpdate;
+    use karstd::engine::Engine;
+    use karstd::filter::Direction;
+
+    fn free_addr() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve port");
+        let addr = listener.local_addr().expect("port");
+        drop(listener);
+        addr
+    }
+    fn post(address: SocketAddr, path: &str, body: &serde_json::Value) {
+        let mut stream = TcpStream::connect(address).expect("admin HTTP connection");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("HTTP timeout");
+        let body = body.to_string();
+        write!(
+            stream,
+            "POST {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .expect("HTTP request");
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).expect("HTTP reply");
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+    }
+    fn peer_count(address: SocketAddr) -> usize {
+        let mut stream = TcpStream::connect(address).expect("admin HTTP connection");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("HTTP timeout");
+        write!(
+            stream,
+            "GET /peers HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
+        )
+        .expect("HTTP request");
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).expect("HTTP reply");
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let body: Vec<serde_json::Value> =
+            serde_json::from_str(reply.split_once("\r\n\r\n").expect("HTTP body").1)
+                .expect("peers JSON");
+        body.len()
+    }
+    fn draft(minimum_version: &str) -> serde_json::Value {
+        serde_json::json!({
+            "tenant_id": "fixture-account",
+            "revision": minimum_version,
+            "requirement_sets": {"ok": [{"id": "cv", "minimum_version": minimum_version}]},
+            "guardrails": [{
+                "id": "g1",
+                "resource": {"selector": SELF_CIDR, "protocol": "tcp", "first": 22, "last": 22},
+                "requirement_sets": ["ok"],
+            }],
+        })
+    }
+    fn tcp(src: [u8; 4], src_port: u16, dst: [u8; 4], dst_port: u16) -> Vec<u8> {
+        let mut p = vec![0u8; 24];
+        p[0] = 0x45;
+        p[2..4].copy_from_slice(&24u16.to_be_bytes());
+        p[9] = 6;
+        p[12..16].copy_from_slice(&src);
+        p[16..20].copy_from_slice(&dst);
+        p[20..22].copy_from_slice(&src_port.to_be_bytes());
+        p[22..24].copy_from_slice(&dst_port.to_be_bytes());
+        p
+    }
+
+    // Deterministic: the fixture's memoryAccount assigns 100.64.0.<n> in
+    // registration order, starting at .2 for the first ever registration
+    // (see server/management/internals/karst/testserver/netmap.go's own
+    // `register`). One preloaded peer registers first (.2); "peer" below is
+    // the second registration ever (.3), and "self" the third (.4).
+    // Configuring the guardrail before either client ever syncs, rather
+    // than learning the address afterward and waiting a real cadence
+    // interval for a second permit request, is what keeps the common path
+    // here fast -- asserted below rather than only assumed.
+    const SELF_CIDR: &str = "100.64.0.4/32";
+
+    let control_addr = free_addr();
+    let server = start_server_args(&[
+        "--netmap".into(),
+        "1".into(),
+        "--compliance".into(),
+        "--compliance-permit".into(),
+        "--control".into(),
+        control_addr.to_string(),
+    ]);
+    post(control_addr, "/permit-draft", &draft(karstd::VERSION));
+
+    // "peer": a real second device, same tenant as "self" below -- the
+    // #363 spec's "two same-user devices" case. It never needs its own
+    // permit; only that its real, truthfully-reported evidence lands in
+    // the shared store before "self" compiles a permit that names it as a
+    // passing source.
+    let peer_dir = Scratch::new("permit-e2e-peer");
+    let mut peer = Client::new(
+        &section(&server, peer_dir.path(), None),
+        peer_dir.path(),
+        &keys(0x71),
+    )
+    .expect("peer client");
+    peer.sync().await.expect("peer registers and reports");
+    let peer_address = peer
+        .to_config(local(0x71))
+        .expect("peer config")
+        .addresses
+        .first()
+        .expect("peer address")
+        .addr
+        .to_string();
+    assert_eq!(
+        peer_address, "100.64.0.3",
+        "the deterministic address prediction this test depends on no longer holds"
+    );
+
+    let self_dir = Scratch::new("permit-e2e-self");
+    let mut this = Client::new(
+        &section(&server, self_dir.path(), None),
+        self_dir.path(),
+        &keys(0x70),
+    )
+    .expect("self client");
+    this.sync().await.expect(
+        "self registers, reports, and requests a permit matching the pre-configured guardrail",
+    );
+    let config = this.to_config(local(0x70)).expect("self config");
+    let self_address = config.addresses.first().expect("self address").addr;
+    assert_eq!(self_address.to_string(), "100.64.0.4");
+    assert_eq!(
+        peer_count(control_addr),
+        3,
+        "one preloaded peer plus peer plus self"
+    );
+
+    let update = this.take_permit_update();
+    let PermitUpdate::Fresh(_) = &update else {
+        panic!("expected a fresh permit snapshot, got {update:?}")
+    };
+    let config = std::sync::Arc::new(config);
+    let engine = Engine::new(&config);
+    engine.set_compliance_permit(update);
+
+    let preloaded_octets = [100, 64, 0, 2];
+    let peer_octets = [100, 64, 0, 3];
+    let self_octets = [100, 64, 0, 4];
+    let find_index = |addr: [u8; 4]| {
+        config
+            .peers
+            .iter()
+            .position(|p| {
+                p.allowed_ips
+                    .iter()
+                    .any(|r| r.base() == std::net::IpAddr::from(addr))
+            })
+            .unwrap_or_else(|| panic!("no peer owns {addr:?}"))
+    };
+    let preloaded_index = find_index(preloaded_octets);
+    let peer_index = find_index(peer_octets);
+
+    // The base ACL (the fixture's fixed identity policy) permits *anyone*
+    // on port 22 -- so a denial below is attributable to compliance
+    // specifically, not to the base ACL already saying no regardless.
+    assert!(
+        !engine.permits_for_test(
+            Direction::In,
+            preloaded_index,
+            &tcp(preloaded_octets, 54321, self_octets, 22),
+            0
+        ),
+        "the preloaded peer never reported evidence and must not pass a guardrail that requires it"
+    );
+    assert!(
+        engine.permits_for_test(
+            Direction::In,
+            peer_index,
+            &tcp(peer_octets, 54321, self_octets, 22),
+            1_000
+        ),
+        "a real device with real passing evidence must be admitted by a real compiled gate"
+    );
+
+    // Raise the bar past what any real build can report, and measure how
+    // long it actually takes a real refresh cycle to reach enforcement --
+    // the real revocation bound, not an assertion about the 120-second
+    // target read off the code.
+    let raised_at = Instant::now();
+    post(control_addr, "/permit-draft", &draft("99.0.0"));
+    let bound = loop {
+        assert!(
+            raised_at.elapsed() < Duration::from_secs(150),
+            "revocation did not reach enforcement within a generous margin over the 120-second target"
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        if this.sync().await.is_err() {
+            continue;
+        }
+        engine.set_compliance_permit(this.take_permit_update());
+        if !engine.permits_for_test(
+            Direction::In,
+            peer_index,
+            &tcp(peer_octets, 54321, self_octets, 22),
+            2_000,
+        ) {
+            break raised_at.elapsed();
+        }
+    };
+    eprintln!("measured revocation bound: {bound:?}");
+    assert!(
+        bound <= Duration::from_secs(120 + 30),
+        "measured revocation bound {bound:?} exceeded the 120-second target plus a generous margin"
+    );
+
+    // Recovery: lowering the bar again restores access without
+    // re-enrollment -- same identity, same client, throughout.
+    post(control_addr, "/permit-draft", &draft(karstd::VERSION));
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        if this.sync().await.is_err() {
+            continue;
+        }
+        engine.set_compliance_permit(this.take_permit_update());
+        if engine.permits_for_test(
+            Direction::In,
+            peer_index,
+            &tcp(peer_octets, 54321, self_octets, 22),
+            3_000,
+        ) {
+            break;
+        }
+    }
+
+    // Control loss: once the server is gone, no further permit can arrive,
+    // but the engine must keep enforcing its last real snapshot rather
+    // than failing open or panicking -- "merely hiding peers... is
+    // insufficient" is about the server side; this is the client side of
+    // the same guarantee.
+    drop(server);
+    assert!(
+        this.sync().await.is_err(),
+        "the server was just killed; a sync succeeding would mean this test's premise is wrong"
+    );
+    assert!(
+        engine.permits_for_test(
+            Direction::In,
+            peer_index,
+            &tcp(peer_octets, 54321, self_octets, 22),
+            4_000,
+        ),
+        "local enforcement must not depend on live control-plane connectivity"
+    );
+}

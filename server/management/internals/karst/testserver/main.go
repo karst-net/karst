@@ -222,6 +222,9 @@ func serveControl(addr string, r *router) {
 	if r.compliance != nil {
 		mux.HandleFunc("/compliance", func(w http.ResponseWriter, req *http.Request) { r.compliance.serve(r, w, req) })
 	}
+	if r.permit != nil {
+		mux.HandleFunc("/permit-draft", r.permit.serveDraft)
+	}
 	if r.rootDomains != nil {
 		mux.Handle("/karst/v1/domains/", r.rootDomains.api)
 	}
