@@ -3248,10 +3248,17 @@ fn apply_gateway(
     status: &Mutex<Option<String>>,
     config: &Config,
 ) {
-    let result = gateway
+    let mut manager = gateway
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .reconcile(config);
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let result = manager.reconcile(config);
+    config
+        .filter
+        .require_kernel_guard(manager.input_guard_required());
+    config
+        .filter
+        .set_scoped_ready(result.is_ok() && cfg!(target_os = "linux") && config.gateway_forwarding);
+    drop(manager);
     let error = match result {
         Ok(_) => None,
         Err(error) => {
@@ -5819,6 +5826,7 @@ fn refresh_netmap(
             // Gateway grants are derived from the same verified snapshot. A
             // failed update removes stale Karst-owned grants and records
             // failed readiness.
+            engine.config().filter.set_scoped_ready(false);
             apply_gateway(gateway, gateway_error, &updated);
 
             // **The whole roster swap happens under the discovery lock**,
@@ -6822,6 +6830,7 @@ mod route_tests {
 
         let granting = report_for(crate::filter::SshFilter::compile(
             &[pb::KarstFilterRule {
+                dst_cidrs: Vec::new(),
                 srcs: vec!["*".to_owned()],
                 ports: vec![pb::KarstPortRange {
                     first: 22,

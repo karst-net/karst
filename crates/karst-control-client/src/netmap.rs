@@ -175,10 +175,11 @@ pub fn peer_digest(entry: &PeerEntry<'_>, epoch: u32) -> u64 {
 #[derive(Debug, Default)]
 pub struct FilterRuleView<'a> {
     pub nodes: &'a [String],
-    /// Destination networks, canonical CIDR strings — only ever populated on
-    /// an egress rule (see `KarstEgressRule.dst_cidrs`); always empty on
-    /// `packet_filter`/`ssh_filter`, so it contributes no bytes there and
-    /// every version computed before this field existed is unaffected.
+    /// Destination networks, canonical CIDR strings. On egress these are
+    /// alternatives to node destinations; on ingress they constrain both
+    /// source and forwarding destination (Gateway ingress schema 1). Empty
+    /// lists contribute no bytes, preserving versions for legacy rules.
+    /// Always empty on the independent SSH filter.
     pub dst_cidrs: &'a [String],
     /// Inclusive `(first, last)` port ranges.
     pub ports: &'a [(u32, u32)],

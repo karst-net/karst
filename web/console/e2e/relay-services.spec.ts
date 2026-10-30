@@ -118,34 +118,46 @@ test("an unavailable service API reports failure instead of an empty healthy vie
   await expect(page.getByRole("button", { name: "Add relay", exact: true })).toBeVisible();
 });
 
-test("relay group access and exit service are configured through one reviewed form", async ({page}) => {
-  let submitted: Record<string, unknown> | undefined;
-  let services: Record<string, unknown>[] = [];
-  await page.route("**/api/groups",route => route.fulfill({json:[{id:"group-sre",name:"sre"}]}));
-  await page.route("**/api/karst/v1/relays",route => route.fulfill({json:[{id:"ponor",address:"203.0.113.1:443",region:"Denver",health:{admission_state:"confirmed"}}]}));
-  await page.route("**/api/karst/v1/nodes?**",route => route.fulfill({json:{items:[{handle:"gateway-key",name:"Gateway host",platform:"Linux"}],next_cursor:null}}));
-  await page.route("**/api/karst/v1/relay-services**",async route => {
-    const path=new URL(route.request().url()).pathname;
-    if(path.endsWith("/publication")){await route.fulfill({json:{mode:"services"}});return;}
-    if(path.endsWith("/admission-targets")){await route.fulfill({json:[{relay_id:"ponor",refreshed_at:new Date().toISOString()}]});return;}
-    if(route.request().method()==="POST") {submitted=route.request().postDataJSON();services=[{...submitted,ponor_present:true,revision:1}];await route.fulfill({json:services[0]});return;}
-    await route.fulfill({json:services});
+for (const scopedIngress of [true, false]) {
+  test(scopedIngress ? "relay group access and exit service are configured through one reviewed form" : "legacy control cannot configure destination-scoped relay egress", async ({page}) => {
+    let submitted: Record<string, unknown> | undefined;
+    let services: Record<string, unknown>[] = [];
+    if (!scopedIngress) {
+      await page.route("**/api/karst/v1/policy/schema", route => route.fulfill({ json: { type: "object", properties: {} } }));
+    }
+    await page.route("**/api/groups",route => route.fulfill({json:[{id:"group-sre",name:"sre"}]}));
+    await page.route("**/api/karst/v1/relays",route => route.fulfill({json:[{id:"ponor",address:"203.0.113.1:443",region:"Denver",health:{admission_state:"confirmed"}}]}));
+    await page.route("**/api/karst/v1/nodes?**",route => route.fulfill({json:{items:[{handle:"gateway-key",name:"Gateway host",platform:"Linux"}],next_cursor:null}}));
+    await page.route("**/api/karst/v1/relay-services**",async route => {
+      const path=new URL(route.request().url()).pathname;
+      if(path.endsWith("/publication")){await route.fulfill({json:{mode:"services"}});return;}
+      if(path.endsWith("/admission-targets")){await route.fulfill({json:[{relay_id:"ponor",refreshed_at:new Date().toISOString()}]});return;}
+      if(route.request().method()==="POST") {submitted=route.request().postDataJSON();services=[{...submitted,ponor_present:true,revision:1}];await route.fulfill({json:services[0]});return;}
+      await route.fulfill({json:services});
+    });
+    await page.goto("/#/relays");
+    await page.getByRole("button",{name:"Configure relay",exact:true}).click();
+    await page.getByLabel("Relay name",{exact:true}).fill("denver");
+    await page.getByLabel("Registered relay",{exact:true}).selectOption("ponor");
+    await page.getByRole("group",{name:"Groups allowed to use this relay",exact:true}).getByRole("checkbox",{name:"sre",exact:true}).check();
+    await page.getByRole("checkbox",{name:"Offer internet access over IPv4",exact:true}).check();
+    await page.getByLabel("Enrolled Gateway machine",{exact:true}).selectOption("gateway-key");
+    if (!scopedIngress) {
+      await expect(page.getByRole("alert")).toContainText("Upgrade the control service to support destination-scoped Gateway ingress");
+      await expect(page.getByRole("button",{name:"Review relay configuration",exact:true})).toBeDisabled();
+      expect(submitted).toBeUndefined();
+      return;
+    }
+    expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+    await page.getByRole("button",{name:"Review relay configuration",exact:true}).click();
+    await expect(page.getByRole("dialog")).toContainText("destination-only forwarding through the Gateway");
+    await expect(page.getByRole("button",{name:"Apply relay configuration",exact:true})).toBeDisabled();
+    await page.getByRole("checkbox",{name:"I reviewed the allowed groups and internet access.",exact:true}).check();
+    await page.getByRole("button",{name:"Apply relay configuration",exact:true}).click();
+    await expect(page.getByRole("status")).toContainText("Relay configuration saved");
+    expect(submitted).toMatchObject({id:"denver",ponor_id:"ponor",access_managed:true,allowed_groups:["group-sre"],exit_ipv4:true,gateway_handle:"gateway-key",metric:9999});
   });
-  await page.goto("/#/relays");
-  await page.getByRole("button",{name:"Configure relay",exact:true}).click();
-  await page.getByLabel("Relay name",{exact:true}).fill("denver");
-  await page.getByLabel("Registered relay",{exact:true}).selectOption("ponor");
-  await page.getByRole("group",{name:"Groups allowed to use this relay",exact:true}).getByRole("checkbox",{name:"sre",exact:true}).check();
-  await page.getByRole("checkbox",{name:"Offer internet access over IPv4",exact:true}).check();
-  await page.getByLabel("Enrolled Gateway machine",{exact:true}).selectOption("gateway-key");
-  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
-  await page.getByRole("button",{name:"Review relay configuration",exact:true}).click();
-  await expect(page.getByRole("button",{name:"Apply relay configuration",exact:true})).toBeDisabled();
-  await page.getByRole("checkbox",{name:"I reviewed the allowed groups and internet access.",exact:true}).check();
-  await page.getByRole("button",{name:"Apply relay configuration",exact:true}).click();
-  await expect(page.getByRole("status")).toContainText("Relay configuration saved");
-  expect(submitted).toMatchObject({id:"denver",ponor_id:"ponor",access_managed:true,allowed_groups:["group-sre"],exit_ipv4:true,gateway_handle:"gateway-key",metric:9999});
-});
+}
 
 test("relay group restriction cannot be applied without admission enforcement", async ({page}) => {
   await page.route("**/api/groups",route => route.fulfill({json:[{id:"group-sre",name:"sre"}]}));

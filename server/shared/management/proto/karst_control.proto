@@ -151,6 +151,10 @@ message KarstNetmapRequest {
   // TURN credentials on unchanged netmaps. Zero is legacy/unknown. This is
   // not an authorization grant or software attestation.
   uint32 relay_lifecycle_schema = 8;
+
+  // 1 understands conjunctive, forwarding-only KarstFilterRule.dst_cidrs.
+  // Zero/unknown cannot receive a scoped ingress grant.
+  uint32 gateway_ingress_schema = 9;
 }
 
 // KarstRouteObservation is one route's egress and ingress bytes/packets
@@ -575,6 +579,8 @@ message KarstNetmapResponse {
   string compliance_tenant_id = 25;
   string compliance_device_id = 26;
   string compliance_policy_revision = 27;
+  // 1 when packet_filter contains forwarding-only destination-scoped rules.
+  uint32 gateway_ingress_schema = 28;
 
   reserved 8;  // never assigned; reserved so the gap stops looking accidental.
   reserved 16; // was KarstTurnServer turn_servers; Karst dropped standalone TURN support in favor of Relay-only transport fallback.
@@ -698,6 +704,11 @@ message KarstPortRange {
 
 // KarstFilterRule permits traffic from any of `srcs` to this node on `ports`.
 message KarstFilterRule {
+  // Schema 1: nonempty means source AND destination AND ports must match.
+  // Permits forwarding only, never local delivery (including the Gateway's
+  // non-overlay addresses). Empty retains legacy machine ingress semantics.
+  // Forbidden on ssh_filter. Never emit to a legacy/unknown agent.
+  repeated string dst_cidrs = 3;
   // Node handles, or "*" for any source.
   repeated string srcs = 1;
   repeated KarstPortRange ports = 2;

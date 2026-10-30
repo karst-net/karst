@@ -761,6 +761,37 @@
           "duty_cycle_seconds": 300
         },
         "version": 14852762947429491736
+      },
+      {
+        "psk_epoch": 0,
+        "node_id": "67617465776179",
+        "dns_name": "",
+        "addresses": null,
+        "peers": null,
+        "packet_filter": [
+          {
+            "dst_cidrs": [
+              "0.0.0.0/0",
+              "::/0"
+            ],
+            "srcs": [
+              "client"
+            ],
+            "ports": [
+              {
+                "first": 0,
+                "last": 65535
+              }
+            ]
+          }
+        ],
+        "egress_filter": null,
+        "relays": null,
+        "routes": null,
+        "dns": {},
+        "bedrock": {},
+        "ephemeral_anchor_schedule": {},
+        "version": 9042246250711431923
       }
     ]
   }

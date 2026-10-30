@@ -58,13 +58,11 @@ from this transaction. Exit offers require local client consent and genuine
 forwarding readiness. The explicitly selected Gateway is admitted to the relay
 to serve those clients even if it is not a member of a client group.
 
-The current packet-filter contract expresses ingress authorization by source
-node and ports, not by destination subnet. Managed exit service therefore also
-requires a machine ingress grant to its Gateway. The form's confirmation states
-that permitted groups gain all-port access to that machine; an existing SSH gate
-still applies. Destination-scoped gateway ingress needs a versioned datapath
-contract before these permissions can be separated. Do not describe this
-configuration as granting only internet access.
+The original packet-filter contract required a broad machine ingress grant for
+managed exit service. ADR-0064 resolves that limitation with versioned,
+destination-scoped Gateway ingress. New or reapplied managed exit access grants
+forwarding only; existing broad grants require the explicit migration described
+there. Independent machine and SSH grants remain additive.
 
 ### Alternatives rejected
 
@@ -97,12 +95,12 @@ install an identity-bound admission writer before enabling group-managed relay
 access; remote workload provisioning is not implemented. Membership changes now
 refresh the entire account while Karst registry grants are present, rather than
 relying on the inherited dependency graph, which does not know about them.
-Gateway ingress permission is broader than destination-only egress, as explained
-above. Already configured legacy global permissions remain additive until
+Existing pre-ADR-0064 Gateway grants remain broader until explicitly migrated.
+Already configured legacy global permissions remain additive until
 explicitly migrated; adding a narrow grant does not cancel a broad legacy rule.
 
 ### Reconsider if
 
 A remote relay management agent supplies authenticated roster delivery, provider
-provisioning acquires durable orchestration, the datapath gains scoped Gateway
-ingress grants, or membership-driven account-wide refresh becomes a bottleneck.
+provisioning acquires durable orchestration, or membership-driven account-wide
+refresh becomes a bottleneck.

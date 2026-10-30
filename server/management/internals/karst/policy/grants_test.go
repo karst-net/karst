@@ -3,7 +3,10 @@
 
 package policy
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+)
 
 func TestRegistryGrantLifecycle(t *testing.T) {
 	doc := &Document{Grants: []Grant{{ID: "rule", Name: "Engineering to server", SourceGroups: []string{"engineering"}, TargetNodes: []string{"server"}, Ports: "443"}}}
@@ -68,5 +71,42 @@ func TestExplicitLegacyBinding(t *testing.T) {
 	f, err = d.Compile(nodes[2], nodes)
 	if err != nil || !f.Permits("old", 443) || f.Permits("new", 443) {
 		t.Fatalf("legacy preservation: %v", err)
+	}
+}
+
+func TestScopedGatewayGrant(t *testing.T) {
+	d := &Document{Grants: []Grant{{ID: "exit", Name: "Internet", SourceGroups: []string{"engineering"}, Gateway: "gateway", Networks: []string{"0.0.0.0/0", "::/0"}, Ports: "443"}}}
+	if err := d.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	nodes := []Node{{Handle: "client", GroupIDs: []string{"engineering"}}, {Handle: "gateway"}, {Handle: "outsider"}}
+	f, err := d.Compile(nodes[1], nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Permits("client", 443) {
+		t.Fatal("forwarding grant permits machine access")
+	}
+	for _, destination := range []string{"8.8.8.8", "2001:4860:4860::8888"} {
+		ip := netip.MustParseAddr(destination)
+		if !f.PermitsForward("client", ip, 443) || f.PermitsForward("outsider", ip, 443) || f.PermitsForward("client", ip, 22) {
+			t.Fatal("source, destination and port must all match")
+		}
+	}
+	e, err := d.CompileEgress(nodes[0], nodes)
+	if err != nil || !e.Permits("8.8.8.8", 443) || e.Permits("gateway", 443) {
+		t.Fatalf("egress broadening: %v", err)
+	}
+	nodes[0].Inactive = true
+	f, err = d.Compile(nodes[1], nodes)
+	if err != nil || f.PermitsForward("client", netip.MustParseAddr("8.8.8.8"), 443) {
+		t.Fatal("inactive member retains access")
+	}
+	for _, mutate := range []func(*Grant){func(g *Grant) { g.Networks = nil }, func(g *Grant) { g.TargetNodes = []string{"gateway"} }, func(g *Grant) { g.SSH = true }} {
+		g := d.Grants[0]
+		mutate(&g)
+		if err := (&Document{Grants: []Grant{g}}).Validate(); err == nil {
+			t.Fatal("ambiguous scoped grant accepted")
+		}
 	}
 }

@@ -3,7 +3,7 @@
 
 export type AccessGrant = {
   id: string; name: string; source_groups: string[]; target_groups?: string[];
-  target_nodes?: string[]; networks?: string[]; ports: string; ssh?: boolean;
+  target_nodes?: string[]; gateway?: string; networks?: string[]; ports: string; ssh?: boolean;
 };
 export type AccessDocument = {
   groups?: Record<string, string[]>; groupBindings?: Record<string, string>;

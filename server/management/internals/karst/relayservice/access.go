@@ -129,7 +129,7 @@ func (s *Store) configureAccess(ctx context.Context, tx *gorm.DB, service Servic
 	if err != nil {
 		return err
 	}
-	grant := policy.Grant{ID: "relay-exit-" + service.ID, Name: service.ID + " internet egress", SourceGroups: service.AllowedGroups, TargetNodes: []string{service.GatewayHandle}, Networks: prefixes, Ports: "*"}
+	grant := policy.Grant{ID: "relay-exit-" + service.ID, Name: service.ID + " internet egress", SourceGroups: service.AllowedGroups, Gateway: service.GatewayHandle, Networks: prefixes, Ports: "*"}
 	doc.Grants = append(doc.Grants, grant)
 	for i, p := range prefixes {
 		prefix, _ := netip.ParsePrefix(p)

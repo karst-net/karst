@@ -132,6 +132,7 @@ fn ssh_only(peer_handle: &str) -> PacketFilter {
     }];
     PacketFilter::compile(
         &[pb::KarstFilterRule {
+            dst_cidrs: Vec::new(),
             srcs: vec![peer_handle.to_owned()],
             ports: ports.clone(),
         }],
@@ -482,4 +483,28 @@ fn disabled_gateway_refuses_transit_but_preserves_local_mesh_and_client_replies(
         &tcp([1, 1, 1, 1], 443, A_IP, EPHEMERAL),
         1
     ));
+}
+
+#[test]
+fn scoped_gateway_grants_exclude_local_services_and_require_kernel_readiness() {
+    let scoped = pb::KarstFilterRule {
+        srcs: vec!["peer".to_owned()],
+        dst_cidrs: vec!["0.0.0.0/0".to_owned()],
+        ports: vec![pb::KarstPortRange {
+            first: 0,
+            last: 65535,
+        }],
+    };
+    let filter = PacketFilter::compile(&[scoped], &[], &[b"peer".to_vec()]);
+    let config = config_for(2, 1, "100.64.0.3/24", "100.64.0.2/32", filter);
+    let gateway = Engine::new(&config);
+    let outbound = tcp(A_IP, EPHEMERAL, [8, 8, 8, 8], 443);
+    assert!(!gateway.permits_for_test(Direction::In, 0, &outbound, 1));
+    config.filter.set_scoped_ready(true);
+    assert!(gateway.permits_for_test(Direction::In, 0, &outbound, 2));
+    assert!(!gateway.permits_for_test(Direction::In, 0, &tcp(A_IP, EPHEMERAL, B_IP, 443), 3));
+    assert!(!gateway.permits_for_test(Direction::In, 0, &tcp(A_IP, EPHEMERAL, B_IP, 22), 4));
+    // Readiness loss gates established flows before connection tracking.
+    config.filter.set_scoped_ready(false);
+    assert!(!gateway.permits_for_test(Direction::In, 0, &outbound, 5));
 }

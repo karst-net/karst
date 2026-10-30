@@ -29,6 +29,9 @@ pub struct Ruleset {
     pub grants: Vec<Grant>,
     pub ipv4: bool,
     pub ipv6: bool,
+    pub input_guard: bool,
+    pub local_addresses: Vec<IpAddr>,
+    pub machine_access: Vec<(Prefix, u16, u16)>,
 }
 
 impl Ruleset {
@@ -76,7 +79,27 @@ impl Ruleset {
                 .cmp(&a.destination.len())
                 .then_with(|| a.route_id.cmp(&b.route_id))
         });
+        let input_guard = config.filter.has_scoped_ingress();
+        let machine_access = config
+            .peers
+            .iter()
+            .enumerate()
+            .flat_map(|(index, peer)| {
+                config
+                    .filter
+                    .machine_ports(index)
+                    .into_iter()
+                    .flat_map(move |(first, last)| {
+                        peer.allowed_ips
+                            .iter()
+                            .map(move |source| (*source, first, last))
+                    })
+            })
+            .collect();
         Self {
+            input_guard,
+            local_addresses: config.addresses.iter().map(|a| a.addr).collect(),
+            machine_access,
             ipv4: grants
                 .iter()
                 .any(|grant| grant.destination.base().is_ipv4()),
@@ -89,7 +112,7 @@ impl Ruleset {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.grants.is_empty()
+        self.grants.is_empty() && !self.input_guard
     }
 
     /// A complete replacement for Karst's table after it has been created.
@@ -103,6 +126,34 @@ impl Ruleset {
              add chain inet {TABLE} forward {{ type filter hook forward priority -10; policy accept; }}\n\
              add chain inet {TABLE} postrouting {{ type nat hook postrouting priority srcnat; policy accept; }}\n"
         );
+        if self.input_guard {
+            // The userspace datapath knows overlay addresses, while the kernel
+            // also owns LAN/public addresses and aliases. A forwarding-only
+            // grant must never turn into INPUT access through those addresses.
+            let _ = writeln!(out, "add chain inet {TABLE} input {{ type filter hook input priority -10; policy accept; }}");
+            for address in &self.local_addresses {
+                let _ = writeln!(
+                    out,
+                    "add rule inet {TABLE} input iifname {interface} {} daddr {address} accept",
+                    family(*address)
+                );
+            }
+            for (source, first, last) in &self.machine_access {
+                let family = family(source.base());
+                if *first == 0 && *last == u16::MAX {
+                    let _ = writeln!(out, "add rule inet {TABLE} input iifname {interface} {family} saddr {source} accept");
+                } else {
+                    let _ = writeln!(out, "add rule inet {TABLE} input iifname {interface} {family} saddr {source} meta l4proto {{ tcp, udp }} th dport {first}-{last} accept");
+                    if *first == 0 {
+                        let _ = writeln!(out, "add rule inet {TABLE} input iifname {interface} {family} saddr {source} meta l4proto != {{ tcp, udp }} accept");
+                    }
+                }
+            }
+            let _ = writeln!(
+                out,
+                "add rule inet {TABLE} input iifname {interface} counter drop"
+            );
+        }
         for grant in &self.grants {
             let family = family(grant.destination.base());
             for source in &grant.sources {
@@ -354,16 +405,24 @@ impl<B: Backend> State<B> {
 /// Dropping it removes only Karst's table and restores forwarding only when
 /// Karst was the process that enabled it.
 #[derive(Debug)]
-pub struct Manager(State<Host>);
+pub struct Manager {
+    state: State<Host>,
+    input_guard_required: bool,
+    ready: bool,
+}
 
 impl Default for Manager {
     fn default() -> Self {
-        Self(State {
-            backend: Host,
-            table: false,
-            changed_v4: false,
-            changed_v6: false,
-        })
+        Self {
+            state: State {
+                backend: Host,
+                table: false,
+                changed_v4: false,
+                changed_v6: false,
+            },
+            input_guard_required: false,
+            ready: false,
+        }
     }
 }
 
@@ -373,30 +432,47 @@ impl Manager {
     /// # Errors
     /// If nftables or a required forwarding sysctl cannot be applied.
     pub fn reconcile(&mut self, config: &Config) -> std::io::Result<Ruleset> {
-        let rules = Ruleset::from_config(config);
-        if !config.gateway_forwarding && cfg!(target_os = "linux") {
+        let mut rules = Ruleset::from_config(config);
+        // Keep INPUT protection until shutdown once used. Packets already
+        // queued to the TUN must not lose their guard during withdrawal.
+        self.input_guard_required |= rules.input_guard;
+        rules.input_guard = self.input_guard_required;
+        self.ready = false;
+        if !config.gateway_forwarding && cfg!(target_os = "linux") && !self.input_guard_required {
             // Explicit refusal also removes our table left by a prior crash.
             // Never reset host sysctls whose ownership this process cannot know.
-            self.0.remove_owned_table()?;
+            self.state.remove_owned_table()?;
         }
-        if let Err(error) = self.0.reconcile(&rules, &config.interface) {
+        if let Err(error) = self.state.reconcile(&rules, &config.interface) {
+            if self.input_guard_required {
+                // Never remove INPUT protection on an apply error. The
+                // datapath readiness gate blocks transit before flow lookup,
+                // including established flows, until a later successful apply.
+                return Err(error);
+            }
             // Retaining the previous grant after an authorization-changing
             // netmap would be a security failure. Best-effort removal is safer
             // than serving stale policy, and any cleanup failure is included in
             // the readiness error operators see.
-            return match self.0.clear() {
+            return match self.state.clear() {
                 Ok(()) => Err(error),
                 Err(cleanup) => Err(std::io::Error::other(format!(
                     "{error}; stale-state cleanup also failed: {cleanup}"
                 ))),
             };
         }
+        self.ready = true;
         Ok(rules)
     }
 
     #[must_use]
+    pub fn input_guard_required(&self) -> bool {
+        self.input_guard_required
+    }
+
+    #[must_use]
     pub fn active(&self) -> bool {
-        self.0.table
+        self.state.table && self.ready
     }
 
     /// Egress and ingress bytes/packets this gateway has forwarded per
@@ -411,7 +487,7 @@ impl Manager {
     /// and skip rather than fail whatever triggered the read.
     pub fn route_bytes(&mut self) -> std::io::Result<Vec<RouteBytes>> {
         let output = self
-            .0
+            .state
             .backend
             .nft_output(&["-j", "list", "table", "inet", TABLE])?;
         parse_route_bytes(&output)
@@ -521,7 +597,7 @@ fn parse_route_bytes(output: &str) -> Result<Vec<RouteBytes>, serde_json::Error>
 
 impl Drop for Manager {
     fn drop(&mut self) {
-        if let Err(error) = self.0.clear() {
+        if let Err(error) = self.state.clear() {
             tracing::warn!(%error, "could not remove gateway forwarding state");
         }
     }
@@ -642,6 +718,119 @@ mod tests {
             config.route_offers.len(),
             3,
             "offers remain visible for diagnostics"
+        );
+    }
+
+    #[test]
+    fn scoped_ingress_installs_an_input_guard_even_without_route_offers() {
+        let mut config = config();
+        config.filter = crate::filter::PacketFilter::compile(
+            &[pb::KarstFilterRule {
+                srcs: vec!["client".to_owned()],
+                dst_cidrs: vec!["0.0.0.0/0".to_owned()],
+                ports: vec![pb::KarstPortRange {
+                    first: 0,
+                    last: 65535,
+                }],
+            }],
+            &[],
+            &[b"client".to_vec()],
+        );
+        let rules = Ruleset::from_config(&config);
+        assert!(
+            !rules.is_empty(),
+            "local-address protection cannot depend on route publication"
+        );
+        assert!(
+            rules.machine_access.is_empty(),
+            "forwarding scope cannot authorize machine INPUT"
+        );
+        let batch = rules.nft_batch("karst0");
+        assert!(batch.contains("type filter hook input priority -10; policy accept;"));
+        assert!(batch.contains("input iifname \"karst0\" ip daddr 100.64.0.7 accept"));
+        assert!(batch.contains("input iifname \"karst0\" ip6 daddr fd7a:115c:a1e0::7 accept"));
+        assert!(batch.contains("input iifname \"karst0\" counter drop"));
+        assert!(!batch.contains("ct state established,related accept"));
+    }
+
+    /// Run under root (or `CAP_SYS_ADMIN/CAP_NET_ADMIN`). The child owns a fresh
+    /// network namespace, so no host interfaces, routes or firewall are changed.
+    #[test]
+    #[ignore = "requires root, unshare, nft, ip, python3 and /dev/net/tun"]
+    fn scoped_input_guard_blocks_gateway_aliases_in_the_kernel() {
+        use std::io::Write as _;
+        use std::process::{Command, Stdio};
+        let rules = Ruleset {
+            input_guard: true,
+            local_addresses: vec!["100.64.0.7".parse().unwrap(), "fd00::7".parse().unwrap()],
+            machine_access: vec![
+                ("100.64.0.2/32".parse().unwrap(), 8443, 8443),
+                ("fd00::2/128".parse().unwrap(), 8443, 8443),
+            ],
+            ..Default::default()
+        };
+        let batch = format!("add table inet {TABLE}\n{}", rules.nft_batch("karst0"));
+        let script = r"
+import fcntl, os, socket, struct, subprocess, sys
+batch = sys.stdin.read()
+fd = os.open('/dev/net/tun', os.O_RDWR)
+fcntl.ioctl(fd, 0x400454ca, struct.pack('16sH', b'karst0', 0x1001))
+def ip(*args): subprocess.run(['ip', *args], check=True)
+ip('link', 'set', 'lo', 'up')
+ip('link', 'set', 'karst0', 'up')
+ip('addr', 'add', '100.64.0.7/24', 'dev', 'karst0')
+ip('addr', 'add', 'fd00::7/64', 'dev', 'karst0', 'nodad')
+ip('addr', 'add', '192.0.2.7/32', 'dev', 'lo')
+ip('addr', 'add', '2001:db8::7/128', 'dev', 'lo', 'nodad')
+subprocess.run(['nft', '-f', '-'], input=batch, text=True, check=True)
+def checksum(data):
+    if len(data) % 2: data += b'\0'
+    value = sum(struct.unpack('!%dH' % (len(data)//2), data))
+    while value >> 16: value = (value & 65535) + (value >> 16)
+    return (~value) & 65535
+def packet(destination, port):
+    v6 = ':' in destination
+    family = socket.AF_INET6 if v6 else socket.AF_INET
+    source = socket.inet_pton(family, 'fd00::2' if v6 else '100.64.0.2')
+    dest = socket.inet_pton(family, destination)
+    udp = struct.pack('!HHHH', 40000, port, 9, 0) + b'x'
+    pseudo = source + dest + (struct.pack('!I3xB', len(udp), 17) if v6 else struct.pack('!BBH', 0, 17, len(udp)))
+    udp = udp[:6] + struct.pack('!H', checksum(pseudo+udp) or 65535) + udp[8:]
+    if v6: return struct.pack('!IHBB', 6 << 28, len(udp), 17, 64) + source + dest + udp
+    header = struct.pack('!BBHHHBBH', 0x45, 0, 20+len(udp), 1, 0, 64, 17, 0) + source + dest
+    return header[:10] + struct.pack('!H', checksum(header)) + header[12:] + udp
+def check(destination, port, allowed):
+    family = socket.AF_INET6 if ':' in destination else socket.AF_INET
+    with socket.socket(family, socket.SOCK_DGRAM) as listener:
+        listener.bind((destination, port)); listener.settimeout(0.2)
+        os.write(fd, packet(destination, port))
+        try: data = listener.recv(8)
+        except TimeoutError: data = None
+        assert (data == b'x') == allowed, (destination, port, allowed, data)
+for overlay, alias in [('100.64.0.7','192.0.2.7'), ('fd00::7','2001:db8::7')]:
+    check(overlay, 9443, True) # overlay admission is checked in the datapath
+    check(alias, 9443, False) # scope must not become local-service access
+    check(alias, 8443, True) # explicit machine grants remain additive
+print('IPv4/IPv6 local aliases denied; explicit machine ports preserved')
+";
+        let mut child = Command::new("unshare")
+            .args(["--net", "--", "python3", "-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(batch.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 

@@ -99,3 +99,26 @@ func TestJSONSchemaRuleShapesMatchTheGoTypes(t *testing.T) {
 		}
 	}
 }
+
+// The console uses the grant schema to reject controllers that cannot express
+// forwarding-only Gateway access. Keep every persisted grant field discoverable.
+func TestJSONSchemaGrantShapeMatchesTheGoType(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Items struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(JSONSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for name := range schema.Properties["grants"].Items.Properties {
+		got = append(got, name)
+	}
+	sort.Strings(got)
+	if want := jsonFieldNames(reflect.TypeOf(Grant{})); !reflect.DeepEqual(got, want) {
+		t.Fatalf("grant schema fields %v, want %v", got, want)
+	}
+}

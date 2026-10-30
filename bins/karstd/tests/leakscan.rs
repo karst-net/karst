@@ -161,6 +161,7 @@ fn netmap_with_psks() -> Netmap {
             peer("beta", "100.64.0.3", 0x42),
         ],
         packet_filter: vec![pb::KarstFilterRule {
+            dst_cidrs: Vec::new(),
             srcs: vec!["alpha".to_owned()],
             ports: vec![pb::KarstPortRange {
                 first: 22,

@@ -63,6 +63,7 @@ fn acl_permitting_ssh() -> PacketFilter {
     }];
     PacketFilter::compile(
         &[pb::KarstFilterRule {
+            dst_cidrs: Vec::new(),
             srcs: vec![HANDLE.to_owned()],
             ports,
         }],
@@ -81,6 +82,7 @@ fn acl_denying_everything() -> PacketFilter {
 fn ssh_granting() -> SshFilter {
     SshFilter::compile(
         &[pb::KarstFilterRule {
+            dst_cidrs: Vec::new(),
             srcs: vec![HANDLE.to_owned()],
             ports: vec![pb::KarstPortRange {
                 first: u32::from(SSH),

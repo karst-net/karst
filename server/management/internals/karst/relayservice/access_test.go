@@ -88,6 +88,8 @@ func TestRelayExitConfigurationAtomicAndVersioned(t *testing.T) {
 	doc, err := policy.Parse([]byte(v.Document))
 	require.NoError(t, err)
 	require.Len(t, doc.Grants, 1)
+	require.Equal(t, "gateway-key", doc.Grants[0].Gateway)
+	require.Empty(t, doc.Grants[0].TargetNodes)
 	changed := *created
 	changed.ExitIPv6 = false
 	updated, err := s.UpdateAccess(ctx, created.ID, changed)
@@ -157,4 +159,41 @@ func TestInstallationWriterRequiresManagedAccessForEveryTenant(t *testing.T) {
 	allowed, err = s.AllowedOnManagedRelay(ctx, svc.PonorID, "a", "laptop-key")
 	require.NoError(t, err)
 	require.False(t, allowed)
+}
+
+func TestReapplyingLegacyExitAccessScopesOnlyItsGeneratedGrant(t *testing.T) {
+	s, svc := accessFixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	svc.ExitIPv4 = true
+	svc.GatewayHandle = "gateway-key"
+	created, err := s.Create(ctx, svc)
+	require.NoError(t, err)
+	doc, version, err := currentDocument(s.db, "a")
+	require.NoError(t, err)
+	// A pre-upgrade service has a broad machine target plus its network grant.
+	doc.Grants[0].Gateway = ""
+	doc.Grants[0].TargetNodes = []string{"gateway-key"}
+	doc.Grants = append(doc.Grants, policy.Grant{ID: "independent", Name: "Machine web", SourceGroups: []string{"engineering"}, TargetNodes: []string{"gateway-key"}, Ports: "443"})
+	doc.Ssh = []policy.SshRule{}
+	require.NoError(t, writeDocument(s.db, "a", doc, version))
+	legacy, err := policy.TransactionStore(s.db).Current(policy.WithAccount(ctx, "a"))
+	require.NoError(t, err)
+	_, err = s.UpdateAccess(ctx, svc.ID, *created)
+	require.NoError(t, err)
+	updated, _, err := currentDocument(s.db, "a")
+	require.NoError(t, err)
+	require.Len(t, updated.Grants, 2)
+	require.NotNil(t, updated.Ssh)
+	nodes := []policy.Node{{Handle: "laptop-key", GroupIDs: []string{"engineering"}}, {Handle: "gateway-key"}}
+	filter, err := updated.Compile(nodes[1], nodes)
+	require.NoError(t, err)
+	require.True(t, filter.Permits("laptop-key", 443), "independent machine grant survives")
+	require.False(t, filter.Permits("laptop-key", 22), "generated broad machine access was removed")
+	gate, err := updated.CompileSSH(nodes[1], nodes)
+	require.NoError(t, err)
+	require.NotNil(t, gate)
+	require.Empty(t, gate.Rules, "explicit empty SSH gate survives")
+	var retained policy.Version
+	require.NoError(t, s.db.Where("account_id = ? AND version = ?", "a", legacy.Version).First(&retained).Error)
+	require.Equal(t, legacy.Document, retained.Document, "migration must preserve immutable policy history")
 }

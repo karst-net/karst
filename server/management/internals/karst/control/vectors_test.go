@@ -197,8 +197,9 @@ type versionPeer struct {
 // way; which direction it is comes from the field it appears in, which is
 // exactly why the hash puts a separator between the two lists.
 type versionRule struct {
-	Srcs  []string           `json:"srcs"`
-	Ports []versionPortRange `json:"ports"`
+	DstCidrs []string           `json:"dst_cidrs,omitempty"`
+	Srcs     []string           `json:"srcs"`
+	Ports    []versionPortRange `json:"ports"`
 }
 
 type versionPortRange struct {
@@ -882,6 +883,13 @@ func TestVectors(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "destination-scoped Gateway ingress, both address families",
+			resp: &proto.KarstNetmapResponse{
+				NodeId:       []byte("gateway"),
+				PacketFilter: []*proto.KarstFilterRule{{Srcs: []string{"client"}, DstCidrs: []string{"0.0.0.0/0", "::/0"}, Ports: []*proto.KarstPortRange{{First: 0, Last: 65535}}}},
+			},
+		},
 	} {
 		vc := versionCase{
 			PskEpoch:  tc.resp.GetPskEpoch(),
@@ -907,8 +915,9 @@ func TestVectors(t *testing.T) {
 		}
 		for _, r := range tc.resp.GetPacketFilter() {
 			vc.PacketFilter = append(vc.PacketFilter, versionRule{
-				Srcs:  r.GetSrcs(),
-				Ports: portsOf(r.GetPorts()),
+				Srcs:     r.GetSrcs(),
+				DstCidrs: r.GetDstCidrs(),
+				Ports:    portsOf(r.GetPorts()),
 			})
 		}
 		for _, r := range tc.resp.GetEgressFilter() {
@@ -919,8 +928,9 @@ func TestVectors(t *testing.T) {
 		}
 		for _, r := range tc.resp.GetSshFilter() {
 			vc.SSHFilter = append(vc.SSHFilter, versionRule{
-				Srcs:  r.GetSrcs(),
-				Ports: portsOf(r.GetPorts()),
+				Srcs:     r.GetSrcs(),
+				DstCidrs: r.GetDstCidrs(),
+				Ports:    portsOf(r.GetPorts()),
 			})
 		}
 		vc.SSHFilterPresent = tc.resp.GetSshFilterPresent()
