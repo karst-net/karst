@@ -1591,9 +1591,16 @@ func TestCompliancePermitAdvertisementIsLiveOnUnchangedResponses(t *testing.T) {
 	if !current.Unchanged || current.CompliancePermitSchema != 1 || current.Version != legacy.Version {
 		t.Fatal("capability must travel on unchanged responses without changing the policy hash")
 	}
+	if current.ComplianceTenantId != "acct" || current.ComplianceDeviceId != "peer-self" ||
+		current.CompliancePolicyRevision != control.UnconfiguredComplianceRevision {
+		t.Fatalf("trusted permit context not advertised correctly: %+v", current)
+	}
 	f.handler.CompliancePermit = false
 	withdrawn := requestNetmap(t, f, current.Version)
 	if !withdrawn.Unchanged || withdrawn.CompliancePermitSchema != 0 {
 		t.Fatal("withdrawn permit capability retained")
+	}
+	if withdrawn.ComplianceTenantId != "" || withdrawn.ComplianceDeviceId != "" || withdrawn.CompliancePolicyRevision != "" {
+		t.Fatal("trusted permit context survived withdrawal")
 	}
 }
