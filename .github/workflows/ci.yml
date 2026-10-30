@@ -852,6 +852,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The permit e2e compares the daemon's real version as SemVer. A shallow
+      # checkout's git-describe fallback is only a hash, not a valid version.
+      - name: Compute the version reported as compliance evidence
+        run: ./scripts/release-version.sh >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5
         with:
           go-version-file: server/go.mod
