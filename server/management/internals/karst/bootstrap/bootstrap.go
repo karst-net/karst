@@ -489,6 +489,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		permit: &control.PermitHandler{Store: complianceStore, Peers: peers},
 		netmap: &control.NetmapHandler{
 			ComplianceIngestion: true,
+			CompliancePermit:    true,
 			Nodes:               nodes,
 			Peers:               peers,
 			PSK:                 deriver,

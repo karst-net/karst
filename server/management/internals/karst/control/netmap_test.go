@@ -1575,3 +1575,25 @@ func TestComplianceAdvertisementIsLiveOnUnchangedResponses(t *testing.T) {
 		t.Fatal("withdrawn ingestion capability retained")
 	}
 }
+
+// TestCompliancePermitAdvertisementIsLiveOnUnchangedResponses mirrors
+// TestComplianceAdvertisementIsLiveOnUnchangedResponses for the independent
+// CompliancePermit/compliance_permit_schema capability, which neither implies
+// nor depends on ComplianceIngestion in either direction.
+func TestCompliancePermitAdvertisementIsLiveOnUnchangedResponses(t *testing.T) {
+	f := newNetmapFixture(t, 1)
+	legacy := requestNetmap(t, f, 0)
+	if legacy.CompliancePermitSchema != 0 {
+		t.Fatal("unconfigured permit support advertised")
+	}
+	f.handler.CompliancePermit = true
+	current := requestNetmap(t, f, legacy.Version)
+	if !current.Unchanged || current.CompliancePermitSchema != 1 || current.Version != legacy.Version {
+		t.Fatal("capability must travel on unchanged responses without changing the policy hash")
+	}
+	f.handler.CompliancePermit = false
+	withdrawn := requestNetmap(t, f, current.Version)
+	if !withdrawn.Unchanged || withdrawn.CompliancePermitSchema != 0 {
+		t.Fatal("withdrawn permit capability retained")
+	}
+}
