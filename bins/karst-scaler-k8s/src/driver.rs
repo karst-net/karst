@@ -17,7 +17,8 @@ use serde_json::json;
 use karst_scaler_driver::{Driver, DriverError, Instance, InstanceState};
 
 use crate::bundle::{
-    bundle_secret_name, pod_address, pod_fqdn, pod_name, secret_key, EnrollBundle,
+    bundle_secret_name, fqdn_for_pod_name, pod_address, pod_fqdn, pod_name, secret_key,
+    EnrollBundle,
 };
 use crate::enroll;
 
@@ -163,17 +164,21 @@ impl Driver for K8sDriver {
             Ok(pods
                 .into_iter()
                 .filter_map(|p| p.metadata.name)
-                .map(|id| Instance {
-                    id,
-                    pool_id: pool_id.to_owned(),
-                    state: InstanceState::Running,
-                    // list() has no create-time context to recover this
-                    // from and no caller needs it from here -- only
-                    // create()'s own return value is ever correlated
-                    // against (ADR-0063's allocation loop reads it off
-                    // the Instance create() just handed back, not a
-                    // later list()).
-                    tls_server_name: None,
+                .map(|id| {
+                    // Unlike AwsDriver, no second data source to read
+                    // back from -- but the FQDN is deterministic from
+                    // the pod's own name plus this driver's own
+                    // namespace, so it recomputes exactly rather than
+                    // needing to remember one, surviving a
+                    // `karst-scaler allocate` restart the same way
+                    // AwsDriver's own tag read does.
+                    let tls_server_name = fqdn_for_pod_name(&id, pool_id, &self.namespace);
+                    Instance {
+                        id,
+                        pool_id: pool_id.to_owned(),
+                        state: InstanceState::Running,
+                        tls_server_name: Some(tls_server_name),
+                    }
                 })
                 .collect())
         })

@@ -56,15 +56,23 @@ pub fn bundle_secret_name(pool_id: &str) -> String {
     format!("{pool_id}-enroll")
 }
 
+/// [`pod_fqdn`]'s own formatting, taking an already-known pod name
+/// directly rather than an ordinal to derive one from — `list()`
+/// (`driver.rs`) already has the real pod name from the Kubernetes API
+/// and has no ordinal of its own to pass back through [`pod_name`]
+/// first; this is the one shared place the `{name}.{pool_id}.{namespace}...`
+/// format lives, so the two call sites can never drift apart.
+#[must_use]
+pub fn fqdn_for_pod_name(pod_name: &str, pool_id: &str, namespace: &str) -> String {
+    format!("{pod_name}.{pool_id}.{namespace}.svc.cluster.local")
+}
+
 /// The stable per-pod DNS name ordinal `i` has once its headless `Service`
 /// (same name as `pool_id`, by the convention this driver assumes — see
 /// the crate doc) is in place. Doubles as the relay's registry address.
 #[must_use]
 pub fn pod_fqdn(pool_id: &str, ordinal: u32, namespace: &str) -> String {
-    format!(
-        "{}.{pool_id}.{namespace}.svc.cluster.local",
-        pod_name(pool_id, ordinal)
-    )
+    fqdn_for_pod_name(&pod_name(pool_id, ordinal), pool_id, namespace)
 }
 
 /// The literal `address` ordinal `i` is enrolled under — [`pod_fqdn`] plus
@@ -106,6 +114,14 @@ mod tests {
         assert_eq!(
             pod_fqdn("relay", 2, "karst-system"),
             "relay-2.relay.karst-system.svc.cluster.local"
+        );
+    }
+
+    #[test]
+    fn fqdn_for_pod_name_matches_pod_fqdn_for_the_same_pod() {
+        assert_eq!(
+            fqdn_for_pod_name(&pod_name("relay", 2), "relay", "karst-system"),
+            pod_fqdn("relay", 2, "karst-system")
         );
     }
 
