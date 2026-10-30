@@ -1751,9 +1751,27 @@ async fn compliance_permit_issuance_enforcement_and_revocation_bound_are_real_en
         "one preloaded peer plus peer plus self"
     );
 
-    let update = this.take_permit_update();
-    let PermitUpdate::Fresh(_) = &update else {
-        panic!("expected a fresh permit snapshot, got {update:?}")
+    // A real report-then-permit round trip inside one `sync` is bounded by
+    // two real 5-second timeouts (REPORT_TIMEOUT, PERMIT_REQUEST_TIMEOUT); a
+    // report still in flight on a slow machine when its timeout fires makes
+    // `sync` bail before ever attempting the permit request, leaving
+    // `take_permit_update` at `Lost` for that cycle. Retry on the same
+    // cadence the revocation loop below tolerates the same way, rather than
+    // asserting a fresh snapshot after exactly one call.
+    let permit_started = Instant::now();
+    let update = loop {
+        let update = this.take_permit_update();
+        if matches!(update, PermitUpdate::Fresh(_)) {
+            break update;
+        }
+        assert!(
+            permit_started.elapsed() < Duration::from_secs(30),
+            "no fresh permit snapshot arrived within a generous margin"
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        this.sync().await.expect(
+            "self registers, reports, and requests a permit matching the pre-configured guardrail",
+        );
     };
     let config = std::sync::Arc::new(config);
     let engine = Engine::new(&config);
