@@ -32,6 +32,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/compliance"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/firstrun"
@@ -104,9 +105,21 @@ type accountUpdater interface {
 	UpdateAccountPeers(ctx context.Context, accountID string, reason types.UpdateReason)
 }
 
+// complianceReader is the self-reported device evidence store (ADR-0055),
+// narrowed to the one read this console surface needs. Never a write
+// capability: this package only ever displays evidence ingested over the
+// control channel (control.ComplianceHandler), never accepts it over HTTP.
+type complianceReader interface {
+	Latest(ctx context.Context, subject compliance.Subject, handle string, now time.Time) (compliance.AcceptedEvidence, error)
+}
+
 type handler struct {
-	nodes      nodeReader
-	peers      peerReader
+	nodes nodeReader
+	peers peerReader
+	// compliance is ADR-0055's self-reported device evidence store -- nil in
+	// a deployment that has not configured one (KARST_COMPLIANCE not set),
+	// see getNodeCompliance.
+	compliance complianceReader
 	audit      auditReader
 	policy     policyReader
 	relays     relayReader
@@ -562,8 +575,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, invitationAssignees invitationAssigneeStore, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections, invitationAssignees: invitationAssignees}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, invitationAssignees invitationAssigneeStore, complianceStore complianceReader, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections, invitationAssignees: invitationAssignees, compliance: complianceStore}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -597,6 +610,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/nodes/{handle}", h.deleteNode).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/nodes/{handle}/paths", h.getNodePaths).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/nodes/{handle}/posture", h.getNodePosture).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/nodes/{handle}/compliance", h.getNodeCompliance).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/posture", h.getPosture).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/posture/sessions", h.listPostureSessions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/audit/head", h.auditHead).Methods(http.MethodGet, http.MethodOptions)
@@ -4548,6 +4562,86 @@ func (h *handler) getNodePosture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	util.WriteJSONObject(r.Context(), w, postureFromObservations(observations))
+}
+
+// getNodeCompliance serves ADR-0055's self-reported device evidence. It
+// never renders a pass/fail verdict: no compliance requirements are
+// configurable yet (policy.ComplianceDraft's own doc comment is why), and a
+// verdict synthesized from absent requirements would be a false green
+// status, the same hazard nodePosture's own doc comment describes.
+func (h *handler) getNodeCompliance(w http.ResponseWriter, r *http.Request) {
+	userAuth, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	handle := mux.Vars(r)["handle"]
+	peers, err := h.peers.GetAdminPeers(r.Context(), userAuth.AccountId, userAuth.UserId, "", "")
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var target *peer.Peer
+	for _, p := range peers {
+		if p.Key == handle {
+			target = p
+			break
+		}
+	}
+	if target == nil {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "Karst node not found"), w)
+		return
+	}
+	if h.compliance == nil {
+		util.WriteJSONObject(r.Context(), w, karstcontract.NodeCompliance{Status: karstcontract.NodeComplianceStatusUnconfigured})
+		return
+	}
+	subject := compliance.Subject{TenantID: target.AccountID, DeviceID: target.ID}
+	accepted, err := h.compliance.Latest(r.Context(), subject, handle, time.Now().UTC())
+	if errors.Is(err, compliance.ErrNoEvidence) || errors.Is(err, compliance.ErrNotEnrolled) {
+		util.WriteJSONObject(r.Context(), w, karstcontract.NodeCompliance{Status: karstcontract.NodeComplianceStatusUnreported})
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, nodeComplianceFromEvidence(accepted))
+}
+
+func nodeComplianceFromEvidence(accepted compliance.AcceptedEvidence) karstcontract.NodeCompliance {
+	e := accepted.Evidence
+	receivedAt := e.ReceivedAt.UTC()
+	generation := int(accepted.Generation)
+	result := karstcontract.NodeCompliance{
+		Status:           karstcontract.NodeComplianceStatusReported,
+		Distribution:     nullableString(e.Distribution),
+		CollectorVersion: nullableString(accepted.CollectorVersion),
+		Generation:       &generation,
+		ReceivedAt:       &receivedAt,
+	}
+	if e.Platform != "" {
+		platform := karstcontract.NodeCompliancePlatform(e.Platform)
+		result.Platform = &platform
+	}
+	if e.ClientVersion.Status != "" {
+		s := karstcontract.NodeComplianceClientVersionStatus(e.ClientVersion.Status)
+		result.ClientVersionStatus = &s
+		result.ClientVersion = nullableString(e.ClientVersion.Version)
+	}
+	if e.OSVersion.Status != "" {
+		s := karstcontract.NodeComplianceOsVersionStatus(e.OSVersion.Status)
+		result.OsVersionStatus = &s
+		result.OsVersion = nullableString(e.OSVersion.Version)
+	}
+	return result
+}
+
+func nullableString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func containsHandle(nodes []nodeResponse, handle string) bool {

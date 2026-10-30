@@ -59,7 +59,7 @@ func installRootDomainFixture(r *router, directory string) error {
 	am := &mock_server.MockAccountManager{}
 	mgr := domainmanager.NewManager(s, am, permissionManager)
 	apiRouter := mux.NewRouter()
-	karstapi.RegisterEndpoints(r.nodes, nil, nil, nil, nil, nil, nil, nil, am, permissionManager, mgr, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, r.nodes, apiRouter)
+	karstapi.RegisterEndpoints(r.nodes, nil, nil, nil, nil, nil, nil, nil, am, permissionManager, mgr, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, r.nodes, nil, apiRouter)
 	r.rootDomains = &rootDomainFixture{api: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "fixture-account", UserId: owner.Id})
 		apiRouter.ServeHTTP(w, req)

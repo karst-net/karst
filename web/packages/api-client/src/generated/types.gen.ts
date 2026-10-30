@@ -439,6 +439,22 @@ export type NodePosture = {
     observed_at: string | null;
 };
 
+/**
+ * Self-reported device compliance evidence (ADR-0055), retained for this node. No pass/fail verdict is included: no compliance requirements are configurable yet (see spec/device-compliance-v1.md), and a server verdict synthesized from absent requirements would read as a false green status in the console.
+ */
+export type NodeCompliance = {
+    status: 'unconfigured' | 'unreported' | 'reported';
+    platform?: 'linux' | 'darwin' | 'windows';
+    distribution?: string | null;
+    client_version_status?: 'collected' | 'unsupported' | 'collection-error';
+    client_version?: string | null;
+    os_version_status?: 'collected' | 'unsupported' | 'collection-error';
+    os_version?: string | null;
+    collector_version?: string | null;
+    generation?: number | null;
+    received_at?: string | null;
+};
+
 export type PolicyWrite = {
     /**
      * HuJSON policy document.
@@ -1821,6 +1837,33 @@ export type GetNodePostureResponses = {
 };
 
 export type GetNodePostureResponse = GetNodePostureResponses[keyof GetNodePostureResponses];
+
+export type GetNodeComplianceData = {
+    body?: never;
+    path: {
+        handle: string;
+    };
+    query?: never;
+    url: '/nodes/{handle}/compliance';
+};
+
+export type GetNodeComplianceErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetNodeComplianceError = GetNodeComplianceErrors[keyof GetNodeComplianceErrors];
+
+export type GetNodeComplianceResponses = {
+    /**
+     * Last self-reported device compliance evidence retained for this node (ADR-0055)
+     */
+    200: NodeCompliance;
+};
+
+export type GetNodeComplianceResponse = GetNodeComplianceResponses[keyof GetNodeComplianceResponses];
 
 export type ListMyDevicesData = {
     body?: never;

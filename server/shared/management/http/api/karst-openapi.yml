@@ -371,6 +371,14 @@ paths:
       responses:
         '200': {description: Last cryptographic posture reported by this node, content: {application/json: {schema: {$ref: '#/components/schemas/NodePosture'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /nodes/{handle}/compliance:
+    parameters: [{$ref: '#/components/parameters/handle'}]
+    get:
+      operationId: getNodeCompliance
+      tags: [nodes]
+      responses:
+        '200': {description: Last self-reported device compliance evidence retained for this node (ADR-0055), content: {application/json: {schema: {$ref: '#/components/schemas/NodeCompliance'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /me/devices:
     get:
       operationId: listMyDevices
@@ -1673,6 +1681,16 @@ components:
       type: object
       required: [status, observed_at]
       properties: {status: {type: string, enum: [pq, lattice_only, stale, unknown]}, suite: {type: string, nullable: true}, psk_epoch: {type: integer, nullable: true, minimum: 0}, lattice_only: {type: boolean}, observed_at: {type: string, nullable: true, format: date-time}}
+    NodeCompliance:
+      type: object
+      description: >-
+        Self-reported device compliance evidence (ADR-0055), retained for this
+        node. No pass/fail verdict is included: no compliance requirements are
+        configurable yet (see spec/device-compliance-v1.md), and a server
+        verdict synthesized from absent requirements would read as a false
+        green status in the console.
+      required: [status]
+      properties: {status: {type: string, enum: [unconfigured, unreported, reported]}, platform: {type: string, nullable: true, enum: [linux, darwin, windows]}, distribution: {type: string, nullable: true}, client_version_status: {type: string, nullable: true, enum: [collected, unsupported, collection-error]}, client_version: {type: string, nullable: true}, os_version_status: {type: string, nullable: true, enum: [collected, unsupported, collection-error]}, os_version: {type: string, nullable: true}, collector_version: {type: string, nullable: true}, generation: {type: integer, nullable: true, minimum: 0}, received_at: {type: string, nullable: true, format: date-time}}
     PolicyWrite:
       type: object
       required: [document]

@@ -173,6 +173,23 @@ test("a machine's paths show sent/received totals, not just kind and endpoint", 
   await expect(row).toContainText("7.3 MB");
 });
 
+// ADR-0055: self-reported evidence, never a pass/fail verdict -- the console
+// has no compliance requirements to evaluate against yet.
+test("a machine's compliance dialog shows self-reported evidence with no pass/fail verdict", async ({ page }) => {
+  await page.goto("/#/machines/status");
+  await page.locator("tbody tr").filter({ hasText: "sre-laptop" }).getByRole("button", { name: "Compliance" }).click();
+  const dialog = page.locator("dialog[open]");
+  await expect(dialog).toContainText("linux");
+  await expect(dialog).toContainText("ubuntu");
+  await expect(dialog).toContainText("1.4.0");
+  await expect(dialog).toContainText("22.04");
+  await expect(dialog).toContainText("not a pass/fail verdict");
+  await dialog.getByRole("button", { name: "Close" }).click();
+
+  await page.locator("tbody tr").filter({ hasText: "prod-db-01" }).getByRole("button", { name: "Compliance" }).click();
+  await expect(page.locator("dialog[open]")).toContainText("No compliance evidence has been reported");
+});
+
 test("the machine filter narrows the list without hiding the count", async ({ page }) => {
   await page.goto("/#/machines");
   await page.getByLabel("Filter machines").fill("prod-db-01");

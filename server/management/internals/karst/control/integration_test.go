@@ -152,7 +152,7 @@ func TestRegistrationAgainstTheRealAccountManager(t *testing.T) {
 	}
 	router := mux.NewRouter()
 	router.UseEncodedPath()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nodes, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nodes, nil, router)
 	portalRequest := func(method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: accountID, UserId: userID})
@@ -485,7 +485,7 @@ func TestServerPushesOnPeerDeletion(t *testing.T) {
 	}
 	router := mux.NewRouter()
 	router.UseEncodedPath()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nodes, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nodes, nil, router)
 	portalRequest := func(method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: accountID, UserId: userID})
