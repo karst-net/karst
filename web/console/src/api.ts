@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayAllocation, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -108,6 +108,10 @@ export type DomainDelegation = { id: string; domain_id: string; domain_path: str
 export type AccountUser = { id: string; name: string; email: string; role: string; status: string; is_current?: boolean; is_blocked: boolean; auto_groups?: string[]; issued?: string; last_login?: string | null };
 
 export type ManagedRelayService = RelayService & { access_managed?: boolean; allowed_groups?: string[]; gateway_handle?: string; exit_ipv4?: boolean; exit_ipv6?: boolean; metric?: number; revision?: number };
+/** The writable fields of a RelayAllocation — everything else on that type
+ * (state, revision, failed_step, …) is server-derived and never accepted
+ * from callers (karst-openapi.yml's own `readonly` markings). */
+export type RelayAllocationDraft = { name: string; infra_connection_id: string; location: string; relay_transport: boolean; permitted_groups: string[] };
 export type Group = { id: string; name: string; peers_count: number; resources_count: number; issued?: string; peers?: Array<{ id: string; name: string }>; resources?: Array<{ id: string; type: string }> };
 
 export type GroupSnapshot = { group: Group; revision: string };
@@ -252,6 +256,12 @@ export const api = {
   relays: () => request<Relay[]>("/relays"),
   addRelay: (entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: RelayLocation }) => request<Relay>("/relays", { method: "POST", body: body(entry) }),
   removeRelay: (id: string) => request<void>(`/relays/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // ── relay allocation (ADR-0063, #455) ───────────────────────────────────────
+  relayAllocations: () => request<RelayAllocation[]>("/relay-allocations"),
+  allocateRelay: (draft: RelayAllocationDraft) => request<RelayAllocation>("/relay-allocations", { method: "POST", body: body(draft) }),
+  deprovisionRelayAllocation: (id: string, revision: number) => request<RelayAllocation>(`/relay-allocations/${encodeURIComponent(id)}/deprovision`, { method: "POST", body: body({ revision, acknowledge_deprovision: true }) }),
+  deleteRelayAllocation: (id: string, revision: number) => request<void>(`/relay-allocations/${encodeURIComponent(id)}?revision=${revision}`, { method: "DELETE" }),
 
   // ── NOC view (#241 Phase 1a, ADR-0046/ADR-0047, extended to ADR-0046 §1's
   // full component list) ──────────────────────────────────────────────────
