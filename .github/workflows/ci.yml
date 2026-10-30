@@ -606,13 +606,28 @@ jobs:
       AQUIFER_BIN: ${{ needs.aquifer-build.outputs.aquifer_bin }}
     steps:
       - uses: actions/checkout@v4
-      # The fixture builds and runs the coordination server itself, as root —
-      # so `go` has to be on root's PATH, which is what the `sudo env PATH`
-      # below is for.
+      # Build the coordination fixture as the runner user so setup-go's
+      # restored module/build caches are used instead of root's empty caches.
       - uses: actions/setup-go@v5
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+      - name: Build the coordination fixture
+        working-directory: server
+        run: |
+          # A transient Go proxy failure must not fail a topology assertion.
+          # Retry only dependency downloads; compilation errors fail at once.
+          for attempt in 1 2 3; do
+            if go mod download; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep "$((attempt * 5))"
+          done
+          CGO_ENABLED=1 go build -o "$GITHUB_WORKSPACE/target/karst-testserver" \
+            ./management/internals/karst/testserver/
       - name: Download the fixtures aquifer-build produced
         uses: actions/download-artifact@v4
         with:
@@ -675,6 +690,7 @@ jobs:
           KARST_REQUIRE_PREREQUISITES: "1"
         run: |
           sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
+            "KARST_AQUIFER_TESTSERVER=$GITHUB_WORKSPACE/target/karst-testserver" \
             "$AQUIFER_BIN" --ignored --test-threads=1 --nocapture --exact ${{ matrix.tests }}
 
   # ADR-0012's release gate and the port-mapping codec check — a different

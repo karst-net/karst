@@ -299,7 +299,7 @@ test("a relay can be added and removed", async ({ page }) => {
   await page.getByLabel("Relay identity key").fill("fixture-public-key-new");
   await page.getByLabel("Relay region").fill("ap-south");
   await page.getByRole("button", { name: "Add relay" }).nth(1).click();
-  await expect(page.getByRole("status")).toContainText("Endpoint registered");
+  await expect(page.getByRole("status").filter({ hasText: "Endpoint registered" })).toBeVisible();
   await expect(page.getByLabel("Registered relay", { exact: true }).locator("option:checked")).toContainText("203.0.113.9:443");
   await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
   const row = page.locator("tbody tr").filter({ hasText: "203.0.113.9:443" });
