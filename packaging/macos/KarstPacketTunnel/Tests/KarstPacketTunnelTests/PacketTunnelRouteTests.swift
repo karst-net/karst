@@ -38,9 +38,14 @@ final class PacketTunnelRouteTests: XCTestCase {
     }
 
     func testPeerRoutesAndActiveRecipientExitRoutesBecomeTunnelRoutes() throws {
+        // The exit's backing (established) peer carries the default prefix
+        // in its own allowed_ips, the same way a real gateway peer's offer
+        // does — see testUnconsentedExitOfferInAllowedIPsDoesNotCaptureTheDefaultRoute
+        // below, and networkSettings(fromStatusJSON:)'s own doc comment on
+        // the readiness gate.
         let settings = try PacketTunnelProvider.networkSettings(fromStatusJSON: status(
             addresses: ["100.64.0.1/10", "fd00::1/64"],
-            allowedIPs: [["100.64.0.0/10", "fd00::/64"]],
+            allowedIPs: [["100.64.0.0/10", "fd00::/64", "0.0.0.0/0", "::/0"]],
             routes: [
                 ["prefix": "0.0.0.0/0", "kind": "exit", "role": "recipient", "active": true],
                 ["prefix": "::/0", "kind": "exit", "role": "recipient", "active": true],
