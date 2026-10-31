@@ -52,3 +52,10 @@ release/revision, even if an image has release-looking tags. Newly built Karst
 client, relay, control, and console images carry these OCI labels. Run
 `scripts/compose-versions.py --output <snapshot-path>` from the Compose project
 directory after deployment to refresh the configured snapshot.
+
+For Nomad's Docker driver, run the same collector on the Docker host with
+`--nomad-job <exact-job-id> --nomad-namespace <namespace>`. It selects local
+containers by their allocation IDs after querying the exact job/namespace;
+it does not copy desired image references from the job definition. The
+production Nomad deployment already mounts the snapshot directory. See its
+[collection instructions](../../deploy/nomad/prod/README.md#observed-system-versions).

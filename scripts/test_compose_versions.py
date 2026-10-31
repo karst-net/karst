@@ -3,8 +3,11 @@
 # Copyright the Karst contributors.
 
 import importlib.util
+import contextlib
+import io
 import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -39,6 +42,48 @@ class ObservedImageIdentityTests(unittest.TestCase):
                     observed = versions.observe_component(self.container())
                 self.assertIsNone(observed["version"])
                 self.assertIsNone(observed["revision"])
+
+
+class NomadContainerSelectionTests(unittest.TestCase):
+    def test_uses_exact_job_namespace_and_mandatory_allocation_label(self):
+        allocations = [
+            {"ID": "active", "JobID": "karst", "Namespace": "prod", "ClientStatus": "running"},
+            {"ID": "starting", "JobID": "karst", "Namespace": "prod", "ClientStatus": "pending"},
+            {"ID": "old", "JobID": "karst", "Namespace": "prod", "ClientStatus": "complete"},
+            {"ID": "other-job", "JobID": "karst-other", "Namespace": "prod", "ClientStatus": "running"},
+            {"ID": "other-namespace", "JobID": "karst", "Namespace": "staging", "ClientStatus": "running"},
+        ]
+        with patch.object(versions.subprocess, "check_output", return_value=json.dumps(allocations)) as nomad:
+            with patch.object(versions, "docker", side_effect=["container-b\ncontainer-a\n", "container-b\n"]) as docker:
+                ids = versions.container_ids("karst", "prod")
+        nomad.assert_called_once_with(["nomad", "job", "allocs", "-all", "-json", "-namespace=prod", "karst"], text=True)
+        self.assertEqual(ids, ["container-a", "container-b"])
+        self.assertEqual(docker.call_args_list, [
+            unittest.mock.call("ps", "--all", "--quiet", "--filter", "label=com.hashicorp.nomad.alloc_id=active"),
+            unittest.mock.call("ps", "--all", "--quiet", "--filter", "label=com.hashicorp.nomad.alloc_id=starting"),
+        ])
+
+    def test_does_not_fall_back_to_other_containers_for_an_empty_job(self):
+        with patch.object(versions.subprocess, "check_output", return_value="[]"):
+            with patch.object(versions, "docker") as docker:
+                self.assertEqual(versions.container_ids("empty", "prod"), [])
+                docker.assert_not_called()
+
+    def test_preserves_compose_project_selection_by_default(self):
+        with patch.object(versions, "docker", return_value="project-container\n") as docker:
+            self.assertEqual(versions.container_ids(), ["project-container"])
+        docker.assert_called_once_with("compose", "ps", "--all", "--quiet")
+
+    def test_empty_nomad_selection_preserves_previous_snapshot(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "components.json"
+            output.write_text("previous observation")
+            arguments = ["compose-versions.py", "--output", str(output), "--nomad-job", "empty"]
+            with patch("sys.argv", arguments), patch.object(versions, "container_ids", return_value=[]):
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as result:
+                    versions.main()
+            self.assertEqual(result.exception.code, 2)
+            self.assertEqual(output.read_text(), "previous observation")
 
 
 if __name__ == "__main__":

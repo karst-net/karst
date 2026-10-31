@@ -80,3 +80,32 @@ vars file, then repeating plan, run, and smoke checks. This replaces only
 the console image and does not change persistent state. Before the first
 signed console release exists, leave the existing deployment running;
 local build validation alone does not complete a production rollout.
+
+## Observed system versions
+
+The control task already mounts `prod_dir/versions` read-only and reads
+`components.json` for **Settings → Software versions**. Populate that snapshot
+on the Docker host after a rollout or rollback:
+
+```sh
+python3 scripts/compose-versions.py --nomad-job karst --nomad-namespace default \
+  --output /path/to/prod_dir/versions/components.json
+```
+
+Use the exact job ID, namespace, and the `prod_dir` from your deployment vars.
+The collector uses `nomad job allocs -all -json` with read access to that job,
+then selects local Docker containers using Nomad's mandatory allocation-ID
+label. Optional job-name/namespace Docker labels are not required. Allocation
+scope comes from Nomad; releases, source revisions, image IDs, and process
+states come from the actual containers/images, not the jobspec's desired image.
+See the [Nomad job allocation command](https://developer.hashicorp.com/nomad/commands/job/allocs)
+and [Docker driver's allocation label](https://github.com/hashicorp/nomad/blob/main/drivers/docker/driver.go).
+
+This production job pins all groups to one host, so run the collector there.
+It does not inspect containers on other Nomad nodes. If the exact job/namespace
+has no matching local containers, or a query fails, the previous snapshot is
+preserved with its original timestamp. The UI marks old snapshots stale; it
+does not contact Nomad or Docker when refreshed. Re-run collection after
+service changes, or schedule it on that host if ongoing observations are
+needed. Neither the Docker socket nor Nomad credentials are mounted into
+control. The snapshot contains no container environment or task configuration.
