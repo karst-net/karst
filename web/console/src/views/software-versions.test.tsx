@@ -13,7 +13,7 @@ vi.stubGlobal("__KARST_UI_BUILD__", { version: "v0.1.0-rc.25", revision: "ui-com
 describe("software versions", () => {
   it("keeps UI and server identities separate and labels deployment observations", () => {
     resource.value = { control: { version: "v0.1.0-rc.24", revision: "server-commit" }, deployment_status: "available", deployment: {
-      observed_at: "2026-10-20T12:00:00Z", components: [{ name: "relay", image: "relay@sha256:123", image_id: "sha256:456", tags: [], state: "running" }],
+      observed_at: "2026-10-20T12:00:00Z", components: [{ name: "relay", image: "relay@sha256:123", image_id: "sha256:456", version: "relay-release", revision: "relay-commit", tags: [], state: "running" }],
     } };
     const html = renderToStaticMarkup(<SoftwareVersions />);
     expect(html).toContain("v0.1.0-rc.25");
@@ -22,8 +22,19 @@ describe("software versions", () => {
     expect(html).toContain("Deployment snapshot observed");
     expect(html).toContain("No release tag reported");
     expect(html).toContain("sha256:456");
+    expect(html).toContain("relay-release");
+    expect(html).toContain("relay-commit");
     expect(html).toContain("Compatibility is unverified");
     expect(html).toContain("Observation status: Stale");
+  });
+  it("keeps old snapshots with missing image labels unknown", () => {
+    resource.error = undefined;
+    resource.value = { control: { version: "unknown", revision: "unknown" }, deployment_status: "available", deployment: {
+      observed_at: "2026-10-20T12:00:00Z", components: [{ name: "relay", image: "relay:latest", image_id: "sha256:old", tags: ["relay:v99"], state: "running" }],
+    } };
+    const html = renderToStaticMarkup(<SoftwareVersions />);
+    expect(html).toContain("<td>relay</td><td>Unknown<br/><code>Unknown</code></td>");
+    expect(html).toContain("relay:v99");
   });
   it("does not substitute the UI version when the server is unavailable", () => {
     resource.value = undefined;

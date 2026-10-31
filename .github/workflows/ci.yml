@@ -1080,6 +1080,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Observed Compose image identities
+        run: python3 -m unittest discover -s scripts -p test_compose_versions.py -v
       - name: Relay deployment adapter and isolated process lifecycle
         env:
           KARST_COMPOSE_LIFECYCLE_TEST: '1'

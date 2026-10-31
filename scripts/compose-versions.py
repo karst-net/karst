@@ -20,6 +20,23 @@ def docker(*args):
     return subprocess.check_output(["docker", *args], text=True)
 
 
+def observe_component(container):
+    # Resolve metadata by the executing container's immutable image ID, never
+    # its configured tag: the tag may already point at a newer image.
+    image_id = container["Image"]
+    image = json.loads(docker("image", "inspect", image_id))[0]
+    labels = image.get("Config", {}).get("Labels") or {}
+    return {
+        "name": container["Name"].lstrip("/"),
+        "image": container["Config"]["Image"],
+        "image_id": image_id,
+        "version": labels.get("org.opencontainers.image.version"),
+        "revision": labels.get("org.opencontainers.image.revision"),
+        "tags": image.get("RepoTags") or [],
+        "state": container["State"]["Status"],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -27,17 +44,7 @@ def main():
     ids = docker("compose", "ps", "--all", "--quiet").split()
     if not ids:
         parser.error("No Compose containers found; no snapshot written")
-    components = []
-    for container in json.loads(docker("inspect", *ids)):
-        image_id = container["Image"]
-        image = json.loads(docker("image", "inspect", image_id))[0]
-        components.append({
-            "name": container["Name"].lstrip("/"),
-            "image": container["Config"]["Image"],
-            "image_id": image_id,
-            "tags": image.get("RepoTags") or [],
-            "state": container["State"]["Status"],
-        })
+    components = [observe_component(container) for container in json.loads(docker("inspect", *ids))]
     snapshot = {"observed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "components": sorted(components, key=lambda c: c["name"])}
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -141,7 +141,7 @@ export type BedrockBootstrapBundle = { format: "bedrock-log-v1"; payload: string
 export type SoftwareVersions = {
   control: { version: string; revision: string };
   deployment_status: "available" | "not_configured" | "unavailable";
-  deployment?: { observed_at: string; components: { name: string; image: string; image_id: string; tags: string[]; state: string }[] };
+  deployment?: { observed_at: string; components: { name: string; image: string; image_id: string; version?: string | null; revision?: string | null; tags: string[]; state: string }[] };
 };
 
 export const api = {

@@ -5,6 +5,8 @@
 # Build from the repository root:
 #   docker build -f deploy/images/karstd.Dockerfile -t ghcr.io/karst-net/karstd:dev .
 FROM rust:1.89-bookworm AS build
+ARG KARST_VERSION=development
+ARG KARST_REVISION=unknown
 RUN apt-get update \
     && apt-get install --no-install-recommends -y libprotobuf-dev protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
@@ -27,6 +29,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && cp /src/target/release/karstd /usr/local/bin/karstd-built
 
 FROM debian:bookworm-slim
+ARG KARST_VERSION=development
+ARG KARST_REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/karst-net/karst" \
+      org.opencontainers.image.version="${KARST_VERSION}" \
+      org.opencontainers.image.revision="${KARST_REVISION}"
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

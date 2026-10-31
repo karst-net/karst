@@ -18,7 +18,7 @@ import (
 func TestSoftwareVersionsRolesAndSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "versions.json")
 	t.Setenv("KARST_COMPONENT_VERSIONS_FILE", path)
-	require.NoError(t, os.WriteFile(path, []byte(`{"observed_at":"2026-10-20T12:00:00Z","components":[{"name":"relay","image":"relay:v1","image_id":"sha256:abc","tags":["relay:v1"],"state":"running","secret":"never expose"}]}`), 0600))
+	require.NoError(t, os.WriteFile(path, []byte(`{"observed_at":"2026-10-20T12:00:00Z","components":[{"name":"relay","image":"relay:v1","image_id":"sha256:abc","tags":["relay:v1"],"state":"running","version":"v0.1.0-rc.31","revision":"observed-commit","secret":"never expose"}]}`), 0600))
 	for _, role := range []string{"owner", "admin", "network_admin", "auditor", "noc", "user", ""} {
 		t.Run(role, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/karst/v1/versions", nil)
@@ -30,6 +30,8 @@ func TestSoftwareVersionsRolesAndSnapshot(t *testing.T) {
 				require.Equal(t, http.StatusOK, response.Code)
 				require.Contains(t, response.Body.String(), `"deployment_status":"available"`)
 				require.Contains(t, response.Body.String(), `"image_id":"sha256:abc"`)
+				require.Contains(t, response.Body.String(), `"version":"v0.1.0-rc.31"`)
+				require.Contains(t, response.Body.String(), `"revision":"observed-commit"`)
 				require.NotContains(t, response.Body.String(), "never expose")
 				require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 			} else {

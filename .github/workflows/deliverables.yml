@@ -468,6 +468,9 @@ jobs:
           push: false
           platforms: linux/${{ matrix.arch }}
           tags: local/${{ matrix.image }}:${{ github.sha }}-${{ matrix.arch }}
+          build-args: |
+            KARST_VERSION=0.0.0+git.${{ github.sha }}
+            KARST_REVISION=${{ github.sha }}
           # Persists BuildKit's cache (including the Dockerfiles' own
           # `--mount=type=cache` registry/module/build-cache mounts) across
           # runs via the Actions cache backend, scoped per image+arch so the
@@ -476,6 +479,24 @@ jobs:
           # a cache mount's contents actually be restored on the next run.
           cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
+      - name: Verify observed image build identities
+        env:
+          IMAGE: local/${{ matrix.image }}:${{ github.sha }}-${{ matrix.arch }}
+          COMPONENT: ${{ matrix.name }}
+          EXPECTED_VERSION: 0.0.0+git.${{ github.sha }}
+          EXPECTED_REVISION: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          image = os.environ["IMAGE"]
+          metadata = json.loads(subprocess.check_output(["docker", "image", "inspect", image]))[0]
+          labels = metadata["Config"]["Labels"]
+          assert labels["org.opencontainers.image.version"] == os.environ["EXPECTED_VERSION"]
+          assert labels["org.opencontainers.image.revision"] == os.environ["EXPECTED_REVISION"]
+          if os.environ["COMPONENT"] == "client":
+              version = subprocess.check_output(["docker", "run", "--rm", image, "--version"], text=True).strip()
+              assert version == "karstd " + os.environ["EXPECTED_VERSION"], version
+          PY
 
   # A release image is a digest, not a tag: a tag may move after an operator
   # has inspected it.  This job consequently pushes and signs only immutable

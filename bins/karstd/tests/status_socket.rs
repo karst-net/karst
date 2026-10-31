@@ -55,6 +55,10 @@ impl Drop for Node {
 /// `with_status_socket` mirrors what packaging actually does: pass
 /// `--status-socket` or do not, nothing in between.
 fn start(tag: &str, with_status_socket: bool) -> Node {
+    start_with_executable_copy(tag, with_status_socket, false)
+}
+
+fn start_with_executable_copy(tag: &str, with_status_socket: bool, copy_executable: bool) -> Node {
     let dir = root_dir().join(tag);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp dir");
@@ -96,7 +100,14 @@ exit_node_state_file = "state/exit-route"
     let out = std::fs::File::create(&log).expect("log file");
     let err = out.try_clone().expect("log file");
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_karstd"));
+    let binary = if copy_executable {
+        let copy = dir.join("karstd");
+        std::fs::copy(env!("CARGO_BIN_EXE_karstd"), &copy).expect("copy daemon executable");
+        copy
+    } else {
+        PathBuf::from(env!("CARGO_BIN_EXE_karstd"))
+    };
+    let mut command = Command::new(binary);
     command
         .arg("--config")
         .arg(&config)
@@ -220,4 +231,41 @@ fn no_status_socket_exists_without_the_flag() {
         !node.dir.join("status").join("status.sock").exists(),
         "no --status-socket was given; nothing should have been created"
     );
+}
+
+/// A package upgrade may replace the installed pathname while the old process
+/// remains running. Its first observation must still identify the old inode.
+#[cfg(target_os = "linux")]
+#[test]
+fn artifact_identity_describes_the_running_executable_after_an_on_disk_upgrade() {
+    use sha2::{Digest as _, Sha256};
+
+    let node = start_with_executable_copy("artifact-upgrade", true, true);
+    wait_for_socket(&node.socket);
+    wait_for_socket(node.status_socket.as_ref().expect("status socket"));
+    let mut file = std::fs::File::open(node.dir.join("karstd")).expect("running binary");
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 16 * 1024];
+    loop {
+        let count = file.read(&mut buffer).expect("read binary");
+        if count == 0 {
+            break;
+        }
+        digest.update(buffer.get(..count).expect("valid read length"));
+    }
+    let expected = format!("sha256:{:x}", digest.finalize());
+    let replacement = node.dir.join("replacement");
+    std::fs::write(&replacement, b"a different installed build").expect("replacement");
+    std::fs::rename(&replacement, node.dir.join("karstd")).expect("install replacement");
+    for socket in [
+        &node.socket,
+        node.status_socket.as_ref().expect("status socket"),
+    ] {
+        let reply = ask(socket, "status-json").expect("software observation");
+        let value: serde_json::Value = serde_json::from_str(&reply).expect("JSON");
+        assert_eq!(
+            value.get("artifact_id").and_then(serde_json::Value::as_str),
+            Some(expected.as_str())
+        );
+    }
 }

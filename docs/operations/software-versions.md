@@ -21,11 +21,16 @@ with control to obtain a new observation. Invalid software fields are ignored
 without preventing netmap synchronization or refreshing the old receipt time.
 
 Release, revision, and artifact identity are independent fields. The shared
-agent currently reports release and source revision; its artifact identity is
-unknown. The API can retain an immutable image/artifact identity when an agent
-reports one. A source revision is not a binary or container digest. Missing
-fields replace previous values with unknown, preventing an upgraded release
-from retaining an older build's identity.
+agent reports release and source revision. On Linux it also reports
+`sha256:<digest>` of the running process executable, read through
+`/proc/self/exe` and cached for that process. This remains the old executable's
+identity if an upgrade replaces its installed pathname while it is running.
+It identifies the process executable, not a package, container image, or
+separately loaded library. On other platforms, or if the running executable
+cannot be read, this identity remains unknown. A source revision is not a
+binary or container digest. Missing fields replace previous values with
+unknown, preventing an upgraded release from retaining an older build's
+identity.
 
 These are self-reported observations, not attestation or configured deployment
 targets. Different client/control releases produce an upgrade advisory; equal
@@ -39,3 +44,11 @@ the control binary answering the request, and any configured deployment
 snapshot. The macOS menu shows the installed app release/build separately from
 the responding agent's release/revision, which helps identify an extension
 that has not yet been replaced after an app upgrade.
+
+Deployment snapshots include release and source revision labels from each
+container's observed immutable image ID. They never resolve labels through a
+mutable configured tag. Old snapshots or images without labels show unknown
+release/revision, even if an image has release-looking tags. Newly built Karst
+client, relay, control, and console images carry these OCI labels. Run
+`scripts/compose-versions.py --output <snapshot-path>` from the Compose project
+directory after deployment to refresh the configured snapshot.

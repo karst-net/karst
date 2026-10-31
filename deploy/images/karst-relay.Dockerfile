@@ -23,6 +23,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && cp /src/target/release/karst-relay /usr/local/bin/karst-relay-built
 
 FROM debian:bookworm-slim
+ARG KARST_VERSION=development
+ARG KARST_REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/karst-net/karst" \
+      org.opencontainers.image.version="${KARST_VERSION}" \
+      org.opencontainers.image.revision="${KARST_REVISION}"
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

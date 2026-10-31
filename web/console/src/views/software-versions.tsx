@@ -26,10 +26,10 @@ export function SoftwareVersions() {
     {versions.error && <Failure message={versions.error} retry={versions.reload} />}
     {versions.value?.deployment ? <>
       <p>Deployment snapshot observed <Observed at={versions.value.deployment.observed_at} />. Changes since this observation may not be reflected here.</p>
-      <p>Observation status: {observationStatus}. Snapshots older than 15 minutes are stale. Refresh retrieves the latest available snapshot; it does not collect a new observation. These are observed running artifacts, not desired deployment versions.</p>
-      <Rows head={<><th>Service</th><th>Image / release tags</th><th>Running image ID</th><th>State at observation</th></>}>
+      <p>Observation status: {observationStatus}. Snapshots older than 15 minutes are stale. Refresh retrieves the latest available snapshot; it does not collect a new observation. These are observed running artifacts, not desired deployment versions. Releases and revisions come from the observed image’s labels; tags alone do not establish a release.</p>
+      <Rows head={<><th>Service</th><th>Observed release / revision</th><th>Image / tags</th><th>Running image ID</th><th>State at observation</th></>}>
         {versions.value.deployment.components.map((component) => <tr key={component.name}>
-          <td>{component.name}</td><td><code>{component.image}</code><br />{component.tags.join(", ") || "No release tag reported"}</td>
+          <td>{component.name}</td><td>{component.version || "Unknown"}<br /><code>{component.revision || "Unknown"}</code></td><td><code>{component.image}</code><br />{component.tags.join(", ") || "No release tag reported"}</td>
           <td><code>{component.image_id || "Unknown"}</code></td><td>{component.state}</td>
         </tr>)}
       </Rows>

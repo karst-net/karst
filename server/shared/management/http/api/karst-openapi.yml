@@ -62,6 +62,8 @@ paths:
                             name: {type: string}
                             image: {type: string}
                             image_id: {type: string}
+                            version: {type: string, nullable: true, description: 'Release label read from the observed immutable image, not inferred from its configured tag.'}
+                            revision: {type: string, nullable: true, description: 'Source revision label read from the observed immutable image.'}
                             tags: {type: array, items: {type: string}}
                             state: {type: string}
         default: {$ref: '#/components/responses/Error'}

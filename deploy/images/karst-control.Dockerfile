@@ -38,6 +38,11 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
     CGO_ENABLED=1 go build -trimpath -ldflags "-X github.com/netbirdio/netbird/management/internals/karst/buildinfo.Version=${KARST_VERSION} -X github.com/netbirdio/netbird/management/internals/karst/buildinfo.Revision=${KARST_REVISION}" -o /out/karst-control ./cmd/karst-control
 
 FROM debian:bookworm-slim
+ARG KARST_VERSION=development
+ARG KARST_REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/karst-net/karst" \
+      org.opencontainers.image.version="${KARST_VERSION}" \
+      org.opencontainers.image.revision="${KARST_REVISION}"
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

@@ -1287,6 +1287,14 @@ export type SoftwareVersionsResponses = {
                 name: string;
                 image: string;
                 image_id: string;
+                /**
+                 * Release label read from the observed immutable image, not inferred from its configured tag.
+                 */
+                version?: string | null;
+                /**
+                 * Source revision label read from the observed immutable image.
+                 */
+                revision?: string | null;
                 tags: Array<string>;
                 state: string;
             }>;

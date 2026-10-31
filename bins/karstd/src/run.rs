@@ -4686,6 +4686,7 @@ fn report(
 struct StatusJson {
     version: &'static str,
     revision: &'static str,
+    artifact_id: Option<&'static str>,
     interface: String,
     mtu: usize,
     listen: String,
@@ -4916,6 +4917,7 @@ fn status_json(
     let json = StatusJson {
         version: crate::VERSION,
         revision: crate::REVISION,
+        artifact_id: crate::build_identity::artifact_id(),
         interface: device.name.to_owned(),
         mtu: device.mtu,
         listen: config.listen.to_string(),
