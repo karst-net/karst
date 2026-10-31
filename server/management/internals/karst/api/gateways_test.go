@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"testing"
+	"time"
 
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/peer"
@@ -55,7 +56,8 @@ func TestGatewayInventoryResolvesBothBehaviorsOncePerVisibleNode(t *testing.T) {
 		{ID: "empty-group", NetworkType: route.IPv4Network, Network: netip.MustParsePrefix("192.168.0.0/16"), PeerGroups: []string{"missing"}},
 		{ID: "domain", NetworkType: route.DomainNetwork},
 	}}
-	h := &handler{routes: sources, peers: fakePeers{{ID: "node-a", Key: "gateway-key", Name: "Combined Gateway", Status: &peer.PeerStatus{Connected: true}}, {ID: "unused-node", Name: "unused"}}}
+	observed := time.Now().UTC()
+	h := &handler{nodes: fakeNodes{"gateway-key": {SoftwareVersion: "gateway-release", SoftwareRevision: "gateway-commit", SoftwareObservedAt: &observed}, "hidden-key": {SoftwareVersion: "hidden-release"}}, routes: sources, peers: fakePeers{{ID: "node-a", Key: "gateway-key", Name: "Combined Gateway", Status: &peer.PeerStatus{Connected: true}}, {ID: "unused-node", Name: "unused"}}}
 	w := gatewayRequest(h)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
@@ -64,6 +66,11 @@ func TestGatewayInventoryResolvesBothBehaviorsOncePerVisibleNode(t *testing.T) {
 	require.Len(t, got.Gateways, 1)
 	node := got.Gateways[0]
 	require.Equal(t, "gateway-key", node.NodeHandle)
+	require.NotNil(t, node.Software)
+	require.Equal(t, "gateway-release", *node.Software.Version)
+	require.Equal(t, "gateway-commit", *node.Software.Revision)
+	require.True(t, node.Software.ObservedAt.Equal(observed))
+	require.NotContains(t, w.Body.String(), "hidden-release")
 	require.True(t, node.ControlConnected)
 	require.Equal(t, "unreported", node.ForwardingReadiness)
 	require.Len(t, node.Offers, 3, "duplicate routing-group membership must not duplicate offers")

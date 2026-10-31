@@ -1425,6 +1425,7 @@ components:
         node_handle: { type: string, description: "Enrolled node public handle for explicit resource bindings. Optional for compatibility with older control servers; never infer it from names or addresses." }
         name: { type: string }
         control_connected: { type: boolean }
+        software: {$ref: '#/components/schemas/NodeSoftware'}
         forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: "Aggregated across this node's own offers, degraded-first." }
         offers:
           type: array
@@ -1693,6 +1694,16 @@ components:
         created_at: {type: string, format: date-time}
         last_seen_at: {type: string, nullable: true, format: date-time}
         posture: {$ref: '#/components/schemas/NodePosture'}
+        software: {$ref: '#/components/schemas/NodeSoftware'}
+    NodeSoftware:
+      type: object
+      description: 'Running agent identity self-reported over the authenticated control channel, independent of compliance collection. Advisory, not attestation or a compatibility verdict. Omitted for agents with no observation. Missing identities remain unknown.'
+      required: [observed_at]
+      properties:
+        version: {type: string, nullable: true, maxLength: 128}
+        revision: {type: string, nullable: true, maxLength: 128}
+        artifact_id: {type: string, nullable: true, maxLength: 256}
+        observed_at: {type: string, format: date-time, description: 'Server receipt time of the last valid software report; unrelated to last_seen_at or compliance evidence.'}
     NodeUpdate:
       type: object
       additionalProperties: false

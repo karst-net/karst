@@ -1980,6 +1980,9 @@ type GatewayNode struct {
 	NodeHandle *string        `json:"node_handle,omitempty"`
 	NodeId     string         `json:"node_id"`
 	Offers     []GatewayOffer `json:"offers"`
+
+	// Software Running agent identity self-reported over the authenticated control channel, independent of compliance collection. Advisory, not attestation or a compatibility verdict. Omitted for agents with no observation. Missing identities remain unknown.
+	Software *NodeSoftware `json:"software,omitempty"`
 }
 
 // GatewayNodeForwardingReadiness Aggregated across this node's own offers, degraded-first.
@@ -2151,8 +2154,11 @@ type Node struct {
 	Name       string      `json:"name"`
 	Platform   string      `json:"platform"`
 	Posture    NodePosture `json:"posture"`
-	Tags       []string    `json:"tags"`
-	UserId     string      `json:"user_id"`
+
+	// Software Running agent identity self-reported over the authenticated control channel, independent of compliance collection. Advisory, not attestation or a compatibility verdict. Omitted for agents with no observation. Missing identities remain unknown.
+	Software *NodeSoftware `json:"software,omitempty"`
+	Tags     []string      `json:"tags"`
+	UserId   string        `json:"user_id"`
 }
 
 // NodeCompliance Self-reported device compliance evidence (ADR-0055), retained for this node. No pass/fail verdict is included: no compliance requirements are configurable yet (see spec/device-compliance-v1.md), and a server verdict synthesized from absent requirements would read as a false green status in the console.
@@ -2204,6 +2210,16 @@ type NodePosture struct {
 
 // NodePostureStatus defines model for NodePosture.Status.
 type NodePostureStatus string
+
+// NodeSoftware Running agent identity self-reported over the authenticated control channel, independent of compliance collection. Advisory, not attestation or a compatibility verdict. Omitted for agents with no observation. Missing identities remain unknown.
+type NodeSoftware struct {
+	ArtifactId *string `json:"artifact_id,omitempty"`
+
+	// ObservedAt Server receipt time of the last valid software report; unrelated to last_seen_at or compliance evidence.
+	ObservedAt time.Time `json:"observed_at"`
+	Revision   *string   `json:"revision,omitempty"`
+	Version    *string   `json:"version,omitempty"`
+}
 
 // NodeUpdate defines model for NodeUpdate.
 type NodeUpdate struct {

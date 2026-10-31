@@ -155,6 +155,12 @@ message KarstNetmapRequest {
   // 1 understands conjunctive, forwarding-only KarstFilterRule.dst_cidrs.
   // Zero/unknown cannot receive a scoped ingress grant.
   uint32 gateway_ingress_schema = 9;
+
+  // Running agent identity, including agents serving as gateways. Advisory,
+  // self-reported metadata, not attestation or a protocol compatibility grant.
+  // Absent on legacy agents: retain the previous observation without refreshing
+  // its receipt time. It must never be inferred from compliance or peer metadata.
+  KarstSoftwareIdentity software = 10;
 }
 
 // KarstRouteObservation is one route's egress and ingress bytes/packets
@@ -960,4 +966,10 @@ message KarstComplianceSourcePermit {
   string device_id = 2;
   uint64 evidence_generation = 3;
   uint32 valid_for_millis = 4;
+}
+
+message KarstSoftwareIdentity {
+  string version = 1;     // release label, at most 128 UTF-8 bytes
+  string revision = 2;    // source revision, at most 128 UTF-8 bytes
+  string artifact_id = 3; // immutable artifact/image identity when known, at most 256 bytes
 }

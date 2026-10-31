@@ -84,8 +84,15 @@ type Identity struct {
 	// missing one.
 	HomeRelay            []byte
 	RelayLifecycleSchema uint32 `gorm:"not null;default:0"`
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+
+	// Latest software report, independent of enrollment and compliance evidence.
+	// A nil receipt time means no report has ever been observed.
+	SoftwareVersion    string
+	SoftwareRevision   string
+	SoftwareArtifactID string
+	SoftwareObservedAt *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // EnrollmentOwner binds a portal or invitation credential to its device owner.

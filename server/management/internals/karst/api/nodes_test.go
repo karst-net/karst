@@ -466,7 +466,7 @@ func TestListNodes_OnlyEnrolledNodesAndNoKeyMaterial(t *testing.T) {
 	created := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{
-		"handle-a": {Handle: "handle-a", PublicKey: []byte("identity-public-material"), KemPublicKey: []byte("kem-public-material"), CreatedAt: created},
+		"handle-a": {Handle: "handle-a", PublicKey: []byte("identity-public-material"), KemPublicKey: []byte("kem-public-material"), CreatedAt: created, SoftwareVersion: "v1", SoftwareRevision: "source-commit", SoftwareArtifactID: "sha256:artifact", SoftwareObservedAt: &created},
 	}, fakePeers{
 		{Key: "fork-only-peer", Name: "not-karst", UserID: "user-a"},
 		{Key: "handle-a", Name: "karst-node", UserID: "user-a", Status: &peer.PeerStatus{LastSeen: created}},
@@ -486,6 +486,11 @@ func TestListNodes_OnlyEnrolledNodesAndNoKeyMaterial(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
 	require.Len(t, page.Items, 1)
 	require.Equal(t, "handle-a", page.Items[0].Handle)
+	require.NotNil(t, page.Items[0].Software)
+	require.Equal(t, "v1", *page.Items[0].Software.Version)
+	require.Equal(t, "source-commit", *page.Items[0].Software.Revision)
+	require.Equal(t, "sha256:artifact", *page.Items[0].Software.ArtifactId)
+	require.True(t, page.Items[0].Software.ObservedAt.Equal(created))
 	require.Equal(t, "unknown", page.Items[0].Posture.Status)
 	require.Nil(t, page.NextCursor)
 }
@@ -513,7 +518,7 @@ func TestGetNode_HidesNodesOutsideAuthorizedPeerSet(t *testing.T) {
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{
 		"handle-a": {Handle: "handle-a"},
-		"handle-b": {Handle: "handle-b"},
+		"handle-b": {Handle: "handle-b", SoftwareVersion: "other-account-release"},
 	}, fakePeers{{Key: "handle-a", Name: "visible", UserID: "user-a"}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/nodes/handle-b", nil)
@@ -522,6 +527,7 @@ func TestGetNode_HidesNodesOutsideAuthorizedPeerSet(t *testing.T) {
 	router.ServeHTTP(response, req)
 
 	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
+	require.NotContains(t, response.Body.String(), "other-account-release")
 }
 
 func TestUserRoleIsDeniedByKarstAuthorization(t *testing.T) {
