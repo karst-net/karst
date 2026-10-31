@@ -312,6 +312,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func menu(for status: DaemonStatus?) -> NSMenu {
         let menu = NSMenu()
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "KarstReleaseVersion") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
+        menu.addItem(withTitle: "App: \(appVersion) (build \(appBuild))", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: "Running agent: \(status?.version ?? "Unknown")", action: nil, keyEquivalent: "")
+        let revisionItem = menu.addItem(withTitle: "Agent revision: \(status?.revision ?? "Unknown")", action: nil, keyEquivalent: "")
+        revisionItem.toolTip = "Source commit reported by the running agent; not an artifact digest."
+        menu.addItem(NSMenuItem.separator())
         guard let status else {
             menu.addItem(
                 withTitle: "Karst tunnel is not running — not yet enrolled, or not connected",

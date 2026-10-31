@@ -24,6 +24,10 @@ struct PeerStatus {
 
 /// Everything from one `status_json`-shaped reply that this app reads.
 struct DaemonStatus {
+    // These identify the responding agent, independently of the app bundle.
+    // Older agents omit these fields; never substitute the app's version.
+    var version = "Unknown"
+    var revision = "Unknown"
     var interface = ""
     var mtu = 0
     var peers: [PeerStatus] = []
@@ -48,6 +52,12 @@ enum StatusParser {
             return status
         }
 
+        if let version = object["version"] as? String, !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            status.version = version
+        }
+        if let revision = object["revision"] as? String, !revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            status.revision = revision
+        }
         status.interface = object["interface"] as? String ?? ""
         status.mtu = object["mtu"] as? Int ?? 0
 
