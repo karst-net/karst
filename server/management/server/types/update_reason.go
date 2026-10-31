@@ -10,21 +10,22 @@ type UpdateReason struct {
 type UpdateResource string
 
 const (
-	UpdateResourceAccountSettings UpdateResource = "account_settings"
-	UpdateResourceDNSSettings     UpdateResource = "dns_settings"
-	UpdateResourceGroup           UpdateResource = "group"
-	UpdateResourceNameServerGroup UpdateResource = "nameserver_group"
-	UpdateResourcePolicy          UpdateResource = "policy"
-	UpdateResourcePostureCheck    UpdateResource = "posture_check"
-	UpdateResourceRoute           UpdateResource = "route"
-	UpdateResourceUser            UpdateResource = "user"
-	UpdateResourcePeer            UpdateResource = "peer"
-	UpdateResourceNetwork         UpdateResource = "network"
-	UpdateResourceNetworkResource UpdateResource = "network_resource"
-	UpdateResourceNetworkRouter   UpdateResource = "network_router"
-	UpdateResourceService         UpdateResource = "service"
-	UpdateResourceZone            UpdateResource = "zone"
-	UpdateResourceZoneRecord      UpdateResource = "zone_record"
+	UpdateResourceAccountSettings  UpdateResource = "account_settings"
+	UpdateResourceDNSSettings      UpdateResource = "dns_settings"
+	UpdateResourceGroup            UpdateResource = "group"
+	UpdateResourceNameServerGroup  UpdateResource = "nameserver_group"
+	UpdateResourcePolicy           UpdateResource = "policy"
+	UpdateResourceCompliancePolicy UpdateResource = "compliance_policy"
+	UpdateResourcePostureCheck     UpdateResource = "posture_check"
+	UpdateResourceRoute            UpdateResource = "route"
+	UpdateResourceUser             UpdateResource = "user"
+	UpdateResourcePeer             UpdateResource = "peer"
+	UpdateResourceNetwork          UpdateResource = "network"
+	UpdateResourceNetworkResource  UpdateResource = "network_resource"
+	UpdateResourceNetworkRouter    UpdateResource = "network_router"
+	UpdateResourceService          UpdateResource = "service"
+	UpdateResourceZone             UpdateResource = "zone"
+	UpdateResourceZoneRecord       UpdateResource = "zone_record"
 )
 
 // UpdateOperation represents the kind of change that triggered the update.

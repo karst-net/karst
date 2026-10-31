@@ -6,6 +6,7 @@ package control_test
 import (
 	"context"
 	"net/netip"
+	"strconv"
 	"testing"
 	"time"
 
@@ -39,10 +40,11 @@ func fixedNonce(seed byte) []byte {
 }
 
 // TestPermitHandlerUnconfiguredDraftIssuesAnEmptyValidSnapshot exercises the
-// shape every production deployment gets today: no Draft wired (#363's
-// persisted admin policy-write API does not exist yet), so the handler
-// serves a structurally valid, zero-guardrail snapshot. It proves the wire
-// path end to end with zero enforcement effect, not that any guardrail works.
+// shape a tenant that has never written a persisted ComplianceDraft gets (no
+// Draft func wired at all, the same as a real deployment before any admin
+// configures a guardrail): the handler serves a structurally valid,
+// zero-guardrail snapshot. It proves the wire path end to end with zero
+// enforcement effect, not that any guardrail works.
 func TestPermitHandlerUnconfiguredDraftIssuesAnEmptyValidSnapshot(t *testing.T) {
 	_, store := complianceDB(t)
 	key, err := identity.Generate()
@@ -162,6 +164,141 @@ func TestPermitHandlerCompilesAGuardrailIntoAWireSnapshot(t *testing.T) {
 	// never the enforcing device's own source decision for itself as a CIDR
 	// (CompileCompliance only populates Egress when the resource also
 	// resolves to an owned/selector match for the target).
+}
+
+// TestPermitHandlerReflectsAPersistedComplianceDraftWrite proves the real
+// production wiring end to end (#363 PR5), not a hand-rolled test closure
+// like TestPermitHandlerCompilesAGuardrailIntoAWireSnapshot above uses: a
+// draft written through policy.ComplianceDraftStore.Write (the same store
+// PUT /karst/v1/compliance/draft calls into) reaches PermitHandler.Handle
+// via CurrentDraft, both for the device whose request triggered the test
+// and for a second device enrolling afterward with no further write -- the
+// store, not a per-call closure, is what Draft actually reads.
+func TestPermitHandlerReflectsAPersistedComplianceDraftWrite(t *testing.T) {
+	db, store := complianceDB(t)
+	draftStore, err := policy.NewComplianceDraftStore(db)
+	require.NoError(t, err)
+	clock := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+
+	keyA, err := identity.Generate()
+	require.NoError(t, err)
+	handleA := node.Handle(keyA.Public())
+	peerA := &nbpeer.Peer{ID: "device-a", AccountID: "tenant-a", Key: handleA, IP: netip.MustParseAddr("100.64.0.1")}
+	peers := &fakePeers{byKey: map[string]*nbpeer.Peer{handleA: peerA}, list: []*nbpeer.Peer{peerA}}
+
+	require.NoError(t, db.Create(&complianceEnrollment{ID: peerA.ID, AccountID: peerA.AccountID, Key: handleA}).Error)
+	subject := compliance.Subject{TenantID: peerA.AccountID, DeviceID: peerA.ID}
+	challenge, err := store.Issue(context.Background(), subject, handleA, clock)
+	require.NoError(t, err)
+	require.NoError(t, store.Submit(context.Background(), subject, handleA, challenge.Token, compliance.Report{
+		CollectorVersion: "1.0.0", Platform: compliance.Linux, Distribution: "ubuntu",
+		ClientVersion: compliance.Observation{Status: compliance.Collected, Version: "1.0.0"},
+	}, clock))
+
+	draft := policy.ComplianceDraft{
+		TenantID: "tenant-a",
+		RequirementSets: map[string][]compliance.Requirement{
+			"client": {{ID: "client-version", Kind: compliance.MinimumClientVersion, MinimumVersion: "1.0.0", Provenance: compliance.SelfReported}},
+		},
+		Guardrails: []policy.ComplianceGuardrail{{
+			ID:              "guardrail-1",
+			Resource:        policy.ComplianceResource{Selector: "100.64.0.1/32", Protocol: "tcp", Ports: policy.PortRange{First: 443, Last: 443}},
+			RequirementSets: []string{"client"},
+		}},
+	}
+	written, err := draftStore.Write(policy.WithAccount(context.Background(), "tenant-a"), draft, "admin-a", 0)
+	require.NoError(t, err)
+
+	h := &control.PermitHandler{
+		Store: store, Peers: peers,
+		Draft: draftStore.CurrentDraft,
+		Now:   func() time.Time { return clock },
+	}
+	nonce := fixedNonce(9)
+	out, err := h.Handle(context.Background(), nil, keyA.Public(), permitRequestPayload(t, nonce))
+	require.NoError(t, err)
+	snap := &proto.KarstCompliancePermitSnapshot{}
+	require.NoError(t, pb.Unmarshal(out, snap))
+
+	wantRevision := strconv.FormatUint(written.Version, 10)
+	require.NoError(t, compliance.ValidatePermitSnapshot(snap, compliance.PermitBinding{
+		Subject: subject, Handle: handleA, PolicyRevision: wantRevision, Nonce: nonce,
+	}))
+	require.Equal(t, wantRevision, snap.PolicyRevision)
+	require.Len(t, snap.Ingress, 1)
+	require.Equal(t, "guardrail-1", snap.Ingress[0].GuardrailId)
+	require.Len(t, snap.Ingress[0].Sources, 1)
+	require.Equal(t, handleA, snap.Ingress[0].Sources[0].Handle)
+
+	// A second device enrolling later, with no further write, still gets the
+	// same persisted draft via CurrentDraft.
+	keyB, err := identity.Generate()
+	require.NoError(t, err)
+	handleB := node.Handle(keyB.Public())
+	peerB := &nbpeer.Peer{ID: "device-b", AccountID: "tenant-a", Key: handleB, IP: netip.MustParseAddr("100.64.0.2")}
+	peers.byKey[handleB] = peerB
+	peers.list = append(peers.list, peerB)
+	out2, err := h.Handle(context.Background(), nil, keyB.Public(), permitRequestPayload(t, fixedNonce(10)))
+	require.NoError(t, err)
+	snap2 := &proto.KarstCompliancePermitSnapshot{}
+	require.NoError(t, pb.Unmarshal(out2, snap2))
+	require.Equal(t, wantRevision, snap2.PolicyRevision)
+}
+
+// TestPermitHandlerResolvesGroupSelectorsAgainstTheRealIdentityDocument
+// defends #363 PR5's one behavior change beyond adding a write API:
+// compliance_permits.go used to hardcode an empty *policy.Document, which
+// made a group: guardrail selector permanently fail to match (Document.
+// Groups was always empty) regardless of what the account's real identity
+// document said. With Policy/PolicyStore wired, a group guardrail must
+// resolve against the real document and compile a gate naming the member
+// device.
+func TestPermitHandlerResolvesGroupSelectorsAgainstTheRealIdentityDocument(t *testing.T) {
+	db, store := complianceDB(t)
+	clock := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+
+	keyA, err := identity.Generate()
+	require.NoError(t, err)
+	handleA := node.Handle(keyA.Public())
+	peerA := &nbpeer.Peer{ID: "device-a", AccountID: "tenant-a", Key: handleA, UserID: "operator", IP: netip.MustParseAddr("100.64.0.5")}
+	peers := &fakePeers{byKey: map[string]*nbpeer.Peer{handleA: peerA}, list: []*nbpeer.Peer{peerA}}
+
+	require.NoError(t, db.Create(&complianceEnrollment{ID: peerA.ID, AccountID: peerA.AccountID, Key: handleA}).Error)
+	subject := compliance.Subject{TenantID: "tenant-a", DeviceID: "device-a"}
+	challenge, err := store.Issue(context.Background(), subject, handleA, clock)
+	require.NoError(t, err)
+	require.NoError(t, store.Submit(context.Background(), subject, handleA, challenge.Token, compliance.Report{
+		CollectorVersion: "1.0.0", Platform: compliance.Linux, Distribution: "ubuntu",
+		ClientVersion: compliance.Observation{Status: compliance.Collected, Version: "1.0.0"},
+	}, clock))
+
+	doc := &policy.Document{Groups: map[string][]string{"group:ops": {"operator"}}}
+	draft := policy.ComplianceDraft{
+		TenantID: "tenant-a",
+		RequirementSets: map[string][]compliance.Requirement{
+			"client": {{ID: "client-version", Kind: compliance.MinimumClientVersion, MinimumVersion: "1.0.0", Provenance: compliance.SelfReported}},
+		},
+		Guardrails: []policy.ComplianceGuardrail{{
+			ID:              "ops-guardrail",
+			Resource:        policy.ComplianceResource{Selector: "group:ops", Protocol: policy.Wildcard, Ports: policy.AllPorts},
+			RequirementSets: []string{"client"},
+		}},
+	}
+	h := &control.PermitHandler{
+		Store: store, Peers: peers,
+		Draft:  func(context.Context, string) (policy.ComplianceDraft, string, error) { return draft, "rev-1", nil },
+		Policy: doc,
+		Now:    func() time.Time { return clock },
+	}
+	out, err := h.Handle(context.Background(), nil, keyA.Public(), permitRequestPayload(t, fixedNonce(11)))
+	require.NoError(t, err)
+	snap := &proto.KarstCompliancePermitSnapshot{}
+	require.NoError(t, pb.Unmarshal(out, snap))
+
+	require.Len(t, snap.Ingress, 1)
+	require.Equal(t, "ops-guardrail", snap.Ingress[0].GuardrailId)
+	require.Len(t, snap.Ingress[0].Sources, 1)
+	require.Equal(t, handleA, snap.Ingress[0].Sources[0].Handle)
 }
 
 // TestPermitHandlerDraftTenantMismatchFailsClosed defends the one place a

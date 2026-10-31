@@ -19,23 +19,23 @@ import (
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
-// KindCompliancePermit serves the reserved permit snapshot contract
-// (spec/device-compliance-v1.md's "reserved permit wire contract" section,
-// #363). This wires the already-tested issuance path onto a real request
-// kind for the first time; it does not activate enforcement by itself —
-// no running client installs or enforces what it returns yet (that is
-// PR2's scope), and no server advertises this kind's capability until
-// bootstrap.go wires it.
+// KindCompliancePermit serves the permit snapshot contract
+// (spec/device-compliance-v1.md's "implemented permit wire contract"
+// section, #363). karstd's control client requests and enforces snapshots
+// over this kind on the existing 30-second refresh cadence; whether an
+// issued snapshot has any guardrails at all still depends on whether this
+// tenant has a persisted ComplianceDraft (see Draft's own doc comment).
 const KindCompliancePermit byte = 6
 
 // UnconfiguredComplianceRevision is the PolicyRevision a PermitHandler issues
-// when Draft is nil, or returns one itself. It is deliberately not empty —
+// when Draft is nil, or when Draft reports TenantID == "" (no draft has been
+// persisted yet for this tenant — policy.ComplianceDraftStore.CurrentDraft's
+// own "unconfigured" convention). It is deliberately not empty —
 // compliance.ValidatePermitSnapshot requires a nonempty, bounded revision —
-// but it names what it is: no persisted admin policy-write API exists yet
-// (policy.ComplianceDraft's own doc comment is why), so every snapshot this
-// issues without a Draft is compiled from a tenant-scoped draft with zero
-// guardrails. A zero-guardrail snapshot is valid and has no enforcement
-// effect: unprotected traffic is unconstrained by compliance either way.
+// but it names what it is: every snapshot issued under this revision is
+// compiled from a tenant-scoped draft with zero guardrails. A zero-guardrail
+// snapshot is valid and has no enforcement effect: unprotected traffic is
+// unconstrained by compliance either way.
 const UnconfiguredComplianceRevision = "unconfigured"
 
 // PermitHandler issues KarstCompliancePermitSnapshot from the already-tested
@@ -47,14 +47,27 @@ type PermitHandler struct {
 	Peers PeerLister
 
 	// Draft supplies the current compliance draft and its revision for a
-	// tenant. A nil Draft, or TenantID == "", means "no persisted draft yet":
-	// the handler compiles against an empty draft (zero guardrails, revision
-	// UnconfiguredComplianceRevision) rather than refusing the request —
-	// matching ComplianceIngestion's own "advertise and serve, even before
-	// there is anything real behind it" shape. This is the seam a future
-	// persisted admin policy-write API plugs into without reshaping the
-	// handler.
+	// tenant. bootstrap.go wires this to policy.ComplianceDraftStore's own
+	// CurrentDraft, which returns TenantID == "" (not an error) for a tenant
+	// that has never written one. A nil Draft, or TenantID == "", means "no
+	// persisted draft yet": the handler compiles against an empty draft
+	// (zero guardrails, revision UnconfiguredComplianceRevision) rather than
+	// refusing the request — matching ComplianceIngestion's own "advertise
+	// and serve, even before there is anything real behind it" shape.
 	Draft func(ctx context.Context, tenantID string) (draft policy.ComplianceDraft, revision string, err error)
+
+	// Policy and PolicyStore resolve the account's real identity Document,
+	// needed so a guardrail's group: selector (validateComplianceResource)
+	// resolves against real groups instead of always failing to match. This
+	// mirrors NetmapHandler's own Policy/PolicyStore fallback (netmap.go):
+	// PolicyStore.Current is preferred, falling back to Policy on
+	// policy.ErrNoVersion. Unlike the ACL filter, a nil/empty result here is
+	// not a safety concern: a guardrail referencing an undefined group simply
+	// never matches, the same as any other selector with no current target.
+	Policy      *policy.Document
+	PolicyStore interface {
+		Current(context.Context) (*policy.Version, error)
+	}
 
 	Now func() time.Time // nil uses the server clock
 }
@@ -127,20 +140,35 @@ func (h *PermitHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			return nil, status.Error(codes.Internal, "compliance: load evidence")
 		}
 		deviceIDs[p.Key] = p.ID
+		// User mirrors NetmapHandler.compileFilter's own conversion
+		// (netmap.go), needed for a group: guardrail selector to resolve:
+		// Document.matches's literal-Groups-map fallback keys membership by
+		// Node.User, same as the ACL filter's ownership check. Registry-group
+		// IDs (GroupIDs) are NetmapHandler's own richer path, not
+		// replicated here: a compliance draft naming group-id: still
+		// resolves no members without it, same as it does today.
 		devices = append(devices, policy.ComplianceDevice{
-			Node:     policy.Node{Handle: p.Key, Addresses: allowedIPsOf(p)},
+			Node:     policy.Node{Handle: p.Key, User: p.UserID, Addresses: allowedIPsOf(p)},
 			Subject:  subject,
 			Evidence: evidence,
 		})
 	}
 
-	// An empty Document is sufficient today: CompileCompliance only calls
-	// Document.matches (which needs real group definitions) for a guardrail
-	// resource selector that isn't a CIDR or "*", and an empty draft has no
-	// guardrails to compile at all. A future persisted draft referencing
-	// real groups needs the account's real identity policy document here —
-	// deliberately deferred rather than guessed at before that API exists.
-	doc := &policy.Document{}
+	doc := h.Policy
+	if h.PolicyStore != nil {
+		version, err := h.PolicyStore.Current(policy.WithAccount(ctx, self.AccountID))
+		if errors.Is(err, policy.ErrNoVersion) {
+			// No version written for this account yet: fall back to h.Policy
+			// (already loaded above) rather than discarding it.
+		} else if err != nil {
+			return nil, status.Error(codes.Internal, "compliance: load policy")
+		} else if doc, err = policy.Parse([]byte(version.Document)); err != nil {
+			return nil, status.Error(codes.Internal, "compliance: parse policy")
+		}
+	}
+	if doc == nil {
+		doc = &policy.Document{}
+	}
 	compiled, err := doc.CompileCompliance(draft, devices, handle, nil, now)
 	if err != nil {
 		return nil, status.Error(codes.Internal, fmt.Sprintf("compliance: compile: %v", err))

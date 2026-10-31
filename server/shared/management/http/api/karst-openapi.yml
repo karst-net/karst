@@ -506,6 +506,72 @@ paths:
       responses:
         '200': {description: Policy test results, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyTestResult'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /compliance/draft:
+    get:
+      operationId: getComplianceDraft
+      tags: [compliance]
+      responses:
+        '200': {description: 'Current compliance guardrail draft (ADR-0055, #363)', content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftVersion'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: writeComplianceDraft
+      tags: [compliance]
+      parameters: [{$ref: '#/components/parameters/ifMatch'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftWrite'}}}}
+      responses:
+        '200': {description: Newly written version, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftVersion'}}}}
+        '412': {$ref: '#/components/responses/VersionConflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /compliance/draft/versions:
+    get:
+      operationId: listComplianceDraftVersions
+      tags: [compliance]
+      parameters: [{$ref: '#/components/parameters/cursor'}, {$ref: '#/components/parameters/limit'}]
+      responses:
+        '200': {description: Version page, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftVersionPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /compliance/draft/versions/{version}:
+    parameters: [{$ref: '#/components/parameters/version'}]
+    get:
+      operationId: getComplianceDraftVersion
+      tags: [compliance]
+      responses:
+        '200': {description: Compliance draft version, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftVersion'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /compliance/draft/validate:
+    post:
+      operationId: validateComplianceDraft
+      tags: [compliance]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftWrite'}}}}
+      responses:
+        '200': {description: Validation diagnostics, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftValidation'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /compliance/draft/preview:
+    post:
+      operationId: previewComplianceDraft
+      tags: [compliance]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftWrite'}}}}
+      responses:
+        '200': {description: Per-device compiled guardrail gates a candidate draft would produce, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftPreview'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /compliance/draft/rollback/{version}:
+    parameters: [{$ref: '#/components/parameters/version'}]
+    post:
+      operationId: rollbackComplianceDraft
+      tags: [compliance]
+      parameters: [{$ref: '#/components/parameters/ifMatch'}]
+      responses:
+        '200': {description: New version copied from the requested version, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftVersion'}}}}
+        '412': {$ref: '#/components/responses/VersionConflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /compliance/draft/test:
+    post:
+      operationId: testComplianceDraft
+      tags: [compliance]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ComplianceDraftWrite'}}}}
+      responses:
+        '200': {description: Compliance draft test results, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyTestResult'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /relay-services:
     get:
       operationId: listRelayServices
@@ -1726,6 +1792,61 @@ components:
       type: object
       required: [passed, results]
       properties: {passed: {type: boolean}, results: {type: array, items: {type: object, required: [name, passed], properties: {name: {type: string}, passed: {type: boolean}, message: {type: string}}}}}
+    ComplianceRequirement:
+      type: object
+      description: Mirrors the internal compliance.Requirement (ADR-0055). Provenance is always self-reported; verified provider evidence is not supported.
+      required: [id, kind, minimum_version]
+      properties: {id: {type: string}, kind: {type: string, enum: [minimum-client-version, minimum-os-version]}, minimum_version: {type: string}, platform: {type: string, enum: [linux, darwin, windows]}, distribution: {type: string}}
+    ComplianceResource:
+      type: object
+      description: A destination node selector or explicit CIDR, an inclusive port range, and tcp/udp ("*" means either).
+      required: [selector, protocol, first, last]
+      properties: {selector: {type: string}, protocol: {type: string, enum: [tcp, udp, '*']}, first: {type: integer, minimum: 0, maximum: 65535}, last: {type: integer, minimum: 0, maximum: 65535}}
+    ComplianceGuardrail:
+      type: object
+      required: [id, resource, requirement_sets]
+      properties: {id: {type: string}, resource: {$ref: '#/components/schemas/ComplianceResource'}, requirement_sets: {type: array, items: {type: string}}}
+    ComplianceDraftWrite:
+      type: object
+      required: [requirement_sets, guardrails, remediation]
+      properties:
+        requirement_sets: {type: object, additionalProperties: {type: array, items: {$ref: '#/components/schemas/ComplianceRequirement'}}}
+        guardrails: {type: array, items: {$ref: '#/components/schemas/ComplianceGuardrail'}}
+        remediation: {type: array, items: {$ref: '#/components/schemas/ComplianceResource'}}
+    ComplianceDraftVersion:
+      allOf:
+        - {$ref: '#/components/schemas/ComplianceDraftWrite'}
+        - type: object
+          required: [version, author, created_at]
+          properties: {version: {type: integer, minimum: 1}, author: {type: string}, created_at: {type: string, format: date-time}}
+    ComplianceDraftVersionPage:
+      allOf: [{$ref: '#/components/schemas/Page'}, {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/ComplianceDraftVersion'}}}}]
+    ComplianceDraftValidation:
+      type: object
+      description: Unlike PolicyValidation, diagnostics carry no line/column — a compliance draft has no single text document to point a parse location at.
+      required: [valid, diagnostics]
+      properties: {valid: {type: boolean}, diagnostics: {type: array, items: {type: object, required: [severity, message], properties: {severity: {type: string, enum: [error, warning]}, message: {type: string}}}}}
+    ComplianceDraftPreview:
+      type: object
+      description: 'ADR-0055''s "explain wildcard and CIDR overlaps" requirement: the mandatory ingress/egress gates a candidate draft compiles to for each currently managed device, grounded in the same policy.CompileCompliance output control.PermitHandler issues.'
+      required: [devices, diagnostics]
+      properties:
+        devices:
+          type: array
+          items:
+            type: object
+            required: [handle, ingress, egress]
+            properties: {handle: {type: string}, ingress: {type: array, items: {$ref: '#/components/schemas/ComplianceGate'}}, egress: {type: array, items: {$ref: '#/components/schemas/ComplianceGate'}}}
+        diagnostics: {type: array, items: {type: object, required: [severity, message], properties: {severity: {type: string, enum: [error, warning]}, message: {type: string}}}}
+    ComplianceGate:
+      type: object
+      required: [guardrail_id, destinations, protocol, ports, sources]
+      properties:
+        guardrail_id: {type: string}
+        destinations: {type: array, items: {type: string}}
+        protocol: {type: string, enum: [tcp, udp, '*']}
+        ports: {type: object, required: [first, last], properties: {first: {type: integer}, last: {type: integer}}}
+        sources: {type: array, items: {type: object, required: [handle, valid_until], properties: {handle: {type: string}, valid_until: {type: string, format: date-time}}}}
     RelayPublication:
       type: object
       required: [mode]
