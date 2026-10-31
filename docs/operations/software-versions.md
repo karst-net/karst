@@ -66,6 +66,7 @@ without a Compose/Nomad deployment snapshot. It is displayed separately from
 the container image ID. Non-Linux control servers and read failures retain an
 unknown artifact identity; no installed pathname is substituted for a running
 image observation.
+
 ## Control capability checks
 
 Machine software details and Gateway inventory also show the last actual
@@ -99,3 +100,20 @@ timestamp. The control response has its own observation time, independently of
 the retained deployment snapshot. Refreshing component versions obtains a new
 control response while preserving the snapshot's original time. Older control
 servers that omit the response timestamp show unknown control freshness.
+
+## Local client versions
+
+The Linux desktop setup dialog displays the installed client version in its
+window title before enrollment and on readiness/error dialogs. It reads the
+installed CLI's own build, so a stopped daemon is not required to identify the
+installation. This value does not identify an older daemon that may still be
+running after an upgrade; use the machine's observed software details for
+that process.
+
+The macOS status menus identify the app bundle and responding agent separately.
+The Windows client currently ships a CLI/service, with no separate desktop
+status UI: `karst --version` identifies the installed CLI without contacting
+the daemon, while `karst version` queries the running daemon. `karst status
+--json` returns the running agent's release and revision. Shared-engine mobile
+bindings use central software reporting, but there is no shipped iOS/Android
+application UI in this repository to verify or extend.

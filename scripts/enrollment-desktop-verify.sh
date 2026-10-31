@@ -106,6 +106,9 @@ run systemd-run --unit=karst-desktop-acceptance --property=User=enrollment-test 
     /usr/bin/dbus-run-session -- /bin/bash -c \
     'openbox >/tmp/openbox.log 2>&1 & /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 >/tmp/auth-agent.log 2>&1 & /usr/bin/karst-setup >/tmp/setup.log 2>&1'
 wait_for gui xdotool search --onlyvisible --name 'Karst Setup'
+# Verify the shipped GUI identifies the installed client before enrollment.
+gui bash -c 'version=$(/usr/bin/karst --version); title=$(xdotool search --onlyvisible --name "Karst Setup" getwindowname); [[ "$title" == "Karst Setup — installed client: $version" ]]'
+
 # Put the test invitation on the desktop clipboard. The product does not write
 # a credential file, pass it in argv, or require a terminal from the recipient.
 gui bash -c 'python3 - <<'"'"'PY'"'"' | xclip -selection clipboard
@@ -140,6 +143,8 @@ wait_for run systemctl is-active karstd.service
 wait_for run bash -c '! pgrep -x karst >/dev/null'
 wait_for gui xdotool search --onlyvisible --name 'Karst Setup'
 run systemctl is-enabled karstd.service
+# The final readiness dialog retains the installed build identity too.
+gui bash -c 'version=$(/usr/bin/karst --version); title=$(xdotool search --onlyvisible --name "Karst Setup" getwindowname); [[ "$title" == "Karst Setup — installed client: $version" ]]'
 run /usr/bin/karst status > "$artifacts/status.txt"
 run python3 -c 'import pathlib,tomllib; c=tomllib.loads(pathlib.Path("/etc/karst/karstd.toml").read_text()); assert "setup_key" not in c["control"]; assert pathlib.Path("/var/lib/karst/identity.key.enrolled").exists(); assert not pathlib.Path("/var/lib/karst/enrollment.toml").exists()'
 # Allow the newly mapped GTK dialog to paint before capturing the artifact.
