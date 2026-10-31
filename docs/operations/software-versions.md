@@ -39,3 +39,20 @@ the control binary answering the request, and any configured deployment
 snapshot. The macOS menu shows the installed app release/build separately from
 the responding agent's release/revision, which helps identify an extension
 that has not yet been replaced after an app upgrade.
+
+## Local client versions
+
+The Linux desktop setup dialog displays the installed client version in its
+window title before enrollment and on readiness/error dialogs. It reads the
+installed CLI's own build, so a stopped daemon is not required to identify the
+installation. This value does not identify an older daemon that may still be
+running after an upgrade; use the machine's observed software details for
+that process.
+
+The macOS status menus identify the app bundle and responding agent separately.
+The Windows client currently ships a CLI/service, with no separate desktop
+status UI: `karst --version` identifies the installed CLI without contacting
+the daemon, while `karst version` queries the running daemon. `karst status
+--json` returns the running agent's release and revision. Shared-engine mobile
+bindings use central software reporting, but there is no shipped iOS/Android
+application UI in this repository to verify or extend.
