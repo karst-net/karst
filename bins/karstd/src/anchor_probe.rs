@@ -266,15 +266,18 @@ mod tests {
 
     #[test]
     fn an_unanswered_port_is_none_within_the_probe_budget() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let addr = listener.local_addr().expect("local addr");
-        drop(listener); // free the port, guaranteeing nothing answers it
+        // Reserve the port without listening. Dropping a listener before
+        // probing lets a parallel test bind the recycled port and answer
+        // the probe instead (issue #469). Keep this socket alive throughout.
+        let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+        socket.bind("127.0.0.1:0".parse().unwrap()).expect("bind");
+        let addr = socket.local_addr().expect("local addr");
 
         let started = Instant::now();
-        let got = probe_at(addr.ip(), addr.port());
+        let got = probe_at_port(&addr.ip().to_string(), addr.port());
 
         assert_eq!(got, None);
-        // Not "promptly": a dropped loopback listener's port is refused
+        // Not "promptly": a bound but non-listening loopback port is refused
         // with an immediate RST on Linux, but Windows has been observed to
         // let the SYN sit unanswered until the connect's own timeout fires
         // — so this only checks that `connect_timeout`'s bound is actually
@@ -295,18 +298,8 @@ mod tests {
             let _ = listener.accept();
         });
 
-        let got = probe_at(addr.ip(), addr.port());
+        let got = probe_at_port(&addr.ip().to_string(), addr.port());
         assert!(got.is_some(), "a reachable listener should yield an RTT");
-    }
-
-    /// `probe` parameterized on port, mirroring `cloud_location.rs`'s own
-    /// `probe_at` split between the real entry point (fixed port 443) and
-    /// a test seam that can point at a local listener's ephemeral port.
-    fn probe_at(ip: std::net::IpAddr, port: u16) -> Option<Duration> {
-        let addr = std::net::SocketAddr::new(ip, port);
-        let started = Instant::now();
-        TcpStream::connect_timeout(&addr, PROBE_BUDGET).ok()?;
-        Some(started.elapsed())
     }
 
     #[test]
