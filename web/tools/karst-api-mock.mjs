@@ -592,6 +592,26 @@ const server = http.createServer((request, response) => {
   if ((method === "PUT" && karst === "/policy") || (method === "POST" && /^\/policy\/rollback\/\d+$/.test(karst))) return json(response, 200, fixture.policy);
   if (method === "POST" && karst === "/policy/test") return json(response, 200, { passed: false, results: [{ name: "SRE SSH access", passed: true, message: "allowed" }, { name: "contractor production SSH", passed: false, message: "expected deny, got allow" }] });
 
+  // ADR-0055/#363 PR5b: compliance guardrail draft admin API.
+  if (method === "GET" && karst === "/compliance/draft") return json(response, 200, fixture.complianceDraft);
+  if (method === "GET" && karst === "/compliance/draft/versions") return json(response, 200, page(fixture.complianceDraftVersions, url));
+  if (method === "GET" && /^\/compliance\/draft\/versions\/\d+$/.test(karst)) {
+    const version = Number.parseInt(karst.split("/").at(-1), 10);
+    const draft = fixture.complianceDraftVersions.find((item) => item.version === version);
+    return draft ? json(response, 200, draft) : error(response, 404, "not_found", "compliance draft version not found");
+  }
+  if (method === "POST" && karst === "/compliance/draft/validate") return json(response, 200, { valid: true, diagnostics: [] });
+  if (method === "POST" && karst === "/compliance/draft/preview") return json(response, 200, {
+    devices: fixture.nodes.slice(0, 2).map((node, index) => ({
+      handle: node.handle,
+      ingress: index === 0 ? [{ guardrail_id: "prod-db", destinations: ["10.0.0.0/24"], protocol: "tcp", ports: { first: 5432, last: 5432 }, sources: [{ handle: fixture.nodes[0].handle, valid_until: fixture.asOf }] }] : [],
+      egress: [],
+    })),
+    diagnostics: [],
+  });
+  if ((method === "PUT" && karst === "/compliance/draft") || (method === "POST" && /^\/compliance\/draft\/rollback\/\d+$/.test(karst))) return json(response, 200, fixture.complianceDraft);
+  if (method === "POST" && karst === "/compliance/draft/test") return json(response, 200, { passed: true, results: [{ name: "draft-valid", passed: true }] });
+
   if (method === "GET" && karst === "/relay-services/publication") return json(response, 200, relayPublication);
   if (method === "POST" && karst === "/relay-services/publication/preview") return json(response, 200, relayServices);
   if (method === "PUT" && karst === "/relay-services/publication") return readBody(request).then((value) => {

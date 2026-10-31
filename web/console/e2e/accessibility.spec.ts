@@ -4,7 +4,7 @@
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-const routes = ["enroll", "domains", "machines", "access", "users", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "connections", "billing", "settings"];
+const routes = ["enroll", "domains", "machines", "access", "groups/compliance", "users", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "connections", "billing", "settings"];
 
 for (const route of routes) {
   test(`${route} has no accessibility violations`, async ({ page }) => {
@@ -91,6 +91,35 @@ test("access defaults to no selected source or destination", async ({ page }) =>
   await page.getByRole("button",{name:"Add access grant",exact:true}).click();
   await expect(page.getByRole("button",{name:"Review access changes",exact:true})).toBeDisabled();
   await expect(page.getByRole("dialog").getByRole("checkbox",{checked:true})).toHaveCount(0);
+});
+
+test("a compliance guardrail requires a requirement set and review before it applies", async ({ page }) => {
+  await page.goto("/#/groups/compliance");
+  await expect(page.getByRole("heading", { name: "Groups & access", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add guardrail", exact: true })).toBeEnabled();
+
+  await page.getByRole("button", { name: "Add requirement set", exact: true }).click();
+  await page.getByRole("textbox", { name: "Set name", exact: true }).fill("min-os");
+  await page.getByRole("textbox", { name: "Requirement ID", exact: true }).fill("min-os-version");
+  await page.getByLabel("Requirement kind", { exact: true }).selectOption("minimum-os-version");
+  await page.getByRole("textbox", { name: "Minimum version", exact: true }).fill("22.04");
+  await page.getByRole("button", { name: "Add requirement", exact: true }).click();
+  await page.getByRole("button", { name: "Save requirement set", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Add guardrail", exact: true }).click();
+  await page.getByRole("textbox", { name: "Guardrail ID", exact: true }).fill("staging-web");
+  await page.getByRole("textbox", { name: "Destination selector", exact: true }).fill("10.0.1.0/24");
+  await page.getByLabel("Ports", { exact: true }).selectOption("web");
+  await page.getByRole("checkbox", { name: "min-os", exact: true }).check();
+  await page.getByRole("button", { name: "Save guardrail", exact: true }).click();
+
+  await page.getByRole("button", { name: "Review guardrail changes", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Review guardrail changes", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply guardrail changes", exact: true })).toBeDisabled();
+  await page.getByRole("checkbox", { name: "I reviewed the compiled guardrail changes for every device above.", exact: true }).check();
+  await page.getByRole("button", { name: "Apply guardrail changes", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Compliance guardrails saved");
 });
 
 test("setup requires a label, groups, and assignee and refuses issuance over HTTP", async ({ page }) => {
