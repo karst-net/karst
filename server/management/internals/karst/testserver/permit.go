@@ -22,10 +22,16 @@ import (
 // one over the same table -- `--compliance-permit` requires `--compliance`
 // already enabled, since a permit over no ingested evidence is nothing to
 // test. Uses the production PermitHandler; the dynamic draft/revision this
-// exposes over the admin control surface is a test fixture only -- no
-// persisted admin policy-write API exists in production (ADR-0055, #363's
-// own deliberate ordering: enforcement must be proven before policy writes
-// are accepted).
+// exposes over the admin control surface is a test fixture only, deliberately
+// kept separate from the real persisted admin policy-write API
+// (policy.ComplianceDraftStore, PUT /karst/v1/compliance/draft -- #363 PR5).
+// This binary's account manager is a stub (no real database, no
+// authentication middleware, no permissions.Manager -- see this file's
+// surrounding doc comments), so it cannot host that real, authenticated API;
+// this fixture exists to drive the control-channel timing test
+// (bins/karstd/tests/control.rs's compliance_permit_issuance_enforcement_and_
+// revocation_bound_are_real_end_to_end), which the real API already has its
+// own, separate handler-level tests for.
 type permitFixture struct {
 	mu       sync.Mutex
 	draft    policy.ComplianceDraft

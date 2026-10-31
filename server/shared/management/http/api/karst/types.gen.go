@@ -246,6 +246,123 @@ func (e CloudAccountCreateProvider) Valid() bool {
 	}
 }
 
+// Defines values for ComplianceDraftPreviewDiagnosticsSeverity.
+const (
+	ComplianceDraftPreviewDiagnosticsSeverityError   ComplianceDraftPreviewDiagnosticsSeverity = "error"
+	ComplianceDraftPreviewDiagnosticsSeverityWarning ComplianceDraftPreviewDiagnosticsSeverity = "warning"
+)
+
+// Valid indicates whether the value is a known member of the ComplianceDraftPreviewDiagnosticsSeverity enum.
+func (e ComplianceDraftPreviewDiagnosticsSeverity) Valid() bool {
+	switch e {
+	case ComplianceDraftPreviewDiagnosticsSeverityError:
+		return true
+	case ComplianceDraftPreviewDiagnosticsSeverityWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ComplianceDraftValidationDiagnosticsSeverity.
+const (
+	ComplianceDraftValidationDiagnosticsSeverityError   ComplianceDraftValidationDiagnosticsSeverity = "error"
+	ComplianceDraftValidationDiagnosticsSeverityWarning ComplianceDraftValidationDiagnosticsSeverity = "warning"
+)
+
+// Valid indicates whether the value is a known member of the ComplianceDraftValidationDiagnosticsSeverity enum.
+func (e ComplianceDraftValidationDiagnosticsSeverity) Valid() bool {
+	switch e {
+	case ComplianceDraftValidationDiagnosticsSeverityError:
+		return true
+	case ComplianceDraftValidationDiagnosticsSeverityWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ComplianceGateProtocol.
+const (
+	ComplianceGateProtocolAsterisk ComplianceGateProtocol = "*"
+	ComplianceGateProtocolTcp      ComplianceGateProtocol = "tcp"
+	ComplianceGateProtocolUdp      ComplianceGateProtocol = "udp"
+)
+
+// Valid indicates whether the value is a known member of the ComplianceGateProtocol enum.
+func (e ComplianceGateProtocol) Valid() bool {
+	switch e {
+	case ComplianceGateProtocolAsterisk:
+		return true
+	case ComplianceGateProtocolTcp:
+		return true
+	case ComplianceGateProtocolUdp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ComplianceRequirementKind.
+const (
+	ComplianceRequirementKindMinimumClientVersion ComplianceRequirementKind = "minimum-client-version"
+	ComplianceRequirementKindMinimumOsVersion     ComplianceRequirementKind = "minimum-os-version"
+)
+
+// Valid indicates whether the value is a known member of the ComplianceRequirementKind enum.
+func (e ComplianceRequirementKind) Valid() bool {
+	switch e {
+	case ComplianceRequirementKindMinimumClientVersion:
+		return true
+	case ComplianceRequirementKindMinimumOsVersion:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ComplianceRequirementPlatform.
+const (
+	ComplianceRequirementPlatformDarwin  ComplianceRequirementPlatform = "darwin"
+	ComplianceRequirementPlatformLinux   ComplianceRequirementPlatform = "linux"
+	ComplianceRequirementPlatformWindows ComplianceRequirementPlatform = "windows"
+)
+
+// Valid indicates whether the value is a known member of the ComplianceRequirementPlatform enum.
+func (e ComplianceRequirementPlatform) Valid() bool {
+	switch e {
+	case ComplianceRequirementPlatformDarwin:
+		return true
+	case ComplianceRequirementPlatformLinux:
+		return true
+	case ComplianceRequirementPlatformWindows:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ComplianceResourceProtocol.
+const (
+	ComplianceResourceProtocolAsterisk ComplianceResourceProtocol = "*"
+	ComplianceResourceProtocolTcp      ComplianceResourceProtocol = "tcp"
+	ComplianceResourceProtocolUdp      ComplianceResourceProtocol = "udp"
+)
+
+// Valid indicates whether the value is a known member of the ComplianceResourceProtocol enum.
+func (e ComplianceResourceProtocol) Valid() bool {
+	switch e {
+	case ComplianceResourceProtocolAsterisk:
+		return true
+	case ComplianceResourceProtocolTcp:
+		return true
+	case ComplianceResourceProtocolUdp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeviceInvitationState.
 const (
 	DeviceInvitationStateExpired  DeviceInvitationState = "expired"
@@ -1581,6 +1698,110 @@ type CloudAccountCreateMode string
 // CloudAccountCreateProvider defines model for CloudAccountCreate.Provider.
 type CloudAccountCreateProvider string
 
+// ComplianceDraftPreview ADR-0055's "explain wildcard and CIDR overlaps" requirement: the mandatory ingress/egress gates a candidate draft compiles to for each currently managed device, grounded in the same policy.CompileCompliance output control.PermitHandler issues.
+type ComplianceDraftPreview struct {
+	Devices []struct {
+		Egress  []ComplianceGate `json:"egress"`
+		Handle  string           `json:"handle"`
+		Ingress []ComplianceGate `json:"ingress"`
+	} `json:"devices"`
+	Diagnostics []struct {
+		Message  string                                    `json:"message"`
+		Severity ComplianceDraftPreviewDiagnosticsSeverity `json:"severity"`
+	} `json:"diagnostics"`
+}
+
+// ComplianceDraftPreviewDiagnosticsSeverity defines model for ComplianceDraftPreview.Diagnostics.Severity.
+type ComplianceDraftPreviewDiagnosticsSeverity string
+
+// ComplianceDraftValidation Unlike PolicyValidation, diagnostics carry no line/column — a compliance draft has no single text document to point a parse location at.
+type ComplianceDraftValidation struct {
+	Diagnostics []struct {
+		Message  string                                       `json:"message"`
+		Severity ComplianceDraftValidationDiagnosticsSeverity `json:"severity"`
+	} `json:"diagnostics"`
+	Valid bool `json:"valid"`
+}
+
+// ComplianceDraftValidationDiagnosticsSeverity defines model for ComplianceDraftValidation.Diagnostics.Severity.
+type ComplianceDraftValidationDiagnosticsSeverity string
+
+// ComplianceDraftVersion defines model for ComplianceDraftVersion.
+type ComplianceDraftVersion struct {
+	Author          string                             `json:"author"`
+	CreatedAt       time.Time                          `json:"created_at"`
+	Guardrails      []ComplianceGuardrail              `json:"guardrails"`
+	Remediation     []ComplianceResource               `json:"remediation"`
+	RequirementSets map[string][]ComplianceRequirement `json:"requirement_sets"`
+	Version         int                                `json:"version"`
+}
+
+// ComplianceDraftVersionPage defines model for ComplianceDraftVersionPage.
+type ComplianceDraftVersionPage struct {
+	Items      []ComplianceDraftVersion `json:"items"`
+	NextCursor *string                  `json:"next_cursor"`
+}
+
+// ComplianceDraftWrite defines model for ComplianceDraftWrite.
+type ComplianceDraftWrite struct {
+	Guardrails      []ComplianceGuardrail              `json:"guardrails"`
+	Remediation     []ComplianceResource               `json:"remediation"`
+	RequirementSets map[string][]ComplianceRequirement `json:"requirement_sets"`
+}
+
+// ComplianceGate defines model for ComplianceGate.
+type ComplianceGate struct {
+	Destinations []string `json:"destinations"`
+	GuardrailId  string   `json:"guardrail_id"`
+	Ports        struct {
+		First int `json:"first"`
+		Last  int `json:"last"`
+	} `json:"ports"`
+	Protocol ComplianceGateProtocol `json:"protocol"`
+	Sources  []struct {
+		Handle     string    `json:"handle"`
+		ValidUntil time.Time `json:"valid_until"`
+	} `json:"sources"`
+}
+
+// ComplianceGateProtocol defines model for ComplianceGate.Protocol.
+type ComplianceGateProtocol string
+
+// ComplianceGuardrail defines model for ComplianceGuardrail.
+type ComplianceGuardrail struct {
+	Id              string   `json:"id"`
+	RequirementSets []string `json:"requirement_sets"`
+
+	// Resource A destination node selector or explicit CIDR, an inclusive port range, and tcp/udp ("*" means either).
+	Resource ComplianceResource `json:"resource"`
+}
+
+// ComplianceRequirement Mirrors the internal compliance.Requirement (ADR-0055). Provenance is always self-reported; verified provider evidence is not supported.
+type ComplianceRequirement struct {
+	Distribution   *string                        `json:"distribution,omitempty"`
+	Id             string                         `json:"id"`
+	Kind           ComplianceRequirementKind      `json:"kind"`
+	MinimumVersion string                         `json:"minimum_version"`
+	Platform       *ComplianceRequirementPlatform `json:"platform,omitempty"`
+}
+
+// ComplianceRequirementKind defines model for ComplianceRequirement.Kind.
+type ComplianceRequirementKind string
+
+// ComplianceRequirementPlatform defines model for ComplianceRequirement.Platform.
+type ComplianceRequirementPlatform string
+
+// ComplianceResource A destination node selector or explicit CIDR, an inclusive port range, and tcp/udp ("*" means either).
+type ComplianceResource struct {
+	First    int                        `json:"first"`
+	Last     int                        `json:"last"`
+	Protocol ComplianceResourceProtocol `json:"protocol"`
+	Selector string                     `json:"selector"`
+}
+
+// ComplianceResourceProtocol defines model for ComplianceResource.Protocol.
+type ComplianceResourceProtocol string
+
 // DeviceEnrollment defines model for DeviceEnrollment.
 type DeviceEnrollment struct {
 	ExpiresAt time.Time `json:"expires_at"`
@@ -2647,6 +2868,24 @@ type EnableCloudAccountRegionJSONBody struct {
 	ParentRegion string `json:"parent_region"`
 }
 
+// WriteComplianceDraftParams defines parameters for WriteComplianceDraft.
+type WriteComplianceDraftParams struct {
+	// IfMatch Current policy version ETag.
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// RollbackComplianceDraftParams defines parameters for RollbackComplianceDraft.
+type RollbackComplianceDraftParams struct {
+	// IfMatch Current policy version ETag.
+	IfMatch IfMatch `json:"If-Match"`
+}
+
+// ListComplianceDraftVersionsParams defines parameters for ListComplianceDraftVersions.
+type ListComplianceDraftVersionsParams struct {
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // CommitRootRenameJSONBody defines parameters for CommitRootRename.
 type CommitRootRenameJSONBody struct {
 	ConfirmNoAliases CommitRootRenameJSONBodyConfirmNoAliases `json:"confirm_no_aliases"`
@@ -2840,6 +3079,18 @@ type CreateCloudAccountJSONRequestBody = CloudAccountCreate
 
 // EnableCloudAccountRegionJSONRequestBody defines body for EnableCloudAccountRegion for application/json ContentType.
 type EnableCloudAccountRegionJSONRequestBody EnableCloudAccountRegionJSONBody
+
+// WriteComplianceDraftJSONRequestBody defines body for WriteComplianceDraft for application/json ContentType.
+type WriteComplianceDraftJSONRequestBody = ComplianceDraftWrite
+
+// PreviewComplianceDraftJSONRequestBody defines body for PreviewComplianceDraft for application/json ContentType.
+type PreviewComplianceDraftJSONRequestBody = ComplianceDraftWrite
+
+// TestComplianceDraftJSONRequestBody defines body for TestComplianceDraft for application/json ContentType.
+type TestComplianceDraftJSONRequestBody = ComplianceDraftWrite
+
+// ValidateComplianceDraftJSONRequestBody defines body for ValidateComplianceDraft for application/json ContentType.
+type ValidateComplianceDraftJSONRequestBody = ComplianceDraftWrite
 
 // SetControlPlaneLocationJSONRequestBody defines body for SetControlPlaneLocation for application/json ContentType.
 type SetControlPlaneLocationJSONRequestBody = RelayLocation

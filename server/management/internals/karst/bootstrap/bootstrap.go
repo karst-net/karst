@@ -261,6 +261,14 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: policy store: %w", err)
 	}
+	// complianceDraftStore is #363 PR5's persisted admin policy-write store
+	// for compliance guardrails -- see control.PermitHandler's own Draft
+	// field doc comment for why PermitHandler.Draft is wired to its
+	// CurrentDraft method below rather than left nil.
+	complianceDraftStore, err := policy.NewComplianceDraftStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: compliance draft store: %w", err)
+	}
 	relayStore, err := relayreg.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay store: %w", err)
@@ -449,7 +457,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, nodes, complianceStore, router)
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, nodes, complianceStore, complianceDraftStore, router)
 		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager(), Audit: auditLog})
 		karstapi.RegisterRelayAllocationEndpoints(router, s.PermissionsManager(), relayAllocationStore, relayStore, relayServiceStore, karstapi.RelayAllocationOptions{Audit: auditLog})
 		relaytelemetry.RegisterEndpoints(router, relayStore)
@@ -482,11 +490,12 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	router := &handler{
 		login:      &control.LoginHandler{Nodes: nodes, Accounts: peerLoginer, OIDC: oidc},
 		compliance: &control.ComplianceHandler{Store: complianceStore, Peers: peers},
-		// Draft is nil: no persisted admin policy-write API exists yet
-		// (policy.ComplianceDraft's own doc comment is why). This serves a
-		// real, structurally valid, always-empty-guardrail snapshot --
-		// proving the wire path end to end with zero enforcement effect.
-		permit: &control.PermitHandler{Store: complianceStore, Peers: peers},
+		// Draft, Policy and PolicyStore are #363 PR5's wiring: every issued
+		// snapshot now compiles from whatever draft the account has actually
+		// persisted (zero guardrails until an admin writes one), against the
+		// account's real identity Document for group: selector resolution --
+		// same Policy/PolicyStore fallback NetmapHandler uses below.
+		permit: &control.PermitHandler{Store: complianceStore, Peers: peers, Draft: complianceDraftStore.CurrentDraft, Policy: pol, PolicyStore: policyStore},
 		netmap: &control.NetmapHandler{
 			ComplianceIngestion: true,
 			CompliancePermit:    true,

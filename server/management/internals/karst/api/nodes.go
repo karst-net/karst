@@ -113,6 +113,19 @@ type complianceReader interface {
 	Latest(ctx context.Context, subject compliance.Subject, handle string, now time.Time) (compliance.AcceptedEvidence, error)
 }
 
+// complianceDraftReadWriter is the persisted admin policy-write surface for
+// compliance guardrails (#363 PR5, ADR-0055) -- narrowed from
+// *karstpolicy.ComplianceDraftStore the same way policyReader narrows
+// *karstpolicy.Store. Unlike complianceReader, this is a write capability:
+// the one place an admin's ComplianceDraft reaches persistence, and from
+// there control.PermitHandler.Draft.
+type complianceDraftReadWriter interface {
+	Current(context.Context) (*karstpolicy.ComplianceDraftVersion, error)
+	Write(context.Context, karstpolicy.ComplianceDraft, string, uint64) (*karstpolicy.ComplianceDraftVersion, error)
+	Get(context.Context, uint64) (*karstpolicy.ComplianceDraftVersion, error)
+	List(context.Context, int, int) ([]karstpolicy.ComplianceDraftVersion, error)
+}
+
 type handler struct {
 	nodes nodeReader
 	peers peerReader
@@ -120,15 +133,20 @@ type handler struct {
 	// a deployment that has not configured one (KARST_COMPLIANCE not set),
 	// see getNodeCompliance.
 	compliance complianceReader
-	audit      auditReader
-	policy     policyReader
-	relays     relayReader
-	bedrock    bedrockReader
-	chain      bedrockLogReader
-	peerWriter peerWriter
-	accounts   accountUpdater
-	domainMgr  domainManager
-	tenancy    tenancyReader
+	// complianceDraft is the persisted admin policy-write store for
+	// compliance guardrails (#363 PR5) -- nil in a deployment that has not
+	// configured one, see requireComplianceDraft and the complianceDraft*
+	// handlers.
+	complianceDraft complianceDraftReadWriter
+	audit           auditReader
+	policy          policyReader
+	relays          relayReader
+	bedrock         bedrockReader
+	chain           bedrockLogReader
+	peerWriter      peerWriter
+	accounts        accountUpdater
+	domainMgr       domainManager
+	tenancy         tenancyReader
 	// anchors is ADR-0045 §7 Phase 1's second demand-side input (§4b's
 	// histogram), nil in a deployment that has not configured a region
 	// allowlist store — see demandAnchors.
@@ -575,8 +593,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, invitationAssignees invitationAssigneeStore, complianceStore complianceReader, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections, invitationAssignees: invitationAssignees, compliance: complianceStore}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, invitationAssignees invitationAssigneeStore, complianceStore complianceReader, complianceDraftStore complianceDraftReadWriter, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections, invitationAssignees: invitationAssignees, compliance: complianceStore, complianceDraft: complianceDraftStore}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -629,6 +647,17 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/policy/versions", h.policyVersions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/policy/versions/{version}", h.policyVersion).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/policy/rollback/{version}", h.policyRollback).Methods(http.MethodPost, http.MethodOptions)
+	// Named /compliance/draft, not bare /compliance: GET
+	// /nodes/{handle}/compliance above already owns that word for per-device
+	// evidence (#363 PR4).
+	karstRouter.HandleFunc("/compliance/draft", h.complianceDraftCurrent).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/compliance/draft/validate", h.complianceDraftValidate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/compliance/draft/preview", h.complianceDraftPreview).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/compliance/draft/test", h.complianceDraftTest).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/compliance/draft", h.complianceDraftWrite).Methods(http.MethodPut, http.MethodOptions)
+	karstRouter.HandleFunc("/compliance/draft/versions", h.complianceDraftVersions).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/compliance/draft/versions/{version}", h.complianceDraftVersion).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/compliance/draft/rollback/{version}", h.complianceDraftRollback).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/relays", h.relaysList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/relays", h.relaysCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}", h.relaysDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -895,7 +924,8 @@ func operationForRequest(method, path string) operations.Operation {
 	path = strings.TrimPrefix(path, "/api")
 	if method == http.MethodPost {
 		switch path {
-		case "/karst/v1/policy/validate", "/karst/v1/policy/preview", "/karst/v1/policy/test":
+		case "/karst/v1/policy/validate", "/karst/v1/policy/preview", "/karst/v1/policy/test",
+			"/karst/v1/compliance/draft/validate", "/karst/v1/compliance/draft/preview", "/karst/v1/compliance/draft/test":
 			return operations.Read
 		}
 		return operations.Create
