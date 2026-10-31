@@ -9,6 +9,8 @@ const routes = ["enroll", "domains", "machines", "access", "users", "groups", "b
 for (const route of routes) {
   test(`${route} has no accessibility violations`, async ({ page }) => {
     await page.goto(`/#/${route}`);
+    // The loading shell already has a main landmark; wait for route content.
+    await expect(page.getByRole("main").getByRole("heading", { level: 2 }).first()).toBeVisible();
     const result = await new AxeBuilder({ page }).analyze();
     expect(result.violations).toEqual([]);
   });
@@ -23,6 +25,8 @@ const background = (page: Page) => page.evaluate(() => getComputedStyle(document
 for (const route of ["posture", "machines", "access"]) {
   test(`${route} renders dark and has no accessibility violations`, async ({ page }) => {
     await page.goto(`/#/${route}`);
+    // The loading shell already has a main landmark; wait for route content.
+    await expect(page.getByRole("main").getByRole("heading", { level: 2 }).first()).toBeVisible();
     const light = await background(page);
     await page.getByLabel("Theme").selectOption("dark");
     await expect.poll(() => background(page)).not.toBe(light);
@@ -324,7 +328,7 @@ test("a relay can be added and removed", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
   await row.getByRole("button", { name: "Endpoint details" }).click();
   await page.getByRole("button", { name: "Remove endpoint" }).click();
-  await expect(page.getByRole("status")).toContainText("Relay endpoint removed");
+  await expect(page.getByRole("status").filter({ hasText: "Relay endpoint removed" })).toContainText("Relay endpoint removed");
   await expect(page.locator("tbody tr").filter({ hasText: "203.0.113.9:443" })).toHaveCount(0);
 });
 
