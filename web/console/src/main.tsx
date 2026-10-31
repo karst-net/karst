@@ -26,7 +26,7 @@ import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "domains" | "machines" | "access" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
+type Route = "domains" | "machines" | "access" | "compliance" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
 type Mode = "configure" | "observe";
 type NavItem = { route: Route; label: string; hash: string; group?: string };
 
@@ -88,6 +88,7 @@ function parseHash(): { route: Route; mode: Mode; machineTab?: "add" } {
   const path = rawPath === "/routes" ? "/gateways" : rawPath;
   // Preserve saved enrollment links inside the consolidated Machines surface.
   if (path === "/access" || path === "/groups/access") return { route: "access", mode: "configure" };
+  if (path === "/groups/compliance") return { route: "compliance", mode: "configure" };
   if (path === "/enroll" || path === "/machines/add") return { route: "machines", mode: "configure", machineTab: "add" };
   for (const mode of ["configure", "observe"] as const) {
     const match = navByMode[mode].find((item) => item.hash === path);
@@ -148,11 +149,11 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
         <button aria-pressed={mode === "observe"} onClick={() => switchMode("observe")}>Observe</button>
       </nav>
       <nav aria-label="Primary">{groupNav(navByMode[mode]).map((section, index) => {
-        const links = section.items.map((item) => <a key={item.hash} aria-current={route === item.route || (route === "access" && item.route === "groups") ? "page" : undefined} href={`#${item.hash}`}>{item.label}</a>);
+        const links = section.items.map((item) => <a key={item.hash} aria-current={route === item.route || ((route === "access" || route === "compliance") && item.route === "groups") ? "page" : undefined} href={`#${item.hash}`}>{item.label}</a>);
         // Collapsed by default; a section that already contains the active
         // route opens so navigating here never hides where you landed.
         return section.group
-          ? <details key={section.group} open={section.items.some((item) => item.route === route || (route === "access" && item.route === "groups"))}>
+          ? <details key={section.group} open={section.items.some((item) => item.route === route || ((route === "access" || route === "compliance") && item.route === "groups"))}>
             <summary>{section.group}</summary>
             {links}
           </details>
@@ -164,6 +165,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "domains" && <Domains />}
       {route === "machines" && <Machines key={`${mode}:${machineTab ?? "list"}`} defaultTab={machineTab ?? (mode === "observe" ? "status" : "manage")} />}
       {route === "access" && <GroupsAccess tab="access" />}
+      {route === "compliance" && <GroupsAccess tab="compliance" />}
       {route === "users" && <Users />}
       {route === "groups" && <GroupsAccess tab="groups" />}
       {route === "bedrock" && <Bedrock />}

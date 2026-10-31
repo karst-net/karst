@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -202,6 +202,16 @@ export const api = {
   policySchema: () => request<Record<string, unknown>>("/policy/schema"),
   savePolicy: (document: string, version: number) => request<PolicyVersion>("/policy", { method: "PUT", headers: { "if-match": String(version) }, body: body({ document }) }),
   rollbackPolicy: (version: number, currentVersion: number) => request<PolicyVersion>(`/policy/rollback/${version}`, { method: "POST", headers: { "if-match": String(currentVersion) } }),
+
+  // ── compliance guardrails (ADR-0055, #363) ──────────────────────────────────
+  complianceDraft: () => request<ComplianceDraftVersion>("/compliance/draft"),
+  complianceDraftVersions: () => request<ComplianceDraftVersionPage>("/compliance/draft/versions?limit=100"),
+  complianceDraftVersion: (version: number) => request<ComplianceDraftVersion>(`/compliance/draft/versions/${version}`),
+  validateComplianceDraft: (draft: ComplianceDraftWrite) => request<ComplianceDraftValidation>("/compliance/draft/validate", { method: "POST", body: body(draft) }),
+  previewComplianceDraft: (draft: ComplianceDraftWrite) => request<ComplianceDraftPreview>("/compliance/draft/preview", { method: "POST", body: body(draft) }),
+  testComplianceDraft: (draft: ComplianceDraftWrite) => request<PolicyTestResult>("/compliance/draft/test", { method: "POST", body: body(draft) }),
+  saveComplianceDraft: (draft: ComplianceDraftWrite, version: number) => request<ComplianceDraftVersion>("/compliance/draft", { method: "PUT", headers: { "if-match": String(version) }, body: body(draft) }),
+  rollbackComplianceDraft: (version: number, currentVersion: number) => request<ComplianceDraftVersion>(`/compliance/draft/rollback/${version}`, { method: "POST", headers: { "if-match": String(currentVersion) } }),
 
   // ── network lock ───────────────────────────────────────────────────────────
   bedrock: () => request<BedrockStatus>("/bedrock"),

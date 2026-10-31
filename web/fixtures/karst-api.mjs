@@ -81,6 +81,20 @@ export function buildFixture({ empty = false } = {}) {
       { version: 7, document: '{\n  "acls": [{"action": "accept", "src": ["*"], "dst": ["tag:prod:22"]}]\n}', author: "user-owner", created_at: "2026-08-22T19:04:00Z" },
       { version: 6, document: '{\n  "groups":{"group:engineering":["user-sre"]}, "acls": [{"action":"accept","src": ["group:engineering"], "dst": ["tag:staging:22"]}]\n}', author: "user-sre", created_at: "2026-08-21T16:20:00Z" },
     ],
+    // ADR-0055/#363 PR5b: one guardrail protecting the production database,
+    // requiring a recent Karst client on every source device.
+    complianceDraft: {
+      version: 2,
+      requirement_sets: { "min-version": [{ id: "min-client-version", kind: "minimum-client-version", minimum_version: "1.0.0", provenance: "self-reported" }] },
+      guardrails: [{ id: "prod-db", resource: { selector: "10.0.0.0/24", protocol: "tcp", first: 5432, last: 5432 }, requirement_sets: ["min-version"] }],
+      remediation: [{ selector: "help", protocol: "tcp", first: 443, last: 443 }],
+      author: "user-owner",
+      created_at: "2026-08-22T19:10:00Z",
+    },
+    complianceDraftVersions: [
+      { version: 2, requirement_sets: { "min-version": [{ id: "min-client-version", kind: "minimum-client-version", minimum_version: "1.0.0", provenance: "self-reported" }] }, guardrails: [{ id: "prod-db", resource: { selector: "10.0.0.0/24", protocol: "tcp", first: 5432, last: 5432 }, requirement_sets: ["min-version"] }], remediation: [{ selector: "help", protocol: "tcp", first: 443, last: 443 }], author: "user-owner", created_at: "2026-08-22T19:10:00Z" },
+      { version: 1, requirement_sets: { "min-version": [{ id: "min-client-version", kind: "minimum-client-version", minimum_version: "1.0.0", provenance: "self-reported" }] }, guardrails: [], remediation: [], author: "user-owner", created_at: "2026-08-21T16:25:00Z" },
+    ],
     audit: empty ? [] : [
       { sequence: 41, created_at: "2026-08-22T19:04:00Z", actor: "user-owner", action: "policy.write", target: "policy", detail: "version 7", previous_hash: "audit-hash-40", hash: "audit-hash-41" },
       { sequence: 42, created_at: "2026-08-22T20:01:00Z", actor: "user-sre", action: "node.disable", target: "node-0049-karst-fixture-handle", detail: "offboarding", previous_hash: "audit-hash-41", hash: "audit-hash-42" },
