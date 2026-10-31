@@ -3428,6 +3428,37 @@ fn reconcile_exit(
     }
     #[cfg(not(all(target_os = "macos", feature = "network-extension")))]
     {
+        // `active` for a recipient exit route means *selected and
+        // consented*, not *working* — `State::activate`'s own `ip` commands
+        // succeed the moment the kernel accepts a rule regardless of
+        // whether the exit's gateway peer ever answers anything. Gate on
+        // that peer's session actually being established before touching
+        // policy routing at all, the same check `PacketTunnelProvider.swift`
+        // already makes from the status JSON on macOS: diagnosed on real
+        // hardware, a client whose exit peer's session was still negotiating
+        // (a dead relay, in the real case) had its default route captured
+        // into a tunnel with nothing behind it. `engine: None` (startup,
+        // before the engine exists) fails this the same way a genuinely
+        // unestablished peer would; the next reconcile once the engine is up
+        // picks it up — see this function's other call sites.
+        let established = engine.is_some_and(|engine| {
+            let prefix = offer.prefix.to_string();
+            engine
+                .status()
+                .into_iter()
+                .any(|peer| peer.established && peer.allowed_ips.contains(&prefix))
+        });
+        if !established {
+            policy.disable();
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "exit route {:?}'s gateway peer has no established session yet; \
+                     holding the main routing table",
+                    offer.route_id
+                ),
+            ));
+        }
         let escapes = underlay_addresses(config, engine, control_endpoint)?;
         policy.activate(tun.name(), offer.prefix.base(), escapes)
     }

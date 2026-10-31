@@ -23,29 +23,23 @@
 //! mocked unit tests below is structurally unable to see, since `Mock`
 //! records calls rather than asking a kernel to resolve one.
 //!
-//! **Health-checked activation, auto-rolled-back.** `State::activate`'s `ip`
-//! commands succeed the moment the kernel accepts a rule, whether or not
-//! anything ever answers through it — a stale or incomplete escape set (a
-//! peer that roamed between the netmap snapshot `underlay_addresses` read
-//! and this activation, a control endpoint that re-resolved, more underlay
-//! destinations than `MAX_ESCAPES` allows) is exactly as silent. Rather than
-//! leave the host to discover that by losing all connectivity and diagnosing
-//! it half-blind, [`activate_checked`] probes a fixed, well-known public
-//! address immediately after a freshly-applied activation and rolls the
-//! whole policy back on the spot if nothing answers within
-//! [`HEALTH_CHECK_TIMEOUT`] — the same way a staged `ip` failure itself rolls
-//! back (`rollback` below), just for a failure the exit status of those
-//! commands cannot see. An unchanged repeat activation (same family, same
-//! escapes — the common case on every netmap refresh) is not re-probed: it
-//! was already verified when first applied, and probing the network on
-//! every refresh tick would risk tearing down a route that is actually fine
-//! on nothing more than one transient probe failure.
+//! **Activation does not itself verify reachability.** `State::activate`'s
+//! `ip` commands succeed the moment the kernel accepts a rule, whether or
+//! not anything ever answers through it. An earlier version of this module
+//! tried to close that gap here, by probing a fixed public address right
+//! after activation — which broke the moment it ran anywhere without real
+//! Internet egress, including `aquifer.rs`'s own network-namespace topology
+//! and any genuinely air-gapped deployment. The real precondition this
+//! module cannot see at all — whether the exit's backing peer actually has
+//! a live session, which is what a stale or incomplete escape set, a roamed
+//! peer, or a control endpoint that re-resolved all eventually come down to
+//! — is checked one layer up, in `run.rs`'s `reconcile_exit`, which already
+//! holds `Engine::status()` and needs no network probe to read it.
 
 use std::collections::BTreeSet;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
+use std::net::IpAddr;
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 const TABLE: &str = "51888";
 const PROTOCOL: &str = "186";
@@ -53,34 +47,6 @@ const ESCAPE_PRIORITY: u32 = 100;
 const MAIN_PRIORITY: u32 = 250;
 const EXIT_PRIORITY: u32 = 260;
 const MAX_ESCAPES: usize = (MAIN_PRIORITY - ESCAPE_PRIORITY) as usize;
-
-/// Cloudflare's public resolver — already this codebase's own default DNS
-/// upstream (`config.rs`'s `[dns] upstream`), reachable on 443 from
-/// effectively anywhere an exit node is expected to provide general Internet
-/// access, and never a Karst underlay address, so it can never collide with
-/// an escape. A deployment whose network specifically blocks this one
-/// address while the exit node is otherwise healthy will see a spurious
-/// rollback; re-running `exit-node use` is the recovery, the same as for any
-/// other failed activation.
-const HEALTH_CHECK_TARGET: IpAddr = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1));
-const HEALTH_CHECK_PORT: u16 = 443;
-const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// Bounded reachability probe run immediately after a fresh activation.
-/// A trait, not a bare function, so tests can simulate a dead exit node
-/// without a real kernel or network — mirroring [`Backend`] above.
-trait HealthCheck {
-    fn reachable(&self, target: SocketAddr, timeout: Duration) -> bool;
-}
-
-#[derive(Debug, Default)]
-struct TcpHealthCheck;
-
-impl HealthCheck for TcpHealthCheck {
-    fn reachable(&self, target: SocketAddr, timeout: Duration) -> bool {
-        TcpStream::connect_timeout(&target, timeout).is_ok()
-    }
-}
 
 trait Backend {
     fn run(&mut self, args: &[String]) -> io::Result<()>;
@@ -138,17 +104,13 @@ struct State<B> {
 }
 
 impl<B: Backend> State<B> {
-    /// Stages the activation, returning whether it did fresh work (`true`)
-    /// or found an identical activation already in place (`false`) —
-    /// [`activate_checked`] uses that to decide whether this call needs a
-    /// health probe at all.
     #[allow(clippy::too_many_lines)]
     fn activate(
         &mut self,
         interface: &str,
         family: Family,
         escapes: BTreeSet<IpAddr>,
-    ) -> io::Result<bool> {
+    ) -> io::Result<()> {
         let escapes: BTreeSet<IpAddr> = escapes
             .into_iter()
             .filter(|address| address.is_ipv4() == (family == Family::V4))
@@ -163,7 +125,7 @@ impl<B: Backend> State<B> {
             ));
         }
         if self.active == Some(family) && self.escapes == escapes {
-            return Ok(false);
+            return Ok(());
         }
         self.clear();
         self.backend.run(&["-Version".to_owned()])?;
@@ -319,7 +281,7 @@ impl<B: Backend> State<B> {
         self.undo = applied;
         self.active = Some(family);
         self.escapes = escapes;
-        Ok(true)
+        Ok(())
     }
 
     fn clear(&mut self) {
@@ -327,37 +289,6 @@ impl<B: Backend> State<B> {
         self.active = None;
         self.escapes.clear();
     }
-}
-
-/// Activates, health-checks a freshly-applied activation, and rolls the
-/// whole policy back immediately if nothing answers — see the module doc
-/// comment above. An unchanged repeat activation is returned from
-/// [`State::activate`] without staging anything and is not re-probed.
-fn activate_checked<B: Backend>(
-    state: &mut State<B>,
-    interface: &str,
-    family: Family,
-    escapes: BTreeSet<IpAddr>,
-    checker: &impl HealthCheck,
-) -> io::Result<()> {
-    if !state.activate(interface, family, escapes)? {
-        return Ok(());
-    }
-    if checker.reachable(
-        SocketAddr::new(HEALTH_CHECK_TARGET, HEALTH_CHECK_PORT),
-        HEALTH_CHECK_TIMEOUT,
-    ) {
-        return Ok(());
-    }
-    state.clear();
-    Err(io::Error::new(
-        io::ErrorKind::TimedOut,
-        format!(
-            "exit node health check failed (no reply from \
-             {HEALTH_CHECK_TARGET}:{HEALTH_CHECK_PORT} within \
-             {HEALTH_CHECK_TIMEOUT:?}); rolled back to the main routing table"
-        ),
-    ))
 }
 
 fn rollback(backend: &mut impl Backend, undo: &mut Vec<Vec<String>>) {
@@ -391,14 +322,9 @@ impl Manager {
     /// Activate one IP family through `interface` while preserving underlay
     /// destinations in the host's main routing table.
     ///
-    /// A freshly-applied activation (not an unchanged repeat) is health-
-    /// checked immediately afterward and rolled back on the spot if it
-    /// fails — see the module doc comment.
-    ///
     /// # Errors
-    /// If iproute2 rejects any staged route or policy rule, or the
-    /// post-activation health check gets no reply. Applied stages are rolled
-    /// back before the error is returned either way.
+    /// If iproute2 rejects any staged route or policy rule. Applied stages are
+    /// rolled back before the error is returned.
     pub fn activate(
         &mut self,
         interface: &str,
@@ -410,7 +336,7 @@ impl Manager {
         } else {
             Family::V6
         };
-        activate_checked(&mut self.0, interface, family, escapes, &TcpHealthCheck)
+        self.0.activate(interface, family, escapes)
     }
 
     /// Mark `exit`'s family active without touching host routing.
@@ -606,70 +532,6 @@ mod tests {
             .join(" ");
         assert!(all.contains("2001:db8::10/128"));
         assert!(!all.contains("192.0.2.10/32"));
-    }
-
-    #[derive(Default)]
-    struct MockHealthCheck {
-        reachable: bool,
-        calls: std::cell::Cell<u32>,
-    }
-
-    impl HealthCheck for MockHealthCheck {
-        fn reachable(&self, _target: SocketAddr, _timeout: Duration) -> bool {
-            self.calls.set(self.calls.get() + 1);
-            self.reachable
-        }
-    }
-
-    #[test]
-    fn a_failed_health_check_rolls_the_whole_activation_back() {
-        let escapes = ["192.0.2.10".parse().unwrap()].into_iter().collect();
-        let mut state = state(Mock::default());
-        let checker = MockHealthCheck {
-            reachable: false,
-            ..MockHealthCheck::default()
-        };
-        let error = activate_checked(&mut state, "karst0", Family::V4, escapes, &checker)
-            .expect_err("an unreachable health check must fail activation");
-        assert_eq!(checker.calls.get(), 1);
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert_eq!(state.active, None);
-        assert!(state.undo.is_empty());
-        assert!(state
-            .backend
-            .commands
-            .iter()
-            .any(|command| command.join(" ").contains("del priority 260")));
-    }
-
-    #[test]
-    fn a_successful_health_check_leaves_the_activation_in_place() {
-        let escapes = ["192.0.2.10".parse().unwrap()].into_iter().collect();
-        let mut state = state(Mock::default());
-        let checker = MockHealthCheck {
-            reachable: true,
-            ..MockHealthCheck::default()
-        };
-        activate_checked(&mut state, "karst0", Family::V4, escapes, &checker).unwrap();
-        assert_eq!(checker.calls.get(), 1);
-        assert_eq!(state.active, Some(Family::V4));
-    }
-
-    #[test]
-    fn an_unchanged_repeat_activation_is_not_reprobed() {
-        let escapes: BTreeSet<IpAddr> = ["192.0.2.10".parse().unwrap()].into_iter().collect();
-        let mut state = state(Mock::default());
-        let checker = MockHealthCheck {
-            reachable: true,
-            ..MockHealthCheck::default()
-        };
-        activate_checked(&mut state, "karst0", Family::V4, escapes.clone(), &checker).unwrap();
-        activate_checked(&mut state, "karst0", Family::V4, escapes, &checker).unwrap();
-        assert_eq!(
-            checker.calls.get(),
-            1,
-            "a no-op repeat must not re-run the network probe"
-        );
     }
 
     #[test]
