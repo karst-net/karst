@@ -813,6 +813,42 @@ func (e NodeComplianceStatus) Valid() bool {
 	}
 }
 
+// Defines values for NodeControlCheckCapability.
+const (
+	NodeControlCheckCapabilityGatewayIngressSchema NodeControlCheckCapability = "gateway_ingress_schema"
+	NodeControlCheckCapabilityRelayLifecycleSchema NodeControlCheckCapability = "relay_lifecycle_schema"
+)
+
+// Valid indicates whether the value is a known member of the NodeControlCheckCapability enum.
+func (e NodeControlCheckCapability) Valid() bool {
+	switch e {
+	case NodeControlCheckCapabilityGatewayIngressSchema:
+		return true
+	case NodeControlCheckCapabilityRelayLifecycleSchema:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NodeControlCheckStatus.
+const (
+	NodeControlCheckStatusAccepted     NodeControlCheckStatus = "accepted"
+	NodeControlCheckStatusIncompatible NodeControlCheckStatus = "incompatible"
+)
+
+// Valid indicates whether the value is a known member of the NodeControlCheckStatus enum.
+func (e NodeControlCheckStatus) Valid() bool {
+	switch e {
+	case NodeControlCheckStatusAccepted:
+		return true
+	case NodeControlCheckStatusIncompatible:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NodePostureStatus.
 const (
 	NodePostureStatusLatticeOnly NodePostureStatus = "lattice_only"
@@ -1970,7 +2006,9 @@ type GatewayInventorySchemaVersion int
 
 // GatewayNode defines model for GatewayNode.
 type GatewayNode struct {
-	ControlConnected bool `json:"control_connected"`
+	// ControlCheck Last actual control-server capability check. Accepted means a netmap was built; it does not establish client application or data-plane compatibility. Missing means unknown. Independent of software report freshness.
+	ControlCheck     *NodeControlCheck `json:"control_check,omitempty"`
+	ControlConnected bool              `json:"control_connected"`
 
 	// ForwardingReadiness Aggregated across this node's own offers, degraded-first.
 	ForwardingReadiness GatewayNodeForwardingReadiness `json:"forwarding_readiness"`
@@ -2140,7 +2178,9 @@ type NocComponentKind string
 
 // Node defines model for Node.
 type Node struct {
-	CreatedAt time.Time `json:"created_at"`
+	// ControlCheck Last actual control-server capability check. Accepted means a netmap was built; it does not establish client application or data-plane compatibility. Missing means unknown. Independent of software report freshness.
+	ControlCheck *NodeControlCheck `json:"control_check,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
 
 	// DnsLabel Root-relative peer DNS label, including the relative domain path. Append the account root suffix exactly once to form the complete DNS name.
 	DnsLabel string `json:"dns_label"`
@@ -2186,6 +2226,21 @@ type NodeCompliancePlatform string
 
 // NodeComplianceStatus defines model for NodeCompliance.Status.
 type NodeComplianceStatus string
+
+// NodeControlCheck Last actual control-server capability check. Accepted means a netmap was built; it does not establish client application or data-plane compatibility. Missing means unknown. Independent of software report freshness.
+type NodeControlCheck struct {
+	Capability     *NodeControlCheckCapability `json:"capability,omitempty"`
+	ObservedAt     time.Time                   `json:"observed_at"`
+	ReportedSchema *int                        `json:"reported_schema,omitempty"`
+	RequiredSchema *int                        `json:"required_schema,omitempty"`
+	Status         NodeControlCheckStatus      `json:"status"`
+}
+
+// NodeControlCheckCapability defines model for NodeControlCheck.Capability.
+type NodeControlCheckCapability string
+
+// NodeControlCheckStatus defines model for NodeControlCheck.Status.
+type NodeControlCheckStatus string
 
 // NodePage defines model for NodePage.
 type NodePage struct {

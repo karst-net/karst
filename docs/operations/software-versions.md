@@ -39,3 +39,28 @@ the control binary answering the request, and any configured deployment
 snapshot. The macOS menu shows the installed app release/build separately from
 the responding agent's release/revision, which helps identify an extension
 that has not yet been replaced after an app upgrade.
+
+## Control capability checks
+
+Machine software details and Gateway inventory also show the last actual
+control-server capability evaluation, independently of the software report's
+receipt time. Machines with a recorded incompatibility are marked in the
+status table; expand their software details for upgrade guidance.
+
+An incompatible result identifies the capability and required/reported schema
+that caused control to reject the netmap. Current checks cover live Relay
+service lifecycle support and destination-scoped Gateway ingress. Upgrade the
+agent to a release supporting the named feature and reconnect it to control.
+Software identity is recorded before these checks, so an incompatible agent
+can still be identified without SSH or logs.
+
+Accepted means control successfully constructed a netmap at the displayed
+time. It does not prove that the agent applied it or that data-plane traffic
+works. A later successful netmap clears an earlier rejection. Unrelated
+request failures do not erase or refresh that result. An absent check is
+unknown, and checks older than 15 minutes are stale. Configuration changes
+since the last check may not be reflected until the agent synchronizes again.
+
+Capability evaluations are distinct from release drift advisories. Equal
+release strings never imply acceptance; an actual rejection remains visible
+even when the agent and control report the same release.

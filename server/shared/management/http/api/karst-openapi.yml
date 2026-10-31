@@ -1426,6 +1426,7 @@ components:
         name: { type: string }
         control_connected: { type: boolean }
         software: {$ref: '#/components/schemas/NodeSoftware'}
+        control_check: {$ref: '#/components/schemas/NodeControlCheck'}
         forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: "Aggregated across this node's own offers, degraded-first." }
         offers:
           type: array
@@ -1695,6 +1696,17 @@ components:
         last_seen_at: {type: string, nullable: true, format: date-time}
         posture: {$ref: '#/components/schemas/NodePosture'}
         software: {$ref: '#/components/schemas/NodeSoftware'}
+        control_check: {$ref: '#/components/schemas/NodeControlCheck'}
+    NodeControlCheck:
+      type: object
+      description: 'Last actual control-server capability check. Accepted means a netmap was built; it does not establish client application or data-plane compatibility. Missing means unknown. Independent of software report freshness.'
+      required: [status, observed_at]
+      properties:
+        status: {type: string, enum: [accepted, incompatible]}
+        observed_at: {type: string, format: date-time}
+        capability: {type: string, enum: [relay_lifecycle_schema, gateway_ingress_schema]}
+        required_schema: {type: integer, minimum: 1}
+        reported_schema: {type: integer, minimum: 0}
     NodeSoftware:
       type: object
       description: 'Running agent identity self-reported over the authenticated control channel, independent of compliance collection. Advisory, not attestation or a compatibility verdict. Omitted for agents with no observation. Missing identities remain unknown.'

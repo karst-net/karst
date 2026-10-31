@@ -466,7 +466,7 @@ func TestListNodes_OnlyEnrolledNodesAndNoKeyMaterial(t *testing.T) {
 	created := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{
-		"handle-a": {Handle: "handle-a", PublicKey: []byte("identity-public-material"), KemPublicKey: []byte("kem-public-material"), CreatedAt: created, SoftwareVersion: "v1", SoftwareRevision: "source-commit", SoftwareArtifactID: "sha256:artifact", SoftwareObservedAt: &created},
+		"handle-a": {Handle: "handle-a", PublicKey: []byte("identity-public-material"), KemPublicKey: []byte("kem-public-material"), CreatedAt: created, SoftwareVersion: "v1", SoftwareRevision: "source-commit", SoftwareArtifactID: "sha256:artifact", SoftwareObservedAt: &created, ControlCheck: node.ControlCheck{Status: "accepted", ObservedAt: &created}},
 	}, fakePeers{
 		{Key: "fork-only-peer", Name: "not-karst", UserID: "user-a"},
 		{Key: "handle-a", Name: "karst-node", UserID: "user-a", Status: &peer.PeerStatus{LastSeen: created}},
@@ -491,6 +491,9 @@ func TestListNodes_OnlyEnrolledNodesAndNoKeyMaterial(t *testing.T) {
 	require.Equal(t, "source-commit", *page.Items[0].Software.Revision)
 	require.Equal(t, "sha256:artifact", *page.Items[0].Software.ArtifactId)
 	require.True(t, page.Items[0].Software.ObservedAt.Equal(created))
+	require.NotNil(t, page.Items[0].ControlCheck)
+	require.Equal(t, "accepted", string(page.Items[0].ControlCheck.Status))
+	require.True(t, page.Items[0].ControlCheck.ObservedAt.Equal(created))
 	require.Equal(t, "unknown", page.Items[0].Posture.Status)
 	require.Nil(t, page.NextCursor)
 }

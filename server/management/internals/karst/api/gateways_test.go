@@ -21,6 +21,7 @@ import (
 	"github.com/netbirdio/netbird/shared/management/status"
 	"github.com/stretchr/testify/require"
 
+	karstnode "github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 )
 
@@ -57,7 +58,7 @@ func TestGatewayInventoryResolvesBothBehaviorsOncePerVisibleNode(t *testing.T) {
 		{ID: "domain", NetworkType: route.DomainNetwork},
 	}}
 	observed := time.Now().UTC()
-	h := &handler{nodes: fakeNodes{"gateway-key": {SoftwareVersion: "gateway-release", SoftwareRevision: "gateway-commit", SoftwareObservedAt: &observed}, "hidden-key": {SoftwareVersion: "hidden-release"}}, routes: sources, peers: fakePeers{{ID: "node-a", Key: "gateway-key", Name: "Combined Gateway", Status: &peer.PeerStatus{Connected: true}}, {ID: "unused-node", Name: "unused"}}}
+	h := &handler{nodes: fakeNodes{"gateway-key": {SoftwareVersion: "gateway-release", SoftwareRevision: "gateway-commit", SoftwareObservedAt: &observed, ControlCheck: karstnode.ControlCheck{Status: "incompatible", Capability: "gateway_ingress_schema", RequiredSchema: 1, ObservedAt: &observed}}, "hidden-key": {SoftwareVersion: "hidden-release"}}, routes: sources, peers: fakePeers{{ID: "node-a", Key: "gateway-key", Name: "Combined Gateway", Status: &peer.PeerStatus{Connected: true}}, {ID: "unused-node", Name: "unused"}}}
 	w := gatewayRequest(h)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
@@ -70,6 +71,10 @@ func TestGatewayInventoryResolvesBothBehaviorsOncePerVisibleNode(t *testing.T) {
 	require.Equal(t, "gateway-release", *node.Software.Version)
 	require.Equal(t, "gateway-commit", *node.Software.Revision)
 	require.True(t, node.Software.ObservedAt.Equal(observed))
+	require.NotNil(t, node.ControlCheck)
+	require.Equal(t, "incompatible", string(node.ControlCheck.Status))
+	require.Equal(t, "gateway_ingress_schema", string(*node.ControlCheck.Capability))
+	require.True(t, node.ControlCheck.ObservedAt.Equal(observed))
 	require.NotContains(t, w.Body.String(), "hidden-release")
 	require.True(t, node.ControlConnected)
 	require.Equal(t, "unreported", node.ForwardingReadiness)

@@ -30,6 +30,7 @@ export type GatewayNode = {
     name: string;
     control_connected: boolean;
     software?: NodeSoftware;
+    control_check?: NodeControlCheck;
     /**
      * Aggregated across this node's own offers, degraded-first.
      */
@@ -345,6 +346,18 @@ export type Node = {
     last_seen_at?: string | null;
     posture: NodePosture;
     software?: NodeSoftware;
+    control_check?: NodeControlCheck;
+};
+
+/**
+ * Last actual control-server capability check. Accepted means a netmap was built; it does not establish client application or data-plane compatibility. Missing means unknown. Independent of software report freshness.
+ */
+export type NodeControlCheck = {
+    status: 'accepted' | 'incompatible';
+    observed_at: string;
+    capability?: 'relay_lifecycle_schema' | 'gateway_ingress_schema';
+    required_schema?: number;
+    reported_schema?: number;
 };
 
 /**
@@ -1121,6 +1134,7 @@ export type NodeWritable = {
     last_seen_at?: string | null;
     posture: NodePosture;
     software?: NodeSoftware;
+    control_check?: NodeControlCheck;
 };
 
 export type DeviceEnrollmentWritable = {

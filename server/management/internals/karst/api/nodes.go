@@ -4687,12 +4687,13 @@ func containsHandle(nodes []nodeResponse, handle string) bool {
 // key. Handles are stable identifiers, not key material, and are the only
 // identity value this REST surface returns.
 type nodeResponse struct {
-	Software *karstcontract.NodeSoftware `json:"software,omitempty"`
-	Handle   string                      `json:"handle"`
-	Name     string                      `json:"name"`
-	Platform string                      `json:"platform"`
-	UserID   string                      `json:"user_id"`
-	Tags     []string                    `json:"tags"`
+	ControlCheck *karstcontract.NodeControlCheck `json:"control_check,omitempty"`
+	Software     *karstcontract.NodeSoftware     `json:"software,omitempty"`
+	Handle       string                          `json:"handle"`
+	Name         string                          `json:"name"`
+	Platform     string                          `json:"platform"`
+	UserID       string                          `json:"user_id"`
+	Tags         []string                        `json:"tags"`
 	// DomainID is the peer's stable mesh domain ID, including the explicit root.
 	// Older, unmigrated fixtures may omit it.
 	DomainID string `json:"domain_id,omitempty"`
@@ -4992,9 +4993,24 @@ func toNodeResponse(p *peer.Peer, identity *node.Identity, posture nodePosture) 
 		Handle: p.Key, Name: p.Name, Platform: peerPlatform(p), UserID: p.UserID, Tags: []string{},
 		DomainID: p.DomainID, DNSLabel: p.DNSLabel,
 		Enabled: true, CreatedAt: identity.CreatedAt.UTC(), LastSeenAt: lastSeen,
-		Posture:  posture,
-		Software: nodeSoftware(identity),
+		Posture:      posture,
+		Software:     nodeSoftware(identity),
+		ControlCheck: nodeControlCheck(identity),
 	}
+}
+
+func nodeControlCheck(identity *node.Identity) *karstcontract.NodeControlCheck {
+	check := identity.ControlCheck
+	if check.ObservedAt == nil {
+		return nil
+	}
+	result := &karstcontract.NodeControlCheck{Status: karstcontract.NodeControlCheckStatus(check.Status), ObservedAt: check.ObservedAt.UTC()}
+	if check.Status == "incompatible" {
+		capability := karstcontract.NodeControlCheckCapability(check.Capability)
+		required, reported := int(check.RequiredSchema), int(check.ReportedSchema)
+		result.Capability, result.RequiredSchema, result.ReportedSchema = &capability, &required, &reported
+	}
+	return result
 }
 
 // nodeSoftware uses its own receipt time, never peer last-seen, enrollment,

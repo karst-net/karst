@@ -130,10 +130,11 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
         ? <EmptyState title="No machines yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
         : shown.length === 0
           ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
-          : <Rows head={<><th>Name</th><th>Crypto posture</th><th>Observed</th><th>Actions</th></>}>
+          : <Rows head={<><th>Name</th><th>Crypto posture</th><th>Control compatibility</th><th>Observed</th><th>Actions</th></>}>
             {shown.map((node) => <tr key={node.handle}>
               <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
               <td><Status state={statusFor(node.posture.status)} label={node.posture.status.replaceAll("_", " ")} /></td>
+              <td>{node.control_check?.status === "incompatible" ? "Incompatible — view software details" : node.control_check ? "Last check accepted" : "Unknown"}</td>
               <td><Observed at={node.last_seen_at} /></td>
               <td><div className="actions">
                 <button onClick={() => void showPaths(node)}>Paths</button>
@@ -185,7 +186,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
     </Dialog>}
 
     {version && <Dialog open title={`Software version — ${version.node.name}`} onClose={() => { versionRequest.current++; setVersion(undefined); }}>
-      <ClientVersion software={version.node.software} />
+      <ClientVersion software={version.node.software} controlCheck={version.node.control_check} />
       {version.loading && <p>Refreshing software observation…</p>}
       {version.error && <p role="alert">Could not refresh software observation: {version.error}. The displayed observation may be out of date.</p>}
       <div className="actions"><button disabled={version.loading} onClick={() => void showVersion(version.node)}>Refresh observation</button><button onClick={() => { versionRequest.current++; setVersion(undefined); }}>Close</button></div>
