@@ -86,6 +86,7 @@ fn node(
         psk_previous: None,
         disco_key: None,
         home_relay: None,
+        candidates: Vec::new(),
     }];
 
     let config = Arc::new(Config {

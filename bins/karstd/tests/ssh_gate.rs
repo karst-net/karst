@@ -144,6 +144,7 @@ fn server_config(filter: PacketFilter, ssh_filter: SshFilter) -> Arc<Config> {
             psk_previous: None,
             disco_key: None,
             home_relay: None,
+            candidates: Vec::new(),
         }],
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
         skipped: Vec::new(),

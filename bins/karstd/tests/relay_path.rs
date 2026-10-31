@@ -149,6 +149,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
             psk_previous: None,
             disco_key: spec.disco_key,
             home_relay: spec.home_relay,
+            candidates: Vec::new(),
         });
     }
 

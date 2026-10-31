@@ -94,6 +94,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str) -> Node {
         psk_previous: None,
         disco_key: None,
         home_relay: None,
+        candidates: Vec::new(),
     }];
 
     let config = Arc::new(Config {

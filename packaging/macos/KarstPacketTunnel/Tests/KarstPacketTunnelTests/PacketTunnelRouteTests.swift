@@ -7,12 +7,19 @@ final class PacketTunnelRouteTests: XCTestCase {
     private func status(
         addresses: [String] = ["100.64.0.1/10"],
         allowedIPs: [[String]] = [],
+        // Defaults every peer to established so the many existing tests
+        // below, written before that field existed, keep meaning what they
+        // already say: "this peer's allowed_ips are live routes." Only the
+        // readiness-gate tests need to pass `false` explicitly.
+        established: [Bool] = [],
         routes: [[String: Any]] = []
     ) throws -> String {
         let object: [String: Any] = [
             "addresses": addresses,
             "mtu": 1280,
-            "peers": allowedIPs.map { ["allowed_ips": $0] },
+            "peers": allowedIPs.enumerated().map { index, ips in
+                ["allowed_ips": ips, "established": index < established.count ? established[index] : true]
+            },
             "control": ["routing": ["routes": routes]],
         ]
         return String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)!
@@ -79,6 +86,44 @@ final class PacketTunnelRouteTests: XCTestCase {
         XCTAssertEqual(
             PacketTunnelProvider.routeSignature(fromStatusJSON: offered),
             PacketTunnelProvider.routeSignature(fromStatusJSON: withoutOffer)
+        )
+    }
+
+    /// Diagnosed on real hardware: a client whose exit peer's session never
+    /// finished negotiating (a dead relay, in the real case) still got
+    /// `active == true` from `exit-node use` — that field means *selected*,
+    /// not *working*. Mapped into `includedRoutes` anyway, it would have
+    /// captured 100% of the Mac's traffic into a tunnel with no live
+    /// session behind it. Only an active recipient exit route backed by an
+    /// *established* peer may add one.
+    func testAnActiveExitRouteWithNoEstablishedPeerDoesNotCaptureTheDefaultRoute() throws {
+        let notYetConnected = try status(
+            addresses: ["100.64.0.1/10"],
+            allowedIPs: [["100.64.0.2/32", "0.0.0.0/0"]],
+            established: [false],
+            routes: [["prefix": "0.0.0.0/0", "kind": "exit", "role": "recipient", "active": true]]
+        )
+        let settings = try PacketTunnelProvider.networkSettings(fromStatusJSON: notYetConnected)
+        XCTAssertEqual(ipv4Routes(settings), ["100.64.0.2/255.255.255.255"])
+
+        let connected = try status(
+            addresses: ["100.64.0.1/10"],
+            allowedIPs: [["100.64.0.2/32", "0.0.0.0/0"]],
+            established: [true],
+            routes: [["prefix": "0.0.0.0/0", "kind": "exit", "role": "recipient", "active": true]]
+        )
+        let settingsOnceConnected = try PacketTunnelProvider.networkSettings(fromStatusJSON: connected)
+        XCTAssertEqual(
+            ipv4Routes(settingsOnceConnected),
+            ["0.0.0.0/0.0.0.0", "100.64.0.2/255.255.255.255"]
+        )
+
+        // The signature must itself change across that transition, or
+        // `pollHealth()` would never recompute settings once the peer
+        // actually connects — see `routeSignature`'s own doc comment.
+        XCTAssertNotEqual(
+            PacketTunnelProvider.routeSignature(fromStatusJSON: notYetConnected),
+            PacketTunnelProvider.routeSignature(fromStatusJSON: connected)
         )
     }
 

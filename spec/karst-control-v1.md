@@ -411,7 +411,7 @@ hold no netmap" in a request. Let `LP(x)` be a four-byte big-endian length of
 "karst-netmap-version-v1" || BE32(psk_epoch) ||
 LP(node_id) || LP(dns_name) || LP(addresses[0]) || ... ||
 each peer's LP(node_id, kem_public_key, dns_name, endpoint,
-               allowed_ips[0], ...) ||
+               allowed_ips[0], ..., candidates[0], ...) ||
 each ingress filter rule's LP(sources..., dst_cidrs..., BE32(first) || BE32(last), ...) ||
 LP("karst-egress-filter") ||
 each egress filter rule's LP(destinations..., BE32(first) || BE32(last), ...) ||
@@ -478,6 +478,22 @@ empty rule list, and without the flag the two states would be indistinguishable
 on the wire even though §3.2 requires them to be observably different.
 Pre-change version values are intentionally incompatible; both implementations
 and the shared vectors moved together.
+
+**Compatibility note (2026-10-31).** Each peer's `LP(candidates[0], ...)` was
+added after `allowed_ips`, for `KarstNetmapPeer.candidates` —
+`spec/aven-v1.md` §7.3.1's control-plane path for AVEN candidate exchange,
+closing the gap where a peer whose relay connection was unreachable could not
+have any candidate — including one on the requester's own LAN — reach a peer
+by any path. The same term was added to the per-peer delta digest (`PeerDigest` in the Go
+implementation's `netmap.go` and `peer_digest` in the Rust `karst-control-client`
+crate; not independently formalized in this document before now, also pinned
+by `spec/vectors/karst-control-v1.json`) for the identical reason a move
+across §5.5's other additions always is: a peer whose only change is this
+field must still be recognized as changed, or it is silently never delivered.
+A peer reporting no candidates hashes identically to before this field
+existed in both functions; pre-change version/digest values for one reporting
+any are intentionally incompatible. Both implementations and the shared
+vectors moved together.
 
 ---
 

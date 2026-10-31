@@ -364,10 +364,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return nil
         }
         var routes = status.peers.flatMap(\.allowedIps).filter { !isDefaultRoute($0) }
+        // Carries each active exit route's backing-peer readiness, not just
+        // its prefix — see `networkSettings(fromStatusJSON:)`'s own doc
+        // comment for why that gate exists. Without this, the exit peer
+        // finishing its handshake after activation (the common case: it
+        // takes a disco round trip or more) would never cross
+        // `pollHealth()`'s signature check, and the default route this
+        // method already correctly withheld at activation would stay
+        // withheld forever instead of being added once the peer is actually
+        // up.
         routes += (status.control?.routing.routes ?? [])
             .filter { $0.kind == "exit" && $0.role == "recipient" && $0.active }
-            .map(\.prefix)
+            .map { "\($0.prefix)@\(hasEstablishedPeer(forPrefix: $0.prefix, in: status.peers))" }
         return (status.addresses.sorted() + ["|"] + routes.sorted()).joined(separator: ",")
+    }
+
+    /// Whether any peer currently offering `prefix` in its `allowedIps` has
+    /// a live, established session — shared by `networkSettings(fromStatusJSON:)`
+    /// and `routeSignature(fromStatusJSON:)` so the gate and the signature
+    /// that must track it can never drift apart.
+    private static func hasEstablishedPeer(forPrefix prefix: String, in peers: [EngineStatus.Peer]) -> Bool {
+        peers.contains { $0.established && $0.allowedIps.contains(prefix) }
     }
 
     /// `EngineHandle.start` on an 8 MiB worker thread, waited for
@@ -613,8 +630,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // others, which must never fold into this node's own default
         // route — that is the inbound side of the exact opposite
         // relationship.
+        //
+        // `active` alone is not enough, either: it means *consented and
+        // selected*, not *working*. Found the same way the unconsented-offer
+        // case above was: a client whose exit peer's session was still
+        // `established == false` (stuck negotiating — a dead relay, a NAT
+        // that will never resolve, anything) got `includedRoutes` set to
+        // the full default route anyway, since `active` had already gone
+        // true at selection time. Every packet the Mac sent then routed
+        // into a tunnel with no live session to carry it — the same
+        // black-holed-internet failure the comment above exists to avoid,
+        // just reached through "selected but not yet connected" instead of
+        // "offered but not yet consented." Requiring an established peer
+        // that actually offers this exact prefix closes both the same way.
         for route in status.control?.routing.routes ?? []
-        where route.kind == "exit" && route.role == "recipient" && route.active {
+        where route.kind == "exit" && route.role == "recipient" && route.active
+            && hasEstablishedPeer(forPrefix: route.prefix, in: status.peers) {
             addRoute(route.prefix, toIPv4: &ipv4Routes, ipv6: &ipv6Routes)
         }
 
@@ -990,9 +1021,15 @@ enum PacketTunnelProviderError: LocalizedError {
 private struct EngineStatus: Decodable {
     struct Peer: Decodable {
         let allowedIps: [String]
+        /// Mirrors `PeerJson.established` (`run.rs`) — a live, up session,
+        /// not merely a configured one. Gates whether an active exit route
+        /// backed by this peer may actually capture the default route; see
+        /// `networkSettings(fromStatusJSON:)`.
+        let established: Bool
 
         enum CodingKeys: String, CodingKey {
             case allowedIps = "allowed_ips"
+            case established
         }
     }
 

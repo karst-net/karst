@@ -44,7 +44,7 @@ invented proper nouns get themed names and standard technical terms do not.
 | **Candidate gathering** | Local interface addresses, server-reflexive addresses learned from peers and relays, and addresses a peer reports observing |
 | **Path probing** | Small authenticated `Ping`/`Pong` pairs to each candidate |
 | **Reflexive discovery** | A `Pong` reports the source address the `Ping` appeared to come from — the STUN function, without a STUN server |
-| **Candidate exchange** | `CallMeMaybe` over the relay, so both ends probe at once |
+| **Candidate exchange** | `CallMeMaybe` over the relay, so both ends probe at once — plus, optionally, the control plane (§7.3.1) |
 | **MTU discovery** | Bisected `MtuProbe`/`MtuProbeAck` pairs find the largest transport datagram a direct path delivers, with no dependence on ICMP |
 | **Path selection** | Continuous measurement with hysteresis, preferring direct over relay and IPv6 over IPv4, and demoting a direct path confirmed to black-hole full-size traffic |
 
@@ -402,6 +402,51 @@ an inbound one.
 It MAY also be sent on an established direct path when candidates change — a
 node that acquires a new interface should not have to wait for a relay round
 trip to say so.
+
+#### 7.3.1 Control-plane-distributed candidates
+
+`CallMeMaybe` has exactly one transport: the relay. That is a single point of
+failure for *discovery itself*, not merely for the direct path discovery is
+trying to establish — found on real hardware, where a double-NAT deployment
+left a node's relay connection unreachable, and with it every candidate
+either peer could otherwise have learned, even though both peers shared a LAN
+and a trivial direct path was sitting right there.
+
+A node MAY also report its own current candidate list — the same list
+`bins/karstd/src/disco.rs`'s `Disco::candidates()` already ranks by tier for
+`CallMeMaybe` — to the control plane on its regular netmap request
+(`karst_control.proto`'s `KarstNetmapRequest.candidates`), which the server
+redistributes to that node's peers as `KarstNetmapPeer.candidates`. A peer
+receiving one adopts it exactly as it would a configured `peer.endpoint`:
+queued for probing, never treated as confirmed until a `Pong` answers it.
+
+**This does not change AVEN's trust model.** A candidate arriving this way is
+no better authenticated than one arriving in `CallMeMaybe` or as a `Pong`'s
+`observed` value (§1.1's malicious peer already covers both) — §7.1's rule
+that only an authenticated `Pong` confirms a path is what actually bounds the
+damage a false candidate from any source can do, which is none beyond a
+wasted probe. What this channel buys is availability, not authentication: a
+second way for a candidate to *arrive* at all when the first one cannot ship,
+not a stronger guarantee about what arrives.
+
+**Capability-gated**, the same way `relay_lifecycle_schema`/
+`gateway_ingress_schema` already are: a node declares
+`candidate_distribution_schema = 1` to mean both "I report `candidates`" and
+"I understand a redistributed `KarstNetmapPeer.candidates`." The server MUST
+NOT send the latter to a node declaring less, which would otherwise treat it
+as an unknown field and discard it silently and permanently rather than
+simply not having asked for it.
+
+**Covered by `PeerDigest` and `netmap_version`** since 2026-10-31
+(`spec/karst-control-v1.md` §5.5's matching compatibility note), the two
+hashes that decide respectively whether one peer's entry and whether the
+whole netmap have changed enough to be delivered. Both are pinned across
+implementations by `spec/vectors/karst-control-v1.json`; a peer whose only
+change is its candidate list is now picked up by the delta mechanism like
+any other change, rather than waiting for something else about that peer to
+move too.
+
+See §9 and §12 item 12 for what this changes about disclosure.
 
 ### 7.4 Answering a probe at most once — the flaw modeling found
 
@@ -1041,6 +1086,15 @@ than defended. Encrypting the body under the disco key would close it and costs
 one AEAD; it is not in v1 because the key schedule for it was not designed in
 time, which is a reason and not a justification.
 
+**§7.3.1's control-plane path discloses the same addresses to one more
+party**: the control plane now stores a node's reported candidate list in the
+clear (`node.Identity.Candidates`), not merely relays it transiently the way
+`CallMeMaybe` already does. A deployment where the control plane and the
+relay are operated separately previously kept a node's local-interface
+addresses off the control plane entirely; opting into
+`candidate_distribution_schema = 1` gives those up. This is additive to the
+existing weakness above, not a new category of one — see §12 item 12.
+
 **A §7.6 reflector learns one thing the relay did not already know**: the node's
 UDP source address, where the Ponor connection disclosed only its TCP one. Those
 differ in port and can differ in address, so this is a real increment and not a
@@ -1238,3 +1292,21 @@ must not be carried across to AVEN, where the MAC's job is different.
     constants, and the bisection's convergence exercised without any ICMP in
     the loop) rather than a proof, and it should be modeled before this draft
     stops being one.
+12. **§7.3.1's control-plane candidate path is new and narrow.** It closes
+    one failure mode — discovery itself having a single point of failure on
+    the relay — and opens a disclosure one: the control plane now holds a
+    node's reported local/LAN addresses in the clear, where it may
+    previously have held none (§9). It is opt-in per node
+    (`candidate_distribution_schema`), but there is no account-level control
+    over whether an account's own control plane is allowed to see this at
+    all, and no way for a node to report candidates to its peers without the
+    server seeing them too — unlike `CallMeMaybe`, which at least requires a
+    relay actively carrying the node's traffic already to learn the same
+    thing. Encrypting `candidates` end-to-end under a key the control plane
+    does not hold would close this the same way an AEAD under the disco key
+    would close item 3, and was not designed for the same reason: no key
+    schedule for it exists yet, since every candidate here is already going
+    to a party (the control plane) a node already trusts with its PSKs,
+    identity key, and session telemetry. Whether that existing trust
+    relationship is the right one to extend to this, rather than minting a
+    narrower one, is unresolved.

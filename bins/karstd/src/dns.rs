@@ -1444,6 +1444,7 @@ mod tests {
             psk: None,
             psk_previous: None,
             disco_key: None,
+            candidates: Vec::new(),
         });
         let resolver = from_netmap(&netmap).expect("resolver");
         assert!(matches!(
@@ -1575,6 +1576,7 @@ mod tests {
             psk: None,
             psk_previous: None,
             disco_key: None,
+            candidates: Vec::new(),
         });
         let resolver = from_netmap(&netmap).expect("resolver");
         let (runtime, address) = start_runtime_on_free_port(&resolver);

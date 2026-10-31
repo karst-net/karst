@@ -5690,6 +5690,17 @@ fn refresh_netmap(
             }
         };
         client.set_route_observations(route_observations);
+        // This node's own current AVEN candidate list — read back fresh
+        // every tick, same as `sessions` above: it is a live snapshot of
+        // interfaces/reflexive state, not a buffer anything queues into
+        // between ticks. See `karst_control.proto`'s
+        // `KarstNetmapRequest.candidates` doc comment.
+        client.set_candidates(
+            disco
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .candidates_wire(),
+        );
         published = chosen;
 
         let synced = runtime.block_on(client.sync());
@@ -6184,6 +6195,7 @@ mod route_tests {
                 psk_previous: None,
                 disco_key: None,
                 home_relay: None,
+                candidates: Vec::new(),
             });
         }
         Config {

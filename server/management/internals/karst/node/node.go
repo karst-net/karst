@@ -23,6 +23,7 @@ import (
 	"crypto/mlkem"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -84,8 +85,42 @@ type Identity struct {
 	// missing one.
 	HomeRelay            []byte
 	RelayLifecycleSchema uint32 `gorm:"not null;default:0"`
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+
+	// Candidates is this node's own self-reported AVEN candidate list
+	// (`karst_control.proto`'s `KarstNetmapRequest.candidates`), order
+	// preserved, redistributed to this node's peers as
+	// `KarstNetmapPeer.candidates` — see `NetmapHandler.Handle`'s own
+	// comment on why a relay-only path left same-LAN peers unable to find
+	// each other whenever the relay itself was unreachable.
+	//
+	// JSON-encoded into a plain string column rather than through GORM's
+	// `serializer:json` tag (unlike `relayalloc`/`relayservice`'s `[]string`
+	// fields): `SetCandidates`' own change-detection `WHERE` clause needs to
+	// compare it as ordinary text, the same way `SetHomeRelay`'s already
+	// does for `home_relay` — binding a raw `[]string` into that clause
+	// would have GORM try to expand it as a SQL `IN` list instead. Empty
+	// (the default, and the zero value a migration leaves on existing rows)
+	// decodes to no candidates, not a parse error — see `CandidateList`.
+	Candidates string `gorm:"not null;default:''"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// CandidateList decodes Candidates, treating anything that fails to parse
+// (including the empty default on a pre-existing row) as no candidates
+// rather than an error a caller would have to handle — the same tolerance
+// `KarstNetmapPeer.candidates`'s own doc comment already asks a node to have
+// toward what a peer reports: a stale or malformed entry costs that one
+// candidate, never the rest of the netmap.
+func (id Identity) CandidateList() []string {
+	if id.Candidates == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(id.Candidates), &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 // EnrollmentOwner binds a portal or invitation credential to its device owner.
@@ -459,6 +494,34 @@ func (s *Store) SetHomeRelay(handle string, relayID []byte) error {
 		Updates(map[string]any{"home_relay": relayID}).Error
 	if err != nil {
 		return fmt.Errorf("node: set home relay: %w", err)
+	}
+	return nil
+}
+
+// SetCandidates records a node's own self-reported AVEN candidate list —
+// see Identity.Candidates' own doc comment.
+//
+// Writes only when the value actually changed, the same reasoning
+// SetHomeRelay's own comment gives: every node reports this on every netmap
+// poll (`bins/karstd/src/run.rs`'s `refresh_netmap`, every tick, not only on
+// a real change — unlike `set_local_candidates`'s own client-side dedup,
+// which only governs when a `CallMeMaybe` goes out, not what this report
+// carries), so an unconditional write would be one row update per node per
+// refresh interval for no reason.
+//
+// An unknown handle is not an error, for the same reason SetHomeRelay's
+// is not: the caller has already authenticated the node, and a row that has
+// not been registered yet has nothing to hold.
+func (s *Store) SetCandidates(handle string, candidates []string) error {
+	encoded, err := json.Marshal(candidates)
+	if err != nil {
+		return fmt.Errorf("node: encode candidates: %w", err)
+	}
+	err = s.db.Model(&Identity{}).
+		Where("handle = ? AND candidates <> ?", handle, string(encoded)).
+		Updates(map[string]any{"candidates": string(encoded)}).Error
+	if err != nil {
+		return fmt.Errorf("node: set candidates: %w", err)
 	}
 	return nil
 }
