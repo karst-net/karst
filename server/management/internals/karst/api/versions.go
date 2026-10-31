@@ -28,6 +28,7 @@ type deploymentVersions struct {
 	Components []componentVersion `json:"components"`
 }
 type versionsResponse struct {
+	ObservedAt       time.Time           `json:"observed_at"`
 	Control          buildinfo.Info      `json:"control"`
 	Deployment       *deploymentVersions `json:"deployment,omitempty"`
 	DeploymentStatus string              `json:"deployment_status"`
@@ -43,7 +44,7 @@ func (h *handler) versions(w http.ResponseWriter, r *http.Request) {
 		util.WriteErrorResponse("Software versions require the admin or owner role", http.StatusForbidden, w)
 		return
 	}
-	result := versionsResponse{Control: buildinfo.Current(), DeploymentStatus: "not_configured"}
+	result := versionsResponse{ObservedAt: time.Now().UTC(), Control: buildinfo.Current(), DeploymentStatus: "not_configured"}
 	if path := os.Getenv("KARST_COMPONENT_VERSIONS_FILE"); path != "" {
 		result.DeploymentStatus = "unavailable"
 		if file, err := os.Open(path); err == nil {

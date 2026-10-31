@@ -41,6 +41,7 @@ paths:
                 type: object
                 required: [control, deployment_status]
                 properties:
+                  observed_at: {type: string, format: date-time, description: 'Server time when the responding control binary identified itself; independent of deployment snapshot observation time. Missing on older servers.'}
                   control:
                     type: object
                     required: [version, revision]

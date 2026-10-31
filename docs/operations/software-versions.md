@@ -64,3 +64,12 @@ since the last check may not be reflected until the agent synchronizes again.
 Capability evaluations are distinct from release drift advisories. Equal
 release strings never imply acceptance; an actual rejection remains visible
 even when the agent and control report the same release.
+
+## Observation freshness while a page stays open
+
+Freshness labels update while the console remains open, without contacting a
+client, Docker, or Nomad. Aging the display never changes a stored observation's
+timestamp. The control response has its own observation time, independently of
+the retained deployment snapshot. Refreshing component versions obtains a new
+control response while preserving the snapshot's original time. Older control
+servers that omit the response timestamp show unknown control freshness.

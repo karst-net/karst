@@ -4,11 +4,13 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/shared/auth"
@@ -24,6 +26,7 @@ func TestSoftwareVersionsRolesAndSnapshot(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/karst/v1/versions", nil)
 			request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account", UserId: "viewer"})
 			request = request.WithContext(nbcontext.WithRole(request.Context(), role))
+			before := time.Now().UTC()
 			response := httptest.NewRecorder()
 			(&handler{}).versions(response, request)
 			if role == "owner" || role == "admin" {
@@ -32,6 +35,11 @@ func TestSoftwareVersionsRolesAndSnapshot(t *testing.T) {
 				require.Contains(t, response.Body.String(), `"image_id":"sha256:abc"`)
 				require.NotContains(t, response.Body.String(), "never expose")
 				require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+				var payload versionsResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
+				require.False(t, payload.ObservedAt.Before(before))
+				require.False(t, payload.ObservedAt.After(time.Now().UTC()))
+				require.NotEqual(t, payload.ObservedAt, payload.Deployment.ObservedAt)
 			} else {
 				require.Equal(t, http.StatusForbidden, response.Code)
 			}

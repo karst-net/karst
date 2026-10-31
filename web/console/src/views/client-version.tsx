@@ -4,6 +4,7 @@
 import type { NodeControlCheck, NodeSoftware } from "@karst-net/api-client";
 import { Observed } from "@karst-net/ui";
 import { api } from "../api";
+import { useObservationStatus } from "../observation-status";
 import { useResource } from "../common";
 
 export function ClientVersion({ software, controlCheck }: { software?: NodeSoftware; controlCheck?: NodeControlCheck }) {
@@ -14,9 +15,8 @@ export function ClientVersion({ software, controlCheck }: { software?: NodeSoftw
 export function ClientVersionObservation({ software, controlVersion, controlCheck }: { software?: NodeSoftware; controlVersion?: string; controlCheck?: NodeControlCheck }) {
   const version = software?.version?.trim();
   const known = !!version && !["unknown", "dev", "development"].includes(version.toLowerCase());
-  const received = software?.observed_at ? Date.parse(software.observed_at) : NaN;
-  const observation = !known || !Number.isFinite(received) || received > Date.now() + 60_000
-    ? "Unknown" : Date.now() - received > 15 * 60_000 ? "Stale" : "Current";
+  const reportStatus = useObservationStatus(software?.observed_at);
+  const observation = known ? reportStatus : "Unknown";
   const controlKnown = controlVersion && !["unknown", "dev", "development"].includes(controlVersion.toLowerCase());
   const drift = known && controlKnown && version !== controlVersion;
   return <section aria-label="Agent software version">
@@ -31,10 +31,8 @@ export function ClientVersionObservation({ software, controlVersion, controlChec
 }
 
 export function ControlCompatibility({ check }: { check?: NodeControlCheck }) {
+  const freshness = useObservationStatus(check?.observed_at);
   if (!check) return <p>Last control check: Unknown. No capability check has been observed.</p>;
-  const observed = Date.parse(check.observed_at);
-  const freshness = !Number.isFinite(observed) || observed > Date.now() + 60_000
-    ? "Unknown" : Date.now() - observed > 15 * 60_000 ? "Stale" : "Current";
   return <section aria-label="Control compatibility check">
     <p>Last control check: {check.status === "incompatible" ? "Incompatible" : "Accepted"}. Observation status: {freshness}. Checked <Observed at={check.observed_at} />.</p>
     {check.status === "incompatible" ? <p role="status">

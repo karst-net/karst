@@ -1290,6 +1290,10 @@ export type SoftwareVersionsResponses = {
      * Running control binary and optional deployment snapshot
      */
     200: {
+        /**
+         * Server time when the responding control binary identified itself; independent of deployment snapshot observation time. Missing on older servers.
+         */
+        observed_at?: string;
         control: {
             version: string;
             revision: string;
