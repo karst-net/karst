@@ -516,6 +516,91 @@ export type PolicyTestResult = {
     }>;
 };
 
+/**
+ * Mirrors the internal compliance.Requirement (ADR-0055). Provenance is always self-reported; verified provider evidence is not supported.
+ */
+export type ComplianceRequirement = {
+    id: string;
+    kind: 'minimum-client-version' | 'minimum-os-version';
+    minimum_version: string;
+    platform?: 'linux' | 'darwin' | 'windows';
+    distribution?: string;
+};
+
+/**
+ * A destination node selector or explicit CIDR, an inclusive port range, and tcp/udp ("*" means either).
+ */
+export type ComplianceResource = {
+    selector: string;
+    protocol: 'tcp' | 'udp' | '*';
+    first: number;
+    last: number;
+};
+
+export type ComplianceGuardrail = {
+    id: string;
+    resource: ComplianceResource;
+    requirement_sets: Array<string>;
+};
+
+export type ComplianceDraftWrite = {
+    requirement_sets: {
+        [key: string]: Array<ComplianceRequirement>;
+    };
+    guardrails: Array<ComplianceGuardrail>;
+    remediation: Array<ComplianceResource>;
+};
+
+export type ComplianceDraftVersion = ComplianceDraftWrite & {
+    version: number;
+    author: string;
+    created_at: string;
+};
+
+export type ComplianceDraftVersionPage = Page & {
+    items: Array<ComplianceDraftVersion>;
+};
+
+/**
+ * Unlike PolicyValidation, diagnostics carry no line/column — a compliance draft has no single text document to point a parse location at.
+ */
+export type ComplianceDraftValidation = {
+    valid: boolean;
+    diagnostics: Array<{
+        severity: 'error' | 'warning';
+        message: string;
+    }>;
+};
+
+/**
+ * ADR-0055's "explain wildcard and CIDR overlaps" requirement: the mandatory ingress/egress gates a candidate draft compiles to for each currently managed device, grounded in the same policy.CompileCompliance output control.PermitHandler issues.
+ */
+export type ComplianceDraftPreview = {
+    devices: Array<{
+        handle: string;
+        ingress: Array<ComplianceGate>;
+        egress: Array<ComplianceGate>;
+    }>;
+    diagnostics: Array<{
+        severity: 'error' | 'warning';
+        message: string;
+    }>;
+};
+
+export type ComplianceGate = {
+    guardrail_id: string;
+    destinations: Array<string>;
+    protocol: 'tcp' | 'udp' | '*';
+    ports: {
+        first: number;
+        last: number;
+    };
+    sources: Array<{
+        handle: string;
+        valid_until: string;
+    }>;
+};
+
 export type RelayPublication = {
     mode: 'legacy' | 'services';
     /**
@@ -2293,6 +2378,233 @@ export type TestPolicyResponses = {
 };
 
 export type TestPolicyResponse = TestPolicyResponses[keyof TestPolicyResponses];
+
+export type GetComplianceDraftData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/compliance/draft';
+};
+
+export type GetComplianceDraftErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetComplianceDraftError = GetComplianceDraftErrors[keyof GetComplianceDraftErrors];
+
+export type GetComplianceDraftResponses = {
+    /**
+     * Current compliance guardrail draft (ADR-0055, #363)
+     */
+    200: ComplianceDraftVersion;
+};
+
+export type GetComplianceDraftResponse = GetComplianceDraftResponses[keyof GetComplianceDraftResponses];
+
+export type WriteComplianceDraftData = {
+    body: ComplianceDraftWrite;
+    headers: {
+        /**
+         * Current policy version ETag.
+         */
+        'If-Match': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/compliance/draft';
+};
+
+export type WriteComplianceDraftErrors = {
+    /**
+     * The supplied policy version is no longer current
+     */
+    412: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type WriteComplianceDraftError = WriteComplianceDraftErrors[keyof WriteComplianceDraftErrors];
+
+export type WriteComplianceDraftResponses = {
+    /**
+     * Newly written version
+     */
+    200: ComplianceDraftVersion;
+};
+
+export type WriteComplianceDraftResponse = WriteComplianceDraftResponses[keyof WriteComplianceDraftResponses];
+
+export type ListComplianceDraftVersionsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/compliance/draft/versions';
+};
+
+export type ListComplianceDraftVersionsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListComplianceDraftVersionsError = ListComplianceDraftVersionsErrors[keyof ListComplianceDraftVersionsErrors];
+
+export type ListComplianceDraftVersionsResponses = {
+    /**
+     * Version page
+     */
+    200: ComplianceDraftVersionPage;
+};
+
+export type ListComplianceDraftVersionsResponse = ListComplianceDraftVersionsResponses[keyof ListComplianceDraftVersionsResponses];
+
+export type GetComplianceDraftVersionData = {
+    body?: never;
+    path: {
+        version: number;
+    };
+    query?: never;
+    url: '/compliance/draft/versions/{version}';
+};
+
+export type GetComplianceDraftVersionErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetComplianceDraftVersionError = GetComplianceDraftVersionErrors[keyof GetComplianceDraftVersionErrors];
+
+export type GetComplianceDraftVersionResponses = {
+    /**
+     * Compliance draft version
+     */
+    200: ComplianceDraftVersion;
+};
+
+export type GetComplianceDraftVersionResponse = GetComplianceDraftVersionResponses[keyof GetComplianceDraftVersionResponses];
+
+export type ValidateComplianceDraftData = {
+    body: ComplianceDraftWrite;
+    path?: never;
+    query?: never;
+    url: '/compliance/draft/validate';
+};
+
+export type ValidateComplianceDraftErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ValidateComplianceDraftError = ValidateComplianceDraftErrors[keyof ValidateComplianceDraftErrors];
+
+export type ValidateComplianceDraftResponses = {
+    /**
+     * Validation diagnostics
+     */
+    200: ComplianceDraftValidation;
+};
+
+export type ValidateComplianceDraftResponse = ValidateComplianceDraftResponses[keyof ValidateComplianceDraftResponses];
+
+export type PreviewComplianceDraftData = {
+    body: ComplianceDraftWrite;
+    path?: never;
+    query?: never;
+    url: '/compliance/draft/preview';
+};
+
+export type PreviewComplianceDraftErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type PreviewComplianceDraftError = PreviewComplianceDraftErrors[keyof PreviewComplianceDraftErrors];
+
+export type PreviewComplianceDraftResponses = {
+    /**
+     * Per-device compiled guardrail gates a candidate draft would produce
+     */
+    200: ComplianceDraftPreview;
+};
+
+export type PreviewComplianceDraftResponse = PreviewComplianceDraftResponses[keyof PreviewComplianceDraftResponses];
+
+export type RollbackComplianceDraftData = {
+    body?: never;
+    headers: {
+        /**
+         * Current policy version ETag.
+         */
+        'If-Match': string;
+    };
+    path: {
+        version: number;
+    };
+    query?: never;
+    url: '/compliance/draft/rollback/{version}';
+};
+
+export type RollbackComplianceDraftErrors = {
+    /**
+     * The supplied policy version is no longer current
+     */
+    412: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type RollbackComplianceDraftError = RollbackComplianceDraftErrors[keyof RollbackComplianceDraftErrors];
+
+export type RollbackComplianceDraftResponses = {
+    /**
+     * New version copied from the requested version
+     */
+    200: ComplianceDraftVersion;
+};
+
+export type RollbackComplianceDraftResponse = RollbackComplianceDraftResponses[keyof RollbackComplianceDraftResponses];
+
+export type TestComplianceDraftData = {
+    body: ComplianceDraftWrite;
+    path?: never;
+    query?: never;
+    url: '/compliance/draft/test';
+};
+
+export type TestComplianceDraftErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type TestComplianceDraftError = TestComplianceDraftErrors[keyof TestComplianceDraftErrors];
+
+export type TestComplianceDraftResponses = {
+    /**
+     * Compliance draft test results
+     */
+    200: PolicyTestResult;
+};
+
+export type TestComplianceDraftResponse = TestComplianceDraftResponses[keyof TestComplianceDraftResponses];
 
 export type ListRelayServicesData = {
     body?: never;
