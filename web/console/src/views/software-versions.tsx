@@ -15,10 +15,10 @@ export function SoftwareVersions() {
     ? "Unknown" : Date.now() - observedTime > 15 * 60_000 ? "Stale" : "Current";
   return <section aria-labelledby="software-versions">
     <h3 id="software-versions">Software versions</h3>
-    <p>The UI build is loaded in this browser. The control server identifies the binary answering this request.</p>
-    <Rows head={<><th>Component</th><th>Version</th><th>Commit</th></>}>
-      <tr><td>Admin console</td><td>{__KARST_UI_BUILD__.version}</td><td><code>{__KARST_UI_BUILD__.revision}</code></td></tr>
-      <tr><td>Control server</td><td>{versions.value?.control.version ?? "Unknown"}</td><td><code>{versions.value?.control.revision ?? "Unknown"}</code></td></tr>
+    <p>The UI build is loaded in this browser. The control server identifies the binary answering this request. Its artifact identity is the running executable digest; deployment image IDs are listed separately below.</p>
+    <Rows head={<><th>Component</th><th>Version</th><th>Commit</th><th>Artifact identity</th></>}>
+      <tr><td>Admin console</td><td>{__KARST_UI_BUILD__.version}</td><td><code>{__KARST_UI_BUILD__.revision}</code></td><td>Unknown</td></tr>
+      <tr><td>Control server</td><td>{versions.value?.control.version ?? "Unknown"}</td><td><code>{versions.value?.control.revision ?? "Unknown"}</code></td><td><code>{versions.value?.control.artifact_id || "Unknown"}</code></td></tr>
     </Rows>
     {drift && <p role="status">Console and control releases differ. Compatibility is unverified. Upgrade the control server and console to the same release, then reload this page before retrying failed operations.</p>}
     <button onClick={versions.reload}>Refresh component versions</button>

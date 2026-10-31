@@ -59,3 +59,10 @@ containers by their allocation IDs after querying the exact job/namespace;
 it does not copy desired image references from the job definition. The
 production Nomad deployment already mounts the snapshot directory. See its
 [collection instructions](../../deploy/nomad/prod/README.md#observed-system-versions).
+
+The responding control server also identifies its own process executable on
+Linux using the same running-inode SHA-256 observation. This is available even
+without a Compose/Nomad deployment snapshot. It is displayed separately from
+the container image ID. Non-Linux control servers and read failures retain an
+unknown artifact identity; no installed pathname is substituted for a running
+image observation.

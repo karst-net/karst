@@ -4,6 +4,8 @@
 package api
 
 import (
+	"encoding/json"
+	"github.com/netbirdio/netbird/management/internals/karst/buildinfo"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,6 +36,9 @@ func TestSoftwareVersionsRolesAndSnapshot(t *testing.T) {
 				require.Contains(t, response.Body.String(), `"revision":"observed-commit"`)
 				require.NotContains(t, response.Body.String(), "never expose")
 				require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+				var payload versionsResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
+				require.Equal(t, buildinfo.Current().ArtifactID, payload.Control.ArtifactID)
 			} else {
 				require.Equal(t, http.StatusForbidden, response.Code)
 			}

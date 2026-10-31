@@ -11,12 +11,13 @@ var Version = "development"
 var Revision = "unknown"
 
 type Info struct {
-	Version  string `json:"version"`
-	Revision string `json:"revision"`
+	Version    string `json:"version"`
+	Revision   string `json:"revision"`
+	ArtifactID string `json:"artifact_id,omitempty"`
 }
 
 func Current() Info {
-	info := Info{Version: Version, Revision: Revision}
+	info := Info{Version: Version, Revision: Revision, ArtifactID: currentArtifact()}
 	if build, ok := debug.ReadBuildInfo(); ok && info.Revision == "unknown" {
 		for _, setting := range build.Settings {
 			if setting.Key == "vcs.revision" {

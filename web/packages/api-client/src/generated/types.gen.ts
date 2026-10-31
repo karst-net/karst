@@ -1279,6 +1279,10 @@ export type SoftwareVersionsResponses = {
         control: {
             version: string;
             revision: string;
+            /**
+             * Digest of the responding process executable, when observed. Independent of container image identity; omitted if unavailable.
+             */
+            artifact_id?: string;
         };
         deployment_status: 'available' | 'not_configured' | 'unavailable';
         deployment?: {
