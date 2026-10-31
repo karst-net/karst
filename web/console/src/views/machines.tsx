@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Node, NodeCompliance } from "@karst-net/api-client";
 import { Dialog, EmptyState, Observed, Status, type StatusState } from "@karst-net/ui";
 import { api, type MeshDomain } from "../api";
@@ -9,6 +9,7 @@ import { domainDNSName, peerDNSName } from "../domains";
 import { Failure, formatBytes, Notice, Rows, statusFor, useMutation, useResource } from "../common";
 
 import { Setup } from "./setup";
+import { ClientVersion } from "./client-version";
 
 type Paths = Awaited<ReturnType<typeof api.nodePaths>>;
 
@@ -29,6 +30,8 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
   const [renaming, setRenaming] = useState<{ node: Node; name: string }>();
   const [moving, setMoving] = useState<{ node: Node; domainId: string }>();
   const [paths, setPaths] = useState<{ node: Node; value?: Paths; error?: string }>();
+  const versionRequest = useRef(0);
+  const [version, setVersion] = useState<{ node: Node; error?: string; loading?: boolean }>();
   const [compliance, setCompliance] = useState<{ node: Node; value?: NodeCompliance; error?: string }>();
   const [domains, setDomains] = useState<MeshDomain[]>([]);
   useEffect(() => {
@@ -71,6 +74,16 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
     setPaths({ node });
     try { setPaths({ node, value: await api.nodePaths(node.handle) }); }
     catch (error) { setPaths({ node, error: (error as Error).message }); }
+  };
+  const showVersion = async (node: Node) => {
+    const request = ++versionRequest.current;
+    setVersion({ node, loading: true });
+    try {
+      const refreshed = await api.node(node.handle);
+      if (request === versionRequest.current) setVersion({ node: refreshed });
+    } catch (error) {
+      if (request === versionRequest.current) setVersion({ node, error: (error as Error).message });
+    }
   };
   const showCompliance = async (node: Node) => {
     setCompliance({ node });
@@ -124,6 +137,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
               <td><Observed at={node.last_seen_at} /></td>
               <td><div className="actions">
                 <button onClick={() => void showPaths(node)}>Paths</button>
+                <button onClick={() => void showVersion(node)}>Software version</button>
                 <button onClick={() => void showCompliance(node)}>Compliance</button>
               </div></td>
             </tr>)}
@@ -170,6 +184,13 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
       <div className="actions"><button onClick={() => setPaths(undefined)}>Close</button></div>
     </Dialog>}
 
+    {version && <Dialog open title={`Software version — ${version.node.name}`} onClose={() => { versionRequest.current++; setVersion(undefined); }}>
+      <ClientVersion software={version.node.software} />
+      {version.loading && <p>Refreshing software observation…</p>}
+      {version.error && <p role="alert">Could not refresh software observation: {version.error}. The displayed observation may be out of date.</p>}
+      <div className="actions"><button disabled={version.loading} onClick={() => void showVersion(version.node)}>Refresh observation</button><button onClick={() => { versionRequest.current++; setVersion(undefined); }}>Close</button></div>
+    </Dialog>}
+
     {compliance && <Dialog open title={`Compliance — ${compliance?.node.name ?? ""}`} onClose={() => setCompliance(undefined)}>
       {compliance?.error ? <p role="alert">{compliance.error}</p> : !compliance?.value ? <p>Loading compliance evidence…</p> : (() => {
         const value = compliance.value;
@@ -178,7 +199,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
         return <>
           <Rows head={<><th>Field</th><th>Value</th></>}>
             <tr><td>Platform</td><td>{value.platform ?? "—"}{value.distribution ? ` (${value.distribution})` : ""}</td></tr>
-            <tr><td>Client version</td><td>{value.client_version ?? "—"}{value.client_version_status && value.client_version_status !== "collected" ? ` — ${value.client_version_status.replaceAll("-", " ")}` : ""}</td></tr>
+            <tr><td>Client version evidence</td><td>{value.client_version ?? "Unknown"}{value.client_version_status && value.client_version_status !== "collected" ? ` — ${value.client_version_status.replaceAll("-", " ")}` : ""}</td></tr>
             <tr><td>OS version</td><td>{value.os_version ?? "—"}{value.os_version_status && value.os_version_status !== "collected" ? ` — ${value.os_version_status.replaceAll("-", " ")}` : ""}</td></tr>
             <tr><td>Collector version</td><td>{value.collector_version ?? "—"}</td></tr>
             <tr><td>Report generation</td><td>{value.generation ?? "—"}</td></tr>
@@ -187,7 +208,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
           <p className="lede">Self-reported evidence only, not a pass/fail verdict: this account has no compliance requirements configured yet.</p>
         </>;
       })()}
-      <div className="actions"><button onClick={() => setCompliance(undefined)}>Close</button></div>
+      <div className="actions"><button onClick={() => void showCompliance(compliance.node)}>Refresh observations</button><button onClick={() => setCompliance(undefined)}>Close</button></div>
     </Dialog>}
 
   </section>;

@@ -130,6 +130,8 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/PlugIns"
 cp "$host_bin" "$app/Contents/MacOS/KarstAppStore"
 chmod 0755 "$app/Contents/MacOS/KarstAppStore"
 cp "$root/packaging/macos/KarstAppStore/Info.plist" "$app/Contents/Info.plist"
+# Preserve prerelease labels for the UI; Apple's marketing version is numeric.
+plutil -insert KarstReleaseVersion -string "$version" "$app/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$pkg_version" "$app/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$bundle_version" "$app/Contents/Info.plist"
 

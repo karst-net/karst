@@ -2,13 +2,15 @@
 # Device compliance v1 — proposed implementation contract
 
 **Status:** Partially implemented: evaluation, ingestion, version collection,
-invalidation scheduling, internal guardrail preview/gate compilation, and a
-real permit wire contract issued by the server and enforced on the datapath,
-proven end to end against a real Go control server and measured at the
-120-second revocation bound.
-No persisted admin policy-write API exists yet for compliance guardrails, so
-every snapshot issued in production today still carries zero gates: the wiring
-is live, but nothing an operator configures reaches it.
+invalidation scheduling, a real permit wire contract issued by the server and
+enforced on the datapath (proven end to end against a real Go control server
+and measured at the 120-second revocation bound), and a persisted admin
+policy-write API for compliance guardrails, modeled on the existing `/policy`
+surface (`PUT /karst/v1/compliance/draft`, with validate/preview/test/
+versions/rollback).
+No console UI exists yet to drive that API, so in practice an operator still
+needs direct API/curl access to write a guardrail; #363 remains open until
+that console surface ships.
 **Related:** [ADR-0055](../docs/adr/0055-device-compliance-and-resource-access.md),
 [#363](https://github.com/karst-net/karst/issues/363).
 
@@ -24,9 +26,13 @@ releases, with bounded challenge/report attempts on live supporting servers.
 Evidence change/expiry invalidations now use a durable retry queue and the peer
 notification path. The policy package also provides an internal draft guardrail
 validator, diagnostic evaluator and device-specific mandatory gate compiler.
-Policy activation and netmap distribution of a real, operator-configured
-guardrail remain pending (no persisted admin policy-write API exists yet for
-compliance drafts); #363 remains open.
+Policy activation now has a real path: `policy.ComplianceDraftStore` persists
+a tenant-scoped, optimistically-versioned `ComplianceDraft`, and the
+`/karst/v1/compliance/draft*` routes let an admin write, validate, preview,
+test and roll one back. `PermitHandler.Draft` reads directly from this store,
+so a written guardrail reaches real issued permits on the existing 30-second
+refresh cadence and an account-wide netmap push. No console UI exists yet to
+drive this API; #363 remains open until it does.
 Permit messages, Go structural validation and Go/Rust wire vectors are now live
 on the wire: `KindCompliancePermit` (request kind 6) is issued by `PermitHandler`,
 which compiles a tenant's compliance draft via `policy.CompileCompliance`, and
@@ -402,10 +408,11 @@ a real request kind (`KindCompliancePermit`, 6), advertised via the
 from a tenant's compiled compliance draft. A running `karstd` client installs
 and enforces the result on the datapath (see "Rust permit receiver and
 datapath enforcement" and "Authorization and enforcement contract" below).
-Because no persisted admin policy-write API exists yet for compliance drafts,
-every draft compiled in production today is empty, so every issued snapshot
-still has zero
-gates. Ingestion schema 1 continues to mean evidence ingestion only.
+A persisted admin policy-write API now exists (`policy.ComplianceDraftStore`,
+`PUT /karst/v1/compliance/draft`), so a draft an admin actually writes reaches
+these snapshots; a tenant that has never written one still gets the
+zero-guardrail "unconfigured" shape. Ingestion schema 1 continues to mean
+evidence ingestion only.
 
 A schema-1 request carries a fresh 32-byte nonce. The response echoes it and
 binds tenant, enforcing enrollment ID, canonical base64 identity handle and
@@ -500,18 +507,20 @@ measured bound on real devices, not just reference behavior.
 
 The permit issuance, refresh and datapath-enforcement mechanics below are now
 implemented and proven end to end (PR1–PR3 of #363's stage 4/6 roadmap) against
-a real Go control server and a real `Engine`. What remains proposed is the
-operator-facing half: a persisted admin policy-write API for compliance
-guardrails, and the policy preview it would drive. Until that API exists, every
-compiled draft is empty and this contract has zero effect in production.
+a real Go control server and a real `Engine`. A persisted admin policy-write
+API for compliance guardrails, and the per-device policy preview it drives,
+are also implemented (PR5a: `policy.ComplianceDraftStore`,
+`/karst/v1/compliance/draft*`). What remains proposed is the console UI an
+operator would actually use to write one — until it ships, this contract is
+reachable only through direct API/curl access, not a false "zero effect":
+anyone who calls the write API today gets a real, enforced guardrail.
 
 Resource guardrails constrain destination selectors, transport/ports and routed
 CIDRs after identity grant resolution. All matching requirements apply to every
 source device. Source wildcards must resolve into device-specific decisions;
 they cannot retain an unconditional bypass. CIDR/port intersections and selector
 changes are reevaluated. Policy preview shows effective requirements and grant
-provenance for each affected flow, including remediation conflicts. **(Policy
-preview itself remains proposed — not yet built.)**
+provenance for each affected flow, including remediation conflicts.
 
 The wire design must carry a versioned compliance capability and resource-scoped
 permits bound to tenant, device, policy revision and evidence generation.
@@ -575,18 +584,22 @@ Deliver in reviewable stages; keep #363 open until all stages pass:
 2. **Done.** Authenticated challenge/report persistence, replica-safe replay
    protection, expiry scheduling and platform collectors; publish actual
    capability matrix.
-3. **Partially done.** Resource guardrails, overlap validation and
-   device-specific ingress/egress/routed compilation exist as an internal
-   draft validator/compiler, independently composed with SSH. Policy preview
-   and a persisted admin policy-write API to reach them remain pending.
+3. **Done.** Resource guardrails, overlap validation and device-specific
+   ingress/egress/routed compilation, independently composed with SSH, are
+   reachable through a persisted admin policy-write API
+   (`policy.ComplianceDraftStore`, `/karst/v1/compliance/draft*`) with a
+   per-device policy preview grounded in the real compiled output. No
+   console UI exists yet to drive this API (PR5b).
 4. **Done.** Versioned permits, compatibility handling and local packet-path
    expiry are live (`KindCompliancePermit`, `Engine::permit`); the
-   established-session and offline bounds are proven (stage 6). Policy writes
-   remain disabled pending stage 3's write API.
-5. **Done.** Scoped console status (`GET /nodes/{handle}/compliance` and the
-   Machines → Status "Compliance" dialog). No pass/fail verdict or
-   remediation/audit guidance is rendered yet — there is nothing to evaluate
-   until stage 3 ships configurable guardrails.
+   established-session and offline bounds are proven (stage 6). Policy
+   writes are enabled (stage 3) and reach real issued permits.
+5. **Done, pending stage 3's console UI.** Scoped console status
+   (`GET /nodes/{handle}/compliance` and the Machines → Status "Compliance"
+   dialog). No pass/fail verdict or remediation/audit guidance is rendered
+   yet — there is a real way to configure a guardrail now (stage 3's API),
+   but no console surface to drive it, so no deployment has one configured
+   through the UI to evaluate against.
 6. **Done, scoped.** Real Go-control/Rust-datapath test: two same-tenant
    devices, explicit remediation, failure/expiry/recovery, and control-loss/
    reconnect, measuring the 120-second bound at ~30.09s. Replay/spoofing,

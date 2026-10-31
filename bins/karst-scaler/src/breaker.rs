@@ -579,13 +579,43 @@ bands = [{ unit_price = 1.0 }]
     }
 
     fn tempdir() -> TempDir {
+        tempdir_at(now_unix_nanos())
+    }
+
+    fn tempdir_at(timestamp: u128) -> TempDir {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        // Wall-clock reads can repeat across parallel tests (notably on
+        // macOS). The sequence separates live fixtures even at the same tick.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "karst-scaler-breaker-test-{}-{}",
+            "karst-scaler-breaker-test-{}-{timestamp}-{sequence}",
             std::process::id(),
-            now_unix_nanos()
         ));
-        std::fs::create_dir_all(&dir).expect("creates temp dir");
+        // Refuse to reuse an existing fixture instead of silently sharing its
+        // configuration/state or deleting another test's directory on drop.
+        std::fs::create_dir(&dir).expect("creates exclusive temp dir");
         TempDir(dir)
+    }
+
+    #[test]
+    fn fixtures_with_identical_clock_readings_do_not_share_configuration_or_cleanup() {
+        let timestamp = now_unix_nanos();
+        let first = tempdir_at(timestamp);
+        let second = tempdir_at(timestamp);
+        assert_ne!(first.path(), second.path());
+        write(first.path(), "limits.toml", "first fixture");
+        write(second.path(), "limits.toml", "second fixture");
+        assert_eq!(
+            std::fs::read_to_string(first.path().join("limits.toml")).expect("first limits"),
+            "first fixture"
+        );
+        drop(first);
+        assert_eq!(
+            std::fs::read_to_string(second.path().join("limits.toml")).expect("second limits"),
+            "second fixture"
+        );
     }
 
     fn now_unix_nanos() -> u128 {

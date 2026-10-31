@@ -102,8 +102,15 @@ type Identity struct {
 	// (the default, and the zero value a migration leaves on existing rows)
 	// decodes to no candidates, not a parse error — see `CandidateList`.
 	Candidates string `gorm:"not null;default:''"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+
+	// Latest software report, independent of enrollment and compliance evidence.
+	// A nil receipt time means no report has ever been observed.
+	SoftwareVersion    string
+	SoftwareRevision   string
+	SoftwareArtifactID string
+	SoftwareObservedAt *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // CandidateList decodes Candidates, treating anything that fails to parse

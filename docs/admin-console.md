@@ -31,7 +31,11 @@ preview, explicit no-alias confirmation, and rollback through another preview.
 The console distinguishes committed configuration from unobserved client
 convergence. Machine names and invitation/move previews include the root suffix,
 including in delegated subtree views. See the [acceptance record](mesh-domain-validation.md).
-Compliance-conditioned access remains a follow-up capability.
+Resource access conditioned on device compliance (#363, ADR-0055) is a
+separate, now-implemented capability: a **Compliance guardrails** tab beside
+Access grants (Groups & access) configures it against a real, persisted
+admin policy-write API. See
+[operating device compliance guardrails](operations/device-compliance.md).
 
 - **Schema-aware autocomplete and inline JSON-syntax lint exist**
   (`GET /policy/schema`, `web/console/src/policy-editor.tsx`, a CodeMirror 6

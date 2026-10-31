@@ -4687,11 +4687,12 @@ func containsHandle(nodes []nodeResponse, handle string) bool {
 // key. Handles are stable identifiers, not key material, and are the only
 // identity value this REST surface returns.
 type nodeResponse struct {
-	Handle   string   `json:"handle"`
-	Name     string   `json:"name"`
-	Platform string   `json:"platform"`
-	UserID   string   `json:"user_id"`
-	Tags     []string `json:"tags"`
+	Software *karstcontract.NodeSoftware `json:"software,omitempty"`
+	Handle   string                      `json:"handle"`
+	Name     string                      `json:"name"`
+	Platform string                      `json:"platform"`
+	UserID   string                      `json:"user_id"`
+	Tags     []string                    `json:"tags"`
 	// DomainID is the peer's stable mesh domain ID, including the explicit root.
 	// Older, unmigrated fixtures may omit it.
 	DomainID string `json:"domain_id,omitempty"`
@@ -4991,7 +4992,22 @@ func toNodeResponse(p *peer.Peer, identity *node.Identity, posture nodePosture) 
 		Handle: p.Key, Name: p.Name, Platform: peerPlatform(p), UserID: p.UserID, Tags: []string{},
 		DomainID: p.DomainID, DNSLabel: p.DNSLabel,
 		Enabled: true, CreatedAt: identity.CreatedAt.UTC(), LastSeenAt: lastSeen,
-		Posture: posture,
+		Posture:  posture,
+		Software: nodeSoftware(identity),
+	}
+}
+
+// nodeSoftware uses its own receipt time, never peer last-seen, enrollment,
+// or compliance timestamps. A legacy node has no software observation.
+func nodeSoftware(identity *node.Identity) *karstcontract.NodeSoftware {
+	if identity.SoftwareObservedAt == nil {
+		return nil
+	}
+	return &karstcontract.NodeSoftware{
+		Version:    nullableString(identity.SoftwareVersion),
+		Revision:   nullableString(identity.SoftwareRevision),
+		ArtifactId: nullableString(identity.SoftwareArtifactID),
+		ObservedAt: identity.SoftwareObservedAt.UTC(),
 	}
 }
 

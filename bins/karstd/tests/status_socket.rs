@@ -74,6 +74,7 @@ addresses = ["10.99.0.1/24"]
 private_key_file = "node.key"
 network_mode = "userspace"
 userspace_socks5_listen = "127.0.0.1:0"
+exit_node_state_file = "state/exit-route"
 "#;
     let config = dir.join("karstd.toml");
     std::fs::write(&config, toml).expect("write config");
@@ -163,6 +164,21 @@ fn the_status_socket_serves_status_and_refuses_everything_else() {
     let status = ask(&status_socket, "status").expect("status");
     assert!(status.contains("interface ="), "got {status:?}");
     assert!(status.contains("[stats]"), "got {status:?}");
+
+    // Both sockets expose the responding agent's build, independently of any
+    // CLI or app bundle that requested the status.
+    for socket in [&node.socket, &status_socket] {
+        let reply = ask(socket, "status-json").expect("JSON status");
+        let value: serde_json::Value = serde_json::from_str(&reply).expect("valid JSON");
+        assert_eq!(
+            value.get("version").and_then(serde_json::Value::as_str),
+            Some(karstd::VERSION)
+        );
+        assert_eq!(
+            value.get("revision").and_then(serde_json::Value::as_str),
+            Some(karstd::REVISION)
+        );
+    }
 
     // Gateway inspection stays on the protected socket and uses the same
     // routing report as status, without manufacturing default-route consent.

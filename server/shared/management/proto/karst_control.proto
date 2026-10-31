@@ -156,6 +156,12 @@ message KarstNetmapRequest {
   // Zero/unknown cannot receive a scoped ingress grant.
   uint32 gateway_ingress_schema = 9;
 
+  // Running agent identity, including agents serving as gateways. Advisory,
+  // self-reported metadata, not attestation or a protocol compatibility grant.
+  // Absent on legacy agents: retain the previous observation without refreshing
+  // its receipt time. It must never be inferred from compliance or peer metadata.
+  KarstSoftwareIdentity software = 10;
+
   // This node's own current AVEN candidate list — the same ranked list
   // `bins/karstd/src/disco.rs`'s `State::candidates()` already computes for
   // a relayed `CallMeMaybe`, reported here too so the server can
@@ -172,7 +178,7 @@ message KarstNetmapRequest {
   // never be reordered ahead of a stronger one). Like `sessions` above, this
   // is an observation the server records, never an assertion it trusts
   // outright.
-  repeated string candidates = 10;
+  repeated string candidates = 11;
 
   // Additive compatibility declaration, the same pattern `relay_lifecycle_schema`/
   // `gateway_ingress_schema` above use. 1 means this node both reports its
@@ -182,7 +188,7 @@ message KarstNetmapRequest {
   // old node would silently treat it as an unknown field and discard it
   // forever, never falling back to anything else, which is worse than not
   // sending it.
-  uint32 candidate_distribution_schema = 11;
+  uint32 candidate_distribution_schema = 12;
 }
 
 // KarstRouteObservation is one route's egress and ingress bytes/packets
@@ -1002,4 +1008,10 @@ message KarstComplianceSourcePermit {
   string device_id = 2;
   uint64 evidence_generation = 3;
   uint32 valid_for_millis = 4;
+}
+
+message KarstSoftwareIdentity {
+  string version = 1;     // release label, at most 128 UTF-8 bytes
+  string revision = 2;    // source revision, at most 128 UTF-8 bytes
+  string artifact_id = 3; // immutable artifact/image identity when known, at most 256 bytes
 }

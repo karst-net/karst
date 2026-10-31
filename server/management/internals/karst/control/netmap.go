@@ -324,6 +324,16 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %w", err)
 	}
+	// Software telemetry is independent of compliance collection and applies to
+	// gateway and desktop/mobile agents alike. Never let advisory metadata deny
+	// a netmap; invalid input must not refresh an older observation's timestamp.
+	if report := req.GetSoftware(); report != nil {
+		if err := h.Nodes.RecordSoftware(ctx, self, node.SoftwareIdentity{
+			Version: report.GetVersion(), Revision: report.GetRevision(), ArtifactID: report.GetArtifactId(),
+		}, time.Now().UTC()); err != nil {
+			log.WithError(err).WithField("node", self).Warn("record Karst software observation")
+		}
+	}
 	// A report is only meaningful for another peer in the reporting node's
 	// account. Without this check a malicious or stale client could create
 	// arbitrary handles in the global observation table and leak them through

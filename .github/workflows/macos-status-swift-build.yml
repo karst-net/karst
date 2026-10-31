@@ -19,6 +19,8 @@ on:
   push:
     paths:
       - 'packaging/macos/KarstStatus/**'
+      - 'packaging/macos/KarstAppStore/**'
+      - 'packaging/macos/tests/status-parser/**'
       - '.github/workflows/macos-status-swift-build.yml'
 
 jobs:
@@ -29,6 +31,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift --version
+      - name: Check both status parsers against new, old, and stopped agents
+        run: |
+          for target in KarstStatus KarstAppStore; do
+            swiftc "packaging/macos/$target/Sources/$target/StatusParser.swift" packaging/macos/tests/status-parser/main.swift -o "$RUNNER_TEMP/status-parser"
+            "$RUNNER_TEMP/status-parser"
+          done
+      - run: swift build --product KarstAppStore
+        working-directory: packaging/macos/KarstAppStore
       - run: swift build --product KarstStatus
         working-directory: packaging/macos/KarstStatus
       # The physical-runner workflow builds this again before execution, but

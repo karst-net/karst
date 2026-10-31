@@ -1324,6 +1324,12 @@ impl Client {
             route_observations: self.route_observations.clone(),
             relay_lifecycle_schema: 1,
             gateway_ingress_schema: 1,
+            software: Some(pb::KarstSoftwareIdentity {
+                version: crate::VERSION.to_owned(),
+                revision: crate::REVISION.to_owned(),
+                // A source revision does not identify the built artifact.
+                artifact_id: String::new(),
+            }),
             candidates: self.candidates.clone(),
             // This node both reports `candidates` above and adopts a
             // redistributed `KarstNetmapPeer.candidates` list — see
