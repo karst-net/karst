@@ -22,6 +22,8 @@ describe("software versions", () => {
     expect(html).toContain("Deployment snapshot observed");
     expect(html).toContain("No release tag reported");
     expect(html).toContain("sha256:456");
+    expect(html).toContain("Compatibility is unverified");
+    expect(html).toContain("Observation status: Stale");
   });
   it("does not substitute the UI version when the server is unavailable", () => {
     resource.value = undefined;
