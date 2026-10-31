@@ -5,13 +5,14 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/netbirdio/netbird/management/internals/karst/buildinfo"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/netbirdio/netbird/management/internals/karst/buildinfo"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/shared/auth"
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,7 @@ func TestSoftwareVersionsRolesAndSnapshot(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/karst/v1/versions", nil)
 			request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account", UserId: "viewer"})
 			request = request.WithContext(nbcontext.WithRole(request.Context(), role))
+			before := time.Now().UTC()
 			response := httptest.NewRecorder()
 			(&handler{}).versions(response, request)
 			if role == "owner" || role == "admin" {
@@ -39,6 +41,9 @@ func TestSoftwareVersionsRolesAndSnapshot(t *testing.T) {
 				var payload versionsResponse
 				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
 				require.Equal(t, buildinfo.Current().ArtifactID, payload.Control.ArtifactID)
+				require.False(t, payload.ObservedAt.Before(before))
+				require.False(t, payload.ObservedAt.After(time.Now().UTC()))
+				require.NotEqual(t, payload.ObservedAt, payload.Deployment.ObservedAt)
 			} else {
 				require.Equal(t, http.StatusForbidden, response.Code)
 			}

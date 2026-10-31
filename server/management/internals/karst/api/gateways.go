@@ -47,13 +47,14 @@ type gatewayOffer struct {
 }
 
 type gatewayNode struct {
-	Software            *karstcontract.NodeSoftware `json:"software,omitempty"`
-	NodeID              string                      `json:"node_id"`
-	NodeHandle          string                      `json:"node_handle"`
-	Name                string                      `json:"name"`
-	ControlConnected    bool                        `json:"control_connected"`
-	ForwardingReadiness string                      `json:"forwarding_readiness"`
-	Offers              []gatewayOffer              `json:"offers"`
+	ControlCheck        *karstcontract.NodeControlCheck `json:"control_check,omitempty"`
+	Software            *karstcontract.NodeSoftware     `json:"software,omitempty"`
+	NodeID              string                          `json:"node_id"`
+	NodeHandle          string                          `json:"node_handle"`
+	Name                string                          `json:"name"`
+	ControlConnected    bool                            `json:"control_connected"`
+	ForwardingReadiness string                          `json:"forwarding_readiness"`
+	Offers              []gatewayOffer                  `json:"offers"`
 }
 
 type gatewayInventory struct {
@@ -174,6 +175,7 @@ func (h *handler) gateways(w http.ResponseWriter, r *http.Request) {
 				}
 				if readErr == nil {
 					current.Software = nodeSoftware(identity)
+					current.ControlCheck = nodeControlCheck(identity)
 				}
 			}
 			sort.Slice(current.Offers, func(i, j int) bool { return current.Offers[i].ID < current.Offers[j].ID })

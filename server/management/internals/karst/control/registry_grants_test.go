@@ -62,6 +62,13 @@ func TestScopedGatewayIngressRequiresVersionedAgentAndHashesScope(t *testing.T) 
 	for _, schema := range []uint32{0, 2} {
 		_, err := request(schema, 0)
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		recorded, readErr := f.handler.Nodes.Get(f.selfH)
+		require.NoError(t, readErr)
+		require.Equal(t, "incompatible", recorded.ControlCheck.Status)
+		require.Equal(t, "gateway_ingress_schema", recorded.ControlCheck.Capability)
+		require.Equal(t, uint32(1), recorded.ControlCheck.RequiredSchema)
+		require.Equal(t, schema, recorded.ControlCheck.ReportedSchema)
+		require.NotNil(t, recorded.ControlCheck.ObservedAt)
 	}
 	response, err := request(1, 0)
 	require.NoError(t, err)
@@ -76,6 +83,19 @@ func TestScopedGatewayIngressRequiresVersionedAgentAndHashesScope(t *testing.T) 
 	unchanged, err := request(1, response.Version)
 	require.NoError(t, err)
 	require.True(t, unchanged.Unchanged)
+	recorded, err := f.handler.Nodes.Get(f.selfH)
+	require.NoError(t, err)
+	require.Equal(t, "accepted", recorded.ControlCheck.Status)
+	require.Empty(t, recorded.ControlCheck.Capability)
+	lastCheck := recorded.ControlCheck.ObservedAt
+	// An unrelated authorization failure must not erase or refresh a check.
+	delete(f.peers.accountOf, f.selfH)
+	_, err = request(1, response.Version)
+	require.Error(t, err)
+	stillRecorded, readErr := f.handler.Nodes.Get(f.selfH)
+	require.NoError(t, readErr)
+	require.True(t, lastCheck.Equal(*stillRecorded.ControlCheck.ObservedAt))
+	f.peers.accountOf[f.selfH] = "acct"
 	_, err = request(0, response.Version)
 	require.Equal(t, codes.FailedPrecondition, status.Code(err), "known version must not bypass schema check")
 	account.Groups["engineering"].Peers = nil
