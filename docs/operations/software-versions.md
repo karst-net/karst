@@ -117,3 +117,10 @@ the daemon, while `karst version` queries the running daemon. `karst status
 --json` returns the running agent's release and revision. Shared-engine mobile
 bindings use central software reporting, but there is no shipped iOS/Android
 application UI in this repository to verify or extend.
+
+The macOS host-app workflow verifies both apps' actual AppKit version-menu
+entries using separate installed-bundle and running-agent identities. It checks
+prerelease labels, an older running agent after an app upgrade, stopped/legacy
+agents with unknown identity, and older bundles without a release label. This
+checks menu rendering without starting or replacing a NetworkExtension; it does
+not claim physical-device extension lifecycle validation.
