@@ -4,9 +4,9 @@
 In the administrative console, open **Machines → Status → Software version**
 for an enrolled device, or expand **Agent software** in the Gateway inventory
 under network route metrics. The running agent reports its release and source
-revision during control synchronization. Gateway agents and desktop/mobile
-agents using the shared engine use the same reporting path. Compliance
-collection does not need to be enabled.
+revision during control synchronization. Gateway and desktop agents use the
+same reporting path. The control protocol can retain software reports from any
+enrolled client platform. Compliance collection does not need to be enabled.
 
 The receipt time belongs to the software report. A recent peer connection,
 enrollment, or compliance report does not refresh it. Reports older than
@@ -114,9 +114,14 @@ The macOS status menus identify the app bundle and responding agent separately.
 The Windows client currently ships a CLI/service, with no separate desktop
 status UI: `karst --version` identifies the installed CLI without contacting
 the daemon, while `karst version` queries the running daemon. `karst status
---json` returns the running agent's release and revision. Shared-engine mobile
-bindings use central software reporting, but there is no shipped iOS/Android
-application UI in this repository to verify or extend.
+--json` returns the running agent's release and revision.
+
+Mobile app delivery remains tracked in [#117](https://github.com/karst-net/karst/issues/117).
+The available mobile-facing bindings perform enrollment, which stops after
+login rather than issuing version-bearing netmap requests. The embedded
+engine/status binding is currently macOS-only. There is no shipped iOS/Android
+application UI or live mobile engine in this repository to verify or extend;
+shared protocol support alone does not establish end-to-end mobile coverage.
 
 The macOS host-app workflow verifies both apps' actual AppKit version-menu
 entries using separate installed-bundle and running-agent identities. It checks

@@ -6,7 +6,6 @@ import Foundation
 
 /// Keep installed app identity independent of the responding agent, including
 /// when the tunnel is stopped or an older agent omits its build fields.
-@MainActor
 enum SoftwareVersionMenu {
     static func addItems(to menu: NSMenu, status: DaemonStatus?, bundle: Bundle = .main) {
         let appVersion = bundle.object(forInfoDictionaryKey: "KarstReleaseVersion") as? String
