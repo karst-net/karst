@@ -2,9 +2,13 @@
 # Device compliance v1 — proposed implementation contract
 
 **Status:** Partially implemented: evaluation, ingestion, version collection,
-invalidation scheduling, internal guardrail preview/gate compilation and a
-reserved permit wire contract.
-Resource guardrails and traffic enforcement remain proposed.
+invalidation scheduling, internal guardrail preview/gate compilation, and a
+real permit wire contract issued by the server and enforced on the datapath,
+proven end to end against a real Go control server and measured at the
+120-second revocation bound.
+No persisted admin policy-write API exists yet for compliance guardrails, so
+every snapshot issued in production today still carries zero gates: the wiring
+is live, but nothing an operator configures reaches it.
 **Related:** [ADR-0055](../docs/adr/0055-device-compliance-and-resource-access.md),
 [#363](https://github.com/karst-net/karst/issues/363).
 
@@ -20,12 +24,19 @@ releases, with bounded challenge/report attempts on live supporting servers.
 Evidence change/expiry invalidations now use a durable retry queue and the peer
 notification path. The policy package also provides an internal draft guardrail
 validator, diagnostic evaluator and device-specific mandatory gate compiler.
-Policy activation, netmap distribution and all traffic enforcement remain
-pending; #363 remains open.
-Reserved permit messages, Go structural validation and Go/Rust wire vectors are
-also implemented. They have no active request kind or enforcement capability.
-The Rust control client has a standalone receiver/reference evaluator using
-caller-supplied elapsed time; it is not integrated with the client or datapath.
+Policy activation and netmap distribution of a real, operator-configured
+guardrail remain pending (no persisted admin policy-write API exists yet for
+compliance drafts); #363 remains open.
+Permit messages, Go structural validation and Go/Rust wire vectors are now live
+on the wire: `KindCompliancePermit` (request kind 6) is issued by `PermitHandler`,
+which compiles a tenant's compliance draft via `policy.CompileCompliance`, and
+support is advertised through the `compliance_permit_schema` netmap capability
+field. `karstd`'s control client requests and validates a fresh snapshot on the
+existing 30-second refresh cadence, and `Engine::permit` enforces the result on
+every protected packet, uncached, alongside the general ACL and the independent
+SSH gate. Because no production caller supplies a non-nil `Draft` yet, every
+issued snapshot still has zero gates — a real, structurally valid wire round
+trip with zero enforcement effect until policy writes are enabled.
 
 `Evaluate` accepts an explicit server evaluation time and authenticated subject.
 Its evidence input must come from trusted ingestion: identity, receipt time and
@@ -380,15 +391,21 @@ compiled decisions with the draft preview and cover same-user devices under
 overlapping unconditional identity grants, remediation, nonpassing evidence,
 expiry/recovery, overlapping guardrails, routed intersections and determinism.
 
-### Reserved permit wire contract
+### Implemented permit wire contract
 
 `KarstCompliancePermitRequest`, `KarstCompliancePermitSnapshot`,
 `KarstCompliancePermitGate` and `KarstComplianceSourcePermit` define a versioned
 protobuf contract with Go/Rust agreement vectors in
-`spec/vectors/device-compliance-permits-v1.json`. These standalone messages are
-not attached to a request kind, netmap field or capability advertisement. No
-server issues them and no running client installs or enforces them. Ingestion schema 1
-continues to mean evidence ingestion only.
+`spec/vectors/device-compliance-permits-v1.json`. These messages are attached to
+a real request kind (`KindCompliancePermit`, 6), advertised via the
+`compliance_permit_schema` netmap capability field, and issued by `PermitHandler`
+from a tenant's compiled compliance draft. A running `karstd` client installs
+and enforces the result on the datapath (see "Rust permit receiver and
+datapath enforcement" and "Authorization and enforcement contract" below).
+Because no persisted admin policy-write API exists yet for compliance drafts,
+every draft compiled in production today is empty, so every issued snapshot
+still has zero
+gates. Ingestion schema 1 continues to mean evidence ingestion only.
 
 A schema-1 request carries a fresh 32-byte nonce. The response echoes it and
 binds tenant, enforcing enrollment ID, canonical base64 identity handle and
@@ -429,14 +446,15 @@ negotiation must reject unknown versions for protected access.
 
 Tests cover binding substitution, validity bounds, unknown enums, invalid ports,
 CIDRs and references, wildcard/duplicate sources, inconsistent evidence
-generations and deny-all snapshots. These validators and wire vectors do not
-implement permit issuance, atomic snapshot reads, capability negotiation or the
-120-second datapath bound. The standalone receiver API below handles structural
-validation and request consumption without activating the protocol.
+generations and deny-all snapshots. `PermitHandler` (request kind 6) now issues
+real snapshots from these validators, and a real Go-control/Rust-karstd
+end-to-end test has measured the 120-second datapath bound at ~30.09s. Atomic
+snapshot reads and capability negotiation beyond the single schema version 1
+remain pending.
 
-### Standalone Rust permit receiver
+### Rust permit receiver and datapath enforcement
 
-`karst-control-client::compliance` accepts the reserved Go-produced snapshots.
+`karst-control-client::compliance` accepts the Go-produced snapshots.
 `PendingPermitRequest` holds trusted tenant/enrollment/policy context, a caller's
 fresh 32-byte nonce and the local request-start timestamp. Its `accept` method
 consumes the pending value even on error. It validates every gate/source before
@@ -468,19 +486,32 @@ All timestamps are caller-supplied `Duration` values from one suspend-aware
 elapsed clock with a stable origin. This module reads no wall clock or platform
 clock; `std::time::Instant` does not provide portable suspend accounting. Tests
 inject transit, sleep-sized elapsed jumps, rollback, exact expiry and arithmetic
-overflow, and consume the Go wire vectors. Platform clock integration, live
-requests, capability negotiation, authoritative issuance, cached-flow revocation
-and datapath enforcement remain pending. These tests establish reference behavior,
-not a measured suspend/offline revocation bound on real devices.
+overflow, and consume the Go wire vectors. `karstd::Client::sync` now issues live
+requests on the existing 30-second refresh cadence and installs the result via
+`Engine::set_compliance_permit`; `Engine::permit` enforces it on every protected
+packet, uncached, alongside the general ACL and the independent SSH gate — proven
+against a real Go control server. Capability negotiation beyond schema version 1
+and cached-flow revocation of a *configured* guardrail (none exists in production
+yet) remain pending. These tests, together with the end-to-end test described
+under "Proposed authorization and enforcement contract" below, establish a
+measured bound on real devices, not just reference behavior.
 
-### Proposed authorization and enforcement contract
+### Authorization and enforcement contract
+
+The permit issuance, refresh and datapath-enforcement mechanics below are now
+implemented and proven end to end (PR1–PR3 of #363's stage 4/6 roadmap) against
+a real Go control server and a real `Engine`. What remains proposed is the
+operator-facing half: a persisted admin policy-write API for compliance
+guardrails, and the policy preview it would drive. Until that API exists, every
+compiled draft is empty and this contract has zero effect in production.
 
 Resource guardrails constrain destination selectors, transport/ports and routed
 CIDRs after identity grant resolution. All matching requirements apply to every
 source device. Source wildcards must resolve into device-specific decisions;
 they cannot retain an unconditional bypass. CIDR/port intersections and selector
 changes are reevaluated. Policy preview shows effective requirements and grant
-provenance for each affected flow, including remediation conflicts.
+provenance for each affected flow, including remediation conflicts. **(Policy
+preview itself remains proposed — not yet built.)**
 
 The wire design must carry a versioned compliance capability and resource-scoped
 permits bound to tenant, device, policy revision and evidence generation.
@@ -491,14 +522,19 @@ A client lacking the mandatory enforcement capability cannot receive protected
 access; capable receivers/gateways must deny it. Activating a guardrail requires
 capable receiving enforcers for every matching resource, including routed paths.
 
-Proposed maximum permit lifetime is **120 seconds**, capped by the evidence's
-remaining lifetime. Refresh every **30 seconds**; invalidate and publish affected
+Maximum permit lifetime is **120 seconds**, capped by the evidence's remaining
+lifetime. Refresh every **30 seconds**; invalidate and publish affected
 decisions immediately on accepted failure, evidence expiry, policy change,
 identity revocation or device removal. Target online delivery is 30 seconds;
 the security bound is **120 seconds after the last permit issuance**, even if
 notifications or control connectivity fail. A newly observed failure must stop
-permit issuance atomically with storing its evaluation. These are acceptance
-targets to test, not guarantees of the current polling implementation.
+permit issuance atomically with storing its evaluation. A real Go-control/
+Rust-karstd end-to-end test (#473) has measured this bound at ~30.09s across
+repeated runs against the 120-second target, including recovery without
+reenrollment and enforcement that survives loss of control-plane connectivity.
+Multi-replica authoritative reads, capability negotiation beyond schema version
+1 and the configuration surface that would make a guardrail reach production
+remain untested or unbuilt.
 
 The receiver enforces remaining lifetime using suspend-aware elapsed time and
 never restarts a lease from a cached response. Restarted clients must obtain
@@ -533,17 +569,27 @@ resource identifiers; avoid logging every unchanged refresh.
 
 Deliver in reviewable stages; keep #363 open until all stages pass:
 
-1. Typed requirement/evaluation model with deterministic time inputs, version
-   comparators and tests for every nonpassing state and provenance mismatch.
-2. Authenticated challenge/report persistence, replica-safe replay protection,
-   expiry scheduling and platform collectors; publish actual capability matrix.
-3. Resource guardrails, overlap validation, policy preview and device-specific
-   ingress/egress/routed compilation, independently composed with SSH.
-4. Versioned permits, compatibility handling and local packet-path expiry;
-   prove established-session and offline bounds before enabling policy writes.
-5. Scoped console status, remediation explanations, audit and operator guidance.
-6. Real Go-control/Rust-datapath tests: two same-user devices, explicit remediation,
-   failure/expiry/recovery, replay/spoofing, tenant/delegation isolation, overlapping
-   grants, CIDRs, direct/relay/SSH/routed established flows, restart, suspend,
-   clock changes, delayed responses and control loss/reconnect. Measure the
-   120-second bound; a mocked policy verdict alone is insufficient evidence.
+1. **Done.** Typed requirement/evaluation model with deterministic time inputs,
+   version comparators and tests for every nonpassing state and provenance
+   mismatch.
+2. **Done.** Authenticated challenge/report persistence, replica-safe replay
+   protection, expiry scheduling and platform collectors; publish actual
+   capability matrix.
+3. **Partially done.** Resource guardrails, overlap validation and
+   device-specific ingress/egress/routed compilation exist as an internal
+   draft validator/compiler, independently composed with SSH. Policy preview
+   and a persisted admin policy-write API to reach them remain pending.
+4. **Done.** Versioned permits, compatibility handling and local packet-path
+   expiry are live (`KindCompliancePermit`, `Engine::permit`); the
+   established-session and offline bounds are proven (stage 6). Policy writes
+   remain disabled pending stage 3's write API.
+5. **Done.** Scoped console status (`GET /nodes/{handle}/compliance` and the
+   Machines → Status "Compliance" dialog). No pass/fail verdict or
+   remediation/audit guidance is rendered yet — there is nothing to evaluate
+   until stage 3 ships configurable guardrails.
+6. **Done, scoped.** Real Go-control/Rust-datapath test: two same-tenant
+   devices, explicit remediation, failure/expiry/recovery, and control-loss/
+   reconnect, measuring the 120-second bound at ~30.09s. Replay/spoofing,
+   tenant/delegation isolation, overlapping grants and CIDRs are covered at
+   the unit level in both languages rather than end to end, since CI cannot
+   meaningfully simulate suspend or clock skew.
