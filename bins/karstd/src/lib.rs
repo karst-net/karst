@@ -73,6 +73,10 @@ pub use routing::{AllowedIps, InterfaceAddress, Prefix};
 /// talks to it can never disagree about which build either one is.
 pub const VERSION: &str = env!("KARST_VERSION");
 
+/// Source commit of the running agent, or `unknown` for source archives without
+/// a `KARST_REVISION` build override. This is not an artifact digest.
+pub const REVISION: &str = env!("KARST_REVISION");
+
 /// Fill a buffer from the operating system's CSPRNG.
 ///
 /// Handshakes need fresh randomness per attempt, and the sans-io crates take it

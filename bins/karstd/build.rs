@@ -21,6 +21,25 @@
 // exists only to be read, not acted on.
 fn main() {
     println!("cargo:rerun-if-env-changed=KARST_VERSION");
+    println!("cargo:rerun-if-env-changed=KARST_REVISION");
+    // Track Git metadata as well as environment overrides so switching commits
+    // rebuilds the embedded identity, including in linked worktrees.
+    for name in ["HEAD", "packed-refs"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", name]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+    if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        if let Some(path) = git(&["rev-parse", "--git-path", &reference]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+    let revision = std::env::var("KARST_REVISION")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| git(&["rev-parse", "HEAD"]))
+        .unwrap_or_else(|| "unknown".to_owned());
+    println!("cargo:rustc-env=KARST_REVISION={revision}");
     let version = std::env::var("KARST_VERSION")
         .ok()
         .filter(|v| !v.is_empty())
@@ -29,18 +48,13 @@ fn main() {
     println!("cargo:rustc-env=KARST_VERSION={version}");
 }
 
-/// Best-effort only: a local dev build without `KARST_VERSION` set. Not
-/// re-run when HEAD moves — `cargo:rerun-if-changed` on the right `.git`
-/// ref file is more machinery than a string nothing but a human reads is
-/// worth; `cargo build` after a fresh checkout or in CI is unaffected
-/// either way, since both always run this from scratch.
+/// Best-effort local development identity when CI has not supplied a version.
 fn git_describe() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["describe", "--tags", "--always", "--dirty"])
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    git(&["describe", "--tags", "--always", "--dirty"])
+}
+
+fn git(args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git").args(args).output().ok()?;
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (output.status.success() && !value.is_empty()).then_some(value)
 }

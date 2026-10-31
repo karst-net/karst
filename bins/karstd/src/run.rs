@@ -4684,6 +4684,8 @@ fn report(
 /// promise not to reword.
 #[derive(serde::Serialize)]
 struct StatusJson {
+    version: &'static str,
+    revision: &'static str,
     interface: String,
     mtu: usize,
     listen: String,
@@ -4912,6 +4914,8 @@ fn status_json(
     };
 
     let json = StatusJson {
+        version: crate::VERSION,
+        revision: crate::REVISION,
         interface: device.name.to_owned(),
         mtu: device.mtu,
         listen: config.listen.to_string(),
@@ -6532,6 +6536,8 @@ mod route_tests {
         );
         let value: serde_json::Value = serde_json::from_str(&text).expect("valid json");
 
+        assert_eq!(value["version"], crate::VERSION);
+        assert_eq!(value["revision"], crate::REVISION);
         assert_eq!(value["interface"], "karst0");
         assert_eq!(value["mtu"], 1420);
         assert_eq!(value["addresses"], serde_json::json!(["100.64.0.1/16"]));

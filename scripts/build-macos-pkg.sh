@@ -193,6 +193,8 @@ cp "$root/packaging/macos/KarstStatus/Info.plist" "$app/Contents/Info.plist"
 # (Gatekeeper/Spotlight read this one); CFBundleVersion is the
 # always-increasing build identifier sysextd's own replace-logic needs —
 # see bundle_version's own comment for why these can't share a value.
+# Preserve prerelease labels for the UI; Apple's marketing version is numeric.
+plutil -insert KarstReleaseVersion -string "$version" "$app/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$pkg_version" "$app/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$bundle_version" "$app/Contents/Info.plist"
 
