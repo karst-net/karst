@@ -29,6 +29,7 @@ export type GatewayNode = {
     node_handle?: string;
     name: string;
     control_connected: boolean;
+    software?: NodeSoftware;
     /**
      * Aggregated across this node's own offers, degraded-first.
      */
@@ -343,6 +344,20 @@ export type Node = {
     created_at: string;
     last_seen_at?: string | null;
     posture: NodePosture;
+    software?: NodeSoftware;
+};
+
+/**
+ * Running agent identity self-reported over the authenticated control channel, independent of compliance collection. Advisory, not attestation or a compatibility verdict. Omitted for agents with no observation. Missing identities remain unknown.
+ */
+export type NodeSoftware = {
+    version?: string | null;
+    revision?: string | null;
+    artifact_id?: string | null;
+    /**
+     * Server receipt time of the last valid software report; unrelated to last_seen_at or compliance evidence.
+     */
+    observed_at: string;
 };
 
 export type NodeUpdate = {
@@ -1105,6 +1120,7 @@ export type NodeWritable = {
     created_at: string;
     last_seen_at?: string | null;
     posture: NodePosture;
+    software?: NodeSoftware;
 };
 
 export type DeviceEnrollmentWritable = {

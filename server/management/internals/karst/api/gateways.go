@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 
@@ -14,7 +15,9 @@ import (
 	"github.com/netbirdio/netbird/shared/management/http/util"
 	"github.com/netbirdio/netbird/shared/management/status"
 
+	karstnode "github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
+	karstcontract "github.com/netbirdio/netbird/shared/management/http/api/karst"
 )
 
 type gatewayGroupReader interface {
@@ -44,12 +47,13 @@ type gatewayOffer struct {
 }
 
 type gatewayNode struct {
-	NodeID              string         `json:"node_id"`
-	NodeHandle          string         `json:"node_handle"`
-	Name                string         `json:"name"`
-	ControlConnected    bool           `json:"control_connected"`
-	ForwardingReadiness string         `json:"forwarding_readiness"`
-	Offers              []gatewayOffer `json:"offers"`
+	Software            *karstcontract.NodeSoftware `json:"software,omitempty"`
+	NodeID              string                      `json:"node_id"`
+	NodeHandle          string                      `json:"node_handle"`
+	Name                string                      `json:"name"`
+	ControlConnected    bool                        `json:"control_connected"`
+	ForwardingReadiness string                      `json:"forwarding_readiness"`
+	Offers              []gatewayOffer              `json:"offers"`
 }
 
 type gatewayInventory struct {
@@ -160,6 +164,18 @@ func (h *handler) gateways(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, current := range nodes {
 		if len(current.Offers) > 0 {
+			// Resolve software only for visible gateway candidates, through
+			// the same authenticated-node record used by machine details.
+			if h.nodes != nil {
+				identity, readErr := h.nodes.Get(current.NodeHandle)
+				if readErr != nil && !errors.Is(readErr, karstnode.ErrUnknownNode) {
+					util.WriteError(r.Context(), readErr, w)
+					return
+				}
+				if readErr == nil {
+					current.Software = nodeSoftware(identity)
+				}
+			}
 			sort.Slice(current.Offers, func(i, j int) bool { return current.Offers[i].ID < current.Offers[j].ID })
 			current.ForwardingReadiness = aggregateForwardingReadiness(current.Offers)
 			result.Gateways = append(result.Gateways, current)

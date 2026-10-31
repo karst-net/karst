@@ -6,6 +6,7 @@ import { Dialog, EmptyState, Status } from "@karst-net/ui";
 import { api, type Group, type NetworkRoute, type NetworkRouteDraft } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 import { TutorialHint } from "../tutorial";
+import { ClientVersionObservation } from "./client-version";
 
 const blank: NetworkRouteDraft = {
   network_id: "", description: "", enabled: true, network: "", peer_groups: [], groups: [], access_control_groups: [],
@@ -26,6 +27,7 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
   const resource = useResource(api.routes);
   const groupResource = useResource(api.groups);
   const inventory = useResource(api.gateways);
+  const versions = useResource(api.softwareVersions);
   const { message, setMessage, run } = useMutation(() => { resource.reload(); inventory.reload(); });
   const [draft, setDraft] = useState<{ value: NetworkRouteDraft; id?: string }>();
 
@@ -74,12 +76,13 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
     {tab === "metrics" ? <section aria-label="Configured Gateway nodes">
       <h3>Configured Gateway nodes</h3>
       <p className="lede">One enrolled node can serve subnet access and default-route egress together. Control connectivity is shown separately from forwarding readiness. Local exit consent and destination policy still apply.</p>
-      <button onClick={inventory.reload}>Refresh Gateway inventory</button>
+      <button onClick={() => { inventory.reload(); versions.reload(); }}>Refresh Gateway inventory</button>
       {inventory.loading ? <p>Loading Gateway inventory…</p> : inventory.error ? <><Failure message={`Gateway inventory unavailable: ${inventory.error}`} retry={inventory.reload} /><p>Route administration remains available under Manage.</p></> : <>
-        {inventory.value?.gateways.length ? <Rows head={<><th>Node</th><th>Configured behaviors</th><th>Recorded control connection</th><th>Forwarding readiness</th></>}>
+        {inventory.value?.gateways.length ? <Rows head={<><th>Node</th><th>Configured behaviors</th><th>Agent software</th><th>Recorded control connection</th><th>Forwarding readiness</th></>}>
           {inventory.value.gateways.map((gateway) => <tr key={gateway.node_id}>
             <td><strong>{gateway.name}</strong><br /><code>{gateway.node_id}</code><br /><button onClick={() => addBehavior([...new Set(routes.filter((route) => gateway.offers.some((offer) => offer.id === route.id)).flatMap((route) => route.peer_groups))])}>Add behavior to {gateway.name}</button></td>
             <td>{gateway.offers.map((offer) => <div key={offer.id}><code>{offer.prefix}</code> · {offer.kind === "subnet" ? "Subnet" : offer.kind === "default_ipv4" ? "IPv4 default" : "IPv6 default"} · {offer.enabled ? "enabled" : "disabled"}{offer.requires_client_consent && " · client consent required"} · {offer.forwarding_readiness === "ready" ? "ready" : offer.forwarding_readiness === "degraded" ? "degraded" : "unreported"}</div>)}</td>
+            <td><details><summary>{gateway.software?.version || "Unknown"}</summary><ClientVersionObservation software={gateway.software} controlVersion={versions.value?.control.version} /></details></td>
             <td>{gateway.control_connected ? "Connected" : "Disconnected"}</td>
             <td><p>{gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "ready").length} ready · {gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "degraded").length} degraded · {gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "unreported").length} unreported enabled behaviors</p>{gateway.forwarding_readiness === "ready" ? "Ready" : gateway.forwarding_readiness === "degraded" ? "Degraded — check the node for an nftables apply failure." : <>Unreported — inspect <code>karst gateway status</code> on the node.</>}</td>
           </tr>)}
