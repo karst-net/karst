@@ -4,17 +4,27 @@
 //! Identity of the executable actually running this agent, not its source
 //! revision or a replacement executable installed at the same pathname.
 
-use std::sync::OnceLock;
+use std::sync::{Once, OnceLock};
 
 /// SHA-256 of the running process executable on Linux, cached once per process.
 /// `/proc/self/exe` refers to the executing inode even after an upgrade renames
 /// or unlinks it. Other platforms remain unknown until an equivalent running
 /// image observation is available; `current_exe()` alone can name a replacement.
-/// Read failures are advisory and never prevent control synchronization.
+/// Hashing runs off the control/IPC thread. Until it completes (or on failure),
+/// the identity is unknown; observation must never delay synchronization.
 #[must_use]
 pub fn artifact_id() -> Option<&'static str> {
     static IDENTITY: OnceLock<Option<String>> = OnceLock::new();
-    IDENTITY.get_or_init(observe).as_deref()
+    static START: Once = Once::new();
+    START.call_once(|| {
+        // Thread creation failures also leave this advisory field unknown.
+        let _ = std::thread::Builder::new()
+            .name("artifact-identity".to_owned())
+            .spawn(|| {
+                let _ = IDENTITY.set(observe());
+            });
+    });
+    IDENTITY.get().and_then(Option::as_deref)
 }
 
 #[cfg(target_os = "linux")]
