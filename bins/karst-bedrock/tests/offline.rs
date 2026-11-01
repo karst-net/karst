@@ -482,7 +482,10 @@ fn a_key_outside_the_authority_list_cannot_sign() {
     let key_path = scratch("stranger.key", &[0x99u8; 32]);
     let out_path = scratch("response-stranger.json", b"");
 
-    let out = run_sign(&req_path, &key_path, &out_path, "sign\n");
+    // An unauthorized key is rejected before the confirmation prompt. Sending
+    // input races the child's early exit (BrokenPipe on macOS); leave stdin
+    // empty and assert the authorization error itself below.
+    let out = run_sign(&req_path, &key_path, &out_path, "");
     assert!(
         !out.status.success(),
         "a stranger's key produced a signature"
