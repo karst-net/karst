@@ -3,8 +3,9 @@
 The console's OIDC login and the management server's IdP adapter are **separate**
 integrations. In the production Compose deployment, login uses the **karst**
 realm through Caddy at `/auth`. This procedure opts the *control* process
-into querying users from **that same realm**. It does not change console OIDC,
-create users or turn Keycloak into the source of truth for Karst ACL groups.
+into querying users from **that same realm**. It does not change console OIDC
+or create users, and steps 1-3 alone do not turn Keycloak into a source of
+Karst ACL groups — that is the separate, optional group-sync setup in step 4.
 
 ## 1. Prepare the existing Keycloak realm
 
@@ -99,14 +100,63 @@ tenant boundary before relying on provisioning. Do not use a production user
 as a deletion test: the adapter implements `DeleteUser` against Keycloak.
 
 **Current limitation:** `server/management/server/idp/keycloak.go` can
-fetch Keycloak users but does not implement Keycloak group enumeration or
-Karst group membership synchronization. Configuring `IdpManagerConfig`
-alone therefore **does not** populate the console Groups view with Keycloak
-groups, nor establish Karst ACL group membership. Groups and access rules
-must stay explicitly administered in Karst until a separately tested
-group-mapping implementation is added. Also, returned directory users do
-not by themselves guarantee that account-local user records are created:
-validate the actual user lifecycle before promising automatic provisioning.
+fetch Keycloak users but does not itself enumerate Keycloak groups or
+synchronize Karst group membership — `IdpManagerConfig` only ever drives
+the Users view. Group sync is a **separate, orthogonal** Karst feature
+(JWT-claims-based group sync, below); configuring `IdpManagerConfig` alone
+does not populate Groups. Also, returned directory users do not by
+themselves guarantee that account-local user records are created: validate
+the actual user lifecycle before promising automatic provisioning.
+
+## 4. Group sync (optional, independent of IdpManagerConfig)
+
+Karst already supports syncing group membership from any OIDC provider's
+token claims — this is how every IdP integration in this codebase handles
+groups; none of them do it through the Admin-API-style adapter in
+`server/management/server/idp/`. It works independently of step 2 above:
+you can enable it even without `IdpManagerConfig` set, and it is the
+mechanism that makes the console's read-only `issued` group rows
+(`web/console/src/views/groups.tsx`) populate from Keycloak.
+
+### 4.1 Add a group-membership claim in Keycloak
+
+Fresh deployments get this automatically: `keycloak-realm.template.json`'s
+`karst-console` client now ships a `karst-console-groups` protocol mapper
+(type **Group Membership**, claim name `groups`, full path off, added to
+both the ID and access token). For an **already-provisioned** realm, add
+the equivalent mapper by hand in the Keycloak admin UI, on the
+`karst-console` client (not the `karst-directory-sync` client from step 1):
+**Client scopes** (or the client's own **Mappers** tab) → add mapper →
+**Group Membership** → Name `groups`, Token Claim Name `groups`, Full
+group path off, Add to ID token on, Add to access token on.
+
+### 4.2 Enable JWT group sync on the account
+
+The console authenticates API calls with the Keycloak access token, so the
+`groups` claim from 4.1 needs `JWTGroupsEnabled`/`JWTGroupsClaimName`
+turned on for the account via the accounts API. Fetch the current
+settings first and merge in the new fields — this endpoint replaces the
+whole settings object, so do not PUT a partial body:
+
+```sh
+curl -s -H "Authorization: Bearer $PAT" https://<console-host>/api/accounts \
+  | jq '.[0]' > /tmp/account.json
+
+ACCOUNT_ID=$(jq -r '.id' /tmp/account.json)
+
+jq '.settings.jwt_groups_enabled = true | .settings.jwt_groups_claim_name = "groups"' \
+  /tmp/account.json \
+  | jq '{settings: .settings, onboarding: .onboarding}' \
+  | curl -s -X PUT -H "Authorization: Bearer $PAT" -H "Content-Type: application/json" \
+      -d @- "https://<console-host>/api/accounts/$ACCOUNT_ID"
+```
+
+Sign in through the console afterward and confirm `/groups` shows the
+directory's groups as `issued: jwt`, read-only rows. Karst does not apply
+those groups to peer access automatically unless `GroupsPropagationEnabled`
+is also turned on (same PUT, `.settings.groups_propagation_enabled = true`)
+— enable that separately once group membership itself looks correct, since
+it changes which groups peers actually get.
 
 ## Rollback
 
@@ -115,3 +165,10 @@ Restore `deploy/compose/state/management.json.pre-idp-sync` to
 private), then restart **control**. This leaves the Keycloak realm and the
 console's OIDC login configuration intact. Remove the unused sync client
 from Keycloak only after confirming rollback.
+
+To roll back group sync (step 4) independently, repeat the GET/PUT in 4.2
+with `.settings.jwt_groups_enabled = false`; this does not touch
+`IdpManagerConfig` or require a restart. The groups Keycloak already
+created in Karst (`issued: jwt`) are left in place; the console UI refuses
+to delete non-`api`-issued groups, so remove them via `DELETE
+/api/groups/{id}` if you need them gone rather than just inert.
