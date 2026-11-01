@@ -741,6 +741,9 @@ path_c() {
 	WT_SUBST=$subst run_step C relay-install
 	WT_SUBST=$subst run_step C relay-cert
 	assert_mode /etc/karst/tls/relay.key 600 "the relay's TLS key is mode 600"
+	WT_SUBST=$subst run_step C relay-cert-verify
+	assert_file_has "$WORK/.out" "CA:FALSE" \
+		"the relay certificate is an end-entity leaf, not a CA"
 	WT_SUBST=$subst run_step C relay-config
 	WT_SUBST=$subst run_step C relay-check
 	# §6.1 prints this line and it is the whole point of seeding a placeholder:

@@ -450,8 +450,32 @@ relay is proved to be, only which certificates the hop will accept.
 sudo openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes \
     -keyout /etc/karst/tls/relay.key -out /etc/karst/tls/relay.crt \
     -subj "/CN=relay.example.com" \
-    -addext "subjectAltName=DNS:relay.example.com,IP:203.0.113.7"
+    -addext "subjectAltName=DNS:relay.example.com,IP:203.0.113.7" \
+    -addext "basicConstraints=critical,CA:FALSE" \
+    -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+    -addext "extendedKeyUsage=serverAuth"
 sudo chmod 600 /etc/karst/tls/relay.key
+```
+
+`openssl req -x509`'s own defaults mark a self-signed certificate as a CA
+(`CA:TRUE`), which clients reject outright — `invalid peer certificate:
+Other(OtherError(CaUsedAsEndEntity))` — because it isn't one; the relay
+presents it as an end-entity leaf. The three `-addext` flags above override
+that. Confirm before moving on:
+
+```sh walkthrough=C step=relay-cert-verify
+openssl x509 -in /etc/karst/tls/relay.crt -noout -text \
+    | grep -A1 "X509v3 Basic Constraints"
+# X509v3 Basic Constraints: critical
+#     CA:FALSE
+```
+
+Every node that connects through this relay needs this certificate — not
+the key — at `relay_ca_file` (§6.3). On a single host that's a local copy;
+across hosts, copy `/etc/karst/tls/relay.crt` to each node, e.g.:
+
+```sh walkthrough=none reason="illustrative; the single-host fixture copies the file directly instead of over the network"
+scp /etc/karst/tls/relay.crt node-host:/etc/karst/relay.crt
 ```
 
 `/etc/karst/relay.toml`:
