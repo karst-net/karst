@@ -4614,6 +4614,16 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
 
     attach_destination_lan_to(NS_C, NS_DEST_C, "ktn-c-dest", "ktn-dest-c");
 
+    // Establish the old session before restarting its recipient so this row
+    // consistently exercises the surviving gateway's recovery, rather than
+    // depending on whether C happened to finish its handshake first.
+    wait_for(
+        &net,
+        "the standby gateway to establish with the original recipient process",
+        Duration::from_secs(30),
+        || peer_established_other_than(&status(&net, "c", NS_C), IP_A_PUBLIC),
+    );
+
     // Node B's last netmap fetch predates node C and the re-pointed route
     // alike; the same restart-to-refresh pattern every routing row uses.
     net.stop_node("b", NS_B);
@@ -4627,7 +4637,19 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
 
     listener_on(&mut net, NS_DEST_C, "via C");
     std::thread::sleep(Duration::from_millis(500));
-    let (reply, reply_err) = dial();
+    // Restarting B can leave C holding a session to B's old process even
+    // while B reports a new established session. As in the daemon-crash row,
+    // recovery may require PHREATIC's 120-second REKEY_AFTER_TIME. Keep the
+    // restart and verify actual traffic through C, allowing the same 150s
+    // recovery budget instead of treating one 15s dial as convergence.
+    let deadline = Instant::now() + Duration::from_secs(150);
+    let (reply, reply_err) = loop {
+        let result = dial();
+        if result.0.contains("via C") || Instant::now() >= deadline {
+            break result;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
     assert!(
         reply.contains("via C"),
         "the recipient did not converge to the standby gateway after \
