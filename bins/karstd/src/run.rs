@@ -138,12 +138,16 @@ impl NetworkDevice {
     /// Add a route. A no-op under `network-extension` for the same reason
     /// [`Self::set_address`] is — see that method's doc comment.
     ///
-    /// **Known limitation, not a solved problem (ADR-0030 item 4):** this is
-    /// also how a subnet-router/exit-node policy change reaches the
-    /// interface mid-session, not only at startup. Answering `Ok(())` here
-    /// means such a change is silently not applied under this build until a
-    /// future slice adds a callback into the extension's own
-    /// `setTunnelNetworkSettings`.
+    /// This stays a no-op at this layer, but the mid-session problem it once
+    /// left unsolved (ADR-0030 item 4: a subnet-router/exit-node policy
+    /// change arriving after startup, not only at it) is handled now — one
+    /// layer up, in Swift. `PacketTunnelProvider`'s health-poll timer
+    /// periodically re-derives and reapplies the full
+    /// `NEPacketTunnelNetworkSettings` from the latest `status_json()`
+    /// snapshot whenever the routing signature changes, which is what
+    /// actually carries a changed route to the interface on this build
+    /// (verified end to end on hardware, #193). Nothing calls `add_route`
+    /// under `network-extension` expecting it to do anything.
     #[cfg(all(target_os = "macos", feature = "network-extension"))]
     fn add_route(
         &self,
@@ -168,8 +172,10 @@ impl NetworkDevice {
         }
     }
 
-    /// Remove a route. Same no-op posture and the same mid-session
-    /// limitation as [`Self::add_route`] under `network-extension`.
+    /// Remove a route. Same no-op posture as [`Self::add_route`] under
+    /// `network-extension`, for the same reason — see that method's doc
+    /// comment for how a mid-session change actually reaches the interface
+    /// on this build.
     #[cfg(all(target_os = "macos", feature = "network-extension"))]
     fn remove_route(
         &self,
