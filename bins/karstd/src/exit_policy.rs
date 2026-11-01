@@ -22,6 +22,19 @@
 //! ordinary pre-existing default route, which every one of this module's own
 //! mocked unit tests below is structurally unable to see, since `Mock`
 //! records calls rather than asking a kernel to resolve one.
+//!
+//! **Activation does not itself verify reachability.** `State::activate`'s
+//! `ip` commands succeed the moment the kernel accepts a rule, whether or
+//! not anything ever answers through it. An earlier version of this module
+//! tried to close that gap here, by probing a fixed public address right
+//! after activation — which broke the moment it ran anywhere without real
+//! Internet egress, including `aquifer.rs`'s own network-namespace topology
+//! and any genuinely air-gapped deployment. The real precondition this
+//! module cannot see at all — whether the exit's backing peer actually has
+//! a live session, which is what a stale or incomplete escape set, a roamed
+//! peer, or a control endpoint that re-resolved all eventually come down to
+//! — is checked one layer up, in `run.rs`'s `reconcile_exit`, which already
+//! holds `Engine::status()` and needs no network probe to read it.
 
 use std::collections::BTreeSet;
 use std::io;

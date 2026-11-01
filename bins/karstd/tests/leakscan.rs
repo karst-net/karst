@@ -148,6 +148,7 @@ fn netmap_with_psks() -> Netmap {
             psk: PSK.to_vec(),
             psk_previous: PREVIOUS_PSK.to_vec(),
             disco_key: DISCO_KEY.to_vec(),
+            candidates: Vec::new(),
         }
     };
 
@@ -455,6 +456,7 @@ fn a_lattice_only_node_is_reported_as_such() {
             psk: Vec::new(),
             psk_previous: Vec::new(),
             disco_key: Vec::new(),
+            candidates: Vec::new(),
         }],
         ..pb::KarstNetmapResponse::default()
     };

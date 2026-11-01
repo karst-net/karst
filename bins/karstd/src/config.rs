@@ -920,6 +920,16 @@ pub struct Peer {
     /// registry id of the right width survives: a value of any other length
     /// names no relay in `relays` and could only be dialed by guessing.
     pub home_relay: Option<[u8; karst_relay_proto::consts::ID_LEN]>,
+    /// This peer's own self-reported AVEN candidate list, redistributed by
+    /// the server — `karst_control.proto`'s `KarstNetmapPeer.candidates`,
+    /// parsed and filtered to what actually parses as a socket address.
+    /// Empty for a static TOML roster peer, which has no coordination
+    /// server to report through — the same reason `home_relay` is `None`
+    /// there. Not a live guarantee: this is a peer's last report as the
+    /// server last relayed it, exactly as unconfirmed as a candidate learned
+    /// from a relayed `CallMeMaybe`, and `disco.rs::reconcile` treats it the
+    /// same way.
+    pub candidates: Vec<SocketAddr>,
 }
 
 impl fmt::Debug for Peer {
@@ -929,6 +939,7 @@ impl fmt::Debug for Peer {
             .field("endpoint", &self.endpoint)
             .field("allowed_ips", &self.allowed_ips)
             .field("psk_is_fallback", &self.psk_is_fallback)
+            .field("candidates", &self.candidates)
             .finish_non_exhaustive()
     }
 }
@@ -1647,6 +1658,24 @@ impl Peer {
             entry.endpoint.parse().ok()
         };
 
+        // One bad entry must not cost every other candidate for this peer —
+        // the same per-entry tolerance `home_relay`'s own comment describes
+        // for a wrong-width relay id. A node reporting one is itself not
+        // this node's fault to enforce; skip it and keep going.
+        let candidates = entry
+            .candidates
+            .iter()
+            .filter_map(|candidate| {
+                if let Ok(addr) = candidate.parse() {
+                    return Some(addr);
+                }
+                tracing::warn!(
+                    "karstd: peer {name:?} reported an unparseable candidate {candidate:?}; skipped"
+                );
+                None
+            })
+            .collect();
+
         Ok(Self {
             name,
             node_id: entry.node_id.clone(),
@@ -1669,6 +1698,7 @@ impl Peer {
                 .first_chunk::<{ karst_relay_proto::consts::ID_LEN }>()
                 .filter(|_| entry.home_relay.len() == karst_relay_proto::consts::ID_LEN)
                 .copied(),
+            candidates,
         })
     }
 
@@ -1744,6 +1774,7 @@ impl Peer {
             // A static roster has no coordination server, so no peer publishes
             // anything — the same reason `node_id` and `disco_key` are empty.
             home_relay: None,
+            candidates: Vec::new(),
         })
     }
 }
@@ -2676,6 +2707,7 @@ mod netmap_tests {
             psk: vec![0x44; 32],
             psk_previous: vec![0x45; 32],
             disco_key: vec![0x46; 32],
+            candidates: Vec::new(),
         }
     }
 

@@ -161,6 +161,34 @@ message KarstNetmapRequest {
   // Absent on legacy agents: retain the previous observation without refreshing
   // its receipt time. It must never be inferred from compliance or peer metadata.
   KarstSoftwareIdentity software = 10;
+
+  // This node's own current AVEN candidate list — the same ranked list
+  // `bins/karstd/src/disco.rs`'s `State::candidates()` already computes for
+  // a relayed `CallMeMaybe`, reported here too so the server can
+  // redistribute it to this account's other peers over the control
+  // channel, which stays reachable even when this node's relay does not
+  // (diagnosed on real hardware: with no relay, `CallMeMaybe` never ships,
+  // so a peer's local/LAN candidates otherwise cannot reach another peer by
+  // any path at all, even one sharing its subnet — `KarstNetmapPeer.endpoint`
+  // exists for exactly this and is simply never populated). Order is
+  // significant and preserved end to end: explicit mappings first, then
+  // interface addresses, then reflexive — the same four-tier ranking
+  // `candidates()`'s own doc comment describes, which is a security
+  // property, not a preference (see that comment for why a weaker tier must
+  // never be reordered ahead of a stronger one). Like `sessions` above, this
+  // is an observation the server records, never an assertion it trusts
+  // outright.
+  repeated string candidates = 11;
+
+  // Additive compatibility declaration, the same pattern `relay_lifecycle_schema`/
+  // `gateway_ingress_schema` above use. 1 means this node both reports its
+  // own `candidates` above and understands a `KarstNetmapPeer.candidates`
+  // list pushed back to it. Zero/unknown gets neither: a server MUST NOT
+  // send `KarstNetmapPeer.candidates` to a node declaring less than 1 — an
+  // old node would silently treat it as an unknown field and discard it
+  // forever, never falling back to anything else, which is worse than not
+  // sending it.
+  uint32 candidate_distribution_schema = 12;
 }
 
 // KarstRouteObservation is one route's egress and ingress bytes/packets
@@ -314,6 +342,20 @@ message KarstNetmapPeer {
   // same protected control-plane envelope. Empty means discovery is disabled
   // for this peer; a node must keep using its relay path in that case.
   bytes disco_key = 9;
+
+  // This peer's own self-reported AVEN candidate list, redistributed from
+  // its `KarstNetmapRequest.candidates` — not a live guarantee, just this
+  // peer's last report, which may be stale or incomplete, exactly as blind
+  // as what a relayed `CallMeMaybe` already risks. Order carries the same
+  // tiering `candidates` does on the way in; this field does not re-rank
+  // it. Supersedes `endpoint` above, which no running server version
+  // actually populates (always empty on the wire today) — kept, not
+  // repurposed, for any client still reading it. Only sent to a node whose
+  // own `KarstNetmapRequest.candidate_distribution_schema` was at least 1
+  // on the request this response answers; see that field's own comment for
+  // why an older node must never receive this instead of silently ignoring
+  // it forever.
+  repeated string candidates = 11;
 }
 
 // KarstRelay is an authenticated Ponor relay registry entry. The node pins the

@@ -439,6 +439,14 @@ pub struct Client {
     /// gateway for anything, which produces a request byte-identical to one
     /// from before this field existed.
     route_observations: Vec<pb::KarstRouteObservation>,
+    /// This node's own current AVEN candidate list — `karst_control.proto`'s
+    /// `KarstNetmapRequest.candidates`, set fresh on every refresh tick the
+    /// same way `sessions` is (never a queued delta: the current list is
+    /// what matters, not what changed since the last report), by
+    /// [`set_candidates`](Self::set_candidates). Empty on a node with no
+    /// candidates to offer yet, which produces a request byte-identical to
+    /// one from before this field existed.
+    candidates: Vec<String>,
     /// The node's PHREATIC public keys, registered so peers can be given them.
     kem_public: Vec<u8>,
     /// Empty until the first registration completes.
@@ -579,6 +587,7 @@ impl Client {
             anchor_rtt: Vec::new(),
             ephemeral_anchor_rtt: Vec::new(),
             route_observations: Vec::new(),
+            candidates: Vec::new(),
             endpoint: section.server.clone(),
             pins,
             node_id: if registered {
@@ -1281,6 +1290,16 @@ impl Client {
         self.route_observations = observations;
     }
 
+    /// Replace this node's own current AVEN candidate list — `karst_control.proto`'s
+    /// `KarstNetmapRequest.candidates`. Set fresh from
+    /// [`disco::Disco::candidates_wire`](crate::disco::Disco::candidates_wire)
+    /// on every refresh tick, the same as `sessions` and unlike the queued
+    /// `anchor_rtt`/`route_observations` above: the current list is what
+    /// matters, never a delta to drain.
+    pub fn set_candidates(&mut self, candidates: Vec<String>) {
+        self.candidates = candidates;
+    }
+
     /// GitHub issue #170: the second of the three client-side spans — the
     /// direct counterpart of `karst-control`'s own `karst.netmap.push` span,
     /// covering the round trip and this node's local
@@ -1311,6 +1330,11 @@ impl Client {
                 // A source revision does not identify the built artifact.
                 artifact_id: String::new(),
             }),
+            candidates: self.candidates.clone(),
+            // This node both reports `candidates` above and adopts a
+            // redistributed `KarstNetmapPeer.candidates` list — see
+            // `disco.rs::reconcile`.
+            candidate_distribution_schema: 1,
         };
         let raw = self
             .request(conn, KIND_NETMAP, &req.encode_to_vec())
@@ -2228,6 +2252,7 @@ mod tests {
                 psk: psk.clone(),
                 psk_previous: Vec::new(),
                 disco_key: vec![0xCD; 32],
+                candidates: Vec::new(),
             }],
             ..pb::KarstNetmapResponse::default()
         };

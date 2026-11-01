@@ -275,6 +275,16 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		}
 		return nil, fmt.Errorf("record home relay: %w", err)
 	}
+	// `karst_control.proto`'s `KarstNetmapRequest.candidates` — this node's
+	// own current AVEN candidate list, recorded the same way `home_relay`
+	// just above is, for the same reason: redistributed to this node's
+	// peers below as `KarstNetmapPeer.candidates`, closing the gap where a
+	// `CallMeMaybe` (and so every candidate it would have carried,
+	// including a peer's own local/LAN address) never ships at all once
+	// the relay itself is unreachable.
+	if err := h.Nodes.SetCandidates(self, req.GetCandidates()); err != nil {
+		return nil, fmt.Errorf("record candidates: %w", err)
+	}
 	accountID, err := h.Peers.GetAccountIDForPeerKey(ctx, self)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, "node is not registered")
@@ -501,6 +511,13 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// above computed it.
 	h.recordRouteObservations(ctx, self, accountID, req.GetRouteObservations(), resp.Routes)
 
+	// `karst_control.proto`'s own comment on `KarstNetmapPeer.candidates`:
+	// a server MUST NOT send it to a node declaring less than schema 1,
+	// which would otherwise silently discard it as an unknown field
+	// forever rather than falling back to anything else. Computed once —
+	// it is this request's own declaration, not a per-peer fact.
+	sendCandidates := req.GetCandidateDistributionSchema() >= 1
+
 	for _, p := range peers {
 		if p.Key == self {
 			continue
@@ -523,6 +540,16 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			// Where to reach this peer when no direct path exists. Empty for a
 			// peer holding no relay, which is a peer reachable only directly.
 			HomeRelay: id.HomeRelay,
+		}
+		if sendCandidates {
+			// This peer's own self-reported candidate list, redistributed —
+			// see Identity.Candidates' own doc comment. Nil when that peer
+			// has reported none, which produces an entry identical to one
+			// from before this field existed. Covered by PeerDigest below
+			// since 2026-10-31, so a peer whose only change is its
+			// candidate list is now pushed via the delta mechanism too, not
+			// only on a full fetch.
+			entry.Candidates = id.CandidateList()
 		}
 
 		// The PSK is derived per (self, peer) pair and is the same value both
@@ -840,6 +867,17 @@ func PeerDigest(p *proto.KarstNetmapPeer, epoch uint32) uint64 {
 	for _, ip := range p.GetAllowedIps() {
 		writeField(h, []byte(ip))
 	}
+	// Added 2026-10-31 (spec/aven-v1.md §7.3.1): this peer's own
+	// self-reported AVEN candidate list, routable content exactly like
+	// home_relay just above — omitting it previously meant a peer whose
+	// only change was its candidate list never got a delta push, which is
+	// precisely the gap this closes. A peer reporting none contributes zero
+	// bytes here, the same zero-length encoding an empty allowed_ips would,
+	// so every pre-existing digest for a peer with no candidates is
+	// unchanged.
+	for _, c := range p.GetCandidates() {
+		writeField(h, []byte(c))
+	}
 	return binary.BigEndian.Uint64(h.Sum(nil)[:8])
 }
 
@@ -1132,6 +1170,14 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 		writeField(h, p.GetHomeRelay())
 		for _, ip := range p.GetAllowedIps() {
 			writeField(h, []byte(ip))
+		}
+		// Added 2026-10-31 (spec/aven-v1.md §7.3.1, spec/karst-control-v1.md
+		// §5.5's matching compatibility note): a peer's candidates are
+		// routable content exactly like home_relay above — a server that
+		// redistributed a new candidate list without moving the version
+		// could tell every peer "unchanged" and never deliver it.
+		for _, c := range p.GetCandidates() {
+			writeField(h, []byte(c))
 		}
 	}
 

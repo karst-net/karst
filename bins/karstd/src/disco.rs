@@ -492,6 +492,23 @@ impl Disco {
             .collect()
     }
 
+    /// This node's own current AVEN candidate list, as `karst_control.proto`'s
+    /// `KarstNetmapRequest.candidates` wants it — plain `ip:port` strings, in
+    /// the exact ranked order [`Disco::candidates`] already computes for a
+    /// relayed `CallMeMaybe`. A second, relay-independent transport for the
+    /// same list, never a different one: see that field's own doc comment
+    /// for why a relay-only path left every candidate unreachable whenever
+    /// the relay itself was (found diagnosing a real double-NAT deployment
+    /// where two peers shared a LAN and still could not reach each other
+    /// directly, because neither's `CallMeMaybe` could ship).
+    #[must_use]
+    pub fn candidates_wire(&self) -> Vec<String> {
+        self.candidates()
+            .iter()
+            .map(|endpoint| endpoint.0.to_string())
+            .collect()
+    }
+
     /// Push the current candidate list to every peer's scheduler.
     ///
     /// `set_local_candidates` schedules an advertisement only when the list
@@ -641,10 +658,25 @@ impl Disco {
                 );
                 continue;
             }
-            if let Some(endpoint) = peer.endpoint {
+            if peer.endpoint.is_some() || !peer.candidates.is_empty() {
                 let index = PeerIndex(self.peers.len() - 1);
-                if let Some(engine) = self.engine_mut(index) {
-                    engine.add_peer_candidate(endpoint, now_ms, true);
+                if let Some(endpoint) = peer.endpoint {
+                    if let Some(engine) = self.engine_mut(index) {
+                        engine.add_peer_candidate(endpoint, now_ms, true);
+                    }
+                }
+                // The server's redistributed copy of this peer's own
+                // `candidates()` report (`karst_control.proto`'s
+                // `KarstNetmapPeer.candidates`) — see `config::Peer.candidates`'s
+                // own doc comment. Same trust and scheduling as the configured
+                // `endpoint` just above: this node already authenticated this
+                // peer's control-plane identity to reach this point, and the
+                // address itself is still unconfirmed either way until a `Pong`
+                // answers it.
+                for &candidate in &peer.candidates {
+                    if let Some(engine) = self.engine_mut(index) {
+                        engine.add_peer_candidate(candidate, now_ms, true);
+                    }
                 }
             }
         }

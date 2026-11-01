@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 
@@ -762,6 +763,126 @@ func requestNetmapReporting(t *testing.T, f *netFixture, relay []byte) (*proto.K
 		t.Fatalf("unmarshal: %v", err)
 	}
 	return resp, nil
+}
+
+func requestNetmapWithCandidates(t *testing.T, f *netFixture, candidates []string, schema uint32) *proto.KarstNetmapResponse {
+	t.Helper()
+	payload, err := pb.Marshal(&proto.KarstNetmapRequest{
+		Candidates:                  candidates,
+		CandidateDistributionSchema: schema,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	raw, err := f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
+	if err != nil {
+		t.Fatalf("netmap: %v", err)
+	}
+	resp := &proto.KarstNetmapResponse{}
+	if err := pb.Unmarshal(raw, resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return resp
+}
+
+// The candidates a node reports about itself are kept, and cleared when it
+// withdraws — the same shape TestReportedHomeRelayIsRecorded verifies for
+// home_relay.
+func TestReportedCandidatesAreRecorded(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+	candidates := []string{"192.0.2.1:51820", "198.51.100.1:51820"}
+
+	requestNetmapWithCandidates(t, f, candidates, 1)
+	rec, err := f.handler.Nodes.Get(f.selfH)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := rec.CandidateList(); !slices.Equal(got, candidates) {
+		t.Fatalf("stored %v, want %v", got, candidates)
+	}
+
+	// A node with nothing left to offer reports none, and the record must
+	// follow it down — the same reasoning TestReportedHomeRelayIsRecorded
+	// gives for a withdrawn relay.
+	requestNetmapWithCandidates(t, f, nil, 1)
+	rec, err = f.handler.Nodes.Get(f.selfH)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := rec.CandidateList(); len(got) != 0 {
+		t.Fatalf("a withdrawn candidate list is still stored as %v", got)
+	}
+}
+
+// And it reaches the peers, which is the only reason to store it — the same
+// shape TestHomeRelayReachesPeers verifies for home_relay. The requester
+// must declare schema 1 to receive it at all; see
+// TestCandidatesAreWithheldFromANodeDeclaringNoSchema for the gate itself.
+func TestCandidatesReachPeers(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+	candidates := []string{"192.0.2.1:51820"}
+	if err := f.handler.Nodes.SetCandidates(f.peerH[0], candidates); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	resp := requestNetmapWithCandidates(t, f, nil, 1)
+	var seen bool
+	for _, p := range resp.GetPeers() {
+		if string(p.GetNodeId()) != f.peerH[0] {
+			if len(p.GetCandidates()) != 0 {
+				t.Fatalf("a peer with no candidates was given some: %v", p.GetCandidates())
+			}
+			continue
+		}
+		seen = true
+		if !slices.Equal(p.GetCandidates(), candidates) {
+			t.Fatalf("peer carries %v, want %v", p.GetCandidates(), candidates)
+		}
+	}
+	if !seen {
+		t.Fatal("the peer that reported candidates was not in the netmap")
+	}
+}
+
+// karst_control.proto's own doc comment on KarstNetmapPeer.candidates: a
+// server MUST NOT send it to a node declaring less than schema 1, which
+// would otherwise be mistaken for an unknown field and discarded forever
+// rather than falling back to anything else.
+func TestCandidatesAreWithheldFromANodeDeclaringNoSchema(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+	if err := f.handler.Nodes.SetCandidates(f.peerH[0], []string{"192.0.2.1:51820"}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	resp := requestNetmapWithCandidates(t, f, nil, 0)
+	for _, p := range resp.GetPeers() {
+		if len(p.GetCandidates()) != 0 {
+			t.Fatalf("candidates were sent to a node declaring schema 0: %v", p.GetCandidates())
+		}
+	}
+}
+
+// Deliberate limitation, documented at PeerDigest and where Handle populates
+// Candidates: that function is pinned across both implementations by
+// spec/vectors/karst-control-v1.json, so Candidates is not covered by it.
+// A peer whose only change is its candidate list is therefore not picked up
+// by the delta mechanism on its own — only a full fetch (known_version: 0)
+// delivers it. This test exists to make that an intentional, observed
+// behavior rather than a silent regression if PeerDigest is ever extended.
+func TestCandidatesAloneDoNotTriggerADeltaPush(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+	full := requestNetmapWithCandidates(t, f, nil, 1)
+	holds := digestsOf(full)
+
+	target := string(full.GetPeers()[0].GetNodeId())
+	if err := f.handler.Nodes.SetCandidates(target, []string{"192.0.2.1:51820"}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	d := requestDelta(t, f, holds)
+	if len(d.GetPeers()) != 0 {
+		t.Fatalf("a candidate-only change produced a delta push of %d peers, want 0", len(d.GetPeers()))
+	}
 }
 
 // The report a node makes about itself is kept, and cleared when it withdraws.

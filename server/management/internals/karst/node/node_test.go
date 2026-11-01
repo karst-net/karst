@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -399,6 +400,105 @@ func TestHomeRelayForUnknownHandleIsQuiet(t *testing.T) {
 	s := newStore(t)
 	if err := s.SetHomeRelay("nobody", bytes.Repeat([]byte{1}, 32)); err != nil {
 		t.Fatalf("unknown handle: %v", err)
+	}
+}
+
+func TestCandidatesAreStoredAndReplaced(t *testing.T) {
+	s := newStore(t)
+	k := newIdentity(t)
+	h, err := s.Register(k.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	first := []string{"192.0.2.1:51820", "198.51.100.1:51820"}
+	if err := s.SetCandidates(h, first); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	rec, err := s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := rec.CandidateList(); !slices.Equal(got, first) {
+		t.Fatalf("stored %v, want %v", got, first)
+	}
+
+	second := []string{"203.0.113.1:51820"}
+	if err := s.SetCandidates(h, second); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	rec, err = s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := rec.CandidateList(); !slices.Equal(got, second) {
+		t.Fatalf("a move left %v, want %v", got, second)
+	}
+
+	// A node with no candidates to offer clears the list rather than
+	// leaving a stale one every peer would keep being told to try.
+	if err := s.SetCandidates(h, nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	rec, err = s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := rec.CandidateList(); len(got) != 0 {
+		t.Fatalf("a withdrawal left %v", got)
+	}
+}
+
+// Reporting the same candidate list again must not touch the row, the same
+// reasoning TestRepeatingTheSameHomeRelayDoesNotWrite gives: every node
+// reports this on every poll, whether or not it actually changed.
+func TestRepeatingTheSameCandidatesDoesNotWrite(t *testing.T) {
+	s := newStore(t)
+	k := newIdentity(t)
+	h, err := s.Register(k.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	candidates := []string{"192.0.2.1:51820"}
+	if err := s.SetCandidates(h, candidates); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	first, err := s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	if err := s.SetCandidates(h, candidates); err != nil {
+		t.Fatalf("set again: %v", err)
+	}
+	again, err := s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !again.UpdatedAt.Equal(first.UpdatedAt) {
+		t.Fatalf("an unchanged report rewrote the row: %v then %v", first.UpdatedAt, again.UpdatedAt)
+	}
+}
+
+// An unregistered handle is not an error, for the same reason
+// TestHomeRelayForUnknownHandleIsQuiet's is not.
+func TestCandidatesForUnknownHandleIsQuiet(t *testing.T) {
+	s := newStore(t)
+	if err := s.SetCandidates("nobody", []string{"192.0.2.1:51820"}); err != nil {
+		t.Fatalf("unknown handle: %v", err)
+	}
+}
+
+// A fresh row's empty-string default, and anything else that fails to
+// parse, decode to no candidates rather than an error — the same tolerance
+// a malformed peer-reported entry gets everywhere else in this feature.
+func TestMalformedCandidatesDecodeToNone(t *testing.T) {
+	for _, value := range []string{"", "not json", "{}"} {
+		id := node.Identity{Candidates: value}
+		if got := id.CandidateList(); len(got) != 0 {
+			t.Fatalf("Candidates=%q decoded to %v, want none", value, got)
+		}
 	}
 }
 

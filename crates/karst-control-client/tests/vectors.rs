@@ -202,6 +202,8 @@ struct VersionPeer {
     psk: String,
     #[serde(default)]
     home_relay: String,
+    #[serde(default)]
+    candidates: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -228,6 +230,8 @@ struct DigestCase {
     #[serde(default)]
     home_relay: String,
     allowed_ips: Option<Vec<String>>,
+    #[serde(default)]
+    candidates: Vec<String>,
     digest: u64,
 }
 
@@ -484,6 +488,7 @@ fn peer_digest_matches() {
             endpoint: &c.endpoint,
             home_relay: &unhex(&c.home_relay),
             allowed_ips: &ips,
+            candidates: &c.candidates,
         };
         assert_eq!(
             peer_digest(&entry, c.epoch),
@@ -664,6 +669,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
             endpoint: &p.endpoint,
             home_relay: &held.homes[i],
             allowed_ips: &held.ips[i],
+            candidates: &p.candidates,
         })
         .collect();
     let inbound_nodes = rule_nodes(c.packet_filter.as_deref().unwrap_or_default());

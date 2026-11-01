@@ -614,6 +614,12 @@ pub struct Peer {
     pub psk_previous: Option<Psk>,
     /// AVEN path-discovery key. Absent means keep the relay path.
     pub disco_key: Option<DiscoKey>,
+    /// This peer's own self-reported AVEN candidate list, redistributed by
+    /// the server from that peer's `KarstNetmapRequest.candidates` — see
+    /// `karst_control.proto`'s doc comment on `KarstNetmapPeer.candidates`.
+    /// As given on the wire, unparsed; `config::Peer::from_netmap` parses
+    /// each entry and drops what does not parse.
+    pub candidates: Vec<String>,
 }
 
 impl fmt::Debug for Peer {
@@ -654,6 +660,7 @@ impl Peer {
             psk,
             psk_previous,
             disco_key,
+            candidates: p.candidates,
         })
     }
 
@@ -676,6 +683,7 @@ impl Peer {
                 .as_ref()
                 .map(|k| k.0.to_vec())
                 .unwrap_or_default(),
+            candidates: self.candidates.clone(),
         }
     }
 
@@ -690,6 +698,7 @@ impl Peer {
                 endpoint: &self.endpoint,
                 home_relay: &self.home_relay,
                 allowed_ips: &self.allowed_ips,
+                candidates: &self.candidates,
             },
             epoch,
         )
@@ -1071,6 +1080,7 @@ impl Netmap {
                 endpoint: &p.endpoint,
                 home_relay: &p.home_relay,
                 allowed_ips: &p.allowed_ips,
+                candidates: &p.candidates,
             })
             .collect();
         let in_ports = port_pairs_of(&self.packet_filter);
@@ -1320,6 +1330,7 @@ mod tests {
             psk: vec![0x33; PSK_LEN],
             psk_previous: vec![0x44; PSK_LEN],
             disco_key: vec![0x55; PSK_LEN],
+            candidates: Vec::new(),
         }
     }
 
