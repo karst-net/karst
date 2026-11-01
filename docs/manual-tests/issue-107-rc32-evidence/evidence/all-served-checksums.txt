@@ -1,0 +1,9 @@
+karst-client-linux-0.1.0-0.rc.32.aarch64.rpm: OK
+karst-client-linux-0.1.0-0.rc.32.x86_64.rpm: OK
+karst-client-linux_0.1.0-0.rc.32_amd64.deb: OK
+karst-client-linux_0.1.0-0.rc.32_arm64.deb: OK
+karst-client-macos-arm64.pkg: OK
+karst-client-macos-x86_64.pkg: OK
+karst-control_0.1.0-0.rc.32_amd64.deb: OK
+karst-relay_0.1.0-0.rc.32_amd64.deb: OK
+karst-web.tar.gz: OK

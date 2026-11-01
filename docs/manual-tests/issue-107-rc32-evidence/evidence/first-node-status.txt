@@ -1,0 +1,55 @@
+control_synchronized = true
+control_peers = 0
+interface = "karst0"
+mtu = 1280
+listen = "0.0.0.0:51820"
+uptime_seconds = 1
+addresses = ["100.102.243.93/16", "fd5b:3441:7206:6432:b3e2:8094:52bc:953c/64"]
+psk_epoch = 20758
+ipv6 = "unreachable (node.listen is IPv4)"
+ipv6_candidates_refused = 0
+
+[portmap]
+portmap_enabled = true
+portmap_state = "failed"
+portmap_gateway = "192.168.68.1:5351"
+portmap_protocol = "natpmp"
+portmap_internal = "192.168.68.101:51820"
+portmap_external = "-"
+portmap_reason = "the gateway reports an unusable external address (192.168.1.243)"
+
+[stats]
+tx_packets = 0
+rx_packets = 0
+unroutable = 1
+source_violations = 0
+mac_failures = 0
+tx_dropped_no_session = 0
+malformed = 0
+decrypt_failures = 0
+acl_denied_in = 0
+acl_denied_out = 0
+acl_unclassifiable = 0
+ssh_denied = 0
+file_transfer_denied = 0
+file_transfer_completed = 0
+file_transfer_failed = 0
+relay_dropped = 0
+
+[policy]
+enforcing = true
+ingress_rules = 1
+egress_rules = 1
+skipped_peers = 0
+
+[ssh_policy]
+enforcing = false
+source = "none (no ssh block in policy)"
+
+[routing]
+offers = 0
+selected_exit = None
+exit_route_active = false
+gateway_forwarding = true
+gateway_active = false
+gateway_error = None

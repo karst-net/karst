@@ -1,0 +1,5 @@
+/etc/karst/relay.toml: ok
+  listen        0.0.0.0:35444
+  roster        0 nodes, 0 mesh peers
+                (no nodes admitted; every connection will be rejected)
+  queue depth   32

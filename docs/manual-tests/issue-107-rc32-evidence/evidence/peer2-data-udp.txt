@@ -1,0 +1,9 @@
+tcpdump: data link type LINUX_SLL2
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on any, link-type LINUX_SLL2 (Linux cooked v2), snapshot length 262144 bytes
+19:34:56.035244 k107peer In  IP 10.107.0.1.51820 > 10.107.0.2.51820: UDP, length 152
+19:34:57.094451 k107peer In  IP 10.107.0.1.51820 > 10.107.0.2.51820: UDP, length 152
+
+2 packets captured
+2 packets received by filter
+0 packets dropped by kernel

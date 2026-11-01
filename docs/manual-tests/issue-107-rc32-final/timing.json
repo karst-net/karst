@@ -1,0 +1,12 @@
+{
+  "release": "v0.1.0-rc.32",
+  "start_utc": "2026-11-01T20:12:38.071156+00:00",
+  "start_monotonic": 4436.637989028,
+  "runner": "Codex autonomous via SSH",
+  "prerequisites": "Ubuntu 24.04.3 amd64, sudo, curl, GnuPG, Docker, openssl; host cleaned of Karst services before timing",
+  "first_node_utc": "2026-11-01T20:13:00.433402+00:00",
+  "first_node_elapsed_seconds": 22.362,
+  "within_30_minutes": true,
+  "first_peer_traffic_utc": "2026-11-01T20:13:12.379363+00:00",
+  "first_peer_traffic_elapsed_seconds": 34.308
+}

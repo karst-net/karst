@@ -1,0 +1,17 @@
+{
+  "release": "v0.1.0-rc.32",
+  "verified_at": "2026-11-01T18:55:34.708Z",
+  "verifier": "OpenPGP.js 6.3.2",
+  "public_key_source": "https://raw.githubusercontent.com/karst-net/karst/v0.1.0-rc.32/docs/release-key.asc",
+  "primary_fingerprint": "dd5c7054dbfae8d6970495a30cfe3d3465673971",
+  "subkey_fingerprints": [
+    "95e84d07245ee5cd73f9ea0df07fbcfa8e79b334"
+  ],
+  "signatures": [
+    {
+      "key_id": "f07fbcfa8e79b334",
+      "verified": true
+    }
+  ],
+  "scope": "Detached signature of downloaded SHA256SUMS; does not establish independent out-of-band trust in the release key"
+}

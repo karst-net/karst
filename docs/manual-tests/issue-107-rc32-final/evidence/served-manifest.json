@@ -1,0 +1,10 @@
+{
+  "assets": [
+    {"platform":"linux","arch":"arm64","format":"rpm","name":"karst-client-linux-0.1.0-0.rc.32.aarch64.rpm","url":"/releases/karst-client-linux-0.1.0-0.rc.32.aarch64.rpm","sha256":"97e7b5deb50fdae72b9922e80dfa3a74a65411f1f6e91e8f94f2d18ef5744812"},
+    {"platform":"linux","arch":"amd64","format":"rpm","name":"karst-client-linux-0.1.0-0.rc.32.x86_64.rpm","url":"/releases/karst-client-linux-0.1.0-0.rc.32.x86_64.rpm","sha256":"b464ccd5f9a34e77ee6bc4f199636b265684d7225d26290dae5f934a027a5b24"},
+    {"platform":"linux","arch":"amd64","format":"deb","name":"karst-client-linux_0.1.0-0.rc.32_amd64.deb","url":"/releases/karst-client-linux_0.1.0-0.rc.32_amd64.deb","sha256":"33d93ea3c7ebe858cefcf21658e569b0f444fb3a2aa90b20469055d0fff7ff6b"},
+    {"platform":"linux","arch":"arm64","format":"deb","name":"karst-client-linux_0.1.0-0.rc.32_arm64.deb","url":"/releases/karst-client-linux_0.1.0-0.rc.32_arm64.deb","sha256":"10d845fed437e8dad94e33075809b0986266f0c23b01722a17ef91ef3bc0c457"},
+    {"platform":"macos","arch":"arm64","format":"pkg","name":"karst-client-macos-arm64.pkg","url":"/releases/karst-client-macos-arm64.pkg","sha256":"3f9b12230301f3f77d1bba464c7cb70c075f3fe6df3d2214bce09d9ee7cab7ae"},
+    {"platform":"macos","arch":"amd64","format":"pkg","name":"karst-client-macos-x86_64.pkg","url":"/releases/karst-client-macos-x86_64.pkg","sha256":"aaf8882a8cc6877d5192e3a024c85b281bfc98f43e0d26b9e71f7687641d551f"}
+  ]
+}

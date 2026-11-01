@@ -1,0 +1,69 @@
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following additional packages will be installed:
+  pkexec zenity
+The following NEW packages will be installed:
+  karst-client-linux karst-control karst-relay pkexec zenity
+0 upgraded, 5 newly installed, 0 to remove and 107 not upgraded.
+Need to get 0 B/70.2 MB of archives.
+After this operation, 171 MB of additional disk space will be used.
+Get:1 /tmp/karst-107-rc32-run3/assets/karst-client-linux_0.1.0-0.rc.32_amd64.deb karst-client-linux amd64 0.1.0-0.rc.32 [8582 kB]
+Get:2 /tmp/karst-107-rc32-run3/assets/karst-control_0.1.0-0.rc.32_amd64.deb karst-control amd64 0.1.0-0.rc.32 [58.5 MB]
+Get:3 /tmp/karst-107-rc32-run3/assets/karst-relay_0.1.0-0.rc.32_amd64.deb karst-relay amd64 0.1.0-0.rc.32 [3077 kB]
+Selecting previously unselected package zenity.
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 254264 files and directories currently installed.)
+Preparing to unpack .../zenity_4.0.1-1build3_amd64.deb ...
+Unpacking zenity (4.0.1-1build3) ...
+Selecting previously unselected package pkexec.
+Preparing to unpack .../pkexec_124-2ubuntu1.24.04.4_amd64.deb ...
+Unpacking pkexec (124-2ubuntu1.24.04.4) ...
+Selecting previously unselected package karst-client-linux.
+Preparing to unpack .../karst-client-linux_0.1.0-0.rc.32_amd64.deb ...
+Unpacking karst-client-linux (0.1.0-0.rc.32) ...
+Selecting previously unselected package karst-control.
+Preparing to unpack .../karst-control_0.1.0-0.rc.32_amd64.deb ...
+Unpacking karst-control (0.1.0-0.rc.32) ...
+Selecting previously unselected package karst-relay.
+Preparing to unpack .../karst-relay_0.1.0-0.rc.32_amd64.deb ...
+Unpacking karst-relay (0.1.0-0.rc.32) ...
+Setting up karst-control (0.1.0-0.rc.32) ...
+Setting up pkexec (124-2ubuntu1.24.04.4) ...
+Setting up zenity (4.0.1-1build3) ...
+Setting up karst-client-linux (0.1.0-0.rc.32) ...
+Setting up karst-relay (0.1.0-0.rc.32) ...
+Processing triggers for man-db (2.12.0-4build2) ...
+Processing triggers for hicolor-icon-theme (0.17-2) ...
+
+Running kernel seems to be up-to-date.
+
+The processor microcode seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
