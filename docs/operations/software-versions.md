@@ -20,6 +20,10 @@ original receipt time intact. Upgrade the agent and allow it to synchronize
 with control to obtain a new observation. Invalid software fields are ignored
 without preventing netmap synchronization or refreshing the old receipt time.
 
+The agent hashes its running executable in the background so observing software
+cannot delay control synchronization or local status requests. Artifact identity
+is unknown until that observation completes and appears on a later report.
+
 Release, revision, and artifact identity are independent fields. The shared
 agent reports release and source revision. On Linux it also reports
 `sha256:<digest>` of the running process executable, read through
