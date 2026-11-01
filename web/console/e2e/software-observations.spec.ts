@@ -7,6 +7,12 @@ const observed = "2026-10-31T18:00:00Z";
 
 test("control and retained deployment observations age while settings stays open", async ({ page }) => {
   await page.clock.install({ time: new Date(observed) });
+  // The empty-state suite clears the shared mock's users concurrently. Keep
+  // this admin-only view's signed-in identity local to this browser test.
+  await page.route("**/api/users/current", route => route.fulfill({ json: {
+    id: "software-observer", name: "Software observer", email: "observer@example.test",
+    role: "admin", status: "active", is_current: true, is_blocked: false, auto_groups: [],
+  } }));
   let controlObserved = observed;
   let requests = 0;
   await page.route("**/api/karst/v1/versions", route => {
