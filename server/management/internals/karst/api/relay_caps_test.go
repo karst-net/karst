@@ -81,14 +81,18 @@ func TestRelayCapCustomerEndpoint(t *testing.T) {
 }
 
 func TestRelayCapCustomerEndpointRejectsUnauthorizedAndBadSchedule(t *testing.T) {
+	// Keep the request valid even after a calendar rollover so these cases
+	// exercise authorization and schedule rejection, not past-period validation.
+	period := currentRelayCapMonth(time.Now().UTC()).AddDate(0, 1, 0).Format("2006-01")
+	body := `{"period":"` + period + `","overage_limit_minor":1,"acknowledge_interruption":true}`
 	for _, tc := range []struct {
 		name     string
 		role     types.UserRole
 		writeErr error
 		body     string
 	}{
-		{name: "member", role: types.UserRoleUser, body: `{"period":"2026-10","overage_limit_minor":1,"acknowledge_interruption":true}`},
-		{name: "unassigned month", role: types.UserRoleOwner, writeErr: billing.ErrScheduleUnassigned, body: `{"period":"2026-10","overage_limit_minor":1,"acknowledge_interruption":true}`},
+		{name: "member", role: types.UserRoleUser, body: body},
+		{name: "unassigned month", role: types.UserRoleOwner, writeErr: billing.ErrScheduleUnassigned, body: body},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &relayCapBillingStub{writeErr: tc.writeErr}

@@ -24,7 +24,8 @@ COPY console ./console
 RUN corepack enable \
     && corepack pnpm install --frozen-lockfile
 ARG KARST_VERSION=development
-ENV KARST_VERSION=${KARST_VERSION}
+ARG KARST_REVISION=unknown
+ENV KARST_VERSION=${KARST_VERSION} KARST_REVISION=${KARST_REVISION}
 RUN corepack pnpm --filter @karst-net/console build
 
 FROM nginx:1.28-alpine

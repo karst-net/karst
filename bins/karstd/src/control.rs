@@ -1327,8 +1327,9 @@ impl Client {
             software: Some(pb::KarstSoftwareIdentity {
                 version: crate::VERSION.to_owned(),
                 revision: crate::REVISION.to_owned(),
-                // A source revision does not identify the built artifact.
-                artifact_id: String::new(),
+                artifact_id: crate::build_identity::artifact_id()
+                    .unwrap_or_default()
+                    .to_owned(),
             }),
             candidates: self.candidates.clone(),
             // This node both reports `candidates` above and adopts a

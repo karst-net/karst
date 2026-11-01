@@ -10,7 +10,7 @@ function git(args: string[]) {
   try { return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
   catch { return "unknown"; }
 }
-const revision = process.env.GITHUB_SHA || git(["rev-parse", "HEAD"]);
+const revision = process.env.KARST_REVISION || process.env.GITHUB_SHA || git(["rev-parse", "HEAD"]);
 const version = process.env.KARST_VERSION || (process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : undefined) || git(["describe", "--tags", "--always", "--dirty"]);
 
 export default defineConfig({

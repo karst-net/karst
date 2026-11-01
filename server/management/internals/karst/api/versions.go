@@ -17,11 +17,13 @@ import (
 )
 
 type componentVersion struct {
-	Name    string   `json:"name"`
-	Image   string   `json:"image"`
-	ImageID string   `json:"image_id"`
-	Tags    []string `json:"tags"`
-	State   string   `json:"state"`
+	Version  string   `json:"version,omitempty"`
+	Revision string   `json:"revision,omitempty"`
+	Name     string   `json:"name"`
+	Image    string   `json:"image"`
+	ImageID  string   `json:"image_id"`
+	Tags     []string `json:"tags"`
+	State    string   `json:"state"`
 }
 type deploymentVersions struct {
 	ObservedAt time.Time          `json:"observed_at"`

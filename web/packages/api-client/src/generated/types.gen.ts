@@ -1279,6 +1279,10 @@ export type SoftwareVersionsResponses = {
         control: {
             version: string;
             revision: string;
+            /**
+             * Digest of the responding process executable, when observed. Independent of container image identity; omitted if unavailable.
+             */
+            artifact_id?: string;
         };
         deployment_status: 'available' | 'not_configured' | 'unavailable';
         deployment?: {
@@ -1287,6 +1291,14 @@ export type SoftwareVersionsResponses = {
                 name: string;
                 image: string;
                 image_id: string;
+                /**
+                 * Release label read from the observed immutable image, not inferred from its configured tag.
+                 */
+                version?: string | null;
+                /**
+                 * Source revision label read from the observed immutable image.
+                 */
+                revision?: string | null;
                 tags: Array<string>;
                 state: string;
             }>;
