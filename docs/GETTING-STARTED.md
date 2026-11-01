@@ -917,6 +917,114 @@ Checks: `just web-check` (`tsc --noEmit` plus lint, both workspaces),
 `corepack pnpm --filter @karst-net/console test`, and Playwright end-to-end
 suites in each app.
 
+### 7.3 Bringing your own root CA for the admin UI
+
+§5's Compose deployment gets this for free: Caddy runs its own internal CA
+and [`deploy/compose/prod/README.md`](../deploy/compose/prod/README.md)
+covers trusting it. Path C's bare-metal reverse proxy has no such thing, and
+a public CA is often the wrong tool here anyway: it needs a publicly
+resolvable name and a way to prove control of it, neither of which fits a
+console reachable only from inside an org's network. Unlike the relay
+(§6.1), this certificate genuinely has to satisfy a real browser's TLS and
+cookie security, so a single ad hoc self-signed leaf works but means every
+renewal asks every device to re-trust a new certificate. An admin who would
+rather mint one root, trusted once on every device that reaches this
+console, does it the same way any private CA does: issue one root, then
+sign short-lived server leaves under it.
+
+The root is a certificate that signs other certificates — the opposite of
+§6.1's relay leaf, which is deliberately barred from doing that:
+
+```sh walkthrough=C step=console-ca-root
+sudo mkdir -p /etc/karst/tls
+sudo openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
+    -keyout /etc/karst/tls/console-ca.key -out /etc/karst/tls/console-ca.crt \
+    -subj "/CN=Karst Admin Root CA" \
+    -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign"
+sudo chmod 600 /etc/karst/tls/console-ca.key
+```
+
+`pathlen:0` means this root can sign server leaves but not further
+intermediate CAs — there is no intermediate tier here, so nothing should be
+able to mint one. `keyUsage` carries only `keyCertSign` and `cRLSign`,
+never `digitalSignature`: this certificate's job is signing other
+certificates, not terminating a TLS handshake, and a CA key presenting
+itself as a server would let a single compromised leaf step impersonate the
+root's own signing identity.
+
+Issue the server leaf the reverse proxy actually presents, for the hostname
+the browser will visit — `-copy_extensions copy` carries the CSR's own
+`basicConstraints`/`keyUsage`/`subjectAltName` through to the signed
+certificate rather than defaulting to the CA behavior §6.1 warns about
+above:
+
+```sh walkthrough=C step=console-ca-leaf
+sudo openssl req -newkey rsa:2048 -sha256 -nodes \
+    -keyout /etc/karst/tls/console.key -out /etc/karst/tls/console.csr \
+    -subj "/CN=karst.example.com" \
+    -addext "subjectAltName=DNS:karst.example.com" \
+    -addext "basicConstraints=critical,CA:FALSE" \
+    -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+    -addext "extendedKeyUsage=serverAuth"
+sudo openssl x509 -req -in /etc/karst/tls/console.csr \
+    -CA /etc/karst/tls/console-ca.crt -CAkey /etc/karst/tls/console-ca.key \
+    -CAcreateserial -days 397 -sha256 -copy_extensions copy \
+    -out /etc/karst/tls/console.crt
+sudo chmod 600 /etc/karst/tls/console.key
+```
+
+Confirm the chain validates and the leaf, not the root, is what terminates
+TLS:
+
+```sh walkthrough=C step=console-ca-verify
+openssl verify -CAfile /etc/karst/tls/console-ca.crt /etc/karst/tls/console.crt
+openssl x509 -in /etc/karst/tls/console.crt -noout -text \
+    | grep -A1 "X509v3 Basic Constraints"
+# console.crt: OK
+# X509v3 Basic Constraints: critical
+#     CA:FALSE
+```
+
+Point the reverse proxy at the leaf — the same `nginx` block from §7 above,
+with TLS added:
+
+```nginx walkthrough=none reason="configuration for a web server no path deploys"
+listen 443 ssl;
+ssl_certificate     /etc/karst/tls/console.crt;
+ssl_certificate_key /etc/karst/tls/console.key;
+location /api/ { proxy_pass http://127.0.0.1:33073; }
+location /     { root /var/www/karst-console; try_files $uri /index.html; }
+```
+
+Trust the **root**, not the leaf, on every device that will open this
+console — the root signs every renewal without asking those devices to
+trust anything new. Copy only `console-ca.crt` (never `console-ca.key`) to
+each device over a channel you trust, confirm its SHA-256 fingerprint
+matches what the server prints, and import it as a trusted root CA:
+
+```sh walkthrough=none reason="runs on the admin's own device, not the server under test"
+openssl x509 -in console-ca.crt -noout -subject -dates -fingerprint -sha256
+
+# macOS: Keychain Access → System keychain → import, then set SSL trust to
+# Always Trust, or:
+sudo security add-trusted-cert -d -r trustRoot -p ssl \
+    -k /Library/Keychains/System.keychain console-ca.crt
+
+# Windows: import into Trusted Root Certification Authorities.
+
+# Linux:
+sudo cp console-ca.crt /usr/local/share/ca-certificates/karst-admin-root.crt
+sudo update-ca-certificates
+```
+
+Browsers with their own trust store (Firefox) need the same import there
+too, and need a restart to pick it up. This is the identical step
+`deploy/compose/prod/README.md` walks through for Caddy's auto-generated
+CA — only the source file differs. Do not distribute `console-ca.key`; back
+it up with the rest of the deployment's state, since losing it means every
+device re-trusts a new root on the next renewal.
+
 After the first connection, continue with the
 [operations manual](OPERATIONS.md) for routine administration, diagnostics,
 backup, restore, failover, and upgrades.
