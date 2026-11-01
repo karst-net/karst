@@ -6,6 +6,7 @@ on:
   pull_request:
   schedule:
     - cron: '0 3 * * *'   # nightly full checks
+    - cron: '0 4 1 * *'   # monthly: fuzz-nightly-pin-check (#493)
   # On demand, against any ref. The walkthrough jobs for paths B and C do not
   # run on pull requests — they bring whole deployments up — so without this
   # the only way to exercise a change to them was to merge it to main and find
@@ -1220,6 +1221,32 @@ jobs:
       - run: cargo fuzz run fragment_header    -- -max_total_time=60
       - run: cargo fuzz run reassembly         -- -max_total_time=120
       - run: cargo fuzz run handshake_respond  -- -max_total_time=180 -max_len=4096
+
+  # The fuzz job above pins RUSTUP_TOOLCHAIN to nightly-2026-10-31 because
+  # nightly-2026-11-01 broke zbus with E0391, and nothing was otherwise
+  # revisiting that pin (#493) — it could sit there indefinitely. This tries
+  # the latest nightly against the same build once a month and fails loudly
+  # if it NOW succeeds, which is exactly the signal to lift the pin above and
+  # close #493. Staying green here is the expected, unremarkable state;
+  # turning red is the alert.
+  fuzz-nightly-pin-check:
+    name: Fuzz nightly pin still needed (#493)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 1 * *')
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install --locked cargo-fuzz
+      - name: Confirm the pin is still needed
+        run: |
+          if cargo fuzz build; then
+            echo "::error::Latest nightly now builds the fuzz targets successfully — the zbus E0391 regression tracked in #493 looks fixed. Lift the RUSTUP_TOOLCHAIN/dtolnay toolchain pin off nightly-2026-10-31 in the 'fuzz' job above and close #493."
+            exit 1
+          fi
+          echo "Latest nightly still fails to build the fuzz targets, as expected — #493's pin is still needed."
 
   # Verifpal on every PR; ProVerif base model is the release gate; the
   # broken-primitive ProVerif variants run nightly (PLAN.md §2.5).
