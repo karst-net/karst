@@ -741,6 +741,9 @@ path_c() {
 	WT_SUBST=$subst run_step C relay-install
 	WT_SUBST=$subst run_step C relay-cert
 	assert_mode /etc/karst/tls/relay.key 600 "the relay's TLS key is mode 600"
+	WT_SUBST=$subst run_step C relay-cert-verify
+	assert_file_has "$WORK/.out" "CA:FALSE" \
+		"the relay certificate is an end-entity leaf, not a CA"
 	WT_SUBST=$subst run_step C relay-config
 	WT_SUBST=$subst run_step C relay-check
 	# §6.1 prints this line and it is the whole point of seeding a placeholder:
@@ -835,6 +838,17 @@ path_c() {
 		|| die "the control identity and the data-plane key are the same size; \
 one of them is not what §6.3 says it is"
 	ok "the control identity is a separate file from the data-plane key"
+
+	# ── 7.3 the admin console's own root CA ────────────────────────────────
+	WT_SUBST='{}' run_step C console-ca-root
+	assert_mode /etc/karst/tls/console-ca.key 600 "the console root CA key is mode 600"
+	WT_SUBST='{}' run_step C console-ca-leaf
+	assert_mode /etc/karst/tls/console.key 600 "the console leaf key is mode 600"
+	WT_SUBST='{}' run_step C console-ca-verify
+	assert_file_has "$WORK/.out" "console.crt: OK" \
+		"the leaf verifies against the root CA that signed it"
+	assert_file_has "$WORK/.out" "CA:FALSE" \
+		"the console leaf is an end-entity certificate, not a CA"
 
 	# ── ExecStopPost= ───────────────────────────────────────────────────────
 	c_exec_stop_post
