@@ -1,0 +1,19 @@
+{
+  "release": "v0.1.0-rc.32",
+  "release_commit": "a1ad9f0b65248515d7d7d77a6a24e083456f961c",
+  "guide_candidate_sha256": "12f8c966586058dc5e83d0cf1fcd8c2c2973c4931e19d9c5ee07452c6587928b",
+  "runner_sha256": "a3cdeae3fec11c074759da7ebf1e93a13949167e4a66b8081efb188ba7eb3b7f",
+  "first_node_seconds": 22.362,
+  "bidirectional_traffic_seconds": 34.308,
+  "browser_downloads": 6,
+  "browser_errors": 0,
+  "package_integrity": "dpkg -V reported no altered package files",
+  "limitations": [
+    "Same-host Linux network namespace; no independent-NAT or non-Linux installation claim",
+    "Caddy internal CA; browser allowed the disposable self-signed origin",
+    "Existing IdP and network prerequisites prepared before timing",
+    "Runtime workaround for multihomed source attribution tracked in #508; no code fix claimed",
+    "Host Karst state and required zenity/pkexec packages removed before the final cold-download attempt"
+  ],
+  "cleanup": "Pass: temporary services, packages, credentials, namespace and scoped firewall rule removed; seven unrelated containers and host DNS remain healthy"
+}

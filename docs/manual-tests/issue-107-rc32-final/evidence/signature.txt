@@ -1,0 +1,14 @@
+[GNUPG:] NEWSIG
+gpg: Signature made Sun Nov  1 14:59:27 2026 UTC
+gpg:                using EDDSA key 95E84D07245EE5CD73F9EA0DF07FBCFA8E79B334
+[GNUPG:] KEY_CONSIDERED DD5C7054DBFAE8D6970495A30CFE3D3465673971 0
+[GNUPG:] SIG_ID Gjz9SnIvfB3XKW/gzd3kDNFuPsU 2026-11-01 1793545167
+[GNUPG:] GOODSIG F07FBCFA8E79B334 Karst Release Signing <adrian.l.anderson@gmail.com>
+gpg: Good signature from "Karst Release Signing <adrian.l.anderson@gmail.com>" [unknown]
+[GNUPG:] VALIDSIG 95E84D07245EE5CD73F9EA0DF07FBCFA8E79B334 2026-11-01 1793545167 0 4 0 22 10 00 DD5C7054DBFAE8D6970495A30CFE3D3465673971
+[GNUPG:] KEY_CONSIDERED DD5C7054DBFAE8D6970495A30CFE3D3465673971 0
+[GNUPG:] TRUST_UNDEFINED 0 pgp
+gpg: WARNING: This key is not certified with a trusted signature!
+gpg:          There is no indication that the signature belongs to the owner.
+Primary key fingerprint: DD5C 7054 DBFA E8D6 9704  95A3 0CFE 3D34 6567 3971
+     Subkey fingerprint: 95E8 4D07 245E E5CD 73F9  EA0D F07F BCFA 8E79 B334

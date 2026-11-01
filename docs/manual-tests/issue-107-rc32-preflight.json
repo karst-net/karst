@@ -1,0 +1,61 @@
+{
+  "date": "2026-11-01",
+  "runner": "Codex",
+  "release": "v0.1.0-rc.32",
+  "release_commit": "a1ad9f0b65248515d7d7d77a6a24e083456f961c",
+  "downloaded_assets": [
+    {
+      "name": "SHA256SUMS",
+      "sha256": "817f23df8baca1b10c37db4a763ea331efaddd740b2fa3528af246015fc6072e",
+      "release_api_match": true,
+      "checksum_list_match": false
+    },
+    {
+      "name": "SHA256SUMS.asc",
+      "sha256": "c3139bc37ec1b4b199d6331e745dab219dfa91bd99071d1a9f11b59580540a00",
+      "release_api_match": true,
+      "checksum_list_match": false
+    },
+    {
+      "name": "karst-client-linux_0.1.0-0.rc.32_amd64.deb",
+      "sha256": "33d93ea3c7ebe858cefcf21658e569b0f444fb3a2aa90b20469055d0fff7ff6b",
+      "release_api_match": true,
+      "checksum_list_match": true
+    },
+    {
+      "name": "karst-control_0.1.0-0.rc.32_amd64.deb",
+      "sha256": "cc659f29e1690b54e4b35169df810333cb959bdcd664f605e760b5110c177dda",
+      "release_api_match": true,
+      "checksum_list_match": true
+    },
+    {
+      "name": "karst-relay_0.1.0-0.rc.32_amd64.deb",
+      "sha256": "5e62ef42525a455f3b493e9fd04a9449ae6251e4ac77ac3450c7563b3940fd15",
+      "release_api_match": true,
+      "checksum_list_match": true
+    },
+    {
+      "name": "karst-web.tar.gz",
+      "sha256": "11f2750ec1cb9723406c616c98d771480eeba48746b3e82748bef7c82b69f13b",
+      "release_api_match": true,
+      "checksum_list_match": true
+    },
+    {
+      "name": "manifest.json",
+      "sha256": "171dc4bcfb41933986228f03952d3bad73f571cfa610517a87dbde4a241612a4",
+      "release_api_match": true,
+      "checksum_list_match": false
+    }
+  ],
+  "manifest_entries_matching_release_api_and_checksum_list": 6,
+  "portal_asset_references_checked": [
+    "/portal/assets/main-CFRhQmWH.js",
+    "/portal/assets/auth-CmZdQLiQ.js",
+    "/portal/assets/main-DeUrq2q2.css"
+  ],
+  "guide_sha256": "2859b5d6082afa43a2fad943ad8e496583da9f9b65f84a8c9c9382be5193a988",
+  "guide_matches_local_checkout": true,
+  "signature_verification": "Pass: detached SHA256SUMS signature verified using OpenPGP.js 6.3.2; see issue-107-rc32-signature.json",
+  "runtime_validation": "pending: Linux host unavailable",
+  "installation_clock": "not started: preparation downloads only"
+}

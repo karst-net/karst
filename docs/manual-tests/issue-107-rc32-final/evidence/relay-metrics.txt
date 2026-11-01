@@ -1,0 +1,48 @@
+# HELP karst_relay_clients Nodes currently connected to this relay.
+# TYPE karst_relay_clients gauge
+karst_relay_clients 2
+# HELP karst_relay_mesh_peers Meshed relays currently connected.
+# TYPE karst_relay_mesh_peers gauge
+karst_relay_mesh_peers 0
+# HELP karst_relay_remote_clients Nodes believed to be connected to a meshed peer.
+# TYPE karst_relay_remote_clients gauge
+karst_relay_remote_clients 0
+# HELP karst_relay_uptime_seconds Seconds since this relay started.
+# TYPE karst_relay_uptime_seconds gauge
+karst_relay_uptime_seconds 553
+# HELP karst_relay_rtt_under_20ms Clients whose last measured RTT was under 20ms — ADR-0045 §4a.
+# TYPE karst_relay_rtt_under_20ms gauge
+karst_relay_rtt_under_20ms 2
+# HELP karst_relay_rtt_20_to_50ms Clients whose last measured RTT was 20-50ms — ADR-0045 §4a.
+# TYPE karst_relay_rtt_20_to_50ms gauge
+karst_relay_rtt_20_to_50ms 0
+# HELP karst_relay_rtt_50_to_100ms Clients whose last measured RTT was 50-100ms — ADR-0045 §4a.
+# TYPE karst_relay_rtt_50_to_100ms gauge
+karst_relay_rtt_50_to_100ms 0
+# HELP karst_relay_rtt_over_100ms Clients whose last measured RTT was over 100ms — ADR-0045 §4a.
+# TYPE karst_relay_rtt_over_100ms gauge
+karst_relay_rtt_over_100ms 0
+# HELP karst_relay_frames_in_total Frames accepted from connections.
+# TYPE karst_relay_frames_in_total counter
+karst_relay_frames_in_total 114
+# HELP karst_relay_bytes_in_total Bytes accepted from connections, frame headers included.
+# TYPE karst_relay_bytes_in_total counter
+karst_relay_bytes_in_total 31498
+# HELP karst_relay_frames_out_total Frames queued towards connections.
+# TYPE karst_relay_frames_out_total counter
+karst_relay_frames_out_total 114
+# HELP karst_relay_bytes_out_total Bytes queued towards connections.
+# TYPE karst_relay_bytes_out_total counter
+karst_relay_bytes_out_total 21418
+# HELP karst_relay_dropped_rate_total Frames refused by the per-connection rate limiter.
+# TYPE karst_relay_dropped_rate_total counter
+karst_relay_dropped_rate_total 0
+# HELP karst_relay_dropped_aquifer_rate_total Frames refused by an aquifer's aggregate rate limiter (ADR-0038); always zero unless limits.aquifer is configured.
+# TYPE karst_relay_dropped_aquifer_rate_total counter
+karst_relay_dropped_aquifer_rate_total 0
+# HELP karst_relay_dropped_queue_total Frames discarded because a destination's write queue was full.
+# TYPE karst_relay_dropped_queue_total counter
+karst_relay_dropped_queue_total 0
+# HELP karst_relay_undeliverable_total Frames for a destination this relay does not hold.
+# TYPE karst_relay_undeliverable_total counter
+karst_relay_undeliverable_total 10

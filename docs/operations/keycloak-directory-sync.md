@@ -1,5 +1,11 @@
 # Keycloak directory lookups for the console (issue #432)
 
+Both user sync (steps 1-3) and group sync (step 4) have been run end to end
+on a real Nomad deployment and confirmed working: `control` picked up
+Keycloak users via the Admin API, and a Keycloak group membership showed up
+in `/groups` as `issued: jwt` after a fresh login. The gotchas and fixes
+below came directly out of that run, not from re-reading the code.
+
 The console's OIDC login and the management server's IdP adapter are **separate**
 integrations. In the production Compose deployment, login uses the **karst**
 realm through Caddy at `/auth`. This procedure opts the *control* process
@@ -18,7 +24,43 @@ roles **query-users** and **view-users**. Grant additional read-only
 roles only if the API rejects a needed query; do not assign realm-admin,
 manage-users, or manage-realm to the sync client.
 
-Copy its generated client secret to a local file on the host:
+Scripting this instead of clicking through the admin UI: `kcadm.sh`
+(`/opt/keycloak/bin/kcadm.sh` inside the Keycloak container) does the same
+thing non-interactively and is what was actually used to validate this
+runbook. Authenticate once per container lifetime, then create the client,
+read its secret, and grant the two roles:
+
+```sh
+# Authenticate without the password ever touching argv or a log:
+cat state/kc-master-admin-password.txt | docker exec -i <keycloak-container> \
+  sh -c 'read -r PW; /opt/keycloak/bin/kcadm.sh config credentials \
+    --server http://localhost:8080/auth --realm master --user admin --password "$PW"'
+
+docker exec <keycloak-container> /opt/keycloak/bin/kcadm.sh create clients -r karst \
+  -s clientId=karst-directory-sync -s protocol=openid-connect -s publicClient=false \
+  -s standardFlowEnabled=false -s directAccessGrantsEnabled=false \
+  -s implicitFlowEnabled=false -s serviceAccountsEnabled=true \
+  -s clientAuthenticatorType=client-secret -i   # prints the new client's id
+
+# Pipe the secret straight to disk; never let it land in your own shell output:
+docker exec <keycloak-container> /opt/keycloak/bin/kcadm.sh get \
+  clients/<client-id>/client-secret -r karst --fields value --format csv --noquotes \
+  | docker exec -i <keycloak-container> tee /tmp/.secret >/dev/null
+docker cp <keycloak-container>:/tmp/.secret deploy/compose/prod/state/keycloak-directory-secret.txt
+docker exec <keycloak-container> rm -f /tmp/.secret
+chmod 600 deploy/compose/prod/state/keycloak-directory-secret.txt
+
+docker exec <keycloak-container> /opt/keycloak/bin/kcadm.sh get \
+  clients/<client-id>/service-account-user -r karst --fields id   # service account's user id
+
+docker exec <keycloak-container> /opt/keycloak/bin/kcadm.sh add-roles -r karst \
+  --uid <service-account-user-id> --cclientid realm-management --rolename query-users
+docker exec <keycloak-container> /opt/keycloak/bin/kcadm.sh add-roles -r karst \
+  --uid <service-account-user-id> --cclientid realm-management --rolename view-users
+```
+
+If you used the admin UI instead of the `kcadm.sh` block above, copy the
+client secret it displayed to a local file on the host:
 
 ```sh
 umask 077
@@ -94,10 +136,22 @@ the control allocation after updating the host's shared management.json.
 
 Sign in using the *existing* console OIDC flow and inspect **Users**;
 compare read-only IdP-sourced records with the identities in Keycloak.
-Inspect server logs for authorization failures from the Keycloak Admin API.
+A successful sync logs `N entries received from IdP management` /
+`warmed up IDP cache with N entries for N accounts` at `control` startup —
+absence of that line, or an authorization error from the Keycloak Admin
+API nearby, means the service account's roles or secret are wrong.
 Test with a non-admin directory user and verify the correct Karst account and
 tenant boundary before relying on provisioning. Do not use a production user
 as a deletion test: the adapter implements `DeleteUser` against Keycloak.
+
+**Do not call `control`'s own port directly** (e.g. `http://control:33073`
+inside the deployment's Docker network) to script any of this validation.
+It multiplexes gRPC and REST on the same plaintext listener, and a plain
+REST request sent straight to it — bypassing Caddy — gets routed wrong and
+comes back as a generic, misleading auth failure that has nothing to do
+with whatever credentials you sent. Always go through Caddy, i.e. the same
+`https://<console-host>:33073/api/...` the browser uses (`--resolve` to
+pin the hostname if you're hitting it by IP without real DNS).
 
 **Current limitation:** `server/management/server/idp/keycloak.go` can
 fetch Keycloak users but does not itself enumerate Keycloak groups or
@@ -158,6 +212,26 @@ is also turned on (same PUT, `.settings.groups_propagation_enabled = true`)
 — enable that separately once group membership itself looks correct, since
 it changes which groups peers actually get.
 
+Two things that look like bugs but are not, if `/groups` still only shows
+`issued: api` rows after this:
+
+- **No groups exist in Keycloak yet, or your user isn't in any.** A fresh
+  realm has zero groups defined; `oidc-group-membership-mapper` only emits
+  whatever groups the authenticating user actually belongs to, so an empty
+  claim syncs nothing. Create at least one group in Keycloak and add the
+  user to it before expecting anything to show up.
+- **Your browser session predates 4.1/4.2.** The `groups` claim and the
+  account's `jwt_groups_enabled` flag only affect *new* tokens. An
+  already-open console tab is still running on an old token with neither;
+  log out and back in to pick up both.
+
+There is no "configure Keycloak" option when creating a group in the
+console, and that's intentional, not a missing feature: a group's `issued`
+source is never picked by hand. Groups are either created via the API
+(`issued: api`) or materialized automatically from a login token's groups
+claim (`issued: jwt`) — see `getJWTGroupsChanges` in
+`server/management/server/account.go`.
+
 ## Rollback
 
 Restore `deploy/compose/state/management.json.pre-idp-sync` to
@@ -172,3 +246,10 @@ with `.settings.jwt_groups_enabled = false`; this does not touch
 created in Karst (`issued: jwt`) are left in place; the console UI refuses
 to delete non-`api`-issued groups, so remove them via `DELETE
 /api/groups/{id}` if you need them gone rather than just inert.
+
+If `GroupsPropagationEnabled` was on while the group existed, the delete
+fails with `group has been linked to user: <id>` — the group is still in
+that user's `auto_groups`. Clear it first with `PUT /api/users/{userId}`
+(body: that user's current `auto_groups` with the group's id removed,
+plus their existing `role` and `is_blocked`; this endpoint replaces the
+whole object, same as accounts), then retry the group delete.

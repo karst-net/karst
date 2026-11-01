@@ -1,0 +1,20 @@
+Karst processes:
+Karst unit files:
+Karst test containers:
+Remaining running containers:
+postgres-f4a59e98-5839-021b-f757-ae3b208d2801 Up 2 hours
+stac-api-f4a59e98-5839-021b-f757-ae3b208d2801 Up 2 hours
+k3d-cedar-runbook-serverlb Up 2 hours
+k3d-cedar-runbook-server-0 Up 2 hours
+cedar-runbook-registry Up 2 hours
+cedar-runbook-gitea Up 2 hours
+buildx_buildkit_cedar-sandbox0 Up 2 hours
+Test namespace:
+Test firewall rule:
+DNS resolution:
+140.82.113.3    STREAM github.com
+DNS listeners:
+UNCONN 0      0                  0.0.0.0:53         0.0.0.0:*    users:(("unbound",pid=1463,fd=5))
+UNCONN 0      0                  0.0.0.0:53         0.0.0.0:*    users:(("unbound",pid=1463,fd=3))
+Root-only original backup:
+700 root /var/backups/karst-107-pre-rc32-20261101T190212Z

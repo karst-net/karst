@@ -183,6 +183,67 @@ go1.26)`.
 
 ## 3. Build everything
 
+**Using a published release instead of building:** for Path C on Debian or
+Ubuntu, download the packages for the host architecture and the prebuilt web
+bundle. No repository checkout, Rust, Go, Node or pnpm is required. For example,
+the following pins every component to `v0.1.0-rc.32`:
+
+```sh walkthrough=none reason="published-package alternative; release walkthrough recorded under issue #107"
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg openssl
+mkdir -p karst-release && cd karst-release
+tag=v0.1.0-rc.32
+version=0.1.0-0.rc.32
+arch=$(dpkg --print-architecture)    # amd64 or arm64
+base="https://github.com/karst-net/karst/releases/download/$tag"
+for artifact in \
+    "karst-client-linux_${version}_${arch}.deb" \
+    "karst-control_${version}_${arch}.deb" \
+    "karst-relay_${version}_${arch}.deb" \
+    karst-web.tar.gz manifest.json SHA256SUMS SHA256SUMS.asc; do
+    curl -fSL "$base/$artifact" -o "$artifact" || exit 1
+done
+curl -fSL "https://raw.githubusercontent.com/karst-net/karst/$tag/docs/release-key.asc" -o release-key.asc
+gpg --import release-key.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS || exit 1
+sha256sum --check --ignore-missing SHA256SUMS || exit 1
+sudo apt-get update
+sudo apt-get install -y \
+    "./karst-client-linux_${version}_${arch}.deb" \
+    "./karst-control_${version}_${arch}.deb" \
+    "./karst-relay_${version}_${arch}.deb"
+tar -xzf karst-web.tar.gz
+```
+
+Check the release signing key's fingerprint against a trusted copy before
+accepting it; importing a key does not establish its owner's identity. The
+published key's primary fingerprint is
+`DD5C 7054 DBFA E8D6 9704 95A3 0CFE 3D34 6567 3971`.
+`gpg` must report a good signature and every downloaded package and the web
+bundle must report `OK` from `sha256sum`. The manifest is not included in
+`SHA256SUMS`; compare its entries with the verified package hashes when staging
+the downloads in §7.
+
+Use APT rather than `dpkg -i` alone: the Linux client includes desktop
+enrollment support and declares `zenity` and `pkexec` dependencies, including
+on headless hosts. If a previous `dpkg -i` attempt left it unconfigured, run
+`sudo apt-get --fix-broken install` before continuing.
+
+The packages supply `/usr/bin/karstd`, `/usr/bin/karst`, `/usr/bin/karst-relay`,
+`/usr/bin/karst-control`, and their systemd units. Continue with §6's
+configuration steps, skipping its commands that install binaries from
+`target/release/` or `server/` and copy units from `deploy/systemd/`.
+Use the packaged units with `sudo systemctl enable --now karst-relay`,
+then `karst-control`, then `karstd`, after configuring each service.
+Keep the node key-generation and directory-creation commands in §6.3.
+For §7, serve `karst-web/console` at `/` and `karst-web/portal` at `/portal/`;
+stage `manifest.json` and the client packages it names under `/releases/`.
+The manifest covers both Linux architectures and macOS: either stage all its
+listed assets or publish a manifest limited to the packages actually served.
+
+**Building from source:** the rest of this section requires the build tools
+in §2.
+
 From the repository root:
 
 Node agent, CLI, relay, offline signer:
@@ -457,25 +518,19 @@ sudo openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes \
 sudo chmod 600 /etc/karst/tls/relay.key
 ```
 
-`openssl req -x509`'s own defaults mark a self-signed certificate as a CA
-(`CA:TRUE`), which clients reject outright — `invalid peer certificate:
-Other(OtherError(CaUsedAsEndEntity))` — because it isn't one; the relay
-presents it as an end-entity leaf. The three `-addext` flags above override
-that. Confirm before moving on:
+The certificate must be a server leaf (`CA:FALSE`). Some OpenSSL defaults
+otherwise generate a CA certificate, which the node's TLS verifier rejects
+with `CaUsedAsEndEntity`, even when `relay_ca_file` names that certificate.
+For this self-signed example, copy `relay.crt` to each node and set
+`[control] relay_ca_file` to its local path as shown in §6.3.
+
+Confirm the leaf extensions before moving on:
 
 ```sh walkthrough=C step=relay-cert-verify
 openssl x509 -in /etc/karst/tls/relay.crt -noout -text \
     | grep -A1 "X509v3 Basic Constraints"
 # X509v3 Basic Constraints: critical
 #     CA:FALSE
-```
-
-Every node that connects through this relay needs this certificate — not
-the key — at `relay_ca_file` (§6.3). On a single host that's a local copy;
-across hosts, copy `/etc/karst/tls/relay.crt` to each node, e.g.:
-
-```sh walkthrough=none reason="illustrative; the single-host fixture copies the file directly instead of over the network"
-scp /etc/karst/tls/relay.crt node-host:/etc/karst/relay.crt
 ```
 
 `/etc/karst/relay.toml`:
@@ -681,8 +736,14 @@ sudo systemctl daemon-reload && sudo systemctl enable --now karst-control
 Look for the two pins every node needs:
 
 ```sh walkthrough=C step=control-pins
-sudo journalctl -u karst-control | grep 'karst: server'
+invocation=$(systemctl show karst-control --property=InvocationID --value)
+sudo journalctl "_SYSTEMD_INVOCATION_ID=$invocation" --no-pager | grep 'karst: server'
 ```
+
+Use only the running service's invocation. After reinstalling or replacing
+server state, older journal entries contain pins for the previous identity;
+copying those makes the node reject the server's hello. The running
+invocation must print both pins before you configure a node.
 
 Notes:
 
@@ -1249,6 +1310,10 @@ The failure modes below are the ones that do not announce themselves.
 | Nodes never dial a relay and never go direct | no `relays.json`, so the netmap carries no relays | set `KARST_RELAY_REGISTRY_FILE` |
 | Everything enrolls; no traffic passes | no policy file — an empty filter is **default deny** | set `KARST_POLICY_FILE` |
 | Relay TLS handshake fails on a node | self-signed relay certificate | point `relay_ca_file` at `relay.crt`, or add it to the invitation as `relay_ca` (PEM) so enrollment sets that up |
+| Relay TLS fails with `CaUsedAsEndEntity` | the relay certificate has `CA:TRUE` | regenerate a server leaf using §6.1's explicit `CA:FALSE` extensions, copy the new certificate to clients and restart the relay and clients |
+| Peers are established but traffic fails on a multihomed host | the selected peer address can differ from the source address used for return UDP traffic ([#508](https://github.com/karst-net/karst/issues/508)) | compare `karst status` endpoints with a UDP packet capture; bind `[node] listen` to the reachable interface address, restart both nodes and verify traffic in both directions |
+| Karst traffic fails while Tailscale is also running | Tailscale may drop CGNAT-source packets arriving on `karst0`; Karst uses addresses in that range too | inspect `ip route get PEER_ADDRESS`, `ip rule`, and the host INPUT rules; add an explicit rule for the actual Karst interface and assigned network before the conflicting drop, following the host firewall's configuration method |
+| DNS listener reports `Address already in use` | another resolver, including Tailscale or a wildcard listener, already owns the configured address and port | inspect `sudo ss -lntup`; choose a free DNS listener using [the annotated node configuration](karstd-example.toml), or set `[dns] enabled = false` if this node does not need KarstDNS |
 | `karstd` refuses to start over a key file | key is readable by group or other | `chmod 600` — a key readable by anyone is not a key |
 | Coordination server exits with "read-only file system" | `management.json` mounted `:ro` | it writes a generated store key back on first boot |
 | A peer entry fails to load after a profile change | the key's *length* is what says which profile it belongs to, so a stale entry fails loudly rather than quietly | re-run `karstd pubkey` on that node and update every roster entry naming it |

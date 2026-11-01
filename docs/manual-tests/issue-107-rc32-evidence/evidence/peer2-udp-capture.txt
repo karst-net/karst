@@ -1,0 +1,17 @@
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on k107peer, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+19:23:51.523835 IP 10.107.0.1.51820 > 10.107.0.2.51820: UDP, length 46
+19:23:51.523862 IP 10.107.0.1.51820 > 10.107.0.2.51820: UDP, length 46
+19:23:51.523911 IP 10.107.0.2.51820 > 10.107.0.1.51820: UDP, length 65
+19:23:51.523943 IP 10.107.0.2.51820 > 10.107.0.1.51820: UDP, length 65
+19:23:51.620150 IP 10.107.0.2.51820 > 10.10.10.1.51820: UDP, length 46
+19:23:51.620213 IP 10.107.0.2.51820 > 10.107.0.1.51820: UDP, length 46
+19:23:51.620230 IP 10.107.0.2.51820 > 10.230.0.1.51820: UDP, length 46
+19:23:51.620243 IP 10.107.0.2.51820 > 100.82.184.101.51820: UDP, length 46
+19:23:51.620255 IP 10.107.0.2.51820 > 172.17.0.1.51820: UDP, length 46
+19:23:51.620266 IP 10.107.0.2.51820 > 172.18.0.1.51820: UDP, length 46
+19:23:51.620277 IP 10.107.0.2.51820 > 172.19.0.1.51820: UDP, length 46
+19:23:51.620287 IP 10.107.0.2.51820 > 172.20.0.1.51820: UDP, length 46
+12 packets captured
+205 packets received by filter
+0 packets dropped by kernel
