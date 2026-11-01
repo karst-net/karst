@@ -261,8 +261,23 @@ fn artifact_identity_describes_the_running_executable_after_an_on_disk_upgrade()
         &node.socket,
         node.status_socket.as_ref().expect("status socket"),
     ] {
-        let reply = ask(socket, "status-json").expect("software observation");
-        let value: serde_json::Value = serde_json::from_str(&reply).expect("JSON");
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let value = loop {
+            let reply = ask(socket, "status-json").expect("software observation");
+            let value: serde_json::Value = serde_json::from_str(&reply).expect("JSON");
+            if value
+                .get("artifact_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some()
+            {
+                break value;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "artifact observation completed"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
         assert_eq!(
             value.get("artifact_id").and_then(serde_json::Value::as_str),
             Some(expected.as_str())
