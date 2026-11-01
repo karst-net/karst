@@ -91,6 +91,11 @@ let allowedRegions = [
 ];
 let relayServices = [];
 let relayPublication = { mode: "legacy" };
+// ADR-0063/#455. No reconciliation loop runs against this mock, so a created
+// allocation simply stays "requested" -- deprovision/delete still enforce
+// the real API's own state gating, so the console's error-handling path for
+// an ineligible action is exercised faithfully too.
+let relayAllocations = [];
 // Console first-run onboarding gate (GET/POST /firstrun). Defaults to true
 // so the existing e2e suite's direct navigation to any route keeps working
 // unchanged -- flip this to false (and restart the mock) to exercise the
@@ -628,6 +633,41 @@ const server = http.createServer((request, response) => {
   });
   const serviceMatch = karst.match(/^\/relay-services\/([^/]+)$/);
   if (serviceMatch && method === "DELETE") return remove(relayServices, serviceMatch[1], response);
+
+  // ADR-0063/#455: admin-triggered relay allocation.
+  if (method === "GET" && karst === "/relay-allocations") return json(response, 200, relayAllocations);
+  if (method === "POST" && karst === "/relay-allocations") {
+    return readBody(request).then((draft) => {
+      if (!draft.name || !infraConnections.some((entry) => entry.id === draft.infra_connection_id) || !draft.location) return error(response, 422, "invalid_argument", "name, a known infra_connection_id, and a location are required");
+      if (!draft.relay_transport) return error(response, 422, "invalid_argument", "relay transport capability is required");
+      if (draft.egress_v4 || draft.egress_v6) return error(response, 422, "invalid_argument", "egress is not yet supported by relay allocation");
+      if (!Array.isArray(draft.permitted_groups) || draft.permitted_groups.length === 0 || !draft.permitted_groups.every((groupId) => groups.some((group) => group.id === groupId))) return error(response, 422, "invalid_argument", "choose at least one permitted group");
+      const now = new Date().toISOString();
+      const allocation = { id: id("relay-allocation"), name: draft.name, infra_connection_id: draft.infra_connection_id, location: draft.location, relay_transport: true, egress_v4: false, egress_v6: false, permitted_groups: draft.permitted_groups, state: "requested", revision: 1, created_at: now, updated_at: now };
+      relayAllocations.push(allocation);
+      return json(response, 201, allocation);
+    });
+  }
+  const allocationDeprovisionMatch = karst.match(/^\/relay-allocations\/([^/]+)\/deprovision$/);
+  if (allocationDeprovisionMatch && method === "POST") {
+    return readBody(request).then((body) => {
+      const allocation = relayAllocations.find((item) => item.id === allocationDeprovisionMatch[1]);
+      if (!allocation) return error(response, 404, "not_found", "relay allocation not found");
+      if (body.acknowledge_deprovision !== true) return error(response, 400, "invalid_argument", "review and acknowledge the deprovision request");
+      if (body.revision !== allocation.revision) return error(response, 409, "already_exists", "allocation changed; reload before retrying");
+      if (allocation.state !== "ready" && allocation.state !== "failed") return error(response, 422, "invalid_argument", "allocation is still in progress");
+      allocation.state = "revoking"; allocation.revision += 1; allocation.updated_at = new Date().toISOString();
+      return json(response, 200, allocation);
+    });
+  }
+  const allocationMatch = karst.match(/^\/relay-allocations\/([^/]+)$/);
+  if (allocationMatch && method === "DELETE") {
+    const allocation = relayAllocations.find((item) => item.id === allocationMatch[1]);
+    if (!allocation) return error(response, 404, "not_found", "relay allocation not found");
+    if (Number(url.searchParams.get("revision")) !== allocation.revision) return error(response, 409, "already_exists", "allocation changed; reload before retrying");
+    if (allocation.state !== "requested" && allocation.state !== "deprovisioned") return error(response, 422, "invalid_argument", "allocation must be deprovisioned before deletion");
+    return remove(relayAllocations, allocationMatch[1], response);
+  }
 
   if (method === "GET" && karst === "/relays") return json(response, 200, fixture.relays);
   if (method === "POST" && karst === "/relays") {

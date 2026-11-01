@@ -3,11 +3,13 @@
 
 import { useEffect, useState } from "react";
 import { Dialog, EmptyState, Observed, Status } from "@karst-net/ui";
-import type { Relay, RelayService } from "@karst-net/api-client";
+import type { Relay, RelayAllocation, RelayService } from "@karst-net/api-client";
 import { api, type ManagedRelayService } from "../api";
 import { RelayReadiness } from "./relay-readiness";
 import { RelayAccess } from "./relay-access";
+import { AllocateRelay } from "./relay-allocation";
 import { Failure, Notice, Rows, useMutation, usePolledResource } from "../common";
+import { allocationStatus } from "../relay-allocation-status";
 import { RelayInstallation } from "./relay-installation";
 import { RelayRegistration } from "./relay-registration";
 
@@ -17,12 +19,14 @@ export function RelayServices() {
   const groups = usePolledResource(api.groups, 60_000);
   const gateways = usePolledResource(api.gateways, 15_000);
   const admission = usePolledResource(api.relayAdmissionTargets, 15_000);
+  const allocations = usePolledResource(api.relayAllocations, 15_000);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5_000); return () => clearInterval(timer); }, []);
-  const reload = () => { resource.reload(); endpoints.reload(); groups.reload(); gateways.reload(); admission.reload(); setNow(Date.now()); };
+  const reload = () => { resource.reload(); endpoints.reload(); groups.reload(); gateways.reload(); admission.reload(); allocations.reload(); setNow(Date.now()); };
   const { message, setMessage, run } = useMutation(reload);
   const [installing, setInstalling] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const [allocating, setAllocating] = useState(false);
   const [relayId, setRelayId] = useState<string>();
   const [details, setDetails] = useState<Relay>();
   const [draft, setDraft] = useState<RelayService>();
@@ -52,11 +56,21 @@ export function RelayServices() {
     if (!confirm(`Remove the ${service.id} service association? ${publication.mode === "services" ? "Endpoints used only by this service will be withdrawn from clients. " : ""}Backend processes and registry records remain intact.`)) return;
     void run(() => api.removeRelayService(service.id), `Relay service ${service.id} association was removed.`);
   };
+  const deprovisionAllocation = (allocation: RelayAllocation) => {
+    if (!allocation.id || allocation.revision === undefined) return;
+    if (!confirm(`Deprovision the ${allocation.name} allocation? This withdraws its access grant before the host is destroyed.`)) return;
+    void run(() => api.deprovisionRelayAllocation(allocation.id!, allocation.revision!), `${allocation.name} deprovisioning requested.`);
+  };
+  const removeAllocation = (allocation: RelayAllocation) => {
+    if (!allocation.id || allocation.revision === undefined) return;
+    if (!confirm(`Remove the ${allocation.name} allocation record?`)) return;
+    void run(() => api.deleteRelayAllocation(allocation.id!, allocation.revision!), `${allocation.name} allocation record was removed.`);
+  };
 
   return <section>
     <h2>Relays</h2>
     <p>Manage relay endpoints, group access, internet egress and health in one place. Ponor is the relay transport; a service stores the endpoint's access and publication settings.</p>
-    <div className="actions"><button className="primary" onClick={() => setRegistering(true)}>Add relay</button><button onClick={() => setInstalling(true)}>Install a local relay</button><button onClick={reload}>Refresh relays</button></div>
+    <div className="actions"><button className="primary" onClick={() => setRegistering(true)}>Add relay</button><button onClick={() => setInstalling(true)}>Install a local relay</button><button onClick={() => setAllocating(true)}>Allocate a relay</button><button onClick={reload}>Refresh relays</button></div>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {endpoints.error && <Failure message={endpoints.error} retry={endpoints.reload} />}
     {admission.error && services.some(service => service.access_managed) && <p role="alert">Admission writer observations unavailable: {admission.error}</p>}
@@ -71,7 +85,7 @@ export function RelayServices() {
     </div>
     <button disabled={Boolean(resource.error || endpoints.error)} onClick={() => { setMessage(undefined); setDraft({ id: "", ponor_id: "" }); }}>Add legacy association</button>
     </details>
-    {!draft && !modeDraft && !details && preview === undefined && <Notice message={message} />}
+    {!draft && !modeDraft && !details && !allocating && preview === undefined && <Notice message={message} />}
     {!resource.error && !endpoints.error && services.length === 0 && ponor.length === 0 ? <EmptyState title="No relays configured">Add a running relay, then choose its allowed groups and optional internet egress.</EmptyState> :
       <Rows head={<><th>Relay</th><th>Endpoint and health</th><th>Access</th><th>Operational status</th><th>Actions</th></>}>
         {services.map((service) => {
@@ -95,8 +109,30 @@ export function RelayServices() {
           <td><button onClick={() => { setMessage(undefined); setDetails(endpoint); }}>Endpoint details</button><button disabled={Boolean(resource.error)} onClick={() => { setRelayId(endpoint.id); setConfiguring("new"); }}>Configure relay</button></td>
         </tr>)}
       </Rows>}
+
+    <h3>Relay allocations</h3>
+    <p className="lede">ADR-0063: name a host, pick its infrastructure connection and location, and choose the permitted groups — provisioning and granting access happen in the background. Internet egress is not yet supported by this workflow.</p>
+    {allocations.error && <Failure message={allocations.error} retry={allocations.reload} />}
+    {!allocations.error && (allocations.value ?? []).length === 0
+      ? <EmptyState title="No relay allocations">Allocate a relay to provision a new host through a real infrastructure connection.</EmptyState>
+      : <Rows head={<><th>Name</th><th>Location</th><th>Permitted groups</th><th>Status</th><th>Actions</th></>}>
+        {(allocations.value ?? []).map(allocation => {
+          const status = allocationStatus(allocation);
+          const canDeprovision = allocation.state === "ready" || allocation.state === "failed";
+          const canRemove = allocation.state === "requested" || allocation.state === "deprovisioned";
+          return <tr key={`allocation-${allocation.id}`}>
+            <td>{allocation.name}</td>
+            <td>{allocation.infra_connection_id}: <code>{allocation.location}</code></td>
+            <td>{groups.error ? "Group names unavailable" : allocation.permitted_groups.map(id => groups.value?.find(group => group.id === id)?.name ?? "Unavailable group").join(", ")}</td>
+            <td><Status state={status.state} label={status.label} /></td>
+            <td>{canDeprovision && <button onClick={() => deprovisionAllocation(allocation)}>Deprovision</button>}{canRemove && <button className="danger" onClick={() => removeAllocation(allocation)}>Remove</button>}</td>
+          </tr>;
+        })}
+      </Rows>}
+
     {installing && <RelayInstallation onClose={() => setInstalling(false)} />}
     {registering && <RelayRegistration onClose={() => setRegistering(false)} onAdded={endpoint => { setRegistering(false); reload(); setRelayId(endpoint.id); setConfiguring(services.find(service => service.ponor_id === endpoint.id) ?? "new"); setMessage("Endpoint registered. Configure group access to complete setup."); }} />}
+    {allocating && <AllocateRelay onClose={() => setAllocating(false)} onAllocated={() => { setAllocating(false); reload(); setMessage("Relay allocation requested. It will show as pending until it registers and access is granted."); }} />}
     <Dialog open={Boolean(details)} title="Relay endpoint details" onClose={() => setDetails(undefined)}>
       {details && <><Notice message={message} /><dl><dt>Address</dt><dd>{details.address}</dd><dt>TLS server name</dt><dd>{details.tls_server_name}</dd><dt>Region</dt><dd>{details.region}</dd><dt>Location</dt><dd>{details.location?.label || (details.location ? `${details.location.lat}, ${details.location.lon}` : "No location")}</dd><dt>Last confirmed</dt><dd><Observed at={details.health.last_confirmed_at} /></dd></dl>
       <p>Health is the relay's signed report. A stale report does not prove the process stopped forwarding traffic.</p>

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0063: Admin-triggered relay allocation through infrastructure connections
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-28
 - **Deciders:** Project owner (issue #439)
 - **Related:** [#439](https://github.com/karst-net/karst/issues/439), ADR-0045, ADR-0058, ADR-0059, ADR-0062
