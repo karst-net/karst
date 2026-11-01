@@ -744,7 +744,8 @@ jobs:
           # The CLI ships again (ADR-0036) as the admin's exit-consent path
           # to the extension's engine — a tool, not the retired daemon.
           test -x /usr/local/bin/karst
-          /usr/local/bin/karst --version
+          test "$(/usr/local/bin/karst --version)" = "karst $KARST_VERSION"
+          test "$(plutil -extract KarstReleaseVersion raw /Applications/Karst.app/Contents/Info.plist)" = "$KARST_VERSION"
           test ! -e /Library/LaunchDaemons/dev.karst.karstd.plist
           test ! -e /etc/karst/karstd.toml.example
           test ! -e /var/log/karst
@@ -867,6 +868,7 @@ jobs:
         run: |
           sudo installer -pkg "dist/macos/karst-appstore-macos-arm64.pkg" -target /
           app="/Applications/Karst.app"
+          test "$(plutil -extract KarstReleaseVersion raw "$app/Contents/Info.plist")" = "$KARST_VERSION"
           test -x "$app/Contents/MacOS/KarstAppStore" || {
             echo "::error::KarstAppStore executable missing"
             ls -laR "$app" 2>&1 || true
