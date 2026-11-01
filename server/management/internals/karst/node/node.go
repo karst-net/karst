@@ -109,6 +109,7 @@ type Identity struct {
 	SoftwareRevision   string
 	SoftwareArtifactID string
 	SoftwareObservedAt *time.Time
+	ControlCheck       ControlCheck `gorm:"embedded;embeddedPrefix:control_check_"`
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }

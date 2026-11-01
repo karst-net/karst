@@ -21,6 +21,7 @@ on:
       - 'packaging/macos/KarstStatus/**'
       - 'packaging/macos/KarstAppStore/**'
       - 'packaging/macos/tests/status-parser/**'
+      - 'packaging/macos/tests/software-menu/**'
       - '.github/workflows/macos-status-swift-build.yml'
 
 jobs:
@@ -39,6 +40,12 @@ jobs:
           done
       - run: swift build --product KarstAppStore
         working-directory: packaging/macos/KarstAppStore
+      - name: Verify installed and running versions in both AppKit menus
+        run: |
+          for target in KarstStatus KarstAppStore; do
+            swiftc "packaging/macos/$target/Sources/$target/StatusParser.swift" "packaging/macos/$target/Sources/$target/SoftwareVersionMenu.swift" packaging/macos/tests/software-menu/main.swift -o "$RUNNER_TEMP/software-menu"
+            "$RUNNER_TEMP/software-menu"
+          done
       - run: swift build --product KarstStatus
         working-directory: packaging/macos/KarstStatus
       # The physical-runner workflow builds this again before execution, but

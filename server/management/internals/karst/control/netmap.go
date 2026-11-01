@@ -308,22 +308,6 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, "node is not registered")
 	}
-	if err := h.Nodes.SetRelayLifecycleSchema(ctx, self, req.GetRelayLifecycleSchema()); err != nil {
-		return nil, fmt.Errorf("record Relay lifecycle capability: %w", err)
-	}
-	if h.RelayServices != nil {
-		publication, err := h.RelayServices.Publication(relayservice.WithAccount(ctx, accountID))
-		if err != nil {
-			return nil, fmt.Errorf("load Relay publication compatibility: %w", err)
-		}
-		if publication.Mode == "services" && publication.SchemaVersion >= 2 && req.GetRelayLifecycleSchema() != 1 {
-			return nil, status.Error(codes.FailedPrecondition, "Relay lifecycle schema 1 is required by this account; upgrade the agent before using service modes")
-		}
-	}
-	peers, err := h.Peers.GetPeersFromAccount(ctx, accountID, selfPeer.ID, selfPeer.UserID)
-	if err != nil {
-		return nil, fmt.Errorf("list peers: %w", err)
-	}
 	// Software telemetry is independent of compliance collection and applies to
 	// gateway and desktop/mobile agents alike. Never let advisory metadata deny
 	// a netmap; invalid input must not refresh an older observation's timestamp.
@@ -333,6 +317,23 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		}, time.Now().UTC()); err != nil {
 			log.WithError(err).WithField("node", self).Warn("record Karst software observation")
 		}
+	}
+	if err := h.Nodes.SetRelayLifecycleSchema(ctx, self, req.GetRelayLifecycleSchema()); err != nil {
+		return nil, fmt.Errorf("record Relay lifecycle capability: %w", err)
+	}
+	if h.RelayServices != nil {
+		publication, err := h.RelayServices.Publication(relayservice.WithAccount(ctx, accountID))
+		if err != nil {
+			return nil, fmt.Errorf("load Relay publication compatibility: %w", err)
+		}
+		if publication.Mode == "services" && publication.SchemaVersion >= 2 && req.GetRelayLifecycleSchema() != 1 {
+			h.recordControlCheck(ctx, self, node.ControlCheck{Status: "incompatible", Capability: "relay_lifecycle_schema", RequiredSchema: 1, ReportedSchema: req.GetRelayLifecycleSchema()})
+			return nil, status.Error(codes.FailedPrecondition, "Relay lifecycle schema 1 is required by this account; upgrade the agent before using service modes")
+		}
+	}
+	peers, err := h.Peers.GetPeersFromAccount(ctx, accountID, selfPeer.ID, selfPeer.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("list peers: %w", err)
 	}
 	// A report is only meaningful for another peer in the reporting node's
 	// account. Without this check a malicious or stale client could create
@@ -612,6 +613,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	for _, rule := range filter {
 		if len(rule.DstCidrs) != 0 {
 			if req.GetGatewayIngressSchema() != 1 {
+				h.recordControlCheck(ctx, self, node.ControlCheck{Status: "incompatible", Capability: "gateway_ingress_schema", RequiredSchema: 1, ReportedSchema: req.GetGatewayIngressSchema()})
 				return nil, status.Error(codes.FailedPrecondition, "Gateway destination-scoped ingress requires gateway_ingress_schema 1; upgrade the agent")
 			}
 			resp.GatewayIngressSchema = 1
@@ -696,7 +698,18 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if err != nil {
 		return nil, fmt.Errorf("marshal netmap: %w", err)
 	}
+	h.recordControlCheck(ctx, self, node.ControlCheck{Status: "accepted"})
 	return out, nil
+}
+
+func (h *NetmapHandler) recordControlCheck(ctx context.Context, self string, check node.ControlCheck) {
+	observed := time.Now().UTC()
+	check.ObservedAt = &observed
+	if err := h.Nodes.RecordControlCheck(ctx, self, check); err != nil {
+		// Monitoring failures must not turn a valid netmap into an outage or
+		// replace the real capability rejection with an unrelated DB error.
+		log.WithError(err).WithField("node", self).Warn("record Karst control compatibility check")
+	}
 }
 
 // compileFilter turns the policy into this node's packet filters: inbound,

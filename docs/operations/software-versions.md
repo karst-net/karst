@@ -4,9 +4,9 @@
 In the administrative console, open **Machines → Status → Software version**
 for an enrolled device, or expand **Agent software** in the Gateway inventory
 under network route metrics. The running agent reports its release and source
-revision during control synchronization. Gateway agents and desktop/mobile
-agents using the shared engine use the same reporting path. Compliance
-collection does not need to be enabled.
+revision during control synchronization. Gateway and desktop agents use the
+same reporting path. The control protocol can retain software reports from any
+enrolled client platform. Compliance collection does not need to be enabled.
 
 The receipt time belongs to the software report. A recent peer connection,
 enrollment, or compliance report does not refresh it. Reports older than
@@ -70,3 +70,66 @@ without a Compose/Nomad deployment snapshot. It is displayed separately from
 the container image ID. Non-Linux control servers and read failures retain an
 unknown artifact identity; no installed pathname is substituted for a running
 image observation.
+
+## Control capability checks
+
+Machine software details and Gateway inventory also show the last actual
+control-server capability evaluation, independently of the software report's
+receipt time. Machines with a recorded incompatibility are marked in the
+status table; expand their software details for upgrade guidance.
+
+An incompatible result identifies the capability and required/reported schema
+that caused control to reject the netmap. Current checks cover live Relay
+service lifecycle support and destination-scoped Gateway ingress. Upgrade the
+agent to a release supporting the named feature and reconnect it to control.
+Software identity is recorded before these checks, so an incompatible agent
+can still be identified without SSH or logs.
+
+Accepted means control successfully constructed a netmap at the displayed
+time. It does not prove that the agent applied it or that data-plane traffic
+works. A later successful netmap clears an earlier rejection. Unrelated
+request failures do not erase or refresh that result. An absent check is
+unknown, and checks older than 15 minutes are stale. Configuration changes
+since the last check may not be reflected until the agent synchronizes again.
+
+Capability evaluations are distinct from release drift advisories. Equal
+release strings never imply acceptance; an actual rejection remains visible
+even when the agent and control report the same release.
+
+## Observation freshness while a page stays open
+
+Freshness labels update while the console remains open, without contacting a
+client, Docker, or Nomad. Aging the display never changes a stored observation's
+timestamp. The control response has its own observation time, independently of
+the retained deployment snapshot. Refreshing component versions obtains a new
+control response while preserving the snapshot's original time. Older control
+servers that omit the response timestamp show unknown control freshness.
+
+## Local client versions
+
+The Linux desktop setup dialog displays the installed client version in its
+window title before enrollment and on readiness/error dialogs. It reads the
+installed CLI's own build, so a stopped daemon is not required to identify the
+installation. This value does not identify an older daemon that may still be
+running after an upgrade; use the machine's observed software details for
+that process.
+
+The macOS status menus identify the app bundle and responding agent separately.
+The Windows client currently ships a CLI/service, with no separate desktop
+status UI: `karst --version` identifies the installed CLI without contacting
+the daemon, while `karst version` queries the running daemon. `karst status
+--json` returns the running agent's release and revision.
+
+Mobile app delivery remains tracked in [#117](https://github.com/karst-net/karst/issues/117).
+The available mobile-facing bindings perform enrollment, which stops after
+login rather than issuing version-bearing netmap requests. The embedded
+engine/status binding is currently macOS-only. There is no shipped iOS/Android
+application UI or live mobile engine in this repository to verify or extend;
+shared protocol support alone does not establish end-to-end mobile coverage.
+
+The macOS host-app workflow verifies both apps' actual AppKit version-menu
+entries using separate installed-bundle and running-agent identities. It checks
+prerelease labels, an older running agent after an app upgrade, stopped/legacy
+agents with unknown identity, and older bundles without a release label. This
+checks menu rendering without starting or replacing a NetworkExtension; it does
+not claim physical-device extension lifecycle validation.

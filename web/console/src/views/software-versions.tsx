@@ -3,16 +3,15 @@
 
 import { Observed } from "@karst-net/ui";
 import { api } from "../api";
+import { useObservationStatus } from "../observation-status";
 import { Failure, Rows, useResource } from "../common";
 
 export function SoftwareVersions() {
   const versions = useResource(api.softwareVersions);
   const controlVersion = versions.value?.control.version;
   const drift = controlVersion && controlVersion !== "unknown" && __KARST_UI_BUILD__.version !== "unknown" && controlVersion !== __KARST_UI_BUILD__.version;
-  const observedAt = versions.value?.deployment?.observed_at;
-  const observedTime = observedAt ? Date.parse(observedAt) : NaN;
-  const observationStatus = !Number.isFinite(observedTime) || observedTime > Date.now() + 60_000
-    ? "Unknown" : Date.now() - observedTime > 15 * 60_000 ? "Stale" : "Current";
+  const observationStatus = useObservationStatus(versions.value?.deployment?.observed_at);
+  const controlStatus = useObservationStatus(versions.value?.observed_at);
   return <section aria-labelledby="software-versions">
     <h3 id="software-versions">Software versions</h3>
     <p>The UI build is loaded in this browser. The control server identifies the binary answering this request. Its artifact identity is the running executable digest; deployment image IDs are listed separately below.</p>
@@ -20,6 +19,7 @@ export function SoftwareVersions() {
       <tr><td>Admin console</td><td>{__KARST_UI_BUILD__.version}</td><td><code>{__KARST_UI_BUILD__.revision}</code></td><td>Unknown</td></tr>
       <tr><td>Control server</td><td>{versions.value?.control.version ?? "Unknown"}</td><td><code>{versions.value?.control.revision ?? "Unknown"}</code></td><td><code>{versions.value?.control.artifact_id || "Unknown"}</code></td></tr>
     </Rows>
+    <section aria-label="Control software observation"><p>Control response observed <Observed at={versions.value?.observed_at} />. Observation status: {controlStatus}. This identifies the server that answered that request; refresh to observe it again.</p></section>
     {drift && <p role="status">Console and control releases differ. Compatibility is unverified. Upgrade the control server and console to the same release, then reload this page before retrying failed operations.</p>}
     <button onClick={versions.reload}>Refresh component versions</button>
     {versions.loading && <p>Loading component versions…</p>}
