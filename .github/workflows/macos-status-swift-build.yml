@@ -23,6 +23,8 @@ on:
       - 'packaging/macos/tests/status-parser/**'
       - 'packaging/macos/tests/software-menu/**'
       - '.github/workflows/macos-status-swift-build.yml'
+      - 'scripts/*macos*version.sh'
+      - 'scripts/release-version.sh'
 
 jobs:
   build:
@@ -31,6 +33,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Verify full release identity in app bundle metadata
+        run: ./scripts/test-macos-app-version.sh
       - run: swift --version
       - name: Check both status parsers against new, old, and stopped agents
         run: |
