@@ -1,0 +1,1 @@
+configuration is valid: interface karst0, listening on 10.107.0.1:51820, 0 peer(s)

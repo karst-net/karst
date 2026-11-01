@@ -1,0 +1,54 @@
+control_synchronized = true
+control_peers = 0
+interface = "karst0"
+mtu = 1280
+listen = "10.107.0.1:51820"
+uptime_seconds = 1
+addresses = ["100.84.155.2/16", "fd07:9557:1f42:733:2f1f:a7f6:4e74:892f/64"]
+psk_epoch = 20758
+ipv6 = "unreachable (node.listen is IPv4)"
+ipv6_candidates_refused = 0
+
+[portmap]
+portmap_enabled = true
+portmap_state = "starting"
+portmap_gateway = "192.168.68.1:5351"
+portmap_protocol = "-"
+portmap_internal = "10.107.0.1:51820"
+portmap_external = "-"
+
+[stats]
+tx_packets = 0
+rx_packets = 0
+unroutable = 1
+source_violations = 0
+mac_failures = 0
+tx_dropped_no_session = 0
+malformed = 0
+decrypt_failures = 0
+acl_denied_in = 0
+acl_denied_out = 0
+acl_unclassifiable = 0
+ssh_denied = 0
+file_transfer_denied = 0
+file_transfer_completed = 0
+file_transfer_failed = 0
+relay_dropped = 0
+
+[policy]
+enforcing = true
+ingress_rules = 1
+egress_rules = 1
+skipped_peers = 0
+
+[ssh_policy]
+enforcing = false
+source = "none (no ssh block in policy)"
+
+[routing]
+offers = 0
+selected_exit = None
+exit_route_active = false
+gateway_forwarding = true
+gateway_active = false
+gateway_error = None

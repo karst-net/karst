@@ -1,0 +1,14 @@
+{
+  "release": "v0.1.0-rc.32",
+  "start_utc": "2026-11-01T19:05:55.273101+00:00",
+  "start_monotonic": 433.839936227,
+  "runner": "Codex autonomous via SSH",
+  "prerequisites": "Ubuntu 24.04.3 amd64, sudo, curl, GnuPG, Docker, openssl; host cleaned of Karst services before timing",
+  "first_node_utc": "2026-11-01T19:09:36.559198+00:00",
+  "first_node_elapsed_seconds": 221.286,
+  "within_30_minutes": true,
+  "failed_first_peer_probe_utc": "2026-11-01T19:13:02.734388+00:00",
+  "failed_first_peer_probe_elapsed_seconds": 427.461,
+  "first_verified_bidirectional_traffic_utc": "2026-11-01T20:02:50.068869+00:00",
+  "first_verified_bidirectional_traffic_elapsed_seconds": 3414.796
+}

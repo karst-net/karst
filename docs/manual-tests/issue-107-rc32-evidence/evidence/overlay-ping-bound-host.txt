@@ -1,0 +1,9 @@
+PING 100.102.147.213 (100.102.147.213) from 100.102.243.93 karst0: 56(84) bytes of data.
+64 bytes from 100.102.147.213: icmp_seq=1 ttl=64 time=0.463 ms
+64 bytes from 100.102.147.213: icmp_seq=2 ttl=64 time=0.423 ms
+64 bytes from 100.102.147.213: icmp_seq=3 ttl=64 time=0.467 ms
+64 bytes from 100.102.147.213: icmp_seq=4 ttl=64 time=0.463 ms
+
+--- 100.102.147.213 ping statistics ---
+4 packets transmitted, 4 received, 0% packet loss, time 3076ms
+rtt min/avg/max/mdev = 0.423/0.454/0.467/0.018 ms

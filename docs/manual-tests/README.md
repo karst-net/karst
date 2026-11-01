@@ -24,6 +24,11 @@ as evidence.
 
 ## Shared test fixture
 
+For the autonomous rc.32 installation validation under issue #107, use the
+[walkthrough execution record and per-step exit criteria](issue-107-release-walkthrough.md).
+That record documents the user waiver of the human-outsider requirement and
+records measured results, finding dispositions and coverage limits.
+
 Use an isolated account and a disposable domain.  Prepare two ordinary users
 (`alice`, `bob`), one administrator, one auditor, and groups `engineering`,
 `production`, and `gateway`.  Enroll at least two clients on independently

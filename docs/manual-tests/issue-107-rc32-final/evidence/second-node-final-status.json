@@ -1,0 +1,83 @@
+{
+  "version": "v0.1.0-rc.32",
+  "revision": "a1ad9f0b65248515d7d7d77a6a24e083456f961c",
+  "artifact_id": "sha256:0d4c82e3d0fa3bb08247debe88dd8073fee4ab7d32f81833423f3a2ee1fdeaa2",
+  "interface": "karst0",
+  "mtu": 1280,
+  "listen": "10.107.0.2:51820",
+  "uptime_seconds": 577,
+  "addresses": [
+    "100.84.232.230/16",
+    "fd07:9557:1f42:733:eb7f:ca:9ffd:676e/64"
+  ],
+  "psk_epoch": 20758,
+  "ipv6_candidates_refused": 96,
+  "portmap": {
+    "enabled": true,
+    "state": "retrying",
+    "gateway": "10.107.0.1:5351",
+    "protocol": "pcp",
+    "internal": "10.107.0.2:51820",
+    "external": null,
+    "reason": "the gateway did not answer PCP",
+    "retry_in_seconds": 640
+  },
+  "stats": {
+    "tx_packets": 9,
+    "rx_packets": 9,
+    "unroutable": 8,
+    "source_violations": 0,
+    "mac_failures": 0,
+    "tx_dropped_no_session": 2,
+    "malformed": 0,
+    "decrypt_failures": 0,
+    "acl_denied_in": 0,
+    "acl_denied_out": 0,
+    "acl_unclassifiable": 0,
+    "ssh_denied": 0,
+    "file_transfer_denied": 0,
+    "file_transfer_completed": 0,
+    "file_transfer_failed": 0,
+    "relay_dropped": 0
+  },
+  "policy": {
+    "enforcing": true,
+    "ingress_rules": 1,
+    "egress_rules": 1,
+    "skipped_peers": 0
+  },
+  "ssh_policy": {
+    "enforcing": false,
+    "source": "none (no ssh block in policy)"
+  },
+  "peers": [
+    {
+      "name": "turing",
+      "hint": "f5e6e50048475db5",
+      "endpoint": "10.107.0.1:51820",
+      "established": true,
+      "rekeying": false,
+      "allowed_ips": [
+        "100.84.155.2/32",
+        "fd07:9557:1f42:733:2f1f:a7f6:4e74:892f/128"
+      ],
+      "psk_fallback": false,
+      "transport": "direct",
+      "tx_bytes": 756,
+      "rx_bytes": 756
+    }
+  ],
+  "control": {
+    "control_synchronized": true,
+    "control_peers": 1,
+    "routing": {
+      "offers": 0,
+      "selected_exit": null,
+      "exit_route_active": false,
+      "gateway_active": false,
+      "gateway_forwarding": true,
+      "gateway_error": null,
+      "routes": []
+    }
+  }
+}

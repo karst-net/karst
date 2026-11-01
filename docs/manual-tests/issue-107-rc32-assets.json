@@ -1,0 +1,152 @@
+{
+  "tag": "v0.1.0-rc.32",
+  "published_at": "2026-11-01T15:01:30Z",
+  "release_url": "https://github.com/karst-net/karst/releases/tag/v0.1.0-rc.32",
+  "source": "GitHub release API; digests require independent verification against downloaded bytes and signed checksums",
+  "assets": [
+    {
+      "name": "karst-cli.cdx.json",
+      "size": 340096,
+      "digest": "sha256:d5fd3f4ad8b69c16c5dbed4980ea4bdf5afdbb4dc1f557c31fa0994ba6ad19e3",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-cli.cdx.json"
+    },
+    {
+      "name": "karst-client-linux-0.1.0-0.rc.32.aarch64.rpm",
+      "size": 8328966,
+      "digest": "sha256:97e7b5deb50fdae72b9922e80dfa3a74a65411f1f6e91e8f94f2d18ef5744812",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-client-linux-0.1.0-0.rc.32.aarch64.rpm"
+    },
+    {
+      "name": "karst-client-linux-0.1.0-0.rc.32.x86_64.rpm",
+      "size": 8586058,
+      "digest": "sha256:b464ccd5f9a34e77ee6bc4f199636b265684d7225d26290dae5f934a027a5b24",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-client-linux-0.1.0-0.rc.32.x86_64.rpm"
+    },
+    {
+      "name": "karst-client-linux_0.1.0-0.rc.32_amd64.deb",
+      "size": 8581592,
+      "digest": "sha256:33d93ea3c7ebe858cefcf21658e569b0f444fb3a2aa90b20469055d0fff7ff6b",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-client-linux_0.1.0-0.rc.32_amd64.deb"
+    },
+    {
+      "name": "karst-client-linux_0.1.0-0.rc.32_arm64.deb",
+      "size": 8324996,
+      "digest": "sha256:10d845fed437e8dad94e33075809b0986266f0c23b01722a17ef91ef3bc0c457",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-client-linux_0.1.0-0.rc.32_arm64.deb"
+    },
+    {
+      "name": "karst-client-macos-arm64.pkg",
+      "size": 9928498,
+      "digest": "sha256:3f9b12230301f3f77d1bba464c7cb70c075f3fe6df3d2214bce09d9ee7cab7ae",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-client-macos-arm64.pkg"
+    },
+    {
+      "name": "karst-client-macos-arm64.pkg.sha256",
+      "size": 137,
+      "digest": "sha256:4e35d330487e82b89b1f0ad50f67d9a2a8e132131a6ab1651bdac6813cbfc2ad",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-client-macos-arm64.pkg.sha256"
+    },
+    {
+      "name": "karst-client-macos-x86_64.pkg",
+      "size": 10761593,
+      "digest": "sha256:aaf8882a8cc6877d5192e3a024c85b281bfc98f43e0d26b9e71f7687641d551f",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-client-macos-x86_64.pkg"
+    },
+    {
+      "name": "karst-client-macos-x86_64.pkg.sha256",
+      "size": 138,
+      "digest": "sha256:7e46391d2a751713fcee8150a1bc74c61ca6bd27228314de03c927c06e29f4fa",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-client-macos-x86_64.pkg.sha256"
+    },
+    {
+      "name": "karst-control-0.1.0-0.rc.32.aarch64.rpm",
+      "size": 53393862,
+      "digest": "sha256:b86a8393c506779e0449f4a2c5c02fa6751b59a15625ad855e9c22adadadc332",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-control-0.1.0-0.rc.32.aarch64.rpm"
+    },
+    {
+      "name": "karst-control-0.1.0-0.rc.32.x86_64.rpm",
+      "size": 58459689,
+      "digest": "sha256:d114caea3bb09a3a955ab5d260e5014e68aee249bb2f236d1e3ca85fe71047ba",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-control-0.1.0-0.rc.32.x86_64.rpm"
+    },
+    {
+      "name": "karst-control.cdx.json",
+      "size": 295060,
+      "digest": "sha256:e43aeee661a88e6a3d54a0e71161f89391d104fa731e4f0862d66c5a61fe3c65",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-control.cdx.json"
+    },
+    {
+      "name": "karst-control_0.1.0-0.rc.32_amd64.deb",
+      "size": 58455990,
+      "digest": "sha256:cc659f29e1690b54e4b35169df810333cb959bdcd664f605e760b5110c177dda",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-control_0.1.0-0.rc.32_amd64.deb"
+    },
+    {
+      "name": "karst-control_0.1.0-0.rc.32_arm64.deb",
+      "size": 53393248,
+      "digest": "sha256:ee3de992ddf77743a18609d32c14d56b754b148219b7144cf15b7a53a8900be0",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-control_0.1.0-0.rc.32_arm64.deb"
+    },
+    {
+      "name": "karst-relay-0.1.0-0.rc.32.aarch64.rpm",
+      "size": 2958201,
+      "digest": "sha256:1c26883b8b83261b36a5f70d098a2729734180c03666b018978f3d70a41d2090",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-relay-0.1.0-0.rc.32.aarch64.rpm"
+    },
+    {
+      "name": "karst-relay-0.1.0-0.rc.32.x86_64.rpm",
+      "size": 3081231,
+      "digest": "sha256:0264b8f870263244eb2a58f3589ea43300622debb2c40d9d8e6e6dd6da3201ca",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-relay-0.1.0-0.rc.32.x86_64.rpm"
+    },
+    {
+      "name": "karst-relay.cdx.json",
+      "size": 199848,
+      "digest": "sha256:62b206283af23d1b8b43f421a9beffe77fb5d53e2ccced735ec9c8f293ce8aa7",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-relay.cdx.json"
+    },
+    {
+      "name": "karst-relay_0.1.0-0.rc.32_amd64.deb",
+      "size": 3076920,
+      "digest": "sha256:5e62ef42525a455f3b493e9fd04a9449ae6251e4ac77ac3450c7563b3940fd15",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-relay_0.1.0-0.rc.32_amd64.deb"
+    },
+    {
+      "name": "karst-relay_0.1.0-0.rc.32_arm64.deb",
+      "size": 2957258,
+      "digest": "sha256:7a0e5ec31b70edddee7256be2b6e3a66e21582c449509e3722bef9ca489a21aa",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-relay_0.1.0-0.rc.32_arm64.deb"
+    },
+    {
+      "name": "karst-web.tar.gz",
+      "size": 1333814,
+      "digest": "sha256:11f2750ec1cb9723406c616c98d771480eeba48746b3e82748bef7c82b69f13b",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karst-web.tar.gz"
+    },
+    {
+      "name": "karstd.cdx.json",
+      "size": 339582,
+      "digest": "sha256:03251a326e46a4763f03926188c073b6323ed6481acaa12f3839db5253d4e272",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/karstd.cdx.json"
+    },
+    {
+      "name": "manifest.json",
+      "size": 1443,
+      "digest": "sha256:171dc4bcfb41933986228f03952d3bad73f571cfa610517a87dbde4a241612a4",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/manifest.json"
+    },
+    {
+      "name": "SHA256SUMS",
+      "size": 1543,
+      "digest": "sha256:817f23df8baca1b10c37db4a763ea331efaddd740b2fa3528af246015fc6072e",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/SHA256SUMS"
+    },
+    {
+      "name": "SHA256SUMS.asc",
+      "size": 228,
+      "digest": "sha256:c3139bc37ec1b4b199d6331e745dab219dfa91bd99071d1a9f11b59580540a00",
+      "url": "https://github.com/karst-net/karst/releases/download/v0.1.0-rc.32/SHA256SUMS.asc"
+    }
+  ]
+}

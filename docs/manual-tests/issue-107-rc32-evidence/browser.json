@@ -1,0 +1,122 @@
+{
+  "release": "v0.1.0-rc.32",
+  "date": "2026-11-01T19:36:47.927Z",
+  "origin": "https://192.168.68.101:35443",
+  "tls": "Caddy internal CA; browser ignoreHTTPSErrors for disposable fixture",
+  "real_oidc_login": true,
+  "devices_text": "Skip to content\nKarst\n\nYour network\n\nMy devices\nDownload\nMy access\nSessions\nLog out\nMy devices\n\nOnly devices signed in as you appear here.\n\nAdd a device\n\nInstall the Karst client package on your Linux device first. This will connect it to https://192.168.68.101:35443 as you.\n\nThe bundle trusts this HTTPS deployment and includes its control-server pins. For independently provisioned pins, use your administrator’s bundle.\n\n I have installed the client and am ready to enroll.Create enrollment bundle\nName\tPlatform\tLast seen\tActions\nturing.compute\tlinux\t27 min ago\tRename Revoke\nturing.compute\tlinux\t26 min ago\tRename Revoke",
+  "sessions_text": "Skip to content\nKarst\n\nYour network\n\nMy devices\nDownload\nMy access\nSessions\nLog out\nMy session history\nDevice\tStarted\tEnded\tIP\nturing.compute\t21 min ago\tNot observed\t127.0.0.1\nturing.compute\t21 min ago\tNot observed\t127.0.0.1\nturing.compute\t22 min ago\t22 min ago\t127.0.0.1\nturing.compute\t22 min ago\t22 min ago\t127.0.0.1\nturing.compute\t22 min ago\t22 min ago\t127.0.0.1\nturing.compute\t22 min ago\t22 min ago\t127.0.0.1\nturing.compute\t26 min ago\t22 min ago\t127.0.0.1\nturing.compute\t27 min ago\t22 min ago\t127.0.0.1\nturing.compute\t27 min ago\t27 min ago\t127.0.0.1",
+  "console_text": "Skip to content\nKarst\n\nAdministration console\n\nConfigure\nObserve\nIDENTITY & ACCESS\nNETWORK\nDomains\nDNS\nGateways\nINFRASTRUCTURE\nACCOUNT\n\nAccount: Walkthrough Admin\n\nLog out\nTheme\nSystem\nLight\nDark\nDomains\n\nDomains organize devices into a naming hierarchy: a device placed in one is addressed as device.subdomain.domain. Every device belongs to a domain; new organizations start with the karst root. A domain's admin can create subdomains under it and delegate their administration to another user, without granting that user access to the rest of the account.\n\nCreate domain\nDomain\tDNS name\tActions\nkarst (root)\tkarst\t\nDelegations\nAdd subdomain\nRename root",
+  "downloads": [
+    {
+      "name": "karst-client-macos-arm64.pkg",
+      "path": "/releases/karst-client-macos-arm64.pkg",
+      "sha256": "3f9b12230301f3f77d1bba464c7cb70c075f3fe6df3d2214bce09d9ee7cab7ae",
+      "manifest_match": true,
+      "error": null
+    },
+    {
+      "name": "karst-client-macos-x86_64.pkg",
+      "path": "/releases/karst-client-macos-x86_64.pkg",
+      "sha256": "aaf8882a8cc6877d5192e3a024c85b281bfc98f43e0d26b9e71f7687641d551f",
+      "manifest_match": true,
+      "error": null
+    },
+    {
+      "name": "karst-client-linux-0.1.0-0.rc.32.aarch64.rpm",
+      "path": "/releases/karst-client-linux-0.1.0-0.rc.32.aarch64.rpm",
+      "sha256": "97e7b5deb50fdae72b9922e80dfa3a74a65411f1f6e91e8f94f2d18ef5744812",
+      "manifest_match": true,
+      "error": null
+    },
+    {
+      "name": "karst-client-linux-0.1.0-0.rc.32.x86_64.rpm",
+      "path": "/releases/karst-client-linux-0.1.0-0.rc.32.x86_64.rpm",
+      "sha256": "b464ccd5f9a34e77ee6bc4f199636b265684d7225d26290dae5f934a027a5b24",
+      "manifest_match": true,
+      "error": null
+    },
+    {
+      "name": "karst-client-linux_0.1.0-0.rc.32_amd64.deb",
+      "path": "/releases/karst-client-linux_0.1.0-0.rc.32_amd64.deb",
+      "sha256": "33d93ea3c7ebe858cefcf21658e569b0f444fb3a2aa90b20469055d0fff7ff6b",
+      "manifest_match": true,
+      "error": null
+    },
+    {
+      "name": "karst-client-linux_0.1.0-0.rc.32_arm64.deb",
+      "path": "/releases/karst-client-linux_0.1.0-0.rc.32_arm64.deb",
+      "sha256": "10d845fed437e8dad94e33075809b0986266f0c23b01722a17ef91ef3bc0c457",
+      "manifest_match": true,
+      "error": null
+    }
+  ],
+  "missing_artifact_status": 404,
+  "errors": [],
+  "responses": [
+    {
+      "path": "/portal/assets/main-DeUrq2q2.css",
+      "status": 200
+    },
+    {
+      "path": "/portal/assets/auth-CmZdQLiQ.js",
+      "status": 200
+    },
+    {
+      "path": "/portal/assets/main-CFRhQmWH.js",
+      "status": 200
+    },
+    {
+      "path": "/portal/assets/auth-CmZdQLiQ.js",
+      "status": 200
+    },
+    {
+      "path": "/portal/assets/silentRenew-C1bZowT3.js",
+      "status": 200
+    },
+    {
+      "path": "/auth/resources/n86uj/common/keycloak/vendor/patternfly-v5/patternfly.min.css",
+      "status": 200
+    },
+    {
+      "path": "/auth/resources/n86uj/login/keycloak.v2/js/passwordVisibility.js",
+      "status": 200
+    },
+    {
+      "path": "/auth/resources/n86uj/login/keycloak.v2/js/authChecker.js",
+      "status": 200
+    },
+    {
+      "path": "/auth/resources/n86uj/login/keycloak.v2/css/styles.css",
+      "status": 200
+    },
+    {
+      "path": "/auth/resources/n86uj/common/keycloak/vendor/patternfly-v5/patternfly-addons.css",
+      "status": 200
+    },
+    {
+      "path": "/portal/assets/main-CFRhQmWH.js",
+      "status": 200
+    },
+    {
+      "path": "/portal/assets/auth-CmZdQLiQ.js",
+      "status": 200
+    },
+    {
+      "path": "/portal/assets/main-DeUrq2q2.css",
+      "status": 200
+    },
+    {
+      "path": "/api/karst/v1/me/devices",
+      "status": 200
+    },
+    {
+      "path": "/api/karst/v1/me/sessions",
+      "status": 200
+    },
+    {
+      "path": "/releases/manifest.json",
+      "status": 200
+    }
+  ]
+}
