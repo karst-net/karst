@@ -132,13 +132,17 @@ but cannot manufacture consent on a client's behalf. Nothing this section
 describes bypasses that gate — routing and privacy exposure begin only after
 the local operator has explicitly opted in.
 
-On macOS (ADR-0036) the local operator is the Mac's administrator, with two
-equivalent ways to give or withdraw consent: `sudo karst gateway exit use
-<route-id>` / `disable` (the CLI ships with the package and talks to the
-Network Extension's root-only socket), or Karst.app's **Exit node** menu,
-which shows this section's disclosure and asks for an administrator's
-password; the extension verifies that authorization itself before changing
-anything. A non-administrator can see the current exit but cannot change it.
+On macOS (ADR-0036, revised 2026-11-02), a self-service install has two
+front doors that no longer require the same credential: `sudo karst gateway
+exit use <route-id>` / `disable` still needs an administrator (the CLI
+talks to the Network Extension's root-only socket, as on Linux/Windows),
+but Karst.app's **Exit node** menu — which still shows this section's
+disclosure before acting — needs no password or Touch ID prompt any more.
+Whoever is logged in locally, administrator or not, can change the exit
+node from the menu. On a **managed** install, the device's `providerConfiguration`
+decides the exit via `ExitNodeAutoConsent` and the menu shows it as
+"Managed by your organization," offering no local change at all —
+managed mode is unaffected by the revision above.
 
 ## 4. Recovery
 

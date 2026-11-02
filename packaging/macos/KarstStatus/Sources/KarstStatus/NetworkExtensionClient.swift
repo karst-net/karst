@@ -61,17 +61,16 @@ struct NetworkExtensionStatusClient {
 
     /// Consent to exit route `routeID`, or with `nil` withdraw consent
     /// (ADR-0036 §3) — `PacketTunnelProvider.handleAppMessage`'s
-    /// `"exit-use"`/`"exit-disable"` verbs. `authorization` is an
-    /// `ExitNodeAuthorization.externalForm`, which the extension verifies
-    /// itself. Answers `{}` on success or `{"error": "..."}`.
+    /// `"exit-use"`/`"exit-disable"` verbs. No local gate on a self-service
+    /// install: the extension only refuses this when the exit node is
+    /// managed (`managedExitAutoConsent`). Answers `{}` on success or
+    /// `{"error": "..."}`.
     func sendExitCommand(
         routeID: String?,
-        authorization: String,
         completion: @escaping (Result<String, Error>) -> Void
     ) {
         var payload: [String: Any] = [
             "verb": routeID == nil ? "exit-disable" : "exit-use",
-            "authorization": authorization,
         ]
         if let routeID {
             payload["route_id"] = routeID

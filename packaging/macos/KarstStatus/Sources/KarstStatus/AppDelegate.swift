@@ -428,7 +428,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = """
             All of this Mac's internet traffic will leave through the exit node, \
             which can see the destinations it reaches (and the contents of anything \
-            not encrypted). An administrator of this Mac must approve this change.
+            not encrypted).
             """
         alert.addButton(withTitle: "Use Exit Node")
         alert.addButton(withTitle: "Cancel")
@@ -441,23 +441,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         changeExitNode(routeID: nil)
     }
 
-    /// Acquire an administrator's authorization, then ask the extension —
-    /// which checks that authorization again, as root — to consent to
-    /// `routeID` or, with `nil`, to withdraw consent.
+    /// Ask the extension to consent to `routeID` or, with `nil`, to
+    /// withdraw consent. Not gated locally on a self-service install
+    /// (ADR-0036 §3, revised); the extension itself still refuses this on a
+    /// managed install (`managedExitAutoConsent`), where the menu item has
+    /// no action in the first place.
     private func changeExitNode(routeID: String?) {
-        let authorization: ExitNodeAuthorization
-        switch ExitNodeAuthorization.request() {
-        case .success(let granted):
-            authorization = granted
-        case .failure(.canceled):
-            return
-        case .failure(let failure):
-            showAlert(title: "Exit Node Not Changed", message: failure.localizedDescription)
-            return
-        }
-        client.sendExitCommand(routeID: routeID, authorization: authorization.externalForm) { [weak self] result in
+        client.sendExitCommand(routeID: routeID) { [weak self] result in
             DispatchQueue.main.async {
-                authorization.invalidate()
                 guard let self else { return }
                 switch result {
                 case .failure(let error):

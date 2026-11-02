@@ -38,7 +38,7 @@ the old binary, whose strict TOML parser rejects unknown tables.
 | Metrics | `karst_gateway_offers{state="ready\|degraded\|disabled"}` counts local Gateway offers. Existing `karst_exit_route_active` describes client selection and is retained for collectors. |
 | Operator guides | Current customer scenarios, manual procedures and macOS operational commands use `karst gateway exit`; historical ADRs/reviews and explicit alias descriptions retain old names. |
 | Deployment generators | macOS lab generator emits `[gateway]` and retains its consent filename. Other checked-in deployment templates do not configure a legacy exit-state key. |
-| Persistent state / IPC / platform rights | Keep the deployed `exit-route` file (or custom `exit-node.json`), legacy IPC verbs, macOS `dev.karst.exit-node.consent` and managed exit-consent settings. These are deployed contracts; renaming them would reset consent or invalidate platform integrations. |
+| Persistent state / IPC / platform rights | Keep the deployed `exit-route` file (or custom `exit-node.json`), legacy IPC verbs, and managed exit-consent settings (`ExitNodeAutoConsent`). These are deployed contracts; renaming them would reset consent or invalidate platform integrations. macOS's `dev.karst.exit-node.consent` authorization right is no longer written by current installs (ADR-0036 §3, revised 2026-11-02); `uninstall.sh` still removes it so an upgrade from an older package doesn't leave it behind. |
 | Implementation and historical plans | Keep `exit_node.rs`, `exit_policy.rs`, subnet/exit test names and archived plans where they describe different semantics or historical work. |
 
 ## Diagnostics and alerting

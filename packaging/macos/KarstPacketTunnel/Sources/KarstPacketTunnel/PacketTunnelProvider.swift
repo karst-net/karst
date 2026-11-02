@@ -890,20 +890,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         case "exit-use", "exit-disable":
             // A profile-managed exit (ADR-0036 §4) is the organization's
             // choice, not a local one: the menu offers no change, and this
-            // refuses one regardless.
+            // refuses one regardless. Outside managed mode, this verb needs
+            // no further gate: whoever is logged in locally may change this
+            // Mac's exit node (ADR-0036 §3, revised).
             if managedExitAutoConsent {
                 completionHandler(Self.errorResponse("the exit node is managed by your organization"))
-                return
-            }
-            // Karst.app's Exit node menu (ADR-0036 §3). The token is checked
-            // here, as root, before anything reaches the engine: see
-            // `ExitConsent`'s doc comment for why the app's own check is not
-            // enough.
-            guard
-                let token = object["authorization"] as? String,
-                ExitConsent.isAuthorized(externalForm: token)
-            else {
-                completionHandler(Self.errorResponse("an administrator must approve exit-node changes"))
                 return
             }
             let line: String
