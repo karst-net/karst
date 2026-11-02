@@ -12,13 +12,18 @@ make_fixture() {
   local route_churn=$2
   local extra=${3:-}
   local invitation="$temp/$name.invitation"
+  local peer2_key="$temp/$name.peer2-ssh-key"
   local handoff="$temp/$name.env"
   printf "karst-invite-v1:test\n" > "$invitation"
   chmod 600 "$invitation"
+  printf "test\n" > "$peer2_key"
+  chmod 600 "$peer2_key"
   {
     printf "KARST_CI_INVITATION_FILE=%s\n" "$invitation"
+    printf "KARST_CI_PEER2_SSH_KEY_FILE=%s\n" "$peer2_key"
     printf "KARST_CI_PROBE_URL=http://100.64.0.2/probe\n"
     printf "KARST_CI_UDP_HOST=100.64.0.2\nKARST_CI_UDP_PORT=9000\n"
+    printf "KARST_CI_PEER2_HOST=100.64.0.3\nKARST_CI_PEER2_SSH_PORT=22\n"
     if [[ "$route_churn" == true ]]; then
       printf "KARST_CI_SUBNET_PROBE_URL=http://10.23.0.2/probe\n"
       printf "KARST_CI_SUBNET_ROUTE_PREFIX=10.23.0.0/24\n"
