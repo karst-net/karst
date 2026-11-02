@@ -4516,6 +4516,20 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
         Duration::from_secs(30),
         || field(&status(&net, "b", NS_B), "state").as_deref() == Some("established"),
     );
+    // "established" is peer transport state (disco/handshake), which can
+    // complete before the *specific* netmap carrying the route offer does —
+    // excludeOfflineGateways (#109) makes a gateway's candidacy depend on a
+    // separate cross-node liveness round trip, a real and variable delay
+    // this row's original single "established" wait predates and does not
+    // account for. Same fix as the subnet row
+    // (`a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding`,
+    // 55d0ad5): wait for the offer itself to appear, not a proxy for it.
+    wait_for(
+        &net,
+        "node B's netmap to actually carry the route offer to node A",
+        Duration::from_secs(10),
+        || field(&status(&net, "b", NS_B), "offers").as_deref() != Some("0"),
+    );
 
     let listener_on = |net: &mut Aquifer, ns: &str, label: &str| {
         let listener = format!(
