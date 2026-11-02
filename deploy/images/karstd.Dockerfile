@@ -37,7 +37,16 @@ LABEL org.opencontainers.image.source="https://github.com/karst-net/karst" \
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /etc/karst /run/karst
+    && mkdir -p /etc/karst
+# Not /run/karst: `ipc.rs::secure_dir` requires the control socket's
+# directory to be exactly mode 0700, and only sets that mode itself when the
+# directory does not exist yet — a pre-existing one is checked, never
+# clobbered (see its own doc comment for why: a caller pointing
+# --socket/--status-socket at a shared location must not have that
+# location's permissions silently overwritten). Baking this directory into
+# the image at the default `mkdir -p` mode (0755) means every container
+# refuses to start: "exists with mode 0755, not the required 0700". Leaving
+# it uncreated lets karstd create it itself, correctly, on first run.
 COPY --from=build /usr/local/bin/karstd-built /usr/local/bin/karstd
 
 # The Kubernetes DaemonSet deliberately runs this as root with the privileges

@@ -67,18 +67,25 @@ prepare)
     mkdir -m 700 "$work"
     chown "$runner" "$work"
     invitation_file="$work/invitation"
+    # The second lab peer's sshd key (KARST_CI_PEER2_SSH_KEY_FILE below):
+    # a file, like the invitation, never an environment variable or a log.
+    peer2_ssh_key_file="$work/peer2_ssh_key"
     answer="$work/.answer"
     lab prepare --scenario "$scenario" $churn $exit_route > "$answer"
 
     owned_file "$invitation_file"
+    owned_file "$peer2_ssh_key_file"
     owned_file "$env_file"
-    /usr/bin/python3 - "$answer" "$invitation_file" "$env_file" <<'EOF'
+    /usr/bin/python3 - "$answer" "$invitation_file" "$peer2_ssh_key_file" "$env_file" <<'EOF'
 import json, sys
 answer = json.load(open(sys.argv[1]))
 with open(sys.argv[2], "w") as f:
     f.write(answer["invitation"] + "\n")
 with open(sys.argv[3], "w") as f:
+    f.write(answer["peer2_ssh_key"])
+with open(sys.argv[4], "w") as f:
     f.write(f"KARST_CI_INVITATION_FILE={sys.argv[2]}\n")
+    f.write(f"KARST_CI_PEER2_SSH_KEY_FILE={sys.argv[3]}\n")
     for key, value in answer["handoff"].items():
         f.write(f"{key}={value}\n")
 EOF

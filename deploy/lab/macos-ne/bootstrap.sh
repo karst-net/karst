@@ -31,8 +31,8 @@ parent=${KARST_LAB_LAN_PARENT:-$(ip -o -4 addr show | awk -v a="$KARST_LAB_HOST_
 lan_subnet=${KARST_LAB_LAN_SUBNET:-$(ip -o -4 route show dev "$parent" proto kernel | awk '{ print $1; exit }')}
 lan_gateway=${KARST_LAB_LAN_GATEWAY:-$(ip -o -4 route show default dev "$parent" | awk '{ print $3; exit }')}
 
-mkdir -p "$state/tls" "$state/netbird" "$state/peer"
-chmod 700 "$state/peer"
+mkdir -p "$state/tls" "$state/netbird" "$state/peer" "$state/peer2"
+chmod 700 "$state/peer" "$state/peer2"
 
 if [ ! -f .env ]; then
     umask 077
@@ -57,12 +57,16 @@ else
 fi
 # Added after the first labs were stood up, so appended to an existing .env
 # rather than only written into a new one. labgw takes the LAN address after
-# the peer's (the two form a /31); control and relay get fixed core addresses
-# that the Mac can reach only through labgw.
+# the peer's, and peer2 (a second, non-gateway mesh peer) the one after
+# that — three consecutive static addresses, so the default `ip_range` below
+# covers a /30 rather than the original pair's /31. Control and relay get
+# fixed core addresses that the Mac can reach only through labgw.
 add_env() { grep -q "^$1=" .env || echo "$1=$2" >> .env; }
 gw_default=$(python3 -c "import ipaddress,sys; print(ipaddress.ip_address(sys.argv[1]) + 1)" "$KARST_LAB_PEER_LAN_IP")
 add_env KARST_LAB_GW_LAN_IP "${KARST_LAB_GW_LAN_IP:-$gw_default}"
-add_env KARST_LAB_LAN_IP_RANGE "${KARST_LAB_LAN_IP_RANGE:-$KARST_LAB_PEER_LAN_IP/31}"
+peer2_default=$(python3 -c "import ipaddress,sys; print(ipaddress.ip_address(sys.argv[1]) + 2)" "$KARST_LAB_PEER_LAN_IP")
+add_env KARST_LAB_PEER2_LAN_IP "${KARST_LAB_PEER2_LAN_IP:-$peer2_default}"
+add_env KARST_LAB_LAN_IP_RANGE "${KARST_LAB_LAN_IP_RANGE:-$KARST_LAB_PEER_LAN_IP/30}"
 add_env KARST_LAB_CORE_SUBNET 10.230.0.0/24
 add_env KARST_LAB_CORE_GW_IP 10.230.0.2
 add_env KARST_LAB_CORE_CONTROL_IP 10.230.0.10
@@ -83,6 +87,16 @@ if [ ! -f "$state/tls/relay.crt" ]; then
     chmod 600 "$state/tls/relay.key"
 fi
 cp "$state/tls/relay.crt" "$state/peer/relay-ca.crt"
+cp "$state/tls/relay.crt" "$state/peer2/relay-ca.crt"
+
+# The lab-only client key both peers' sshd fixtures trust (peer-entrypoint.sh).
+# Not security-sensitive: this lab's own README already runs everything else
+# in plaintext, and this key only reaches disposable, karst0-gated containers.
+if [ ! -f "$state/ssh_lab_client" ]; then
+    ssh-keygen -t ed25519 -N '' -C 'karst-ne-lab' -f "$state/ssh_lab_client" >/dev/null
+fi
+cp "$state/ssh_lab_client.pub" "$state/peer/ssh_authorized_keys"
+cp "$state/ssh_lab_client.pub" "$state/peer2/ssh_authorized_keys"
 [ -f "$state/relay.toml" ] || cat > "$state/relay.toml" <<EOF
 listen = "0.0.0.0:443"
 identity_key = "/var/lib/karst/relay.key"

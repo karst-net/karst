@@ -26,12 +26,33 @@ ip link set lab-fixtures up
 ip addr replace "$KARST_LAB_SUBNET_ADDR/32" dev lab-fixtures
 ip addr replace "$KARST_LAB_EXIT_ADDR/32" dev lab-fixtures
 
+# sshd: a ping/ssh-reachable fixture, gated the same way as the HTTP/UDP
+# ones below — only reachable through the overlay, never the LAN. The
+# authorized key is `bootstrap.sh`'s lab-only keypair, mounted read-only at
+# /etc/karst/ssh_authorized_keys; sshd's own StrictModes rejects an
+# AuthorizedKeysFile it does not own, and the bind mount keeps the host's
+# ownership (not root's), so this copies it into root's own .ssh instead of
+# pointing AuthorizedKeysFile at the mount directly. Host keys are
+# regenerated on every start, which is fine for a disposable lab (nothing
+# here is meant to survive a container recreation, same as the rest of
+# this file).
+mkdir -p /run/sshd /root/.ssh
+chmod 700 /root/.ssh
+cp /etc/karst/ssh_authorized_keys /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+ssh-keygen -A >/dev/null 2>&1
+cat > /etc/ssh/sshd_config.d/lab.conf <<'EOF'
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+EOF
+/usr/sbin/sshd
+
 # Fixtures answer only traffic that arrived through the overlay.
 iptables -N LAB-FIXTURES 2>/dev/null || iptables -F LAB-FIXTURES
 iptables -A LAB-FIXTURES -i karst0 -j ACCEPT
 iptables -A LAB-FIXTURES -i lo -j ACCEPT
 iptables -A LAB-FIXTURES -j DROP
-for rule in "-p tcp --dport 8080" "-p udp --dport 7777"; do
+for rule in "-p tcp --dport 8080" "-p udp --dport 7777" "-p tcp --dport 22"; do
     # shellcheck disable=SC2086
     iptables -C INPUT $rule -j LAB-FIXTURES 2>/dev/null || iptables -A INPUT $rule -j LAB-FIXTURES
 done

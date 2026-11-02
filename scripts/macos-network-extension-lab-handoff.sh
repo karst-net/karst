@@ -20,10 +20,12 @@ subnet_probe_url= subnet_route_prefix=
 exit_probe_url= exit_route_prefix=
 control_plane_probe_url= control_plane_host= control_plane_interface=
 relay_probe_url= relay_host= relay_interface=
+peer2_host= peer2_ssh_port= peer2_ssh_key_file=
 
 while IFS= read -r line; do
   case "$line" in
     KARST_CI_INVITATION_FILE=*) invitation_file=${line#*=} ;;
+    KARST_CI_PEER2_SSH_KEY_FILE=*) peer2_ssh_key_file=${line#*=} ;;
     KARST_CI_PROBE_URL=*) probe_url=${line#*=} ;;
     KARST_CI_UDP_HOST=*) udp_host=${line#*=} ;;
     KARST_CI_UDP_PORT=*) udp_port=${line#*=} ;;
@@ -37,6 +39,8 @@ while IFS= read -r line; do
     KARST_CI_RELAY_PROBE_URL=*) [[ "$exit_route" == true ]] || { echo "unexpected exit-route environment entry" >&2; exit 1; }; relay_probe_url=${line#*=} ;;
     KARST_CI_RELAY_HOST=*) [[ "$exit_route" == true ]] || { echo "unexpected exit-route environment entry" >&2; exit 1; }; relay_host=${line#*=} ;;
     KARST_CI_RELAY_INTERFACE=*) [[ "$exit_route" == true ]] || { echo "unexpected exit-route environment entry" >&2; exit 1; }; relay_interface=${line#*=} ;;
+    KARST_CI_PEER2_HOST=*) peer2_host=${line#*=} ;;
+    KARST_CI_PEER2_SSH_PORT=*) peer2_ssh_port=${line#*=} ;;
     *) echo "unexpected lab environment entry" >&2; exit 1 ;;
   esac
   echo "$line" >> "$GITHUB_ENV"
@@ -51,6 +55,12 @@ test -r "$invitation_file"
 test "$(file_mode "$invitation_file")" -le 600
 require_url "$probe_url"
 case "$udp_port" in *[!0-9]*|"") exit 1 ;; esac
+: "${peer2_host:?lab bootstrap did not provide a second-peer host}"
+: "${peer2_ssh_port:?lab bootstrap did not provide a second-peer SSH port}"
+: "${peer2_ssh_key_file:?lab bootstrap did not provide a second-peer SSH key file}"
+case "$peer2_ssh_port" in *[!0-9]*|"") exit 1 ;; esac
+test -r "$peer2_ssh_key_file"
+test "$(file_mode "$peer2_ssh_key_file")" -le 600
 if [[ "$route_churn" == true ]]; then
   : "${subnet_probe_url:?lab bootstrap did not provide a subnet probe URL}"
   : "${subnet_route_prefix:?lab bootstrap did not provide a subnet route prefix}"

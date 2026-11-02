@@ -2,7 +2,8 @@
 # ADR-0036: Exit-route consent on the macOS Network Extension client
 
 - **Status:** Proposed
-- **Date:** 2026-09-25
+- **Date:** 2026-09-25 (revised 2026-11-02: dropped the local authorization
+  gate for self-service installs — see Decision item 3 and "Revision")
 - **Deciders:** TBD
 - **Related:** #160 (exit-route validation, blocked on this), #165 (its
   active-exit-withdrawal criterion), ADR-0024 (consent stays local and
@@ -33,16 +34,23 @@ unusable end to end:
 | Consent storage | Works: `exit-use` writes `/var/db/karst/exit-route` (root, 0600), as on Linux |
 | **Activation** | Fails: `reconcile_exit` calls `exit_policy::activate`, Linux policy routing built on the `ip` tool; on macOS that is `ENOENT` ("No such file or directory"), so the exit never becomes active |
 | Default route | Exists: the provider maps an *active* recipient exit into `0.0.0.0/0`/`::/0` included routes, and since #193 re-applies it mid-session |
-| **Who may consent** | Only root over the raw socket, with no shipped tool and no UI |
+| **Who may consent** | Only root over the raw socket, with no shipped tool and no UI (this was the starting point the Decision below changes for self-service installs) |
 
 Two constraints decide the shape before preference does:
 
-1. **ADR-0024's authority model.** Consent, and its withdrawal, belong to the
-   device's *local operator*: whoever holds administrator rights, not the
-   enrolled user. A child's non-admin account must not be able to turn a
-   parent's chosen exit off, or pick one of its own. On macOS, `Karst.app`
-   runs as whichever user is logged in, so a plain menu item sending a
-   provider message would hand that power to any console user.
+1. **ADR-0024's authority model, applied — and, on reflection, deliberately
+   narrowed for this one platform's self-service case (see "Revision"
+   below).** ADR-0024 draws its line at the *local operator*: whoever can
+   already reconfigure the machine, which on Linux/Windows is whoever can
+   reach the root-only control socket. The original version of this ADR
+   mapped that to "whoever holds administrator rights" on macOS too, because
+   `Karst.app` runs as whichever user is logged in, so a plain menu item
+   sending a provider message would hand the power to change the exit node
+   to any console user, admin or not — and ADR-0024's own worked example is
+   a parent/child household where that distinction matters. The revision
+   below keeps ADR-0024's actual boundary (the control plane can never force
+   or imply consent) but stops reproducing Linux's *root-only* half of it on
+   macOS for a self-service install: see "Revision" for why.
 2. **macOS has no Linux policy routing, and doesn't need it.** In a Network
    Extension the provider owns routing through `NEPacketTunnelNetworkSettings`
    (the engine's `add_route` is already a no-op there), and the system keeps a
@@ -70,26 +78,24 @@ Two constraints decide the shape before preference does:
    satisfied by a connected LAN route. If it shows a loop, reconsider (see
    below).
 
-3. **Personal mode: two front doors, both requiring administrator rights.**
+3. **Personal mode: two front doors; neither needs a password any more.**
    - **CLI.** The package ships the `karst` CLI, defaulting on macOS to the
      extension's admin socket
      (`/Library/Application Support/dev.karst.packettunnel/control.sock`,
      root-only). `sudo karst exit-node list | use <route-id> | disable` works
-     as documented for Linux. The CI harness uses this path.
+     as documented for Linux, unchanged by this revision — this path still
+     needs `sudo`, for the same reason it does on Linux/Windows. The CI
+     harness uses this path.
    - **Karst.app menu.** An **Exit node ▸** submenu lists offered exit routes
-     (gateway name and prefix) and **Off**. Choosing one first shows the
-     existing privacy disclosure ("the exit node sees your traffic's
-     destinations", `docs/subnet-routers-and-exit-nodes.md` §3), then
-     requests the authorization right `dev.karst.exit-node.consent` (rule:
-     authenticate as an administrator, credentials not shared, valid for 5
-     seconds: long enough for the extension's check, short enough that every
-     change prompts) with Authorization Services. The app
-     sends the provider an `exit-use`/`exit-disable` message carrying the
-     `AuthorizationExternalForm`. **The extension, running as root,
-     reconstructs it and checks the right itself** (`AuthorizationCopyRights`
-     without interaction) before relaying the command to the engine; a
-     missing or unauthorized token is refused. A non-admin user sees the
-     current exit but cannot change it.
+     (gateway name and prefix) and **Off**. Choosing one shows the existing
+     privacy disclosure ("the exit node sees your traffic's destinations",
+     `docs/subnet-routers-and-exit-nodes.md` §3) and, on confirmation, sends
+     the provider a plain `exit-use`/`exit-disable` message — no
+     authorization token, no password or Touch ID prompt. **The extension
+     only checks whether the install is managed** (`managedExitAutoConsent`,
+     ADR-0036 §4 below); if it is not, the command reaches the engine
+     unconditionally. Any console user, administrator or not, can change
+     the exit node this way on a self-service Mac.
 
 4. **Managed mode (ADR-0031): consent comes from the profile.** A
    `providerConfiguration` key in the `com.apple.vpn.managed` payload,
@@ -110,12 +116,10 @@ Two constraints decide the shape before preference does:
 
 ### Alternatives rejected
 
-- **A menu item that sends `exit-use` without authorization.** Rejected: it
-  lets any console user, including a managed child account, give or withdraw
-  consent, which ADR-0024 exists to prevent.
-- **Asking for admin credentials in the app and trusting the app's word.**
-  Rejected: the provider cannot tell a checked request from an unchecked
-  one. Only a token the root side verifies itself carries the guarantee.
+- **Keeping the Authorization Services gate for every console user, as the
+  original version of this ADR did.** Superseded — see "Revision" below for
+  why a self-service install no longer reproduces Linux's root-only-socket
+  boundary on macOS.
 - **Porting `exit_policy`'s policy routing to macOS (PF or `route`).**
   Rejected: inside a Network Extension routing is the provider's job, and
   duplicating it in the engine would fight `NEPacketTunnelNetworkSettings`.
@@ -139,17 +143,37 @@ Two constraints decide the shape before preference does:
 - Exit routes become usable on macOS, unblocking #160 and #165's
   active-exit-withdrawal criterion. The lab's exit scenario can run via
   `sudo karst exit-node use`.
-- ADR-0024's authority boundary holds on macOS: consent needs an
-  administrator, checked by the root side, in both front doors.
-- Managed deployments get a no-touch exit without a route-ID dependency.
+- The control plane still cannot force or imply consent on macOS, which is
+  the part of ADR-0024's boundary that actually matters: the server can
+  offer a route, never activate one.
+- Changing the exit node from `Karst.app` now needs no password or Touch ID
+  prompt on a self-service Mac, matching the CLI's own ADR-0024 ceiling (an
+  admin on a personally-owned machine could already do this via `sudo`
+  regardless of what the GUI gated) instead of adding GUI-only friction on
+  top of it.
+- Managed deployments get a no-touch exit without a route-ID dependency,
+  unaffected by this revision.
 
 ### Negative
 
-- Authorization Services is new surface area in both the app and the
-  extension: a custom right in the authorization database, installed by the
-  package, and a verification path that must fail closed.
-- The shipped CLI is a second consent path to keep aligned with the menu,
-  though both end at the same engine IPC.
+- **Any console user on a self-service Mac — not only an administrator —
+  can now change the exit node from the menu, with no credential at all.**
+  This reopens exactly the household scenario ADR-0024 names (a non-admin
+  child account) for the macOS GUI path specifically: a parent's chosen
+  exit can be turned off, or a different one chosen, from a non-admin
+  session. ADR-0024 itself names the escape hatch for anyone who needs that
+  boundary enforced: managed/MDM mode (ADR-0036 §4), where the device's
+  account is not the intended holder of control and the exit is already
+  fully locked to the profile's choice with no local override of any kind.
+  Self-service installs are, by this revision, no longer where that
+  boundary is enforced.
+- The CLI's root-only socket and the GUI's unauthenticated provider message
+  are now two different privilege levels for the same action — `sudo karst
+  exit-node use` still needs an admin password; the menu item next to it
+  does not. This is intentional (the GUI path has no OS-level privilege
+  gate available to it the way a Unix socket does, so there was never
+  parity to preserve once the password requirement was dropped), but it is
+  a visible asymmetry worth stating plainly rather than leaving implicit.
 - `ExitNodeAutoConsent` picks nothing when more than one exit is offered to
   a device. Deployments that offer several exits to managed Macs need a
   follow-up (for example selecting by gateway name).
@@ -163,5 +187,36 @@ Two constraints decide the shape before preference does:
   item 2).
 - Managed fleets need several exits per device. Then extend the profile key
   to select by gateway rather than by count.
-- Apple ships a supported per-user consent or VPN-configuration API that
-  makes Authorization Services unnecessary.
+- A self-service, multi-account household wants the pre-revision behavior
+  back (a non-admin console user blocked from changing the exit node)
+  without adopting MDM. No such request has been made; if one is, it needs
+  its own ADR per ADR-0024's own "Reconsider if" clause, not a reversal
+  folded back into this one.
+
+---
+
+## Revision (2026-11-02): dropped the local authorization gate
+
+The Decision above originally required Authorization Services on the
+`Karst.app` menu path (an admin password or Touch ID prompt on every
+`exit-use`/`exit-disable`, deliberately not cached — see the postinstall
+comment history for why a longer timeout was tried and reverted). On
+direction from the project, that gate is removed for self-service installs:
+**unless the configuration is managed (`ExitNodeAutoConsent` present,
+§4), whoever is logged in locally may change this Mac's exit node without
+a password**, from either front door the CLI already had (`sudo karst
+exit-node use`, unchanged) or the menu (now ungated).
+
+This is a deliberate, scoped narrowing of ADR-0024's authority model for
+macOS's self-service case, not a bug fix: the Context section above
+explains why the original design treated "administrator" as the local
+operator on macOS the same way "root over the socket" is the local operator
+on Linux/Windows. The friction that boundary bought — a password on every
+switch, with no session caching, by design — was reconsidered and found not
+worth paying on a platform where, per ADR-0024's own "Where this genuinely
+does not reach" section, an admin could always reach the same result
+through the CLI anyway. What the revision gives up is the piece ADR-0024's
+household example actually depended on: a non-admin console user on a
+self-service Mac can now also change the exit node. Anyone who needs that
+specific boundary enforced should use managed/MDM mode, which this revision
+does not touch.
