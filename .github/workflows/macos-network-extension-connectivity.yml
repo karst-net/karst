@@ -199,6 +199,16 @@ jobs:
           echo "control host via $(route_via "$KARST_CI_CONTROL_PLANE_HOST") (was $KARST_CI_CONTROL_PLANE_INTERFACE), relay host via $(route_via "$KARST_CI_RELAY_HOST") (was $KARST_CI_RELAY_INTERFACE)"
           curl --fail --silent --show-error --noproxy '*' --max-time 15 --output /dev/null "$KARST_CI_CONTROL_PLANE_PROBE_URL"
           curl --fail --silent --show-error --noproxy '*' --max-time 15 --output /dev/null "$KARST_CI_RELAY_PROBE_URL"
+          # The checks above only prove the exit's own gateway peer and the
+          # control/relay hosts stay reachable — not that an *unrelated* mesh
+          # peer does. KARST_CI_PEER2_HOST (labctl.py's PEER2_NAME) is never a
+          # route's gateway, so this is the actual gap an active default
+          # route could open: overlay traffic to it must stay on karst0, not
+          # fall into the newly-installed 0.0.0.0/0.
+          ping -c 3 -t 10 "$KARST_CI_PEER2_HOST"
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
+            -o ConnectTimeout=10 -i "$KARST_CI_PEER2_SSH_KEY_FILE" -p "$KARST_CI_PEER2_SSH_PORT" \
+            "root@$KARST_CI_PEER2_HOST" true
           for _ in 1 2 3; do
             sleep 15
             status="$(sudo /usr/local/bin/karst status)"

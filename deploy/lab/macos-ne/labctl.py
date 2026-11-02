@@ -32,12 +32,19 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(HERE, "state")
 PEER_NAME = "lab-peer"
+# A second, ordinary mesh peer: not a gateway for any route, so it is never
+# the exit route's own backing peer. Exists to test that a device can still
+# reach *other* mesh peers while an exit route is active — the gateway peer
+# alone can't prove that, since reaching it is what the exit route itself
+# depends on.
+PEER2_NAME = "lab-peer-2"
 MAC_PREFIX = "lab-mac-"
 GROUP = "lab"
 SUBNET_ROUTE = ("lab-subnet", "subnet")
 EXIT_ROUTE = ("lab-exit", "exit")
 FIXTURE_HTTP_PORT = 8080
 FIXTURE_UDP_PORT = 7777
+FIXTURE_SSH_PORT = 22
 
 
 def log(*args):
@@ -123,10 +130,23 @@ def group_id(api):
     return api("POST", "/api/groups", {"name": GROUP})["id"]
 
 
+def current_user_id(api):
+    """The `sub` claim of `api`'s own bearer token — no verification needed,
+    since this is the token this process just obtained with the lab admin's
+    own credentials. Invitations now require an explicit owner
+    (`for_user_id`); the lab always assigns its own devices to itself.
+    """
+    payload = api.bearer.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))["sub"]
+
+
 def invitation(api, name):
     """A fresh single-use invitation, encoded exactly as the console does."""
     metadata = api("GET", "/api/karst/v1/me/enrollment")
-    grant = api("POST", "/api/karst/v1/invitations", {"name": name, "groups": [group_id(api)]})
+    grant = api("POST", "/api/karst/v1/invitations", {
+        "name": name, "groups": [group_id(api)], "for_user_id": current_user_id(api),
+    })
     # The relay's self-signed certificate rides in the invitation, so the
     # Mac trusts it for relay TLS only (enrollment writes relay_ca_file)
     # instead of needing it in the system trust store.
@@ -141,9 +161,9 @@ def peers(api):
     return api("GET", "/api/peers")
 
 
-def lab_peer(api):
+def lab_peer(api, name=PEER_NAME):
     for peer in peers(api):
-        if peer["name"] == PEER_NAME:
+        if peer["name"] == name:
             return peer
     return None
 
@@ -162,12 +182,12 @@ def find_route(api, route):
     return next((r for r in api("GET", "/api/routes") if r["network_id"] == route[0]), None)
 
 
-def peer_running():
+def peer_running(container="peer"):
     """NetBird's `connected` flag is never set by Karst nodes, so readiness is
     the container being up with a netmap it has fetched."""
     ps = docker("ps", "--status", "running", "--services", check=False).stdout.split()
-    cached = docker("exec", "-T", "peer", "test", "-s", "/etc/karst/netmap.cache", check=False)
-    return "peer" in ps and cached.returncode == 0
+    cached = docker("exec", "-T", container, "test", "-s", "/etc/karst/netmap.cache", check=False)
+    return container in ps and cached.returncode == 0
 
 
 def set_route(api, route, enabled):
@@ -213,27 +233,31 @@ def ensure_policy(api):
     return published.get("version")
 
 
-def cmd_init(_args):
-    wait_for("Keycloak", token)
-    api = Api()
-    gid = group_id(api)
-    log(f"group {GROUP}: {gid}")
-    log(f"policy version {ensure_policy(api)}")
-    config = os.path.join(STATE, "peer", "karstd.toml")
+def ensure_peer(api, name, container, gateway):
+    """Provision and start one peer container, idempotently (skipped if its
+    config already exists). `gateway=True` adds the `[gateway]` section that
+    makes a peer eligible as a route's backing peer (the subnet/exit routes'
+    `lab-peer`); `PEER2_NAME` passes `gateway=False` since it exists only to
+    be an ordinary mesh peer, never a route's gateway.
+    """
+    config = os.path.join(STATE, container, "karstd.toml")
     if not os.path.exists(config):
-        _, metadata, grant = invitation(api, PEER_NAME)
+        _, metadata, grant = invitation(api, name)
         os.makedirs(os.path.dirname(config), mode=0o700, exist_ok=True)
-        key = os.path.join(STATE, "peer", "node.key")
+        key = os.path.join(STATE, container, "node.key")
         with open(os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             f.write(secrets.token_hex(64) + "\n")
+        gateway_section = (
+            '\n[gateway]\n'
+            'forwarding = true\n'
+            'exit_state_file = "/etc/karst/exit-node.json"\n'
+        ) if gateway else ""
         text = (
             "[node]\n"
             'listen = "0.0.0.0:51820"\n'
             'interface = "karst0"\n'
             'private_key_file = "/etc/karst/node.key"\n'
-            '\n[gateway]\n'
-            'forwarding = true\n'
-            'exit_state_file = "/etc/karst/exit-node.json"\n'
+            f"{gateway_section}"
             "\n[control]\n"
             f'server = "{CONTROL}"\n'
             f'server_kem_pin = "{metadata["server_kem_pin"]}"\n'
@@ -247,10 +271,21 @@ def cmd_init(_args):
         )
         with open(os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             f.write(text)
-        log("peer configuration written")
-    docker("up", "-d", "peer")
-    peer = wait_for("the lab peer to enroll", lambda: peer_running() and lab_peer(Api()))
-    log(f"peer {PEER_NAME}: {peer['ip']}")
+        log(f"{container} configuration written")
+    docker("up", "-d", container)
+    peer = wait_for(f"{container} to enroll", lambda: peer_running(container) and lab_peer(Api(), name))
+    log(f"peer {name}: {peer['ip']}")
+    return peer
+
+
+def cmd_init(_args):
+    wait_for("Keycloak", token)
+    api = Api()
+    gid = group_id(api)
+    log(f"group {GROUP}: {gid}")
+    log(f"policy version {ensure_policy(api)}")
+    ensure_peer(api, PEER_NAME, "peer", gateway=True)
+    ensure_peer(api, PEER2_NAME, "peer2", gateway=False)
     set_route(api, SUBNET_ROUTE, False)
     set_route(api, EXIT_ROUTE, False)
     log("routes present and withdrawn")
@@ -272,12 +307,19 @@ def cmd_prepare(args):
     peer = lab_peer(api)
     if not peer or not peer_running():
         raise SystemExit("labctl: the lab peer is not connected; run `labctl.py init`")
+    peer2 = lab_peer(api, PEER2_NAME)
+    if not peer2 or not peer_running("peer2"):
+        raise SystemExit("labctl: the second lab peer is not connected; run `labctl.py init`")
     invite, _, _ = invitation(api, f"{MAC_PREFIX}{int(time.time())}")
     overlay = peer["ip"]
     handoff = {
         "KARST_CI_PROBE_URL": f"http://{overlay}:{FIXTURE_HTTP_PORT}/probe",
         "KARST_CI_UDP_HOST": overlay,
         "KARST_CI_UDP_PORT": str(FIXTURE_UDP_PORT),
+        # A non-gateway peer, to prove reachability to *other* mesh peers
+        # survives an active exit route, not only the exit's own gateway.
+        "KARST_CI_PEER2_HOST": peer2["ip"],
+        "KARST_CI_PEER2_SSH_PORT": str(FIXTURE_SSH_PORT),
     }
     if args.route_churn:
         handoff["KARST_CI_SUBNET_PROBE_URL"] = f"http://{SUBNET_ADDR}:{FIXTURE_HTTP_PORT}/probe"
@@ -296,7 +338,9 @@ def cmd_prepare(args):
         handoff["KARST_CI_RELAY_PROBE_URL"] = f"http://{relay_host}:8081/"
         handoff["KARST_CI_RELAY_HOST"] = relay_host
     log(f"prepared scenario={args.scenario} route_churn={args.route_churn} exit_route={args.exit_route}")
-    json.dump({"invitation": invite, "handoff": handoff}, sys.stdout)
+    with open(os.path.join(STATE, "ssh_lab_client")) as f:
+        peer2_ssh_key = f.read()
+    json.dump({"invitation": invite, "peer2_ssh_key": peer2_ssh_key, "handoff": handoff}, sys.stdout)
     print()
 
 
@@ -318,6 +362,7 @@ def cmd_status(_args):
     for route in api("GET", "/api/routes"):
         print(f"route {route['network_id']:<24} {route['network']:<16} enabled={route['enabled']}")
     print("lab peer container", "running" if peer_running() else "NOT running")
+    print("lab peer2 container", "running" if peer_running("peer2") else "NOT running")
     rules = docker("exec", "-T", "peer", "iptables", "-S", "LAB-DIRECT", check=False).stdout
     print("direct UDP", "blocked" if "DROP" in rules else "allowed")
 

@@ -151,6 +151,36 @@ services:
       - control
       - relay
 
+  # A second, ordinary mesh peer (labctl.py's `PEER2_NAME`): never a route's
+  # gateway, so it is never what an active exit route itself depends on
+  # reaching. Exists to prove a device can still reach *other* mesh peers
+  # while an exit route is active, which the gateway peer alone can't show.
+  peer2:
+    image: karst-ne-lab/karst-peer:${KARST_LAB_TAG}
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    environment:
+      KARST_LAB_HOST_IP: ${KARST_LAB_HOST_IP}
+      KARST_LAB_LAN_IF_ADDR: ${KARST_LAB_PEER2_LAN_IP}
+      # Not a gateway, but peer-entrypoint.sh unconditionally stands up the
+      # subnet/exit fixture addresses on its own local dummy interface;
+      # harmless here since nothing is ever routed to this peer's copy of
+      # them (no route names it as a gateway).
+      KARST_LAB_SUBNET_ADDR: ${KARST_LAB_SUBNET_ADDR}
+      KARST_LAB_EXIT_ADDR: ${KARST_LAB_EXIT_ADDR}
+    volumes:
+      - ./state/peer2:/etc/karst
+    networks:
+      lab: {}
+      lan:
+        ipv4_address: ${KARST_LAB_PEER2_LAN_IP}
+        gw_priority: 1
+      core: {}
+    depends_on:
+      - control
+      - relay
+
 networks:
   lab: {}
   lan:
@@ -161,7 +191,7 @@ networks:
       config:
         - subnet: ${KARST_LAB_LAN_SUBNET}
           gateway: ${KARST_LAB_LAN_GATEWAY}
-          # The peer and labgw's static addresses (a /31 pair).
+          # The peer's, labgw's and peer2's static addresses.
           ip_range: ${KARST_LAB_LAN_IP_RANGE}
   core:
     ipam:

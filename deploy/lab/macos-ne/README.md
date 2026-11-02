@@ -31,7 +31,7 @@ flowchart LR
 | `bootstrap.sh` | lab host | creates state (relay identity and certificate, OIDC realm, `management.json`), starts the stack and runs `labctl.py init`. Idempotent |
 | `labctl.py` | lab host | admin-API driver: `init` (account, `lab` group, published policy, peer, routes), `prepare`, `mutate`, `status` |
 | `labctl-ssh` | lab host | forced command that admits only `labctl.py`'s own verbs and flags |
-| `peer.Dockerfile`, `peer-entrypoint.sh`, `peer-fixtures.py` | peer container | a 64 KiB HTTP body on `:8080` and a UDP echo on `:7777`, firewalled to arrive only on `karst0`; the subnet (`10.203.0.1`) and exit (`198.18.0.1`) fixture addresses; the `LAB-DIRECT` chain for the relay scenario |
+| `peer.Dockerfile`, `peer-entrypoint.sh`, `peer-fixtures.py` | peer, peer2 containers | a 64 KiB HTTP body on `:8080`, a UDP echo on `:7777`, and an `sshd` on `:22` (key-only, `state/ssh_lab_client`), all firewalled to arrive only on `karst0`; the subnet (`10.203.0.1`) and exit (`198.18.0.1`) fixture addresses on `peer`; the `LAB-DIRECT` chain for the relay scenario |
 | `karst-ne-lab` | Mac, `/usr/local/libexec` | turns `labctl.py prepare` output into the runner-owned, mode-0600 invitation and environment files the handoff contract names; `net-setup`/`net-teardown` point the Mac's Wi-Fi at labgw and revert it |
 
 ### Why the peer has a macvlan address
@@ -97,6 +97,19 @@ synchronized, direct and error-free throughout.
   A recipient exit route becomes active only with local consent (ADR-0024);
   the workflow gives it as the Mac's administrator with the shipped CLI
   (`sudo karst gateway exit use`, ADR-0036).
+
+### `peer2`: proving an active exit route doesn't swallow other mesh peers
+
+`peer` doubles as the exit route's backing gateway, so checking that *it*
+stays reachable with the exit active only proves the exit's own gateway
+session survives — not that an unrelated mesh peer still does.
+`labctl.py`'s `PEER2_NAME` (`lab-peer-2`, the `peer2` container) is an
+ordinary peer, never a route's gateway, kept connected the same way `peer`
+is. `prepare`'s JSON handoff always includes `KARST_CI_PEER2_HOST` and
+`KARST_CI_PEER2_SSH_PORT`; with an exit route active, `ping` and `ssh
+-i state/ssh_lab_client root@$KARST_CI_PEER2_HOST` from the Mac should both
+still work over `karst0` — if they don't, the exit's default route is
+capturing traffic to a peer it has no business touching.
 
 ### Policy
 

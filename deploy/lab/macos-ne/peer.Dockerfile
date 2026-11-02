@@ -4,10 +4,12 @@
 # The lab peer: the ordinary karstd image plus what the fixtures need.
 # Also the image for labgw and the probe responders, which need nothing more.
 # nftables: the exit gateway's NAT (karstd's gateway.rs drives `nft`).
+# openssh-server: a reachable-over-karst0-only `ssh` fixture, same purpose
+# and gating as the HTTP/UDP fixtures (peer-fixtures.py, peer-entrypoint.sh).
 ARG KARST_LAB_TAG
 FROM karst-ne-lab/karstd:${KARST_LAB_TAG}
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y iproute2 iptables nftables python3 \
+    && apt-get install --no-install-recommends -y iproute2 iptables nftables python3 openssh-server \
     && rm -rf /var/lib/apt/lists/*
 COPY peer-entrypoint.sh peer-fixtures.py labgw-entrypoint.sh /usr/local/libexec/
 ENTRYPOINT ["/bin/sh", "/usr/local/libexec/peer-entrypoint.sh"]
