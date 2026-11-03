@@ -2243,6 +2243,65 @@ fn wait_for(net: &Aquifer, what: &str, timeout: Duration, mut f: impl FnMut() ->
     );
 }
 
+/// [`wait_for`], but for a reachability probe specifically: extends the
+/// deadline for as long as `gateway_tag`'s `decrypt_failures` counter keeps
+/// climbing, instead of racing a transient session resync against a flat
+/// clock.
+///
+/// #516 traced a recurring "timed out waiting to reach the destination"
+/// flake to exactly this: `exit_route_active`/`gateway_forwarding` can read
+/// green while a control-plane hiccup has left the two sides transiently
+/// out of key agreement, so the gateway counts real, sustained
+/// `decrypt_failures` for a window that can outlast a flat 15-30s bound
+/// under CI load — a false failure, since the sides do converge, just a
+/// moment too late for the probe's bound. A `settle` deadline that keeps
+/// getting pushed out while the counter is still moving gives that window
+/// room to close; it only fires once the counter has gone quiet (resync
+/// either finished or genuinely stuck) and the probe still hasn't
+/// succeeded. `hard_cap` bounds the total wait regardless, so a
+/// non-resync failure (the gateway never seeing any traffic at all,
+/// `decrypt_failures` never moving) still fails in reasonable time instead
+/// of hanging.
+fn wait_for_reachable(
+    net: &Aquifer,
+    what: &str,
+    settle: Duration,
+    gateway_tag: &str,
+    gateway_ns: &str,
+    mut probe: impl FnMut() -> bool,
+) {
+    let hard_cap = Instant::now() + Duration::from_secs(120).max(settle * 2);
+    let mut last_decrypt_failures =
+        field(&status(net, gateway_tag, gateway_ns), "decrypt_failures");
+    let mut deadline = Instant::now() + settle;
+    loop {
+        if probe() {
+            return;
+        }
+        let now = Instant::now();
+        if now >= deadline || now >= hard_cap {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        let current = field(&status(net, gateway_tag, gateway_ns), "decrypt_failures");
+        if current != last_decrypt_failures {
+            last_decrypt_failures = current;
+            deadline = (Instant::now() + settle).min(hard_cap);
+        }
+    }
+    panic!(
+        "timed out waiting for {what} ({gateway_tag}'s decrypt_failures settled at \
+         {last_decrypt_failures:?} without reachability)\n\
+         ── node A ──\n{}\n── node B ──\n{}\n\
+         ── a.log ──\n{}\n── b.log ──\n{}\n── relay.log ──\n{}",
+        status(net, "a", NS_A),
+        status(net, "b", NS_B),
+        net.log("a.log"),
+        net.log("b.log"),
+        net.log("relay.log"),
+    );
+}
+
 /// What each NAT is actually holding, at the moment the assertion gave up.
 ///
 /// **The mapping is the thing under test in the NAT rows**, and it lives in the
@@ -4217,10 +4276,12 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
             .output()
             .is_ok_and(|out| out.status.success())
     };
-    wait_for(
+    wait_for_reachable(
         &net,
         "the recipient to reach the destination after consenting to the exit route",
         Duration::from_secs(15),
+        "a",
+        NS_A,
         probe,
     );
 }
@@ -4312,10 +4373,12 @@ fn exit_node_consent_survives_a_daemon_crash_and_restart() {
     // Selecting the route persists consent synchronously, but installing the
     // kernel forwarding state is asynchronous. Wait for the observable
     // behavior instead of assuming it completes within one probe.
-    wait_for(
+    wait_for_reachable(
         &net,
         "the recipient to reach the destination through the selected exit route",
         Duration::from_secs(30),
+        "a",
+        NS_A,
         probe,
     );
 
@@ -4353,11 +4416,13 @@ fn exit_node_consent_survives_a_daemon_crash_and_restart() {
         Duration::from_secs(15),
         || field(&status(&net, "b", NS_B), "exit_route_active").as_deref() == Some("true"),
     );
-    wait_for(
+    wait_for_reachable(
         &net,
         "the recipient to reach the destination through the exit route \
          after the crash",
         Duration::from_secs(15),
+        "a",
+        NS_A,
         probe,
     );
 }
