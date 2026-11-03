@@ -55,6 +55,14 @@ struct DaemonStatus {
     /// (`control.routing.selected_exit`) — kept even while that offer is
     /// withdrawn, which is how consent stays dormant.
     var selectedExit: String?
+    /// Whether the control-plane sync that actually populates `exitOffers`
+    /// has completed at least once since start — `control.control_synchronized`
+    /// (`bins/karstd/src/run.rs`'s `ControlJson`). `true` when the field is
+    /// absent (an older agent, or the unprivileged status socket, which has
+    /// no `control` section at all) so neither is shown as "stale" on a
+    /// guess — see #481: a confirmed-empty exit-offer list must read
+    /// differently from one this app cannot yet vouch for.
+    var controlSynchronized = true
 }
 
 /// One exit route offered to this device.
@@ -143,6 +151,7 @@ enum StatusParser {
         }
 
         let control = object["control"] as? [String: Any]
+        status.controlSynchronized = control?["control_synchronized"] as? Bool ?? true
         let routing = control?["routing"] as? [String: Any]
         status.selectedExit = routing?["selected_exit"] as? String
         for case let route as [String: Any] in routing?["routes"] as? [Any] ?? [] {
