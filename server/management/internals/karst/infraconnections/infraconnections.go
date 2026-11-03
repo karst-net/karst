@@ -77,6 +77,12 @@ var (
 	ErrNoAccount          = errors.New("cloud accounts: account scope missing")
 	ErrNotFound           = errors.New("cloud accounts: not found")
 	ErrEncryptionRequired = errors.New("cloud accounts: the server has no data-store encryption key configured -- cloud credentials cannot be stored unencrypted")
+	// ErrCredentialsRejected means the provider itself rejected the stored
+	// secret (expired/revoked/wrong keys) -- a precondition on this
+	// connection's own state, not a Karst server fault, so handlers should
+	// surface it as a 4xx rather than let it fall through to a generic
+	// "internal server error" (see discoverAWS).
+	ErrCredentialsRejected = errors.New("cloud accounts: the provider rejected the stored credentials")
 )
 
 // Type identifies what kind of infrastructure a connection authenticates
