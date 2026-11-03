@@ -6,6 +6,7 @@ package infraconnections
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,9 +14,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/netbirdio/netbird/management/internals/karst/cloudcatalog"
 )
+
+// credentialRejectionCodes are the EC2 error codes AWS returns for a secret
+// it will not authenticate at all, as opposed to one that authenticates but
+// lacks a permission -- see ErrCredentialsRejected.
+var credentialRejectionCodes = map[string]bool{
+	"AuthFailure":                 true,
+	"InvalidClientTokenId":        true,
+	"SignatureDoesNotMatch":       true,
+	"ExpiredToken":                true,
+	"UnrecognizedClientException": true,
+}
+
+func isCredentialRejection(err error) bool {
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && credentialRejectionCodes[apiErr.ErrorCode()]
+}
 
 // awsSecret is the admin-entered credential shape for Type "aws".
 // SessionToken is optional, for a temporary/STS-issued credential.
@@ -61,6 +79,9 @@ func discoverAWS(ctx context.Context, rawSecret string, mode Mode) ([]Discovered
 	client := ec2.NewFromConfig(cfg)
 	regionsOut, err := client.DescribeRegions(ctx, &ec2.DescribeRegionsInput{})
 	if err != nil {
+		if isCredentialRejection(err) {
+			return nil, fmt.Errorf("aws: describe regions: %w: %w", ErrCredentialsRejected, err)
+		}
 		return nil, fmt.Errorf("aws: describe regions: %w", err)
 	}
 

@@ -3420,6 +3420,13 @@ func (h *handler) infraConnectionResources(w http.ResponseWriter, r *http.Reques
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "infrastructure connection not found"), w)
 		return
 	}
+	if errors.Is(err, infraconnections.ErrCredentialsRejected) {
+		// The provider itself rejected this connection's stored secret -- a
+		// precondition on the connection's own state, not a Karst fault; see
+		// its status in Settings rather than reporting a generic 500.
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "%s", err), w)
+		return
+	}
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
