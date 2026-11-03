@@ -51,39 +51,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ADR-0036 §4): the menu then shows the choice but offers no change.
     private var exitManaged = false
 
-    /// This device's own identity handle, if enrolled — the 44-character
-    /// fingerprint `identity_handle` (`crates/karst-ffi`) derives from the
-    /// local ML-DSA-87 key. `nil` means "not enrolled" exactly as often as
-    /// it means "haven't checked yet"; both draw the same "Enroll…" menu,
-    /// which is the only place this distinction would matter and it
-    /// doesn't. Fetched once at launch and again after a successful
-    /// enroll/re-enroll, not polled every tick like peer status: unlike
-    /// that, it does not change on its own between enrollments.
-    private var identityHandle: String?
-
-    /// This device's control-plane-assigned name (#163) — `deviceName`
-    /// (`crates/karst-ffi`), set at login from `KarstLoginResponse.dns_name`.
-    /// For a device enrolled via an admin's invitation this is the admin's
-    /// own invitation text, run through DNS-label sanitization and
-    /// qualified with the account's DNS domain into a full FQDN (ADR-0032
-    /// made `DNSLabel` itself the device's real, resolvable mesh identity;
-    /// the FQDN qualification is what makes it something an admin can hand
-    /// to another user to address this device by, not just a label unique
-    /// within the account); every other setup key carries this node's own
-    /// reported hostname instead, still qualified the same way. `nil`
-    /// whenever `identityHandle` is, plus one more case that one doesn't
-    /// have: a device enrolled
-    /// before this field existed, or one whose one login attempt failed to
-    /// persist it — the menu falls back to showing the handle alone rather
-    /// than treating either as an error.
-    private var identityName: String?
+    /// This device's enrollment identity, as last established — see
+    /// `IdentityStatus` (#481). Fetched once at launch and again after a
+    /// successful enroll/re-enroll, not polled every tick like peer
+    /// status: unlike that, it does not change on its own between
+    /// enrollments.
+    private var identityStatus: IdentityStatus = .unknown
 
     /// `nil` until the first `NetworkExtensionEnrollment.currentOwnership`
-    /// check resolves — deliberately distinct from `.unknownOrForeign`
-    /// (unlike `identityHandle`'s `nil`, which doubles as "not enrolled")
-    /// so the very first render, before that async check has ever run,
-    /// shows nothing rather than incorrectly claiming a personal install
-    /// is organization-managed.
+    /// check resolves — deliberately distinct from `.unknownOrForeign`,
+    /// the same "not checked yet is not the same claim as checked and
+    /// negative" distinction `identityStatus`'s own `.unknown` case now
+    /// makes (#481) — so the very first render, before that async check
+    /// has ever run, shows nothing rather than incorrectly claiming a
+    /// personal install is organization-managed.
     private var managerOwnership: NetworkExtensionEnrollment.ManagerOwnership?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -178,7 +159,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let status, !status.interface.isEmpty else {
             statusItem.button?.image = Self.karstMarkIcon(.notRunning, accessibilityDescription: "karst: not running")
             statusItem.button?.title = "karst: not running"
-            statusItem.menu = menu(for: nil)
+            // `status` (not forced to `nil`): a reachable extension
+            // answering "the engine is not running" carries a `refusal`
+            // worth showing (#481) — only a genuine fetch failure has
+            // nothing here at all.
+            statusItem.menu = menu(for: status)
             return
         }
 
@@ -310,15 +295,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return String(format: "%.1f %@", value, units[unitIndex])
     }
 
+    /// The top line shown when there is no running tunnel to report on —
+    /// three different reasons (#481), not one hedge covering all of
+    /// them: the extension itself could not be reached at all
+    /// (`status == nil`), it answered but the engine/tunnel is not
+    /// running (`status.refusal`), or it answered with something this
+    /// app could not parse. Enrollment state is reported separately, by
+    /// `addIdentityAndEnrollItems` below this line — it no longer needs
+    /// to be hedged into this text at all.
+    private static func notRunningMessage(status: DaemonStatus?) -> String {
+        guard let status else {
+            return "Karst's network extension could not be reached — try again from this menu"
+        }
+        return status.refusal.map { "Karst tunnel is not running: \($0)" } ?? "Karst tunnel is not running"
+    }
+
     private func menu(for status: DaemonStatus?) -> NSMenu {
         let menu = NSMenu()
         SoftwareVersionMenu.addItems(to: menu, status: status)
-        guard let status else {
-            menu.addItem(
-                withTitle: "Karst tunnel is not running — not yet enrolled, or not connected",
-                action: nil,
-                keyEquivalent: ""
-            )
+        guard let status, !status.interface.isEmpty else {
+            menu.addItem(withTitle: Self.notRunningMessage(status: status), action: nil, keyEquivalent: "")
             menu.addItem(NSMenuItem.separator())
             addIdentityAndEnrollItems(to: menu)
             menu.addItem(NSMenuItem.separator())
@@ -371,52 +367,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    /// The Exit node submenu (ADR-0036 §3): the offered exit routes plus Off,
-    /// with the current consent checked. Shown only when there is something
-    /// to choose or to withdraw. Changing it needs an administrator — the
-    /// extension verifies that itself — so any user sees the choice but only
-    /// an administrator can make it.
+    /// The Exit node submenu (ADR-0036 §3) — see `ExitNodeMenu`. Changing
+    /// it needs an administrator — the extension verifies that itself —
+    /// so any user sees the choice but only an administrator can make it.
     private func addExitNodeItem(to menu: NSMenu, status: DaemonStatus) {
-        guard !status.exitOffers.isEmpty || status.selectedExit != nil else { return }
-        let submenu = NSMenu()
-        if exitManaged {
-            submenu.addItem(withTitle: "Managed by your organization", action: nil, keyEquivalent: "")
-            if status.exitOffers.count > 1, !status.exitOffers.contains(where: { $0.routeID == status.selectedExit }) {
-                submenu.addItem(
-                    withTitle: "Several exits offered — none chosen until exactly one is",
-                    action: nil, keyEquivalent: ""
-                )
-            }
-            submenu.addItem(NSMenuItem.separator())
-        }
-        // Managed: shown, not changeable (no action grays the item out).
-        let off = NSMenuItem(title: "Off", action: exitManaged ? nil : #selector(runExitDisable), keyEquivalent: "")
-        off.target = self
-        off.state = status.selectedExit == nil ? .on : .off
-        submenu.addItem(off)
-        submenu.addItem(NSMenuItem.separator())
-        for offer in status.exitOffers {
-            let via = offer.gatewayName.map { "Via \($0)" } ?? "Exit route"
-            let pending = status.selectedExit == offer.routeID && !offer.active ? " — connecting" : ""
-            let item = NSMenuItem(
-                title: "\(via) (\(offer.prefix))\(pending)",
-                action: exitManaged ? nil : #selector(runExitUse(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = offer
-            item.state = status.selectedExit == offer.routeID ? .on : .off
-            submenu.addItem(item)
-        }
-        if let selected = status.selectedExit, !status.exitOffers.contains(where: { $0.routeID == selected }) {
-            submenu.addItem(withTitle: "Chosen exit is not currently offered", action: nil, keyEquivalent: "")
-        }
-        let active = status.exitOffers.first(where: \.active)
-        let title = active.map { "Exit node: \($0.gatewayName ?? $0.prefix)" } ?? "Exit node: Off"
-        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        parent.submenu = submenu
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(parent)
+        ExitNodeMenu.addItems(
+            to: menu,
+            status: status,
+            exitManaged: exitManaged,
+            target: self,
+            useAction: #selector(runExitUse(_:)),
+            disableAction: #selector(runExitDisable)
+        )
     }
 
     @objc private func runExitUse(_ sender: NSMenuItem) {
@@ -469,102 +431,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Always present, running or not: it is also how an already-enrolled
     /// device recovers from a config a resume path can't use, not only how
-    /// first enrollment happens.
-    ///
-    /// `identityHandle == nil` covers both "never enrolled" and "haven't
-    /// checked yet" (its own doc comment) — either way "Enroll…" is the
-    /// right item, since re-enrollment only makes sense once this device
-    /// is known to already have an identity to replace.
+    /// first enrollment happens. See `IdentityMenu` for how `identityStatus`
+    /// becomes the text and items shown here (#481).
     private func addIdentityAndEnrollItems(to menu: NSMenu) {
-        // Informational only — Enroll/Re-enroll below stay fully
-        // functional either way. #162 considered hiding them outright for
-        // a detected-managed configuration and rejected it as too risky on
-        // a weaker heuristic than `managerOwnership`'s own (see its doc
-        // comment): a false "foreign" reading must never cost a real
-        // self-service user their only way to (re-)enroll.
-        if managerOwnership == .unknownOrForeign {
-            menu.addItem(
-                withTitle: "VPN configuration managed by your organization",
-                action: nil,
-                keyEquivalent: ""
-            )
-        }
-        guard let identityHandle else {
-            let item = NSMenuItem(title: "Enroll…", action: #selector(runEnroll), keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
-            return
-        }
-        // The friendly `identityName` when there is one (#163); the
-        // truncated handle alone otherwise — a device enrolled before
-        // #163 shipped, or one whose login never persisted a name, still
-        // gets a real menu item, not a blank or an error.
-        let identityItem = NSMenuItem(
-            title: identityName.map { "Enrolled as \($0)" }
-                ?? "Enrolled as \(Self.truncatedHandle(identityHandle))",
-            action: nil,
-            keyEquivalent: ""
+        IdentityMenu.addItems(
+            to: menu,
+            identity: identityStatus,
+            managerOwnership: managerOwnership,
+            target: self,
+            enrollAction: #selector(runEnroll),
+            reEnrollAction: #selector(runReEnroll)
         )
-        identityItem.toolTip = identityName.map { "\($0)\n\(identityHandle)" } ?? identityHandle
-        menu.addItem(identityItem)
-        let reEnrollItem = NSMenuItem(title: "Re-enroll…", action: #selector(runReEnroll), keyEquivalent: "")
-        reEnrollItem.target = self
-        menu.addItem(reEnrollItem)
-    }
-
-    /// The full 44-character handle is exact but not glanceable in a menu
-    /// item; the full value stays reachable via `toolTip` above rather than
-    /// dropped, since an operator comparing it against the admin console's
-    /// own device list needs the whole thing at least once.
-    private static func truncatedHandle(_ handle: String) -> String {
-        guard handle.count > 16 else { return handle }
-        let start = handle.prefix(8)
-        let end = handle.suffix(8)
-        return "\(start)…\(end)"
     }
 
     /// Fetches this device's identity handle over the same
     /// `sendProviderMessage` channel `refresh()` uses for status, and
-    /// redraws the menu once it lands — see `identityHandle`'s own doc
+    /// redraws the menu once it lands — see `IdentityStatus`'s own doc
     /// comment for why this is called explicitly rather than folded into
     /// the periodic poll.
     private func refreshIdentity() {
         client.fetchIdentityHandle { [weak self] result in
             guard let self else { return }
-            let handle: String?
-            let name: String?
-            switch result {
-            case .success(let json):
-                (handle, name) = Self.parseIdentity(json)
-            case .failure:
-                // Indistinguishable here from "not enrolled" (both draw
-                // "Enroll…"), which is the correct fallback for a
-                // transient failure too: retrying enrollment is always
-                // safe, and re-enrollment is never offered on a guess.
-                (handle, name) = (nil, nil)
-            }
             DispatchQueue.main.async {
-                self.identityHandle = handle
-                self.identityName = name
+                switch result {
+                case .success(let json):
+                    self.identityStatus = Self.parseIdentity(json, previous: self.identityStatus)
+                case .failure:
+                    // A transport-level failure (extension unreachable, no
+                    // manager configured, …), not a reply at all — kept as
+                    // "stale"/"unknown" rather than treated as confirmed
+                    // non-enrollment (#481): retrying enrollment is always
+                    // safe, but offering it to an already-enrolled device
+                    // on a guess is not harmless, it is misleading.
+                    self.identityStatus = self.identityStatus.afterFailedCheck
+                }
                 self.rebuildMenu()
             }
         }
     }
 
-    /// Parses `{"handle": "..."|null, "name": "..."|null}` —
+    /// Parses `{"handle": "..."|null, "name": "..."|null}` — the
+    /// confirmed shape `identity_handle`'s `Ok` arm produces — or
+    /// `{"error": "..."}`, the shape its `Err` arm produces (a corrupt or
+    /// unreadable identity file, not evidence of "not enrolled") —
     /// `PacketTunnelProvider.handleAppMessage`'s `"identity"` verb's own
-    /// response shape, distinct from `StatusParser.parseJSON`'s
-    /// `{"error": "..."}` convention because this is not a refusal, only
-    /// ever a present-or-absent pair of facts. `name` is only ever
-    /// present alongside a non-nil `handle` on the provider side, but
-    /// read independently here anyway rather than assumed, since nothing
-    /// about this parser's own contract depends on that being true.
-    private static func parseIdentity(_ json: String) -> (handle: String?, name: String?) {
+    /// two response shapes (#481). `previous` is carried through on the
+    /// error shape or on malformed JSON, for the same reason a transport
+    /// failure carries it through in `refreshIdentity` above.
+    private static func parseIdentity(_ json: String, previous: IdentityStatus) -> IdentityStatus {
         guard
             let data = json.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return (nil, nil) }
-        return (object["handle"] as? String, object["name"] as? String)
+        else { return previous.afterFailedCheck }
+        if object["error"] is String {
+            return previous.afterFailedCheck
+        }
+        guard let handle = object["handle"] as? String else {
+            return .notEnrolled
+        }
+        return .enrolled(handle: handle, name: object["name"] as? String)
     }
 
     /// Redraws the menu from `lastStatus` without waiting for the next
@@ -644,7 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// As `runEnroll`, but for a device `identityHandle` already shows as
+    /// As `runEnroll`, but for a device `identityStatus` already shows as
     /// enrolled — the "Re-enroll…" item's action, going through
     /// `NetworkExtensionEnrollment.reEnroll` (the `"re-enroll"` verb,
     /// `reEnrollInvitation` on the Rust side) rather than `enroll`, which

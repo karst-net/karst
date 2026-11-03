@@ -22,6 +22,8 @@ on:
       - 'packaging/macos/KarstAppStore/**'
       - 'packaging/macos/tests/status-parser/**'
       - 'packaging/macos/tests/software-menu/**'
+      - 'packaging/macos/tests/identity-menu/**'
+      - 'packaging/macos/tests/exit-node-menu/**'
       - '.github/workflows/macos-status-swift-build.yml'
       - 'scripts/*macos*version.sh'
       - 'scripts/release-version.sh'
@@ -50,6 +52,17 @@ jobs:
             swiftc "packaging/macos/$target/Sources/$target/StatusParser.swift" "packaging/macos/$target/Sources/$target/SoftwareVersionMenu.swift" packaging/macos/tests/software-menu/main.swift -o "$RUNNER_TEMP/software-menu"
             "$RUNNER_TEMP/software-menu"
           done
+      # #481 — KarstStatus (Developer-ID build) only: KarstAppStore has no
+      # exit-node menu at all yet (tracked separately, #499), so there is
+      # nothing there for either of these to exercise.
+      - name: Verify the identity/enroll menu distinguishes unchecked, unenrolled, enrolled, and stale states
+        run: |
+          swiftc packaging/macos/KarstStatus/Sources/KarstStatus/NetworkExtensionEnrollment.swift packaging/macos/KarstStatus/Sources/KarstStatus/IdentityMenu.swift packaging/macos/tests/identity-menu/main.swift -o "$RUNNER_TEMP/identity-menu"
+          "$RUNNER_TEMP/identity-menu"
+      - name: Verify the exit-node menu distinguishes confirmed-empty, unsynchronized, and offered states
+        run: |
+          swiftc packaging/macos/KarstStatus/Sources/KarstStatus/StatusParser.swift packaging/macos/KarstStatus/Sources/KarstStatus/ExitNodeMenu.swift packaging/macos/tests/exit-node-menu/main.swift -o "$RUNNER_TEMP/exit-node-menu"
+          "$RUNNER_TEMP/exit-node-menu"
       - run: swift build --product KarstStatus
         working-directory: packaging/macos/KarstStatus
       # The physical-runner workflow builds this again before execution, but
