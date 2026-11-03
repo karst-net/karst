@@ -44,3 +44,64 @@ func TestRelayLifecycleAccountScopeDowngradeAndTransaction(t *testing.T) {
 	require.NoError(t, store.CheckRelayLifecycle(ctx, "a", nil))
 	require.ErrorIs(t, store.SetRelayLifecycleSchema(ctx, "missing", 1), node.ErrUnknownNode)
 }
+
+func TestGatewayIngressSchemaAndParameterizedCounts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+	sqlDB.SetMaxOpenConns(1)
+	store, err := node.NewStore(db)
+	require.NoError(t, err)
+	require.NoError(t, db.Exec("CREATE TABLE peers (key TEXT PRIMARY KEY, account_id TEXT)").Error)
+	for _, item := range []struct{ handle, account string }{{"old", "a"}, {"new", "a"}} {
+		require.NoError(t, db.Create(&node.Identity{Handle: item.handle, PublicKey: []byte{1}}).Error)
+		require.NoError(t, db.Exec("INSERT INTO peers VALUES (?, ?)", item.handle, item.account).Error)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	// Both agents start at schema 0 -- below any required schema >= 1.
+	below, err := store.CountGatewayIngressBelow(ctx, "a", 1, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, below)
+
+	require.NoError(t, store.SetGatewayIngressSchema(ctx, "old", 1))
+	below, err = store.CountGatewayIngressBelow(ctx, "a", 1, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, below)
+
+	// A later legacy declaration replaces the earlier one -- a downgrade
+	// is not sticky, the same property SetRelayLifecycleSchema already has.
+	require.NoError(t, store.SetGatewayIngressSchema(ctx, "old", 0))
+	below, err = store.CountGatewayIngressBelow(ctx, "a", 1, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, below)
+
+	// A higher required schema than any agent has reported counts everyone,
+	// including an agent that satisfies a lower bar.
+	require.NoError(t, store.SetGatewayIngressSchema(ctx, "new", 1))
+	below, err = store.CountGatewayIngressBelow(ctx, "a", 2, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, below)
+
+	// CountRelayLifecycleBelow is independent of the gateway column, and
+	// CheckRelayLifecycle's own error-returning behavior is unchanged by
+	// having been refactored onto it.
+	relayBelow, err := store.CountRelayLifecycleBelow(ctx, "a", 1, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, relayBelow)
+	require.ErrorContains(t, store.CheckRelayLifecycle(ctx, "a", nil), "2 enrolled")
+
+	require.NoError(t, db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		count, err := store.CountGatewayIngressBelow(ctx, "a", 1, tx)
+		if err != nil {
+			return err
+		}
+		require.EqualValues(t, 1, count) // "old" is still at schema 0; "new" is at 1
+		return nil
+	}))
+	_, err = store.CountGatewayIngressBelow(ctx, "", 1, nil)
+	require.Error(t, err)
+}

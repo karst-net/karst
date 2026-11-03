@@ -858,6 +858,141 @@ paths:
       responses:
         '200': {description: Failure recorded, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /rollouts:
+    get:
+      operationId: listRollouts
+      tags: [rollouts]
+      description: ADR-0066 admin-tracked component rollout plans, in every lifecycle state.
+      responses:
+        '200': {description: Rollout plans, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RolloutPlan'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createRollout
+      tags: [rollouts]
+      description: Persist the plan as planned, with no external call (control never calls Nomad/a registry/cosign -- ADR-0066). Returns the plan with its live, uncached fleet-compatibility preview.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [target_release, components]
+              properties:
+                target_release: {type: string, minLength: 1}
+                maintenance_window_note: {type: string}
+                components: {type: array, minItems: 1, items: {$ref: '#/components/schemas/RolloutComponent'}}
+      responses:
+        '201': {description: Plan created, content: {application/json: {schema: {$ref: '#/components/schemas/RolloutPlan'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /rollouts/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getRollout
+      tags: [rollouts]
+      description: One plan with its components and a freshly computed fleet-compatibility preview -- never cached on the row, since fleet state drifts.
+      responses:
+        '200': {description: Rollout plan, content: {application/json: {schema: {$ref: '#/components/schemas/RolloutPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteRollout
+      tags: [rollouts]
+      description: Remove the plan outright. Only legal while still planned (never started); a started plan must be rolled back first and stays for audit.
+      parameters:
+        - {name: revision, in: query, required: true, schema: {type: integer, minimum: 0}}
+      responses:
+        '204': {description: Plan removed}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /rollouts/{id}/start:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: startRollout
+      tags: [rollouts]
+      description: Move planned -> in_progress. Re-checks the live fleet-compatibility preview server-side; if anything is still blocking, override_incompatibility must be explicitly set -- a stale console view can never bypass this.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, acknowledge]
+              properties:
+                revision: {type: integer, minimum: 0}
+                acknowledge: {type: boolean, enum: [true]}
+                override_incompatibility: {type: boolean, default: false}
+                maintenance_window_note: {type: string}
+      responses:
+        '200': {description: Rollout started, content: {application/json: {schema: {$ref: '#/components/schemas/RolloutPlan'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /rollouts/{id}/components/{name}/mark-applied:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: name, in: path, required: true, schema: {type: string, enum: [control, console, relay_job]}}
+    post:
+      operationId: markRolloutComponentApplied
+      tags: [rollouts]
+      description: Recorded only after the operator has actually run the documented cosign/nomad steps by hand (ADR-0066) -- control never executes them. name must be the lowest not-yet-applied sequence; idempotent if already applied. Reconciles, non-blockingly, against the existing deployment-versions snapshot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [revision], properties: {revision: {type: integer, minimum: 0}}}
+      responses:
+        '200': {description: Component marked applied (plan auto-completes once every component has), content: {application/json: {schema: {$ref: '#/components/schemas/RolloutPlan'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /rollouts/{id}/components/{name}/mark-failed:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: name, in: path, required: true, schema: {type: string, enum: [control, console, relay_job]}}
+    post:
+      operationId: markRolloutComponentFailed
+      tags: [rollouts]
+      description: Reports failure of the named component's apply step; transitions the plan in_progress -> failed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, reason]
+              properties:
+                revision: {type: integer, minimum: 0}
+                reason: {type: string, minLength: 1}
+      responses:
+        '200': {description: Failure recorded, content: {application/json: {schema: {$ref: '#/components/schemas/RolloutPlan'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /rollouts/{id}/rollback:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: rollBackRollout
+      tags: [rollouts]
+      description: Records that the operator reverted the deployment to the previous verified digest by hand -- control never executes a rollback itself (ADR-0066). Component rows are left untouched for audit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, acknowledge_rollback]
+              properties:
+                revision: {type: integer, minimum: 0}
+                acknowledge_rollback: {type: boolean, enum: [true]}
+                reason: {type: string}
+      responses:
+        '200': {description: Rolled back, content: {application/json: {schema: {$ref: '#/components/schemas/RolloutPlan'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
   /relays:
     get:
       operationId: listRelays
@@ -1924,6 +2059,52 @@ components:
         revision: {type: integer, minimum: 0, readOnly: true, description: Expected revision for the next compare-and-set action against this allocation.}
         created_at: {type: string, format: date-time, readOnly: true}
         updated_at: {type: string, format: date-time, readOnly: true}
+    RolloutPlan:
+      type: object
+      required: [target_release, components]
+      additionalProperties: false
+      properties:
+        id: {type: string, readOnly: true, description: Server-generated; never accepted from callers.}
+        target_release: {type: string, minLength: 1}
+        maintenance_window_note: {type: string}
+        components: {type: array, items: {$ref: '#/components/schemas/RolloutComponent'}}
+        compatibility: {type: array, readOnly: true, items: {$ref: '#/components/schemas/RolloutComponentCompatibility'}, description: Live, uncached fleet-compatibility preview -- recomputed on every read, never stored.}
+        note: {type: string, readOnly: true, description: A non-blocking reconciliation note, e.g. when the deployment-versions snapshot is stale or missing.}
+        state: {type: string, readOnly: true, enum: [planned, in_progress, completed, failed, rolled_back]}
+        failed_component: {type: string, readOnly: true, enum: [control, console, relay_job], description: Only meaningful while state is failed.}
+        failure_reason: {type: string, readOnly: true}
+        revision: {type: integer, minimum: 0, readOnly: true, description: Expected revision for the next compare-and-set action against this plan.}
+        created_at: {type: string, format: date-time, readOnly: true}
+        updated_at: {type: string, format: date-time, readOnly: true}
+        started_at: {type: string, format: date-time, readOnly: true, nullable: true}
+        completed_at: {type: string, format: date-time, readOnly: true, nullable: true}
+    RolloutComponent:
+      type: object
+      required: [name, sequence, target_digest, verification_ref]
+      additionalProperties: false
+      properties:
+        name: {type: string, enum: [control, console, relay_job], description: relay_job is this job's own relay task group, not the broader relay registry.}
+        sequence: {type: integer, minimum: 0, description: 0-based apply order, enforced contiguous across a plan's components.}
+        current_digest: {type: string, description: Operator-recorded, informational only; not verified by control.}
+        target_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        verification_ref: {type: string, minLength: 1, description: The operator's own attestation that they ran cosign verify against target_digest per deploy/nomad/prod/README.md. Control never re-verifies this.}
+        requires_relay_lifecycle_schema: {type: integer, minimum: 0, nullable: true, description: Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.}
+        requires_gateway_ingress_schema: {type: integer, minimum: 0, nullable: true}
+        status: {type: string, readOnly: true, enum: [pending, applied, failed]}
+        failure_reason: {type: string, readOnly: true}
+        observed_digest: {type: string, readOnly: true, description: From the deployment-versions snapshot at the time this component was marked applied; empty if the snapshot was unavailable.}
+        observed_at: {type: string, format: date-time, readOnly: true, nullable: true}
+    RolloutComponentCompatibility:
+      type: object
+      required: [component, capability, required, incompatible_peer_count, blocking]
+      additionalProperties: false
+      properties:
+        component: {type: string, enum: [control, console, relay_job]}
+        capability: {type: string, enum: [relay_lifecycle_schema, gateway_ingress_schema]}
+        required: {type: integer, minimum: 0}
+        incompatible_peer_count: {type: integer, minimum: 0}
+        blocking: {type: boolean}
+        message: {type: string}
     RelayCreate:
       type: object
       required: [address, identity_key, region]

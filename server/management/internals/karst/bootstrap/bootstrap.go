@@ -54,6 +54,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/rollout"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
@@ -311,6 +312,15 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay allocation store: %w", err)
 	}
+	// ADR-0066/#484: the admin-tracked component rollout plan and its own
+	// state machine. Reuses nodes (the same *node.Store already threaded
+	// into NetmapHandler) as its fleet compatibility checker -- see
+	// rollout.Preview's own doc comment for why this package has no
+	// reconciliation loop, unlike relayAllocationStore just above.
+	rolloutStore, err := rollout.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: rollout plan store: %w", err)
+	}
 	knownEventsStore, err := knownevents.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: known events store: %w", err)
@@ -460,6 +470,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, nodes, complianceStore, complianceDraftStore, router)
 		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager(), Audit: auditLog})
 		karstapi.RegisterRelayAllocationEndpoints(router, s.PermissionsManager(), relayAllocationStore, relayStore, relayServiceStore, karstapi.RelayAllocationOptions{Audit: auditLog})
+		karstapi.RegisterRolloutEndpoints(router, rolloutStore, nodes, karstapi.RolloutOptions{Audit: auditLog})
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)

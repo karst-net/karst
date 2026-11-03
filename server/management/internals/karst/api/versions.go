@@ -46,19 +46,31 @@ func (h *handler) versions(w http.ResponseWriter, r *http.Request) {
 		util.WriteErrorResponse("Software versions require the admin or owner role", http.StatusForbidden, w)
 		return
 	}
-	result := versionsResponse{ObservedAt: time.Now().UTC(), Control: buildinfo.Current(), DeploymentStatus: "not_configured"}
-	if path := os.Getenv("KARST_COMPONENT_VERSIONS_FILE"); path != "" {
-		result.DeploymentStatus = "unavailable"
-		if file, err := os.Open(path); err == nil {
-			defer file.Close()
-			var snapshot deploymentVersions
-			// Decode a fixed schema; never expose arbitrary host metadata or secrets.
-			if err := json.NewDecoder(io.LimitReader(file, 1<<20)).Decode(&snapshot); err == nil && !snapshot.ObservedAt.IsZero() && snapshot.Components != nil {
-				result.Deployment = &snapshot
-				result.DeploymentStatus = "available"
-			}
-		}
-	}
+	result := versionsResponse{ObservedAt: time.Now().UTC(), Control: buildinfo.Current()}
+	result.Deployment, result.DeploymentStatus = loadDeploymentSnapshot()
 	w.Header().Set("Cache-Control", "no-store")
 	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// loadDeploymentSnapshot reads the operator-maintained deployment-versions
+// snapshot (scripts/compose-versions.py's output, via
+// KARST_COMPONENT_VERSIONS_FILE) once per call -- shared by handler.versions
+// above and the rollout API's mark-applied handler, which reconciles a
+// component's claimed ObservedDigest against it (ADR-0066).
+func loadDeploymentSnapshot() (*deploymentVersions, string) {
+	path := os.Getenv("KARST_COMPONENT_VERSIONS_FILE")
+	if path == "" {
+		return nil, "not_configured"
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, "unavailable"
+	}
+	defer file.Close()
+	var snapshot deploymentVersions
+	// Decode a fixed schema; never expose arbitrary host metadata or secrets.
+	if err := json.NewDecoder(io.LimitReader(file, 1<<20)).Decode(&snapshot); err != nil || snapshot.ObservedAt.IsZero() || snapshot.Components == nil {
+		return nil, "unavailable"
+	}
+	return &snapshot, "available"
 }

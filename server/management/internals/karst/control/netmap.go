@@ -321,6 +321,15 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if err := h.Nodes.SetRelayLifecycleSchema(ctx, self, req.GetRelayLifecycleSchema()); err != nil {
 		return nil, fmt.Errorf("record Relay lifecycle capability: %w", err)
 	}
+	// Recorded unconditionally, mirroring SetRelayLifecycleSchema just
+	// above, so a current value is on record for every agent -- not only
+	// ones that happen to trigger the gated FailedPrecondition check
+	// further down for a destination-scoped filter rule. A rollout plan's
+	// cross-component compatibility preview (ADR-0066) depends on this
+	// being queryable without a live netmap round trip.
+	if err := h.Nodes.SetGatewayIngressSchema(ctx, self, req.GetGatewayIngressSchema()); err != nil {
+		return nil, fmt.Errorf("record Gateway ingress capability: %w", err)
+	}
 	if h.RelayServices != nil {
 		publication, err := h.RelayServices.Publication(relayservice.WithAccount(ctx, accountID))
 		if err != nil {

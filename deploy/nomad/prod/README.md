@@ -81,6 +81,18 @@ the console image and does not change persistent state. Before the first
 signed console release exists, leave the existing deployment running;
 local build validation alone does not complete a production rollout.
 
+Control and relay follow this exact same procedure -- verify their digest
+the same way, set `control_image_digest`/`relay_image_digest` in the vars
+file, and run the same `plan`/`run`/`status`/smoke-check sequence -- there
+is nothing console-specific about it. **Settings → Component rollout
+plans** in the console (ADR-0066, #484) tracks this for any of the three:
+it records the target digest, your verification reference, and a live
+fleet-compatibility preview before you start, and lets you mark each
+component applied, in sequence, once you have actually run the steps
+above by hand for it. Control never calls `cosign`, a registry, or `nomad`
+itself; the plan is a tracked, auditable record of the same manual
+procedure, not a replacement for it.
+
 ## Observed system versions
 
 The control task already mounts `prod_dir/versions` read-only and reads
