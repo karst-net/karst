@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayAllocation, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayAllocation, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, RolloutComponent, RolloutPlan, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -112,6 +112,12 @@ export type ManagedRelayService = RelayService & { access_managed?: boolean; all
  * (state, revision, failed_step, …) is server-derived and never accepted
  * from callers (karst-openapi.yml's own `readonly` markings). */
 export type RelayAllocationDraft = { name: string; infra_connection_id: string; location: string; relay_transport: boolean; permitted_groups: string[] };
+
+/** The writable fields of a RolloutComponent/RolloutPlan — status, observed_digest,
+ * compatibility, etc. are server-derived (karst-openapi.yml's own `readOnly`
+ * markings) and never accepted from callers. ADR-0066/#484. */
+export type RolloutComponentDraft = Pick<RolloutComponent, "name" | "sequence" | "current_digest" | "target_digest" | "verification_ref" | "requires_relay_lifecycle_schema" | "requires_gateway_ingress_schema">;
+export type RolloutPlanDraft = { target_release: string; maintenance_window_note?: string; components: RolloutComponentDraft[] };
 export type Group = { id: string; name: string; peers_count: number; resources_count: number; issued?: string; peers?: Array<{ id: string; name: string }>; resources?: Array<{ id: string; type: string }> };
 
 export type GroupSnapshot = { group: Group; revision: string };
@@ -262,6 +268,24 @@ export const api = {
   allocateRelay: (draft: RelayAllocationDraft) => request<RelayAllocation>("/relay-allocations", { method: "POST", body: body(draft) }),
   deprovisionRelayAllocation: (id: string, revision: number) => request<RelayAllocation>(`/relay-allocations/${encodeURIComponent(id)}/deprovision`, { method: "POST", body: body({ revision, acknowledge_deprovision: true }) }),
   deleteRelayAllocation: (id: string, revision: number) => request<void>(`/relay-allocations/${encodeURIComponent(id)}?revision=${revision}`, { method: "DELETE" }),
+
+  // ── component rollout (ADR-0066, #484) ──────────────────────────────────────
+  // Control only computes/tracks/verifies-by-attestation here; it never calls
+  // Nomad, a registry, or cosign itself. The operator still runs the
+  // documented deploy/nomad/prod/README.md steps by hand and tells control
+  // which step they completed.
+  rollouts: () => request<RolloutPlan[]>("/rollouts"),
+  rollout: (id: string) => request<RolloutPlan>(`/rollouts/${encodeURIComponent(id)}`),
+  createRollout: (draft: RolloutPlanDraft) => request<RolloutPlan>("/rollouts", { method: "POST", body: body(draft) }),
+  startRollout: (id: string, revision: number, acknowledge: boolean, overrideIncompatibility: boolean, maintenanceWindowNote?: string) =>
+    request<RolloutPlan>(`/rollouts/${encodeURIComponent(id)}/start`, { method: "POST", body: body({ revision, acknowledge, override_incompatibility: overrideIncompatibility, maintenance_window_note: maintenanceWindowNote }) }),
+  markRolloutComponentApplied: (id: string, name: string, revision: number) =>
+    request<RolloutPlan>(`/rollouts/${encodeURIComponent(id)}/components/${encodeURIComponent(name)}/mark-applied`, { method: "POST", body: body({ revision }) }),
+  markRolloutComponentFailed: (id: string, name: string, revision: number, reason: string) =>
+    request<RolloutPlan>(`/rollouts/${encodeURIComponent(id)}/components/${encodeURIComponent(name)}/mark-failed`, { method: "POST", body: body({ revision, reason }) }),
+  rollBackRollout: (id: string, revision: number, reason?: string) =>
+    request<RolloutPlan>(`/rollouts/${encodeURIComponent(id)}/rollback`, { method: "POST", body: body({ revision, acknowledge_rollback: true, reason }) }),
+  deleteRollout: (id: string, revision: number) => request<void>(`/rollouts/${encodeURIComponent(id)}?revision=${revision}`, { method: "DELETE" }),
 
   // ── NOC view (#241 Phase 1a, ADR-0046/ADR-0047, extended to ADR-0046 §1's
   // full component list) ──────────────────────────────────────────────────

@@ -104,3 +104,33 @@ func TestScopedGatewayIngressRequiresVersionedAgentAndHashesScope(t *testing.T) 
 	require.Empty(t, revoked.PacketFilter)
 	require.False(t, revoked.Unchanged)
 }
+
+// TestGatewayIngressSchemaPersistsUnconditionally confirms
+// GatewayIngressSchema is recorded on node.Identity for every netmap
+// request, not only for a node whose policy happens to produce a
+// destination-scoped filter rule and therefore trips the gated
+// FailedPrecondition check above -- the same unconditional-persistence
+// property TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback
+// already covers for RelayLifecycleSchema (ADR-0066).
+func TestGatewayIngressSchemaPersistsUnconditionally(t *testing.T) {
+	f := newNetmapFixture(t, 1)
+	// No Policy/DNS configured at all, so compileFilter produces no
+	// destination-scoped rule -- the gated check in netmap.go never runs.
+	payload, err := pb.Marshal(&proto.KarstNetmapRequest{GatewayIngressSchema: 1})
+	require.NoError(t, err)
+	_, err = f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
+	require.NoError(t, err)
+	recorded, err := f.handler.Nodes.Get(f.selfH)
+	require.NoError(t, err)
+	require.Equal(t, uint32(1), recorded.GatewayIngressSchema)
+
+	// A later legacy declaration replaces the earlier one, same as
+	// RelayLifecycleSchema's own downgrade behavior.
+	payload, err = pb.Marshal(&proto.KarstNetmapRequest{GatewayIngressSchema: 0})
+	require.NoError(t, err)
+	_, err = f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
+	require.NoError(t, err)
+	recorded, err = f.handler.Nodes.Get(f.selfH)
+	require.NoError(t, err)
+	require.Zero(t, recorded.GatewayIngressSchema)
+}

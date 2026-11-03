@@ -727,6 +727,79 @@ export type RelayAllocation = {
     readonly updated_at?: string;
 };
 
+export type RolloutPlan = {
+    /**
+     * Server-generated; never accepted from callers.
+     */
+    readonly id?: string;
+    target_release: string;
+    maintenance_window_note?: string;
+    components: Array<RolloutComponent>;
+    /**
+     * Live
+     */
+    readonly compatibility?: Array<RolloutComponentCompatibility>;
+    /**
+     * A non-blocking reconciliation note
+     */
+    readonly note?: string;
+    readonly state?: 'planned' | 'in_progress' | 'completed' | 'failed' | 'rolled_back';
+    /**
+     * Only meaningful while state is failed.
+     */
+    readonly failed_component?: 'control' | 'console' | 'relay_job';
+    readonly failure_reason?: string;
+    /**
+     * Expected revision for the next compare-and-set action against this plan.
+     */
+    readonly revision?: number;
+    readonly created_at?: string;
+    readonly updated_at?: string;
+    readonly started_at?: string | null;
+    readonly completed_at?: string | null;
+};
+
+export type RolloutComponent = {
+    /**
+     * relay_job is this job's own relay task group
+     */
+    name: 'control' | 'console' | 'relay_job';
+    /**
+     * 0-based apply order
+     */
+    sequence: number;
+    /**
+     * Operator-recorded
+     */
+    current_digest?: string;
+    target_digest: string;
+    /**
+     * The operator's own attestation that they ran cosign verify against target_digest per deploy/nomad/prod/README.md. Control never re-verifies this.
+     */
+    verification_ref: string;
+    /**
+     * Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.
+     */
+    requires_relay_lifecycle_schema?: number | null;
+    requires_gateway_ingress_schema?: number | null;
+    readonly status?: 'pending' | 'applied' | 'failed';
+    readonly failure_reason?: string;
+    /**
+     * From the deployment-versions snapshot at the time this component was marked applied; empty if the snapshot was unavailable.
+     */
+    readonly observed_digest?: string;
+    readonly observed_at?: string | null;
+};
+
+export type RolloutComponentCompatibility = {
+    component: 'control' | 'console' | 'relay_job';
+    capability: 'relay_lifecycle_schema' | 'gateway_ingress_schema';
+    required: number;
+    incompatible_peer_count: number;
+    blocking: boolean;
+    message?: string;
+};
+
 export type RelayCreate = {
     address: string;
     identity_key: string;
@@ -1171,6 +1244,37 @@ export type RelayAllocationWritable = {
      * Stable account group IDs granted access once ready.
      */
     permitted_groups: Array<string>;
+};
+
+export type RolloutPlanWritable = {
+    target_release: string;
+    maintenance_window_note?: string;
+    components: Array<RolloutComponentWritable>;
+};
+
+export type RolloutComponentWritable = {
+    /**
+     * relay_job is this job's own relay task group
+     */
+    name: 'control' | 'console' | 'relay_job';
+    /**
+     * 0-based apply order
+     */
+    sequence: number;
+    /**
+     * Operator-recorded
+     */
+    current_digest?: string;
+    target_digest: string;
+    /**
+     * The operator's own attestation that they ran cosign verify against target_digest per deploy/nomad/prod/README.md. Control never re-verifies this.
+     */
+    verification_ref: string;
+    /**
+     * Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.
+     */
+    requires_relay_lifecycle_schema?: number | null;
+    requires_gateway_ingress_schema?: number | null;
 };
 
 export type RelayWritable = RelayCreate & {
@@ -3197,6 +3301,264 @@ export type ReportRelayAllocationFailedResponses = {
 };
 
 export type ReportRelayAllocationFailedResponse = ReportRelayAllocationFailedResponses[keyof ReportRelayAllocationFailedResponses];
+
+export type ListRolloutsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/rollouts';
+};
+
+export type ListRolloutsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListRolloutsError = ListRolloutsErrors[keyof ListRolloutsErrors];
+
+export type ListRolloutsResponses = {
+    /**
+     * Rollout plans
+     */
+    200: Array<RolloutPlan>;
+};
+
+export type ListRolloutsResponse = ListRolloutsResponses[keyof ListRolloutsResponses];
+
+export type CreateRolloutData = {
+    body: {
+        target_release: string;
+        maintenance_window_note?: string;
+        components: Array<RolloutComponentWritable>;
+    };
+    path?: never;
+    query?: never;
+    url: '/rollouts';
+};
+
+export type CreateRolloutErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateRolloutError = CreateRolloutErrors[keyof CreateRolloutErrors];
+
+export type CreateRolloutResponses = {
+    /**
+     * Plan created
+     */
+    201: RolloutPlan;
+};
+
+export type CreateRolloutResponse = CreateRolloutResponses[keyof CreateRolloutResponses];
+
+export type DeleteRolloutData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query: {
+        revision: number;
+    };
+    url: '/rollouts/{id}';
+};
+
+export type DeleteRolloutErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteRolloutError = DeleteRolloutErrors[keyof DeleteRolloutErrors];
+
+export type DeleteRolloutResponses = {
+    /**
+     * Plan removed
+     */
+    204: void;
+};
+
+export type DeleteRolloutResponse = DeleteRolloutResponses[keyof DeleteRolloutResponses];
+
+export type GetRolloutData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/rollouts/{id}';
+};
+
+export type GetRolloutErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetRolloutError = GetRolloutErrors[keyof GetRolloutErrors];
+
+export type GetRolloutResponses = {
+    /**
+     * Rollout plan
+     */
+    200: RolloutPlan;
+};
+
+export type GetRolloutResponse = GetRolloutResponses[keyof GetRolloutResponses];
+
+export type StartRolloutData = {
+    body: {
+        revision: number;
+        acknowledge: true;
+        override_incompatibility?: boolean;
+        maintenance_window_note?: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/rollouts/{id}/start';
+};
+
+export type StartRolloutErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type StartRolloutError = StartRolloutErrors[keyof StartRolloutErrors];
+
+export type StartRolloutResponses = {
+    /**
+     * Rollout started
+     */
+    200: RolloutPlan;
+};
+
+export type StartRolloutResponse = StartRolloutResponses[keyof StartRolloutResponses];
+
+export type MarkRolloutComponentAppliedData = {
+    body: {
+        revision: number;
+    };
+    path: {
+        id: string;
+        name: 'control' | 'console' | 'relay_job';
+    };
+    query?: never;
+    url: '/rollouts/{id}/components/{name}/mark-applied';
+};
+
+export type MarkRolloutComponentAppliedErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type MarkRolloutComponentAppliedError = MarkRolloutComponentAppliedErrors[keyof MarkRolloutComponentAppliedErrors];
+
+export type MarkRolloutComponentAppliedResponses = {
+    /**
+     * Component marked applied (plan auto-completes once every component has)
+     */
+    200: RolloutPlan;
+};
+
+export type MarkRolloutComponentAppliedResponse = MarkRolloutComponentAppliedResponses[keyof MarkRolloutComponentAppliedResponses];
+
+export type MarkRolloutComponentFailedData = {
+    body: {
+        revision: number;
+        reason: string;
+    };
+    path: {
+        id: string;
+        name: 'control' | 'console' | 'relay_job';
+    };
+    query?: never;
+    url: '/rollouts/{id}/components/{name}/mark-failed';
+};
+
+export type MarkRolloutComponentFailedErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type MarkRolloutComponentFailedError = MarkRolloutComponentFailedErrors[keyof MarkRolloutComponentFailedErrors];
+
+export type MarkRolloutComponentFailedResponses = {
+    /**
+     * Failure recorded
+     */
+    200: RolloutPlan;
+};
+
+export type MarkRolloutComponentFailedResponse = MarkRolloutComponentFailedResponses[keyof MarkRolloutComponentFailedResponses];
+
+export type RollBackRolloutData = {
+    body: {
+        revision: number;
+        acknowledge_rollback: true;
+        reason?: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/rollouts/{id}/rollback';
+};
+
+export type RollBackRolloutErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type RollBackRolloutError = RollBackRolloutErrors[keyof RollBackRolloutErrors];
+
+export type RollBackRolloutResponses = {
+    /**
+     * Rolled back
+     */
+    200: RolloutPlan;
+};
+
+export type RollBackRolloutResponse = RollBackRolloutResponses[keyof RollBackRolloutResponses];
 
 export type ListRelaysData = {
     body?: never;

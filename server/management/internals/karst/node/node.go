@@ -86,6 +86,13 @@ type Identity struct {
 	HomeRelay            []byte
 	RelayLifecycleSchema uint32 `gorm:"not null;default:0"`
 
+	// GatewayIngressSchema mirrors RelayLifecycleSchema above: a
+	// netmap-time capability declaration, persisted so fleet-wide
+	// compatibility (e.g. a rollout plan's compatibility preview) can be
+	// queried without a live netmap round trip. See
+	// control/netmap.go's unconditional SetGatewayIngressSchema call.
+	GatewayIngressSchema uint32 `gorm:"not null;default:0"`
+
 	// Candidates is this node's own self-reported AVEN candidate list
 	// (`karst_control.proto`'s `KarstNetmapRequest.candidates`), order
 	// preserved, redistributed to this node's peers as

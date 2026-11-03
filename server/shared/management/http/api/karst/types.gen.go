@@ -1164,6 +1164,135 @@ func (e RelayUsageReportCoverage) Valid() bool {
 	}
 }
 
+// Defines values for RolloutComponentName.
+const (
+	RolloutComponentNameConsole  RolloutComponentName = "console"
+	RolloutComponentNameControl  RolloutComponentName = "control"
+	RolloutComponentNameRelayJob RolloutComponentName = "relay_job"
+)
+
+// Valid indicates whether the value is a known member of the RolloutComponentName enum.
+func (e RolloutComponentName) Valid() bool {
+	switch e {
+	case RolloutComponentNameConsole:
+		return true
+	case RolloutComponentNameControl:
+		return true
+	case RolloutComponentNameRelayJob:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutComponentStatus.
+const (
+	RolloutComponentStatusApplied RolloutComponentStatus = "applied"
+	RolloutComponentStatusFailed  RolloutComponentStatus = "failed"
+	RolloutComponentStatusPending RolloutComponentStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the RolloutComponentStatus enum.
+func (e RolloutComponentStatus) Valid() bool {
+	switch e {
+	case RolloutComponentStatusApplied:
+		return true
+	case RolloutComponentStatusFailed:
+		return true
+	case RolloutComponentStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutComponentCompatibilityCapability.
+const (
+	RolloutComponentCompatibilityCapabilityGatewayIngressSchema RolloutComponentCompatibilityCapability = "gateway_ingress_schema"
+	RolloutComponentCompatibilityCapabilityRelayLifecycleSchema RolloutComponentCompatibilityCapability = "relay_lifecycle_schema"
+)
+
+// Valid indicates whether the value is a known member of the RolloutComponentCompatibilityCapability enum.
+func (e RolloutComponentCompatibilityCapability) Valid() bool {
+	switch e {
+	case RolloutComponentCompatibilityCapabilityGatewayIngressSchema:
+		return true
+	case RolloutComponentCompatibilityCapabilityRelayLifecycleSchema:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutComponentCompatibilityComponent.
+const (
+	RolloutComponentCompatibilityComponentConsole  RolloutComponentCompatibilityComponent = "console"
+	RolloutComponentCompatibilityComponentControl  RolloutComponentCompatibilityComponent = "control"
+	RolloutComponentCompatibilityComponentRelayJob RolloutComponentCompatibilityComponent = "relay_job"
+)
+
+// Valid indicates whether the value is a known member of the RolloutComponentCompatibilityComponent enum.
+func (e RolloutComponentCompatibilityComponent) Valid() bool {
+	switch e {
+	case RolloutComponentCompatibilityComponentConsole:
+		return true
+	case RolloutComponentCompatibilityComponentControl:
+		return true
+	case RolloutComponentCompatibilityComponentRelayJob:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutPlanFailedComponent.
+const (
+	RolloutPlanFailedComponentConsole  RolloutPlanFailedComponent = "console"
+	RolloutPlanFailedComponentControl  RolloutPlanFailedComponent = "control"
+	RolloutPlanFailedComponentRelayJob RolloutPlanFailedComponent = "relay_job"
+)
+
+// Valid indicates whether the value is a known member of the RolloutPlanFailedComponent enum.
+func (e RolloutPlanFailedComponent) Valid() bool {
+	switch e {
+	case RolloutPlanFailedComponentConsole:
+		return true
+	case RolloutPlanFailedComponentControl:
+		return true
+	case RolloutPlanFailedComponentRelayJob:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutPlanState.
+const (
+	RolloutPlanStateCompleted  RolloutPlanState = "completed"
+	RolloutPlanStateFailed     RolloutPlanState = "failed"
+	RolloutPlanStateInProgress RolloutPlanState = "in_progress"
+	RolloutPlanStatePlanned    RolloutPlanState = "planned"
+	RolloutPlanStateRolledBack RolloutPlanState = "rolled_back"
+)
+
+// Valid indicates whether the value is a known member of the RolloutPlanState enum.
+func (e RolloutPlanState) Valid() bool {
+	switch e {
+	case RolloutPlanStateCompleted:
+		return true
+	case RolloutPlanStateFailed:
+		return true
+	case RolloutPlanStateInProgress:
+		return true
+	case RolloutPlanStatePlanned:
+		return true
+	case RolloutPlanStateRolledBack:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RootRenamePreviewConvergence.
 const (
 	RootRenamePreviewConvergenceUnobserved RootRenamePreviewConvergence = "unobserved"
@@ -1491,6 +1620,36 @@ const (
 func (e SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange) Valid() bool {
 	switch e {
 	case SetRelayServiceModesJSONBodyAcknowledgeConnectivityChangeTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RollBackRolloutJSONBodyAcknowledgeRollback.
+const (
+	RollBackRolloutJSONBodyAcknowledgeRollbackTrue RollBackRolloutJSONBodyAcknowledgeRollback = true
+)
+
+// Valid indicates whether the value is a known member of the RollBackRolloutJSONBodyAcknowledgeRollback enum.
+func (e RollBackRolloutJSONBodyAcknowledgeRollback) Valid() bool {
+	switch e {
+	case RollBackRolloutJSONBodyAcknowledgeRollbackTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StartRolloutJSONBodyAcknowledge.
+const (
+	StartRolloutJSONBodyAcknowledgeTrue StartRolloutJSONBodyAcknowledge = true
+)
+
+// Valid indicates whether the value is a known member of the StartRolloutJSONBodyAcknowledge enum.
+func (e StartRolloutJSONBodyAcknowledge) Valid() bool {
+	switch e {
+	case StartRolloutJSONBodyAcknowledgeTrue:
 		return true
 	default:
 		return false
@@ -2698,6 +2857,87 @@ type RelayUsageReport struct {
 // RelayUsageReportCoverage Completeness is measured over explicitly operator-authorized producers and account mappings only.
 type RelayUsageReportCoverage string
 
+// RolloutComponent defines model for RolloutComponent.
+type RolloutComponent struct {
+	// CurrentDigest Operator-recorded
+	CurrentDigest *string `json:"current_digest,omitempty"`
+	FailureReason *string `json:"failure_reason,omitempty"`
+
+	// Name relay_job is this job's own relay task group
+	Name       RolloutComponentName `json:"name"`
+	ObservedAt *time.Time           `json:"observed_at,omitempty"`
+
+	// ObservedDigest From the deployment-versions snapshot at the time this component was marked applied; empty if the snapshot was unavailable.
+	ObservedDigest               *string `json:"observed_digest,omitempty"`
+	RequiresGatewayIngressSchema *int    `json:"requires_gateway_ingress_schema,omitempty"`
+
+	// RequiresRelayLifecycleSchema Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.
+	RequiresRelayLifecycleSchema *int `json:"requires_relay_lifecycle_schema,omitempty"`
+
+	// Sequence 0-based apply order
+	Sequence     int                     `json:"sequence"`
+	Status       *RolloutComponentStatus `json:"status,omitempty"`
+	TargetDigest string                  `json:"target_digest"`
+
+	// VerificationRef The operator's own attestation that they ran cosign verify against target_digest per deploy/nomad/prod/README.md. Control never re-verifies this.
+	VerificationRef string `json:"verification_ref"`
+}
+
+// RolloutComponentName relay_job is this job's own relay task group
+type RolloutComponentName string
+
+// RolloutComponentStatus defines model for RolloutComponent.Status.
+type RolloutComponentStatus string
+
+// RolloutComponentCompatibility defines model for RolloutComponentCompatibility.
+type RolloutComponentCompatibility struct {
+	Blocking              bool                                    `json:"blocking"`
+	Capability            RolloutComponentCompatibilityCapability `json:"capability"`
+	Component             RolloutComponentCompatibilityComponent  `json:"component"`
+	IncompatiblePeerCount int                                     `json:"incompatible_peer_count"`
+	Message               *string                                 `json:"message,omitempty"`
+	Required              int                                     `json:"required"`
+}
+
+// RolloutComponentCompatibilityCapability defines model for RolloutComponentCompatibility.Capability.
+type RolloutComponentCompatibilityCapability string
+
+// RolloutComponentCompatibilityComponent defines model for RolloutComponentCompatibility.Component.
+type RolloutComponentCompatibilityComponent string
+
+// RolloutPlan defines model for RolloutPlan.
+type RolloutPlan struct {
+	// Compatibility Live
+	Compatibility *[]RolloutComponentCompatibility `json:"compatibility,omitempty"`
+	CompletedAt   *time.Time                       `json:"completed_at,omitempty"`
+	Components    []RolloutComponent               `json:"components"`
+	CreatedAt     *time.Time                       `json:"created_at,omitempty"`
+
+	// FailedComponent Only meaningful while state is failed.
+	FailedComponent *RolloutPlanFailedComponent `json:"failed_component,omitempty"`
+	FailureReason   *string                     `json:"failure_reason,omitempty"`
+
+	// Id Server-generated; never accepted from callers.
+	Id                    *string `json:"id,omitempty"`
+	MaintenanceWindowNote *string `json:"maintenance_window_note,omitempty"`
+
+	// Note A non-blocking reconciliation note
+	Note *string `json:"note,omitempty"`
+
+	// Revision Expected revision for the next compare-and-set action against this plan.
+	Revision      *int              `json:"revision,omitempty"`
+	StartedAt     *time.Time        `json:"started_at,omitempty"`
+	State         *RolloutPlanState `json:"state,omitempty"`
+	TargetRelease string            `json:"target_release"`
+	UpdatedAt     *time.Time        `json:"updated_at,omitempty"`
+}
+
+// RolloutPlanFailedComponent Only meaningful while state is failed.
+type RolloutPlanFailedComponent string
+
+// RolloutPlanState defines model for RolloutPlan.State.
+type RolloutPlanState string
+
 // RootRenamePreview defines model for RootRenamePreview.
 type RootRenamePreview struct {
 	Committed bool `json:"committed"`
@@ -3101,6 +3341,50 @@ type SetRelayServiceModesJSONBody struct {
 // SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange defines parameters for SetRelayServiceModes.
 type SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange bool
 
+// CreateRolloutJSONBody defines parameters for CreateRollout.
+type CreateRolloutJSONBody struct {
+	Components            []RolloutComponent `json:"components"`
+	MaintenanceWindowNote *string            `json:"maintenance_window_note,omitempty"`
+	TargetRelease         string             `json:"target_release"`
+}
+
+// DeleteRolloutParams defines parameters for DeleteRollout.
+type DeleteRolloutParams struct {
+	Revision int `form:"revision" json:"revision"`
+}
+
+// MarkRolloutComponentAppliedJSONBody defines parameters for MarkRolloutComponentApplied.
+type MarkRolloutComponentAppliedJSONBody struct {
+	Revision int `json:"revision"`
+}
+
+// MarkRolloutComponentFailedJSONBody defines parameters for MarkRolloutComponentFailed.
+type MarkRolloutComponentFailedJSONBody struct {
+	Reason   string `json:"reason"`
+	Revision int    `json:"revision"`
+}
+
+// RollBackRolloutJSONBody defines parameters for RollBackRollout.
+type RollBackRolloutJSONBody struct {
+	AcknowledgeRollback RollBackRolloutJSONBodyAcknowledgeRollback `json:"acknowledge_rollback"`
+	Reason              *string                                    `json:"reason,omitempty"`
+	Revision            int                                        `json:"revision"`
+}
+
+// RollBackRolloutJSONBodyAcknowledgeRollback defines parameters for RollBackRollout.
+type RollBackRolloutJSONBodyAcknowledgeRollback bool
+
+// StartRolloutJSONBody defines parameters for StartRollout.
+type StartRolloutJSONBody struct {
+	Acknowledge             StartRolloutJSONBodyAcknowledge `json:"acknowledge"`
+	MaintenanceWindowNote   *string                         `json:"maintenance_window_note,omitempty"`
+	OverrideIncompatibility *bool                           `json:"override_incompatibility,omitempty"`
+	Revision                int                             `json:"revision"`
+}
+
+// StartRolloutJSONBodyAcknowledge defines parameters for StartRollout.
+type StartRolloutJSONBodyAcknowledge bool
+
 // GetDeviceUsageParams defines parameters for GetDeviceUsage.
 type GetDeviceUsageParams struct {
 	Start time.Time `form:"start" json:"start"`
@@ -3240,6 +3524,21 @@ type SetRelayServiceModesJSONRequestBody SetRelayServiceModesJSONBody
 
 // CreateRelayJSONRequestBody defines body for CreateRelay for application/json ContentType.
 type CreateRelayJSONRequestBody = RelayCreate
+
+// CreateRolloutJSONRequestBody defines body for CreateRollout for application/json ContentType.
+type CreateRolloutJSONRequestBody CreateRolloutJSONBody
+
+// MarkRolloutComponentAppliedJSONRequestBody defines body for MarkRolloutComponentApplied for application/json ContentType.
+type MarkRolloutComponentAppliedJSONRequestBody MarkRolloutComponentAppliedJSONBody
+
+// MarkRolloutComponentFailedJSONRequestBody defines body for MarkRolloutComponentFailed for application/json ContentType.
+type MarkRolloutComponentFailedJSONRequestBody MarkRolloutComponentFailedJSONBody
+
+// RollBackRolloutJSONRequestBody defines body for RollBackRollout for application/json ContentType.
+type RollBackRolloutJSONRequestBody RollBackRolloutJSONBody
+
+// StartRolloutJSONRequestBody defines body for StartRollout for application/json ContentType.
+type StartRolloutJSONRequestBody StartRolloutJSONBody
 
 // SetScalingModeJSONRequestBody defines body for SetScalingMode for application/json ContentType.
 type SetScalingModeJSONRequestBody = ScalingMode

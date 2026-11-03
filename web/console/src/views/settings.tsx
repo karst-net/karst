@@ -2,6 +2,7 @@
 // Copyright the Karst contributors.
 
 import { SoftwareVersions } from "./software-versions";
+import { Rollouts } from "./rollouts";
 import { useState } from "react";
 import { Dialog, EmptyState, Observed } from "@karst-net/ui";
 import { api, type Token } from "../api";
@@ -66,7 +67,10 @@ export function Settings() {
   };
   return <section>
     <h2>Settings</h2>
-    {(user?.role === "admin" || user?.role === "owner") && <SoftwareVersions />}
+    {(user?.role === "admin" || user?.role === "owner") && <>
+      <SoftwareVersions />
+      <Rollouts />
+    </>}
     <h3>Signed in as</h3>
     <Rows head={<><th>Name</th><th>Email</th><th>Role</th><th>User ID</th></>}>
       <tr><td>{user?.name}</td><td>{user?.email}</td><td>{user?.role}</td><td><code>{user?.id}</code></td></tr>
