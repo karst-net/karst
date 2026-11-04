@@ -116,21 +116,13 @@ variable "scaler_allocate_enabled" {
 variable "scaler_allocate_binary" {
   type        = string
   default     = ""
-  description = "Absolute path, on node_name, to a karst-scaler binary built with `cargo build --release --features aws` (docs/operations/scaler-aws-driver.md) -- raw_exec, not docker: there is no published karst-scaler image. Required when scaler_allocate_enabled is true."
-  validation {
-    condition     = !var.scaler_allocate_enabled || var.scaler_allocate_binary != ""
-    error_message = "scaler_allocate_binary is required when scaler_allocate_enabled is true."
-  }
+  description = "Absolute path, on node_name, to a karst-scaler binary built with `cargo build --release --features aws` (docs/operations/scaler-aws-driver.md) -- raw_exec, not docker: there is no published karst-scaler image. Required when scaler_allocate_enabled is true: Nomad only allows a variable's own validation block to reference itself, so that requirement cannot be enforced here and is checked at the `count = var.scaler_allocate_enabled ? 1 : 0` group below instead -- an empty path with the group enabled fails the raw_exec task at runtime rather than at `job validate`."
 }
 
 variable "scaler_allocate_config" {
   type        = string
   default     = ""
-  description = "Absolute path, on node_name, to this deployment's own ALLOCATE_CONFIG.toml -- see scaler-allocate-config.toml.example alongside this job file. Never checked into version control: it names subnet/security-group ids and a pat_file path, the same posture deployment.vars.hcl already has. Required when scaler_allocate_enabled is true."
-  validation {
-    condition     = !var.scaler_allocate_enabled || var.scaler_allocate_config != ""
-    error_message = "scaler_allocate_config is required when scaler_allocate_enabled is true."
-  }
+  description = "Absolute path, on node_name, to this deployment's own ALLOCATE_CONFIG.toml -- see scaler-allocate-config.toml.example alongside this job file. Never checked into version control: it names subnet/security-group ids and a pat_file path, the same posture deployment.vars.hcl already has. Required when scaler_allocate_enabled is true: Nomad only allows a variable's own validation block to reference itself, so that requirement cannot be enforced here and is checked at the `count = var.scaler_allocate_enabled ? 1 : 0` group below instead -- an empty path with the group enabled fails the raw_exec task at runtime rather than at `job validate`."
 }
 
 job "karst" {
