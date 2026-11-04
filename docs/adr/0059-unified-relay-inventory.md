@@ -23,9 +23,11 @@ existing endpoints from their row. Add relay registers an endpoint, then opens
 the existing reviewed access/exit form with that endpoint selected.
 
 Keep transport details and registration deletion in the row's endpoint dialog.
-Require configuration removal before offering endpoint deletion. Keep legacy
-associations and publication migration under advanced settings with their
-existing preview and acknowledgment. Preserve APIs and publication semantics.
+Require configuration removal before offering endpoint deletion. Keep
+publication migration under advanced settings with its existing preview and
+acknowledgment; issue #530 removed the console's unmanaged "add legacy
+association" path from that same panel, so every new configuration now goes
+through group selection. Preserve APIs and publication semantics.
 Load registrations independently so configuration API failure does not prevent
 endpoint diagnosis; show unknown access and disable dependent mutations.
 

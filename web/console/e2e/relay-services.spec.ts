@@ -81,26 +81,30 @@ test("explicit Relay association preserves backend identity and supports removal
   let services: Record<string, unknown>[] = [];
   let submitted: Record<string, unknown> | undefined;
   await page.route("**/api/karst/v1/relay-services**", async (route) => {
-    if (route.request().url().endsWith("/publication")) { await route.fulfill({ json: { mode: "legacy" } }); return; }
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/publication")) { await route.fulfill({ json: { mode: "services" } }); return; }
+    if (path.endsWith("/admission-targets")) { await route.fulfill({ json: [{ relay_id: endpoint.id, refreshed_at: new Date().toISOString() }] }); return; }
     if (route.request().method() === "POST") {
       submitted = route.request().postDataJSON();
-      services = [{ ...submitted, ponor_present: true }];
-      await route.fulfill({ status: 201, json: submitted });
+      services = [{ ...submitted, ponor_present: true, revision: 1 }];
+      await route.fulfill({ status: 201, json: services[0] });
     } else if (route.request().method() === "DELETE") {
       services = [];
       await route.fulfill({ status: 204 });
     } else await route.fulfill({ json: services });
   });
   await page.goto("/#/relays");
-  await page.getByText("Advanced publication and legacy settings", { exact: true }).click();
-  await page.getByRole("button", { name: "Add legacy association", exact: true }).click();
-  await expect(page.getByLabel("Ponor endpoint")).toHaveValue("");
-  await page.getByLabel("Service name").fill("primary");
-  await page.getByLabel("Ponor endpoint").selectOption(endpoint.id);
+  // issue #530: association creation always goes through group selection now.
+  await page.getByRole("button", { name: "Configure relay", exact: true }).click();
+  await expect(page.getByLabel("Registered relay")).toHaveValue(endpoint.id);
+  await page.getByLabel("Relay name").fill("primary");
+  await page.getByRole("group", { name: "Groups allowed to use this relay", exact: true }).getByRole("checkbox", { name: "sre", exact: true }).check();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-  await page.getByRole("button", { name: "Create service" }).click();
+  await page.getByRole("button", { name: "Review relay configuration", exact: true }).click();
+  await page.getByRole("checkbox", { name: "I reviewed the allowed groups and internet access.", exact: true }).check();
+  await page.getByRole("button", { name: "Apply relay configuration", exact: true }).click();
   await expect(page.getByRole("cell", { name: "primary", exact: true })).toBeVisible();
-  expect(submitted).toEqual({ id: "primary", ponor_id: endpoint.id });
+  expect(submitted).toEqual({ id: "primary", ponor_id: endpoint.id, access_managed: true, allowed_groups: ["group-sre"], metric: 9999 });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Remove configuration" }).click();

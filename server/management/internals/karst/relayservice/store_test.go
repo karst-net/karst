@@ -16,7 +16,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/server/types"
 )
 
 type compatibleAgents struct{}
@@ -43,8 +45,36 @@ func fixture(t *testing.T) (*Store, *relayreg.Store, Service) {
 	return store, ponor, Service{ID: "primary", PonorID: p.ID}
 }
 
-func TestExplicitAssociationSurvivesReopenWithoutChangingBackends(t *testing.T) {
+// fixtureManaged sets up the group, live admission lease and "services"
+// publication that Create now always requires, since it no longer accepts
+// an unmanaged association.
+func fixtureManaged(t *testing.T) (*Store, *relayreg.Store, Service) {
+	t.Helper()
 	store, ponor, service := fixture(t)
+	require.NoError(t, store.db.AutoMigrate(&types.Group{}, &policy.Version{}))
+	require.NoError(t, store.db.Create(&types.Group{ID: "engineering", AccountID: "a", Name: "Engineering"}).Error)
+	ctx := WithAccount(context.Background(), "a")
+	_, err := store.SetPublication(ctx, "services")
+	require.NoError(t, err)
+	require.NoError(t, store.RefreshAdmissionLease(service.PonorID))
+	service.AccessManaged = true
+	service.AllowedGroups = []string{"engineering"}
+	return store, ponor, service
+}
+
+// legacyRow directly persists a pre-existing unmanaged association, the kind
+// Create can no longer write but the store must still read, migrate and
+// project correctly (grandfathered rows; see issue #530's "Open question").
+func legacyRow(t *testing.T, store *Store, service Service) Service {
+	t.Helper()
+	service.AccountID = "a"
+	service.Revision = 1
+	require.NoError(t, store.db.Create(&service).Error)
+	return service
+}
+
+func TestExplicitAssociationSurvivesReopenWithoutChangingBackends(t *testing.T) {
+	store, ponor, service := fixtureManaged(t)
 	ctx := WithAccount(context.Background(), "a")
 	// Nothing is inferred from existing backend rows.
 	views, err := store.List(ctx)
@@ -72,7 +102,7 @@ func TestExplicitAssociationSurvivesReopenWithoutChangingBackends(t *testing.T) 
 }
 
 func TestAssociationsRequireAccountAndAccountLocalReferences(t *testing.T) {
-	store, _, service := fixture(t)
+	store, _, service := fixtureManaged(t)
 	_, err := store.Create(context.Background(), service)
 	require.ErrorIs(t, err, ErrNoAccount)
 	_, err = store.List(context.Background())
@@ -89,7 +119,7 @@ func TestAssociationsRequireAccountAndAccountLocalReferences(t *testing.T) {
 }
 
 func TestLegacyDeletionExposesMissingBackendWithoutReassociation(t *testing.T) {
-	store, ponor, service := fixture(t)
+	store, ponor, service := fixtureManaged(t)
 	ctx := WithAccount(context.Background(), "a")
 	_, err := store.Create(ctx, service)
 	require.NoError(t, err)
@@ -102,7 +132,7 @@ func TestLegacyDeletionExposesMissingBackendWithoutReassociation(t *testing.T) {
 }
 
 func TestDuplicateService(t *testing.T) {
-	store, _, service := fixture(t)
+	store, _, service := fixtureManaged(t)
 	ctx := WithAccount(context.Background(), "a")
 	_, err := store.Create(ctx, service)
 	require.NoError(t, err)
@@ -114,10 +144,12 @@ func TestDuplicateService(t *testing.T) {
 }
 
 func TestInvalidAssociationNeverWrites(t *testing.T) {
-	store, _, valid := fixture(t)
+	store, _, valid := fixtureManaged(t)
 	for _, mutate := range []func(*Service){
 		func(s *Service) { s.ID = "../bad" },
 		func(s *Service) { s.PonorID = "missing" },
+		func(s *Service) { s.AccessManaged = false },
+		func(s *Service) { s.AllowedGroups = nil },
 	} {
 		service := valid
 		mutate(&service)
@@ -125,6 +157,19 @@ func TestInvalidAssociationNeverWrites(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalid)
 	}
 	views, err := store.List(WithAccount(context.Background(), "a"))
+	require.NoError(t, err)
+	require.Empty(t, views)
+}
+
+// TestCreateRejectsUnmanagedAssociation covers issue #530: a RelayService can
+// no longer be created without access_managed and at least one allowed
+// group, closing the account-wide "legacy association" bypass.
+func TestCreateRejectsUnmanagedAssociation(t *testing.T) {
+	store, _, service := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	_, err := store.Create(ctx, service)
+	require.ErrorIs(t, err, ErrInvalid)
+	views, err := store.List(ctx)
 	require.NoError(t, err)
 	require.Empty(t, views)
 }

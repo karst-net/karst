@@ -2045,8 +2045,8 @@ components:
       properties:
         id: {type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}
         ponor_id: {type: string, minLength: 1, description: Existing account-local Ponor registry ID.}
-        access_managed: {type: boolean, default: false, description: Use live registry-group membership for relay admission. Requires a live identity-bound roster writer.}
-        allowed_groups: {type: array, items: {type: string}, description: Stable account group IDs permitted to use this backend.}
+        access_managed: {type: boolean, default: false, description: Use live registry-group membership for relay admission. Requires a live identity-bound roster writer. POST /relay-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.}
+        allowed_groups: {type: array, items: {type: string}, description: Stable account group IDs permitted to use this backend. POST /relay-services requires at least one entry.}
         gateway_handle: {type: string, description: Explicitly selected enrolled Linux machine providing internet egress.}
         exit_ipv4: {type: boolean, default: false}
         exit_ipv6: {type: boolean, default: false}

@@ -305,8 +305,8 @@ Location is optional and does not require an authorized-location entry.
 last signed health observation. Remove all configurations using an endpoint
 before deleting its registration. Removing a configuration preserves the
 endpoint and the running process. **Advanced publication and legacy settings**
-contains publication preview/activation, rollback, and legacy associations.
-These retain their existing connectivity acknowledgments. Endpoint details
+contains publication preview/activation and rollback. These retain their
+existing connectivity acknowledgments. Endpoint details
 remain available when the service API fails; access is shown as unknown and
 deletion/configuration actions are disabled until that API recovers.
 

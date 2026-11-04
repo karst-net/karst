@@ -12,7 +12,7 @@ import (
 )
 
 func TestDeletedBackendWithdrawsOnlyItsMode(t *testing.T) {
-	store, ponor, service := fixture(t)
+	store, ponor, service := fixtureManaged(t)
 	ctx := WithAccount(context.Background(), "a")
 	_, err := store.Create(ctx, service)
 	require.NoError(t, err)
@@ -32,8 +32,9 @@ func TestDeletedBackendWithdrawsOnlyItsMode(t *testing.T) {
 func TestPublicationIsExplicitDurableAndNeverFallsBackWhenEmpty(t *testing.T) {
 	store, _, service := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
-	_, err := store.Create(ctx, service)
-	require.NoError(t, err)
+	// A pre-existing unmanaged association, grandfathered rather than
+	// created through Create, which now always requires managed access.
+	service = legacyRow(t, store, service)
 	preview, err := store.Preview(ctx)
 	require.NoError(t, err)
 	require.Len(t, preview, 1)
@@ -65,7 +66,7 @@ func TestPublicationIsExplicitDurableAndNeverFallsBackWhenEmpty(t *testing.T) {
 }
 
 func TestPublicationRejectsUnknownModesAndMissingReferences(t *testing.T) {
-	store, ponor, service := fixture(t)
+	store, ponor, service := fixtureManaged(t)
 	ctx := WithAccount(context.Background(), "a")
 	_, err := store.SetPublication(ctx, "automatic")
 	require.ErrorIs(t, err, ErrInvalid)

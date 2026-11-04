@@ -29,7 +29,6 @@ export function RelayServices() {
   const [allocating, setAllocating] = useState(false);
   const [relayId, setRelayId] = useState<string>();
   const [details, setDetails] = useState<Relay>();
-  const [draft, setDraft] = useState<RelayService>();
   const [saving, setSaving] = useState(false);
   const [configuring, setConfiguring] = useState<ManagedRelayService | "new">();
   const [preview, setPreview] = useState<RelayService[]>();
@@ -41,17 +40,6 @@ export function RelayServices() {
   const ponor = endpoints.value ?? [];
   const unconfigured = ponor.filter(endpoint => !services.some(service => service.ponor_id === endpoint.id));
 
-  const add = async () => {
-    if (!draft || saving) return;
-    const service: RelayService = { id: draft.id.trim(), ponor_id: draft.ponor_id };
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(service.id)) {
-      setMessage("Use 1–64 letters, digits, underscores or hyphens for the service name, starting with a letter or digit."); return;
-    }
-    if (!ponor.some((entry) => entry.id === service.ponor_id)) { setMessage("Choose a registered Ponor endpoint."); return; }
-    setSaving(true);
-    if (await run(() => api.addRelayService(service), `Relay service ${service.id} was added.`)) setDraft(undefined);
-    setSaving(false);
-  };
   const remove = (service: RelayService) => {
     if (!confirm(`Remove the ${service.id} service association? ${publication.mode === "services" ? "Endpoints used only by this service will be withdrawn from clients. " : ""}Backend processes and registry records remain intact.`)) return;
     void run(() => api.removeRelayService(service.id), `Relay service ${service.id} association was removed.`);
@@ -84,9 +72,8 @@ export function RelayServices() {
       <button disabled={saving || Boolean(resource.error)} onClick={async () => { setMessage(undefined); setSaving(true); try { setPreview(await api.previewRelayPublication()); setAcknowledged(false); } catch (error) { setMessage((error as Error).message); } finally { setSaving(false); } }}>Preview service publication</button>
       {publication.mode === "services" && <button disabled={saving || Boolean(resource.error)} onClick={async () => { if (!confirm("Return to legacy registry publication? Previously unassociated legacy endpoints may become available to clients again.")) return; setSaving(true); await run(() => api.setRelayPublication("legacy"), "Legacy registry publication restored."); setSaving(false); }}>Restore legacy publication</button>}
     </div>
-    <button disabled={Boolean(resource.error || endpoints.error)} onClick={() => { setMessage(undefined); setDraft({ id: "", ponor_id: "" }); }}>Add legacy association</button>
     </details>
-    {!draft && !modeDraft && !details && !allocating && preview === undefined && <Notice message={message} />}
+    {!modeDraft && !details && !allocating && preview === undefined && <Notice message={message} />}
     {!resource.error && !endpoints.error && services.length === 0 && ponor.length === 0 ? <EmptyState title="No relays configured">Add a running relay, then choose its allowed groups and optional internet egress.</EmptyState> :
       <Rows head={<><th>Relay</th><th>Endpoint and health</th><th>Access</th><th>Operational status</th><th>Actions</th></>}>
         {services.map((service) => {
@@ -156,17 +143,6 @@ export function RelayServices() {
       {preview?.length ? <ul>{preview.map((service) => <li key={`service-${service.id}`}><strong>{service.id}</strong>: Ponor <code>{ponor.find((entry) => entry.id === service.ponor_id)?.address ?? service.ponor_id}</code>{service.ponor_disabled ? " (disabled)" : ""}</li>)}</ul> : <p>No services: all Relay endpoints will be withdrawn from clients.</p>}
       <label><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} />I understand this changes client connectivity.</label>
       <div className="actions"><button disabled={saving} onClick={() => setPreview(undefined)}>Cancel</button><button disabled={!acknowledged || saving} onClick={async () => { setSaving(true); if (await run(() => api.setRelayPublication("services"), "Relay service publication enabled.")) setPreview(undefined); setSaving(false); }}>Publish services</button></div>
-    </Dialog>
-    <Dialog open={Boolean(draft)} title="Add Relay service" onClose={() => { if (!saving) setDraft(undefined); }}>
-      <form onSubmit={(event) => { event.preventDefault(); void add(); }}>
-        <p>This preserves legacy account-wide access. Use Configure relay on an endpoint to select allowed groups and optional internet egress.</p>
-        {draft && <Notice message={message} />}
-        <label>Service name<input required maxLength={64} value={draft?.id ?? ""} onChange={(event) => setDraft((current) => current && { ...current, id: event.target.value })} /></label>
-        <label>Ponor endpoint<select required value={draft?.ponor_id ?? ""} onChange={(event) => setDraft((current) => current && { ...current, ponor_id: event.target.value })}>
-          <option value="">Choose an endpoint</option>{ponor.map((entry) => <option key={entry.id} value={entry.id}>{entry.address} ({entry.region})</option>)}
-        </select></label>
-        <div className="actions"><button type="button" disabled={saving} onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Create service"}</button></div>
-      </form>
     </Dialog>
   </section>;
 }

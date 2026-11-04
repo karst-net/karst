@@ -2765,10 +2765,10 @@ type RelayPublicationSchemaVersion int
 
 // RelayService defines model for RelayService.
 type RelayService struct {
-	// AccessManaged Use live registry-group membership for relay admission. Requires a live identity-bound roster writer.
+	// AccessManaged Use live registry-group membership for relay admission. Requires a live identity-bound roster writer. POST /relay-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.
 	AccessManaged *bool `json:"access_managed,omitempty"`
 
-	// AllowedGroups Stable account group IDs permitted to use this backend.
+	// AllowedGroups Stable account group IDs permitted to use this backend. POST /relay-services requires at least one entry.
 	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
 	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
 	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`
@@ -2790,10 +2790,10 @@ type RelayService struct {
 
 // RelayServiceView defines model for RelayServiceView.
 type RelayServiceView struct {
-	// AccessManaged Use live registry-group membership for relay admission. Requires a live identity-bound roster writer.
+	// AccessManaged Use live registry-group membership for relay admission. Requires a live identity-bound roster writer. POST /relay-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.
 	AccessManaged *bool `json:"access_managed,omitempty"`
 
-	// AllowedGroups Stable account group IDs permitted to use this backend.
+	// AllowedGroups Stable account group IDs permitted to use this backend. POST /relay-services requires at least one entry.
 	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
 	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
 	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`

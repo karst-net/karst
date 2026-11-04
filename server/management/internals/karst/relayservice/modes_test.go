@@ -13,9 +13,10 @@ import (
 func TestModesPersistWithdrawAndRestoreWithoutReinterpretingLegacyState(t *testing.T) {
 	store, _, service := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
-	_, err := store.Create(ctx, service)
-	require.NoError(t, err)
-	_, err = store.SetPublication(ctx, "services")
+	// A pre-existing unmanaged association, grandfathered rather than
+	// created through Create, which now always requires managed access.
+	service = legacyRow(t, store, service)
+	_, err := store.SetPublication(ctx, "services")
 	require.NoError(t, err)
 	_, err = store.SetModes(ctx, service.ID, true)
 	require.NoError(t, err)
@@ -61,8 +62,7 @@ func TestModesPersistWithdrawAndRestoreWithoutReinterpretingLegacyState(t *testi
 func TestUpgradeDefaultsPreserveExistingBackendAssociations(t *testing.T) {
 	store, _, service := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
-	created, err := store.Create(ctx, service)
-	require.NoError(t, err)
+	created := legacyRow(t, store, service)
 	require.NoError(t, store.db.Migrator().DropColumn(&Service{}, "PonorDisabled"))
 	require.False(t, store.db.Migrator().HasColumn(&Service{}, "PonorDisabled"))
 	upgraded, err := NewStore(store.db)
@@ -70,16 +70,15 @@ func TestUpgradeDefaultsPreserveExistingBackendAssociations(t *testing.T) {
 	views, err := upgraded.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, views, 1)
-	require.Equal(t, *created, views[0].Service)
+	require.Equal(t, created, views[0].Service)
 	require.False(t, views[0].PonorDisabled)
 }
 
 func TestLifecycleTrackingRequiredForAllActivationPaths(t *testing.T) {
 	store, _, service := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
-	_, err := store.Create(ctx, service)
-	require.NoError(t, err)
-	_, err = store.SetPublication(ctx, "services")
+	service = legacyRow(t, store, service)
+	_, err := store.SetPublication(ctx, "services")
 	require.NoError(t, err) // v1 remains additive for existing agents.
 	store.LifecycleAgents = nil
 	_, err = store.SetModes(ctx, service.ID, true)
