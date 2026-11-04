@@ -21,6 +21,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
+	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayalloc"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
@@ -57,6 +58,10 @@ func relayAllocationFixture(t *testing.T) relayAllocationEnv {
 	require.NoError(t, err)
 	grants, err := relayservice.NewStore(db)
 	require.NoError(t, err)
+	// Every test below allocates against "us-west-2" -- requireAuthorizedLocation
+	// rejects that unless it is already in the Authorized Locations registry.
+	// Coordinates match cloudcatalog's own entry for it exactly.
+	require.NoError(t, db.Create(&locationreg.StoredLocation{AccountID: "a", ID: "loc-1", Lat: 45.8696, Lon: -119.6880, Label: "US West (Oregon)"}).Error)
 	return relayAllocationEnv{db: db, alloc: alloc, registry: registry, grants: grants, connection: connection.ID, group: group.ID}
 }
 

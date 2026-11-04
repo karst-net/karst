@@ -8,6 +8,11 @@ const gatewayInventory = { schema_version: 1, gateways: [], unresolved_routes: [
 const connection = { id: "conn-aws", type: "aws", mode: "read_write", label: "Primary AWS", created_at: "2026-01-01T00:00:00Z" };
 const resources = [{ code: "us-west-2", name: "US West (Oregon)", kind: "region", lat: 45.84, lon: -119.7 }];
 const group = { id: "group-engineering", name: "engineering", peers_count: 32, resources_count: 0 };
+// requireAuthorizedLocation (server) and AllocateRelay's own picker (console)
+// both require the target already be in Authorized Locations -- matches
+// resources[0]'s coordinates exactly, the same way a real admin would have
+// added it from the discovered region before allocating against it.
+const authorizedLocations = [{ id: "location-us-west-2", lat: 45.84, lon: -119.7, label: "US West (Oregon)" }];
 
 async function mockRelayServicesPage(page: import("@playwright/test").Page) {
   await page.route("**/api/karst/v1/relays", (route) => route.fulfill({ json: [] }));
@@ -21,6 +26,7 @@ async function mockRelayServicesPage(page: import("@playwright/test").Page) {
   });
   await page.route("**/api/karst/v1/infrastructure-connections", (route) => route.fulfill({ json: [connection] }));
   await page.route(`**/api/karst/v1/infrastructure-connections/${connection.id}/resources`, (route) => route.fulfill({ json: resources }));
+  await page.route("**/api/karst/v1/locations", (route) => route.fulfill({ json: authorizedLocations }));
 }
 
 test("allocating a relay walks discovery, reviews, and posts the expected request", async ({ page }) => {
@@ -93,6 +99,33 @@ test("a ready allocation offers deprovision; a requested one offers remove inste
   await expect(requestedRow.getByRole("button", { name: "Deprovision" })).toHaveCount(0);
   await requestedRow.getByRole("button", { name: "Remove" }).click();
   await expect.poll(() => deletedId).toBe(requested.id);
+});
+
+test("only resources already in Authorized Locations are offered", async ({ page }) => {
+  const unauthorized = { code: "eu-west-1", name: "Europe (Ireland)", kind: "region", lat: 53.3498, lon: -6.2603 };
+  await page.route("**/api/karst/v1/relays", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: gatewayInventory }));
+  await page.route("**/api/groups", (route) => route.fulfill({ json: [group] }));
+  await page.route("**/api/karst/v1/relay-services**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/publication")) { await route.fulfill({ json: { mode: "legacy" } }); return; }
+    if (path.endsWith("/admission-targets")) { await route.fulfill({ json: [] }); return; }
+    await route.fulfill({ json: [] });
+  });
+  await page.route("**/api/karst/v1/relay-allocations", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/karst/v1/infrastructure-connections", (route) => route.fulfill({ json: [connection] }));
+  // Two discovered regions; only one (resources[0]) is in Authorized Locations.
+  await page.route(`**/api/karst/v1/infrastructure-connections/${connection.id}/resources`, (route) => route.fulfill({ json: [...resources, unauthorized] }));
+  await page.route("**/api/karst/v1/locations", (route) => route.fulfill({ json: authorizedLocations }));
+
+  await page.goto("/#/relays");
+  await page.getByRole("button", { name: "Allocate a relay" }).click();
+  await page.getByLabel("Infrastructure connection", { exact: true }).selectOption(connection.id);
+
+  const location = page.getByLabel("Location", { exact: true });
+  await expect(location.locator("option", { hasText: "US West (Oregon)" })).toHaveCount(1);
+  await expect(location.locator("option", { hasText: "Europe (Ireland)" })).toHaveCount(0);
+  await expect(page.getByText("Only locations already in Authorized Locations are offered.", { exact: false })).toBeVisible();
 });
 
 test("no infrastructure connections configured is explained, not a dead end", async ({ page }) => {
