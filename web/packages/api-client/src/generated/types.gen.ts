@@ -644,11 +644,11 @@ export type RelayService = {
      */
     ponor_id: string;
     /**
-     * Use live registry-group membership for relay admission. Requires a live identity-bound roster writer.
+     * Use live registry-group membership for relay admission. Requires a live identity-bound roster writer. POST /relay-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.
      */
     access_managed?: boolean;
     /**
-     * Stable account group IDs permitted to use this backend.
+     * Stable account group IDs permitted to use this backend. POST /relay-services requires at least one entry.
      */
     allowed_groups?: Array<string>;
     /**
