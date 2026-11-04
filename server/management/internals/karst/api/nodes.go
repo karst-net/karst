@@ -300,6 +300,12 @@ type infraConnectionReadWriter interface {
 	Discover(ctx context.Context, id string) ([]infraconnections.DiscoveredResource, error)
 	DiscoverLegacy(ctx context.Context, id string) ([]infraconnections.DiscoveredRegion, error)
 	EnableLocalZone(ctx context.Context, id, code, parentRegion string) (infraconnections.DiscoveredRegion, error)
+	// UpdateLaunchDefaults is ADR-0045's 2026-11-04 addendum: the AWS
+	// launch shape (AMI/instance type/subnet/security groups) a named
+	// relay allocation (ADR-0063, package relayalloc) actuates against,
+	// set here rather than collected on the allocation request itself --
+	// see UpdateLaunchDefaultsRequest's own doc comment.
+	UpdateLaunchDefaults(ctx context.Context, id string, req infraconnections.UpdateLaunchDefaultsRequest) (*infraconnections.Account, error)
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -692,6 +698,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/infrastructure-connections", h.infraConnectionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}", h.infraConnectionsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/resources", h.infraConnectionResources).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/launch-defaults", h.infraConnectionUpdateLaunchDefaults).Methods(http.MethodPut, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/regions/{provider}/{region}", h.regionsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -3432,6 +3439,43 @@ func (h *handler) infraConnectionResources(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	util.WriteJSONObject(r.Context(), w, resources)
+}
+
+// infraConnectionUpdateLaunchDefaults sets the AWS launch shape ADR-0063's
+// relay allocation actuates against (ADR-0045's 2026-11-04 addendum) --
+// gated the same as credential create/delete/update
+// (requireInfraConnectionAdminRole): it is what a compromised or careless
+// admin session could use to point a future allocation at an AMI/subnet/
+// security group of their choosing, the same consequence class
+// cloudAccountEnableRegion's own gate reasons about.
+func (h *handler) infraConnectionUpdateLaunchDefaults(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.infraConnections == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "infrastructure connections are not configured"), w)
+		return
+	}
+	if err := requireInfraConnectionAdminRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var req infraconnections.UpdateLaunchDefaultsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	connection, err := h.infraConnections.UpdateLaunchDefaults(r.Context(), mux.Vars(r)["connectionId"], req)
+	if errors.Is(err, infraconnections.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "infrastructure connection not found"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, connection.ToResponse())
 }
 
 // groupLocationsList/groupLocationsSet/groupLocationsDelete manage a route

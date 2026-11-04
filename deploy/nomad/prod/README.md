@@ -122,60 +122,47 @@ service changes, or schedule it on that host if ongoing observations are
 needed. Neither the Docker socket nor Nomad credentials are mounted into
 control. The snapshot contains no container environment or task configuration.
 
-## Scaler allocate loop (ADR-0063, #525)
+## Relay allocation (ADR-0063; ADR-0045's 2026-11-04 addendum)
 
-The `scaler-allocate` group runs `karst-scaler allocate`, the reconciliation
-loop that drives an admin-triggered relay allocation (ADR-0063) through a
-real AWS infrastructure connection — `requested` → provisioned → granted,
-later → revoked → `deprovisioned`. It is off by default
-(`scaler_allocate_enabled = false`) and does not affect an existing
-deployment until turned on.
+An admin-triggered relay allocation (ADR-0063) — `requested` → provisioned →
+granted, later → revoked → `deprovisioned` — is now driven **in-process**,
+inside the `control` task above, not by a separate `karst-scaler allocate`
+process. There used to be an opt-in `scaler-allocate` `raw_exec` group here
+(ADR-0063/#525) that ran an external binary; that binary, its Nomad task,
+its opt-in flag, and its hand-written `ALLOCATE_CONFIG.toml` are gone. The
+in-process allocate worker always runs, the same always-on posture
+control/relay/console already have — nothing to deploy or opt into.
 
-It runs under `raw_exec`, not `docker`: unlike control/relay/console,
-`karst-scaler` has no published container image, and
-[docs/operations/scaler-aws-driver.md](../../../docs/operations/scaler-aws-driver.md)
-already documents it as a binary built locally with the `aws` feature,
-resolving AWS credentials through `aws-config`'s own ambient chain (an EC2
-instance profile on `node_name`, a shared credentials file, or environment
-variables) — exactly what running it directly on the host gives it for free.
+Two things still need operator configuration before a real allocation
+reaches `ready`, neither of them a separate process or host:
 
-1. Enable `raw_exec` on the Nomad client running on `node_name` (it is
-   disabled by default):
-
-   ```hcl
-   # client agent config, not this jobspec
-   plugin "raw_exec" {
-     config {
-       enabled = true
-     }
-   }
-   ```
-
-2. Build the binary on that host and install it somewhere stable:
-
-   ```sh
-   cargo build --release --locked --package karst-scaler --features aws
-   install -m 0755 target/release/karst-scaler /usr/local/bin/karst-scaler
-   ```
-
-3. Copy [`scaler-allocate-config.toml.example`](scaler-allocate-config.toml.example)
-   outside version control, fill in `control_api_base`, the AWS `[driver]`
-   fields (region, AMI id, instance type, subnet, security groups), and the
-   two `UserRoleScaler`-scoped PAT file paths it references. Grant
-   `deploy/aws/scaler/iam-policy.json` (shared with `karst-scaler drive`,
-   see that policy's own header) to the role/instance-profile the binary
-   runs under.
-
-4. Add to `deployment.vars.hcl`:
+1. Set `relay_allocate_control_api_base` (this deployment's own
+   externally-reachable control API base — e.g.
+   `https://control.example.test/api`) and `relay_allocate_max_concurrent`
+   (a positive per-account ceiling on non-terminal allocations — ADR-0045
+   §6 bullet 4 allows no "unlimited" value) in `deployment.vars.hcl`:
 
    ```hcl
-   scaler_allocate_enabled = true
-   scaler_allocate_binary  = "/usr/local/bin/karst-scaler"
-   scaler_allocate_config  = "/etc/karst-scaler/allocate-config.toml"
+   relay_allocate_control_api_base = "https://control.example.test/api"
+   relay_allocate_max_concurrent   = 10
    ```
 
-5. `nomad job plan` / `nomad job run` as usual (see "Rollout and rollback"
-   above). Confirm the task is running (`nomad job status karst`) and watch
-   a real allocation reach `ready` and later `deprovisioned` with no manual
-   step beyond the console form — the acceptance criteria this task exists
-   to satisfy.
+   Until both are set, every relay allocation request fails closed with a
+   clear reason instead of silently doing nothing.
+
+2. In the console's Settings page, on the AWS infrastructure connection to
+   allocate against, set its **launch defaults** (AMI id, instance type,
+   subnet, security groups) — see
+   [docs/operations/scaler-aws-driver.md](../../../docs/operations/scaler-aws-driver.md).
+   Grant `deploy/aws/scaler/iam-policy.json` (shared with `karst-scaler
+   drive`, see that policy's own header) to whatever AWS IAM principal the
+   connection's own access key belongs to — that credential, not a separate
+   host's instance profile, is what actuates now. Consider tightening that
+   policy's `KarstScalerRunInstancesTemplate` statement to the specific
+   AMI/subnet/security-group ARNs you configured, since AWS allows no tag
+   condition on those resource types.
+
+`nomad job plan` / `nomad job run` as usual (see "Rollout and rollback"
+above) to pick up the two new control task env vars. Confirm a real
+allocation reaches `ready` and later `deprovisioned` with no manual step
+beyond the console form and the one-time Settings configuration above.

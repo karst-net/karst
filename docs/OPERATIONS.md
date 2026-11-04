@@ -65,23 +65,31 @@ to change to deploy it.
 
 ### Scaler (ADR-0045, ADR-0063)
 
-`karst-scaler drive` reconciles pool capacity against a cost model;
-`karst-scaler allocate` is its sibling for ADR-0063's admin-triggered,
-one-off named relay allocation — a separate loop, not a mode of `drive`,
-since a named allocation is not a pool member. Both share the same `Driver`
-trait and poll the control server with a `UserRoleScaler`-scoped PAT; neither
-has a published container image, so neither is containerized the way
-control/relay/console are.
+`karst-scaler drive` reconciles pool capacity against a cost model, as a
+separate process/trust domain from the control server (ADR-0045 §6) — see
+[the Kubernetes scaler driver](operations/scaler-k8s-driver.md) and
+[the AWS scaler driver](operations/scaler-aws-driver.md) for `drive`'s
+`[driver]` config and each `Driver` implementation's own operational
+caveats (verified/not-verified against a real cluster or EC2 account).
 
-- [The Kubernetes scaler driver](operations/scaler-k8s-driver.md) and
-  [the AWS scaler driver](operations/scaler-aws-driver.md) document `drive`'s
-  `[driver]` config and each `Driver` implementation's own operational
-  caveats (verified/not-verified against a real cluster or EC2 account).
-- [`deploy/nomad/prod/README.md`](../deploy/nomad/prod/README.md)'s "Scaler
-  allocate loop" section deploys `karst-scaler allocate` for AWS as a
-  `raw_exec` task in the Nomad `prod` reference deployment — the gap #455
-  left open: without something running this loop, an allocation requested
-  against a real AWS infrastructure connection sits at `requested` forever.
+ADR-0063's admin-triggered, one-off named relay allocation used to have its
+own sibling loop, `karst-scaler allocate`, polling the control server as a
+separate process. ADR-0045's 2026-11-04 addendum moved that reconciliation
+**in-process**, into the control server itself, because the external
+process required manual, per-deployment setup (a locally built binary, a
+hand-written TOML config, an opt-in Nomad task) that nothing in the console
+flow ever told an administrator to do — an allocation requested against a
+real AWS infrastructure connection simply sat at `requested` forever with no
+signal why (the exact gap #525 tried, and failed, to close by adding that
+opt-in task). See that addendum and
+[ADR-0063's own addendum](adr/0063-admin-triggered-relay-allocation.md) for
+the security-boundary reasoning, and
+[`deploy/nomad/prod/README.md`](../deploy/nomad/prod/README.md)'s "Relay
+allocation" section for the two operator-configured values
+(`relay_allocate_control_api_base`, `relay_allocate_max_concurrent`) and the
+AWS launch defaults now set once in the console's Settings page instead of
+a separate config file. `drive`'s own continuous pool autoscaling is
+unaffected by this change and keeps the separate-process boundary above.
 
 ### Gateway and Relay operational ownership
 

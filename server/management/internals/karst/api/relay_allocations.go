@@ -57,6 +57,16 @@ type RelayAllocationOptions struct {
 // one allocation and one step it acts on; "pending" is the only Scaler
 // route with no {id}, so it gets its own exact-path check rather than
 // trying to fold it into the same pattern.
+//
+// Deprecated, not removed: ADR-0045's 2026-11-04 addendum moves relay
+// allocation's own reconciliation in-process (package relayalloc,
+// awsdrive_loop.go's RunAllocateWorker), which drives the same state
+// machine through direct Go calls instead of these six routes. Nothing in
+// this codebase calls them anymore, but they are kept working, exactly as
+// this repo's own cloudaccounts->infraconnections rename addendum kept its
+// old routes working rather than breaking an external consumer that might
+// already have built the now-removed `karst-scaler allocate` process
+// against this exact surface.
 const relayAllocationsPendingPath = "/karst/v1/relay-allocations/pending"
 
 var relayAllocationScalerActionPath = regexp.MustCompile(`^/karst/v1/relay-allocations/[^/]+/(provisioning|grant|revoke|deprovisioned|failed)$`)

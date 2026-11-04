@@ -11,6 +11,22 @@ import { TutorialHint } from "../tutorial";
 type ConnectionType = InfrastructureConnection["type"];
 type ConnectionMode = InfrastructureConnection["mode"];
 
+/** Draft for the "Launch defaults" dialog -- ADR-0045's 2026-11-04
+ *  addendum. Security groups are entered newline/comma-separated and
+ *  split on submit, matching how every multi-value field elsewhere in
+ *  this console (e.g. GroupPicker) avoids inventing a tag-input widget
+ *  for a short, rarely-edited list. */
+type LaunchDefaultsDraft = {
+  region: string; amiId: string; instanceType: string; subnetId: string; securityGroupIds: string;
+};
+function blankLaunchDefaultsDraft(connection: InfrastructureConnection): LaunchDefaultsDraft {
+  return {
+    region: connection.launch_region ?? "", amiId: connection.launch_ami_id ?? "",
+    instanceType: connection.launch_instance_type ?? "", subnetId: connection.launch_subnet_id ?? "",
+    securityGroupIds: (connection.launch_security_group_ids ?? []).join(", "),
+  };
+}
+
 type ConnectionDraft = {
   type: ConnectionType;
   mode: ConnectionMode;
@@ -76,6 +92,8 @@ export function InfrastructureConnections() {
   const infraConnections = useResource(api.infrastructureConnections);
   const { message, setMessage, run } = useMutation(infraConnections.reload);
   const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft>();
+  const [launchDefaultsFor, setLaunchDefaultsFor] = useState<InfrastructureConnection>();
+  const [launchDefaultsDraft, setLaunchDefaultsDraft] = useState<LaunchDefaultsDraft>();
 
   const addConnection = async () => {
     if (!connectionDraft) return;
@@ -99,9 +117,21 @@ export function InfrastructureConnections() {
     void run(() => api.deleteInfrastructureConnection(connection.id), `${connection.label || connection.type} was removed.`);
   };
 
+  const saveLaunchDefaults = async () => {
+    if (!launchDefaultsFor || !launchDefaultsDraft) return;
+    const defaults = {
+      region: launchDefaultsDraft.region.trim(), ami_id: launchDefaultsDraft.amiId.trim(),
+      instance_type: launchDefaultsDraft.instanceType.trim(), subnet_id: launchDefaultsDraft.subnetId.trim(),
+      security_group_ids: launchDefaultsDraft.securityGroupIds.split(/[\n,]/).map((id) => id.trim()).filter(Boolean),
+    };
+    if (await run(() => api.updateInfrastructureConnectionLaunchDefaults(launchDefaultsFor.id, defaults), `Launch defaults for ${launchDefaultsFor.label || launchDefaultsFor.type} were saved.`)) {
+      setLaunchDefaultsFor(undefined);
+    }
+  };
+
   return <section>
     <h2>Infrastructure connections</h2>
-    <TutorialHint>Lets Authorized Locations offer real regions, local zones, Kubernetes namespaces, Nomad datacenters, and LXD cluster members instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces/datacenters/cluster-members) — they cannot place an order or create a workload. "Read-write" connections may make one further live change — enabling an AWS Local Zone that exists but isn't opted into use yet — and can incur costs; nothing else in Karst uses them to create or change infrastructure yet. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</TutorialHint>
+    <TutorialHint>Lets Authorized Locations offer real regions, local zones, Kubernetes namespaces, Nomad datacenters, and LXD cluster members instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces/datacenters/cluster-members) — they cannot place an order or create a workload. "Read-write" connections may make live changes and incur costs: enabling an AWS Local Zone that exists but isn't opted into use yet, and — once its own launch defaults below are set — actuating a relay allocated against it on the Relay allocations page. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</TutorialHint>
     <div className="actions"><button className="primary" onClick={() => setConnectionDraft(blankConnectionDraft)}>Add infrastructure connection</button></div>
     <Notice message={message} />
     {infraConnections.loading ? <p>Loading infrastructure connections…</p> : infraConnections.error
@@ -115,7 +145,11 @@ export function InfrastructureConnections() {
             <td>{connection.label || <span className="lede">—</span>}</td>
             <td>{connection.status === "error" ? connection.last_error : connection.status === "ok" ? "OK" : <span className="lede">Not yet validated</span>}</td>
             <td><Observed at={connection.created_at} /></td>
-            <td><button className="danger" onClick={() => removeConnection(connection)}>Remove</button></td>
+            <td>
+              {connection.type === "aws" && connection.mode === "read_write" &&
+                <button onClick={() => { setLaunchDefaultsFor(connection); setLaunchDefaultsDraft(blankLaunchDefaultsDraft(connection)); }}>Launch defaults</button>}
+              {" "}<button className="danger" onClick={() => removeConnection(connection)}>Remove</button>
+            </td>
           </tr>)}
         </Rows>}
 
@@ -187,6 +221,19 @@ export function InfrastructureConnections() {
 
         <div className="actions"><button type="button" onClick={() => setConnectionDraft(undefined)}>Cancel</button><button className="primary" type="submit">Add connection</button></div>
       </form>
+    </Dialog>
+
+    <Dialog open={Boolean(launchDefaultsFor)} title="Launch defaults" onClose={() => setLaunchDefaultsFor(undefined)}>
+      <p>The AWS shape a relay allocated against {launchDefaultsFor?.label || launchDefaultsFor?.type} on the Relay allocations page actually launches as — set once here, not on the allocation itself.</p>
+      {launchDefaultsDraft && <form onSubmit={(event) => { event.preventDefault(); void saveLaunchDefaults(); }}>
+        <label>Region<input aria-label="Launch region" placeholder="us-east-1" required value={launchDefaultsDraft.region} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, region: event.target.value })} /></label>
+        <label>AMI ID<input aria-label="Launch AMI ID" placeholder="ami-0123456789abcdef0" required value={launchDefaultsDraft.amiId} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, amiId: event.target.value })} /></label>
+        <label>Instance type<input aria-label="Launch instance type" placeholder="t3.micro" required value={launchDefaultsDraft.instanceType} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, instanceType: event.target.value })} /></label>
+        <label>Subnet ID<input aria-label="Launch subnet ID" placeholder="subnet-0123456789abcdef0" required value={launchDefaultsDraft.subnetId} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, subnetId: event.target.value })} /></label>
+        <label>Security group IDs<textarea aria-label="Launch security group IDs" rows={3} placeholder={"sg-0123456789abcdef0\nsg-0123456789abcdef1"} required value={launchDefaultsDraft.securityGroupIds} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, securityGroupIds: event.target.value })} /></label>
+        <p className="lede">One per line or comma-separated.</p>
+        <div className="actions"><button type="button" onClick={() => setLaunchDefaultsFor(undefined)}>Cancel</button><button className="primary" type="submit">Save launch defaults</button></div>
+      </form>}
     </Dialog>
   </section>;
 }

@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayAllocation, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, RolloutComponent, RolloutPlan, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, InfrastructureConnectionLaunchDefaults, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayAllocation, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, RolloutComponent, RolloutPlan, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -398,6 +398,11 @@ export const api = {
   createInfrastructureConnection: (entry: InfrastructureConnectionCreate) => request<InfrastructureConnection>("/infrastructure-connections", { method: "POST", body: body(entry) }),
   deleteInfrastructureConnection: (id: string) => request<void>(`/infrastructure-connections/${encodeURIComponent(id)}`, { method: "DELETE" }),
   infrastructureConnectionResources: (id: string) => request<DiscoveredResource[]>(`/infrastructure-connections/${encodeURIComponent(id)}/resources`),
+  // ADR-0045's 2026-11-04 addendum: the AWS launch shape (AMI/instance
+  // type/subnet/security groups) a relay allocation (ADR-0063) actuates
+  // against, set once here rather than on the allocation request itself.
+  updateInfrastructureConnectionLaunchDefaults: (id: string, defaults: InfrastructureConnectionLaunchDefaults) =>
+    request<InfrastructureConnection>(`/infrastructure-connections/${encodeURIComponent(id)}/launch-defaults`, { method: "PUT", body: body(defaults) }),
   // ADR-0045 §6's second addendum: the one mutating call this API makes --
   // opts an AWS Local Zone's group into use. A one-way door on AWS's side
   // (no opt-out API), so the caller must have already confirmed this with

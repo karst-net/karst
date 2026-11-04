@@ -111,6 +111,14 @@ func (AllocationHistory) TableName() string { return "karst_relay_allocation_his
 
 type Store struct {
 	db *gorm.DB
+	// maxConcurrentAllocations is ADR-0045 §6 bullet 4's "hard ceilings...
+	// are mandatory configuration, with no 'unlimited' value," applied a
+	// second time by that ADR's 2026-11-04 addendum now that this package
+	// itself actuates AWS (awsdrive.go/awsdrive_loop.go): zero (the
+	// default, before SetMaxConcurrentAllocations is called) means Create
+	// refuses every request rather than silently allowing an unbounded
+	// number of real, billable instances per account.
+	maxConcurrentAllocations int
 }
 
 func NewStore(db *gorm.DB) (*Store, error) {
@@ -125,6 +133,17 @@ func NewStore(db *gorm.DB) (*Store, error) {
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+// SetMaxConcurrentAllocations wires the per-account concurrency ceiling
+// (KARST_RELAY_ALLOCATE_MAX_CONCURRENT, threaded down from
+// cmd/karst-control/main.go through internals/karst/bootstrap) once, at
+// boot. n must be positive; Create treats any non-positive value
+// (including never calling this at all) as "not configured" and refuses
+// every allocation request until it is set -- see maxConcurrentAllocations'
+// own doc comment for why that is the deliberate default, not a bug.
+func (s *Store) SetMaxConcurrentAllocations(n int) {
+	s.maxConcurrentAllocations = n
 }
 
 // validAllocationTransition is the explicit transition-graph allow-list
@@ -255,6 +274,9 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
+	if s.maxConcurrentAllocations <= 0 {
+		return nil, fmt.Errorf("%w: KARST_RELAY_ALLOCATE_MAX_CONCURRENT is not configured -- set a per-account concurrency ceiling before allocating a relay (ADR-0045 §6)", ErrInvalid)
+	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var connection infraconnections.Account
 		if err := tx.Where("account_id = ? AND id = ?", account, allocation.InfraConnectionID).First(&connection).Error; err != nil {
@@ -265,6 +287,18 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 		}
 		if err := requireAuthorizedLocation(tx, account, connection, allocation.Location); err != nil {
 			return err
+		}
+		// ADR-0045 §6 bullet 4, applied to this actuator by its
+		// 2026-11-04 addendum: each non-terminal allocation is one real,
+		// billable EC2 instance (or about to be one), so the ceiling is
+		// checked inside this same transaction, not as a separate
+		// read-then-write a concurrent Create could race.
+		var nonTerminal int64
+		if err := tx.Model(&Allocation{}).Where("account_id = ? AND state != ?", account, StateDeprovisioned).Count(&nonTerminal).Error; err != nil {
+			return err
+		}
+		if nonTerminal >= int64(s.maxConcurrentAllocations) {
+			return fmt.Errorf("%w: this account already has %d non-terminal relay allocation(s), at or above the configured ceiling of %d", ErrInvalid, nonTerminal, s.maxConcurrentAllocations)
 		}
 		for _, id := range allocation.PermittedGroups {
 			var count int64
@@ -483,4 +517,44 @@ func (s *Store) Delete(ctx context.Context, id string, expectedRevision uint64) 
 		}
 		return nil
 	})
+}
+
+// PendingAcrossAccounts returns every allocation, across every account in
+// the deployment, that still needs a reconciliation step -- the
+// in-process allocate worker's own entry point (awsdrive_loop.go),
+// replacing what used to be an external process's own
+// POST /relay-allocations/pending poll (still served, deprecated, by
+// api/relay_allocations.go, for any consumer that already built against
+// it). Deliberately unscoped by account: driving an allocation forward is
+// not a per-tenant-request operation the way every other method on this
+// Store is.
+func (s *Store) PendingAcrossAccounts(ctx context.Context) ([]Allocation, error) {
+	rows := make([]Allocation, 0)
+	err := s.db.WithContext(ctx).
+		Where("state IN ?", []string{StateRequested, StateProvisioning, StateGranting, StateRevoking, StateDeprovisioning}).
+		Order("created_at, id").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("relay allocation: list pending across accounts: %w", err)
+	}
+	return rows, nil
+}
+
+// HasNonTerminalAllocations implements
+// infraconnections.AllocationReferenceChecker -- wired once at boot
+// (internals/karst/bootstrap, via infraconnections.Store's own
+// SetAllocationReferenceChecker) so infraconnections.Store.Delete can
+// refuse to remove a connection a live allocation still depends on,
+// without an import cycle: infraconnections cannot import this package,
+// which already imports infraconnections the other way for Create's own
+// reverse validation above. accountID is a plain parameter, not read from
+// ctx -- WithAccount's context key here is this package's own and
+// unexported, so a caller in infraconnections could not set it on ctx in
+// the first place.
+func (s *Store) HasNonTerminalAllocations(ctx context.Context, accountID, infraConnectionID string) (bool, error) {
+	var count int64
+	err := s.db.WithContext(ctx).Model(&Allocation{}).
+		Where("account_id = ? AND infra_connection_id = ? AND state != ?", accountID, infraConnectionID, StateDeprovisioned).
+		Count(&count).Error
+	return count > 0, err
 }

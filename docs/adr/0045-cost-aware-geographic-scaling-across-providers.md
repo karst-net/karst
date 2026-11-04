@@ -921,6 +921,86 @@ whatever the operator already trusts.
 >   comment gives for its hand-rolled OTLP/HTTP client on the node-agent
 >   side of this codebase.
 
+> **Addendum, 2026-11-04 — in-process AWS actuation for ADR-0063's
+> admin-triggered allocation, and only that path.** The first bullet of
+> §6 above is narrowed a second time, more than the 2026-10-19 addendum
+> narrowed it, but **only for one caller**: `relayalloc`'s reconciliation
+> loop (ADR-0063, admin-triggered, named, single-instance relay
+> allocation). [ADR-0063](0063-admin-triggered-relay-allocation.md)'s own
+> addendum records the architecture change on that side; this addendum
+> records why it's acceptable against this ADR's own security boundary.
+>
+> - **What stays unchanged.** §5/§6/§7's actual subject — `drive_loop.rs`'s
+>   continuous, autonomous pool reconciliation against the cost/demand
+>   solver — keeps the full separate-process, separate-trust-domain
+>   boundary exactly as written above. Nothing here touches that loop,
+>   that binary, or its driver's own credential path. `bins/karst-scaler-aws`
+>   (`AwsDriver`, its `bundle`/`enroll` modules) is untouched and still the
+>   only actuator `drive_loop.rs` uses.
+> - **What changes, and why this one path is different from the autonomous
+>   case the original bullet was written for.** For `relayalloc` only, the
+>   control server (`server/management`) itself now calls `RunInstances`/
+>   `StopInstances`/`TerminateInstances` against the credential the
+>   2026-10-19 addendum already allowed it to store and decrypt. That
+>   addendum deliberately stopped short of wiring storage to actuation,
+>   "so the latter isn't rushed through as a side effect of a Settings-page
+>   checkbox" — this is that wiring, and it is not a checkbox: every
+>   allocation this loop drives exists only because an administrator named
+>   it, in the console, as one explicit, audited action
+>   (`relayalloc.AllocationHistory`), not because a planner decided demand
+>   warranted more capacity. The autonomous case §6 was protecting against
+>   — a compromised or buggy *process* spending money with no human in the
+>   loop at all — does not describe this path, because nothing in it runs
+>   without a prior admin-initiated row.
+> - **What a control-plane compromise gains that it didn't before, and
+>   what still bounds it.** Honestly: a control-plane compromise can now
+>   cause a real `RunInstances`/`TerminateInstances` call, where before it
+>   could only decrypt a credential it had no in-process way to use. Four
+>   things bound this, each already required for the code to exist, not
+>   optional hardening added after the fact:
+>   1. **The launch shape is never request-supplied.** AMI/instance
+>      type/subnet/security groups come only from launch defaults an
+>      administrator configured once, in Settings, on the infrastructure
+>      connection itself (`infraconnections.Account`) — nothing in the
+>      `POST /karst/v1/relay-allocations` body, console or API, can name
+>      an AMI, instance type, subnet, or security group. A compromised
+>      control plane can trigger a launch using an operator's own
+>      pre-declared shape; it cannot invent a new one.
+>   2. **A code-level allowlist check runs before every `RunInstances`
+>      call**, independent of IAM, rejecting anything not matching the
+>      connection's own stored launch defaults — the same "enforced in the
+>      driver, not only in the planner" posture §6's region-allowlist
+>      bullet and §4c already require, applied here because
+>      `deploy/aws/scaler/iam-policy.json`'s `KarstScalerRunInstancesTemplate`
+>      statement grants unconditional `ec2:RunInstances` on `subnet/*`,
+>      `security-group/*`, and `image/*` (AWS allows no tag condition on
+>      those resource types), so IAM alone cannot bound this the way it
+>      bounds the tag-conditioned statements.
+>   3. **A hard per-account ceiling on concurrent non-terminal
+>      allocations**, each one a real billable instance, enforced in
+>      `relayalloc.Store.Create` itself. Per §6's own fourth bullet, this
+>      is **mandatory configuration with no "unlimited" value**, not a
+>      constant — this addendum does not relax that existing requirement,
+>      it satisfies it for a second actuator.
+>   4. **The operator's own IAM policy should be tightened beyond what
+>      `iam-policy.json` ships**, scoping `KarstScalerRunInstancesTemplate`
+>      to the specific AMI/subnet/security-group ARNs the operator actually
+>      uses, now that the credential runs inside the always-on control
+>      process rather than a separate, narrowly-deployed host. This is an
+>      operator-facing recommendation (`docs/operations/scaler-aws-driver.md`),
+>      not something the control plane can enforce on AWS's behalf — the
+>      same "least-privilege is the operator's to enforce" posture the
+>      2026-10-19 addendum already accepted for `read_only` scoping.
+> - **Accepted residual risk, stated plainly.** A control-plane compromise
+>   can now spend the operator's money through this one path, bounded by
+>   the four controls above. This is a real increase over the status quo
+>   `relayalloc` shipped with (external process, no control-plane
+>   actuation at all) and is accepted specifically because that status quo
+>   left the feature non-functional without manual, undocumented-to-the-
+>   admin operational setup that nothing in the product actually asked
+>   the operator to do. `drive_loop.rs`'s autonomous path is not part of
+>   this trade and keeps the original boundary in full.
+
 ### 7. Phasing
 
 | Phase | Deliverable | Actuates anything? |

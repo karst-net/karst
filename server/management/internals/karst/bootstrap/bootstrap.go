@@ -126,6 +126,14 @@ type Karst struct {
 	RelayServices *relayservice.Store
 }
 
+// relayAllocatePollInterval is relayalloc.RunAllocateWorker's own tick
+// interval -- matches the external Rust loop's own documented example
+// default (docs/operations/scaler-aws-driver.md's poll_interval_secs = 15,
+// since removed along with that loop). Not operator-configurable: unlike
+// the control-API base URL or the concurrency ceiling, there is no
+// security or correctness reason an operator would need to change this.
+const relayAllocatePollInterval = 15 * time.Second
+
 // Install registers KarstControlService on the daemon's gRPC server.
 //
 // Returns the pins an operator must distribute with auth keys. Handing out
@@ -141,7 +149,19 @@ type Karst struct {
 // loopback /recommendations endpoint is reachable from this server's host.
 // Empty means the GET /karst/v1/scaler/recommendations endpoint is
 // configured-but-absent — see RegisterEndpoints' own doc comment.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration) (*Karst, error) {
+//
+// relayAllocateControlAPIBase and relayAllocateMaxConcurrent are ADR-0045's
+// 2026-11-04 addendum's own two operator-configured values for the
+// in-process relay-allocation actuation loop (relayalloc.RunAllocateWorker,
+// below) -- KARST_RELAY_ALLOCATE_CONTROL_API_BASE (this server's own
+// externally-reachable API base, embedded in every launched instance's
+// enroll bundle) and KARST_RELAY_ALLOCATE_MAX_CONCURRENT (the per-account
+// concurrency ceiling ADR-0045 §6 bullet 4 requires as mandatory
+// configuration with no "unlimited" value). Either left unset fails every
+// allocation closed with a clear reason, the same "configured-but-absent"
+// posture scalerAdvisorURL already has -- see relayalloc.Store.Create and
+// provisionStep's own doc comments.
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration, relayAllocateControlAPIBase string, relayAllocateMaxConcurrent int) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -312,6 +332,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay allocation store: %w", err)
 	}
+	relayAllocationStore.SetMaxConcurrentAllocations(relayAllocateMaxConcurrent)
 	// ADR-0066/#484: the admin-tracked component rollout plan and its own
 	// state machine. Reuses nodes (the same *node.Store already threaded
 	// into NetmapHandler) as its fleet compatibility checker -- see
@@ -442,6 +463,37 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	infraConnectionStore, err := infraconnections.NewStore(db, infraConnectionEncrypt)
 	if err != nil {
 		return nil, fmt.Errorf("karst: infrastructure connection store: %w", err)
+	}
+	// relayAllocationStore itself implements infraconnections.AllocationReferenceChecker
+	// (relayalloc.Store.HasNonTerminalAllocations) -- wired here, the one
+	// place both stores already exist, rather than through NewStore's own
+	// signature (see AllocationReferenceChecker's own doc comment for why).
+	infraConnectionStore.SetAllocationReferenceChecker(relayAllocationStore)
+	// ADR-0045's 2026-11-04 addendum / ADR-0063's own addendum: the
+	// in-process AWS actuation loop, replacing the external
+	// `karst-scaler allocate` Rust process this package used to depend
+	// on. Always started -- no feature flag, the same always-on posture
+	// control/relay/console already have -- but every step still refuses
+	// outright until an operator has configured
+	// KARST_RELAY_ALLOCATE_CONTROL_API_BASE, KARST_RELAY_ALLOCATE_MAX_CONCURRENT,
+	// and the connection's own launch defaults (Settings), so a
+	// deployment that never touches AWS allocation sees no behavior
+	// change from this loop running.
+	if enroller, ok := s.AccountManager().(interface {
+		MintRelayEnrollKey(context.Context, string, string, time.Duration) (string, error)
+	}); ok {
+		go relayalloc.RunAllocateWorker(context.Background(), relayAllocationStore, relayalloc.AllocateDeps{
+			InfraConnections: infraConnectionStore,
+			Enroll:           enroller,
+			Relays:           relayStore,
+			Deenroll:         relayStore,
+			Grants:           relayServiceStore,
+			ControlAPIBase:   relayAllocateControlAPIBase,
+		}, relayAllocatePollInterval, func(err error) {
+			log.WithError(err).Error("karst: relay allocation: allocate worker tick failed")
+		})
+	} else {
+		log.Warn("karst: relay allocation: account manager does not support minting relay-enroll keys; the allocate worker was not started")
 	}
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.

@@ -83,6 +83,7 @@ var (
 	// surface it as a 4xx rather than let it fall through to a generic
 	// "internal server error" (see discoverAWS).
 	ErrCredentialsRejected = errors.New("cloud accounts: the provider rejected the stored credentials")
+	ErrInvalid             = errors.New("cloud accounts: invalid request")
 )
 
 // Type identifies what kind of infrastructure a connection authenticates
@@ -119,9 +120,13 @@ func (t Type) IsLegacy() bool {
 	return t == TypeAWS || t == TypeAzure || t == TypeGCP
 }
 
-// Mode says what a credential may be used for. See the package doc comment
-// for why ModeReadWrite does not currently do anything more than
-// ModeReadOnly -- both are discovery-only until Phase 2 actuation exists.
+// Mode says what a credential may be used for. ModeReadOnly stays
+// discovery-only, provably incapable of actuating anything. ModeReadWrite
+// may additionally drive an ADR-0063 relay allocation against this
+// connection's own LaunchDefaults (ADR-0045's 2026-11-04 addendum) -- but
+// only once those defaults are set; a read_write connection with no launch
+// defaults configured yet is not distinguishable in behavior from
+// read_only until an admin sets them.
 type Mode string
 
 const (
@@ -169,23 +174,65 @@ func accountFromContext(ctx context.Context) (string, error) {
 // and Status/LastValidatedAt/LastError are new, nullable columns: existing
 // rows get zero values for them, which is exactly "no declared location"/
 // "not yet validated".
+//
+// LaunchRegion/LaunchAMIID/LaunchInstanceType/LaunchSubnetID/
+// LaunchSecurityGroupIDs (ADR-0045's 2026-11-04 addendum) are the AWS
+// launch shape ADR-0063's reconciliation loop actuates a named relay
+// allocation against -- set once here, in Settings, never by an allocation
+// request itself. Meaningful only for Type TypeAWS, Mode ModeReadWrite;
+// zero value on every other row, including pre-existing ones, which is
+// exactly "no launch defaults configured yet".
 type Account struct {
-	ID              string `gorm:"primaryKey"`
-	AccountID       string `gorm:"index"`
-	Type            Type   `gorm:"column:provider"`
-	Mode            Mode
-	Label           string
-	Secret          string
-	CreatedAt       time.Time
-	Lat             *float64
-	Lon             *float64
-	LocationLabel   string
-	Status          Status
-	LastValidatedAt *time.Time
-	LastError       string
+	ID                     string `gorm:"primaryKey"`
+	AccountID              string `gorm:"index"`
+	Type                   Type   `gorm:"column:provider"`
+	Mode                   Mode
+	Label                  string
+	Secret                 string
+	CreatedAt              time.Time
+	Lat                    *float64
+	Lon                    *float64
+	LocationLabel          string
+	Status                 Status
+	LastValidatedAt        *time.Time
+	LastError              string
+	LaunchRegion           string   `gorm:"column:launch_region"`
+	LaunchAMIID            string   `gorm:"column:launch_ami_id"`
+	LaunchInstanceType     string   `gorm:"column:launch_instance_type"`
+	LaunchSubnetID         string   `gorm:"column:launch_subnet_id"`
+	LaunchSecurityGroupIDs []string `gorm:"column:launch_security_group_ids;serializer:json"`
 }
 
 func (Account) TableName() string { return "karst_cloud_accounts" }
+
+// LaunchDefaults is Account's AWS launch shape, as handed to
+// relayalloc's reconciliation loop by AWSActuationClient (aws.go) --
+// pulled out as its own type so that loop never has to reach into Account
+// itself or re-derive these five fields' names.
+type LaunchDefaults struct {
+	Region           string
+	AMIID            string
+	InstanceType     string
+	SubnetID         string
+	SecurityGroupIDs []string
+}
+
+// AllocationReferenceChecker lets Delete refuse to remove a connection a
+// live ADR-0063 relay allocation still depends on, without this package
+// importing relayalloc -- relayalloc already imports infraconnections the
+// other way, for its own Create's reverse validation, so the dependency
+// has to run through a narrow interface instead. nil (the default) means
+// "nothing wired yet": Delete behaves exactly as it did before this
+// existed. Wired once, at boot, by SetAllocationReferenceChecker.
+type AllocationReferenceChecker interface {
+	// HasNonTerminalAllocations reports whether accountID has any
+	// relay allocation referencing connectionID that is not yet fully
+	// deprovisioned. accountID is passed explicitly rather than carried on
+	// ctx: relayalloc's own WithAccount uses a different, unexported
+	// context key than this package's, so ctx alone cannot carry it across
+	// the package boundary.
+	HasNonTerminalAllocations(ctx context.Context, accountID, connectionID string) (bool, error)
+}
 
 // LegacyResponse is byte-for-byte what this package used to serialize as
 // cloudaccounts.Response, before the rename -- the /cloud-accounts routes
@@ -204,17 +251,22 @@ func (a *Account) ToLegacyResponse() LegacyResponse {
 
 // Response is the generalized /infrastructure-connections wire shape.
 type Response struct {
-	ID              string     `json:"id"`
-	Type            Type       `json:"type"`
-	Mode            Mode       `json:"mode"`
-	Label           string     `json:"label,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	Lat             *float64   `json:"lat,omitempty"`
-	Lon             *float64   `json:"lon,omitempty"`
-	LocationLabel   string     `json:"location_label,omitempty"`
-	Status          Status     `json:"status,omitempty"`
-	LastValidatedAt *time.Time `json:"last_validated_at,omitempty"`
-	LastError       string     `json:"last_error,omitempty"`
+	ID                     string     `json:"id"`
+	Type                   Type       `json:"type"`
+	Mode                   Mode       `json:"mode"`
+	Label                  string     `json:"label,omitempty"`
+	CreatedAt              time.Time  `json:"created_at"`
+	Lat                    *float64   `json:"lat,omitempty"`
+	Lon                    *float64   `json:"lon,omitempty"`
+	LocationLabel          string     `json:"location_label,omitempty"`
+	Status                 Status     `json:"status,omitempty"`
+	LastValidatedAt        *time.Time `json:"last_validated_at,omitempty"`
+	LastError              string     `json:"last_error,omitempty"`
+	LaunchRegion           string     `json:"launch_region,omitempty"`
+	LaunchAMIID            string     `json:"launch_ami_id,omitempty"`
+	LaunchInstanceType     string     `json:"launch_instance_type,omitempty"`
+	LaunchSubnetID         string     `json:"launch_subnet_id,omitempty"`
+	LaunchSecurityGroupIDs []string   `json:"launch_security_group_ids,omitempty"`
 }
 
 func (a *Account) ToResponse() Response {
@@ -222,6 +274,8 @@ func (a *Account) ToResponse() Response {
 		ID: a.ID, Type: a.Type, Mode: a.Mode, Label: a.Label, CreatedAt: a.CreatedAt,
 		Lat: a.Lat, Lon: a.Lon, LocationLabel: a.LocationLabel,
 		Status: a.Status, LastValidatedAt: a.LastValidatedAt, LastError: a.LastError,
+		LaunchRegion: a.LaunchRegion, LaunchAMIID: a.LaunchAMIID, LaunchInstanceType: a.LaunchInstanceType,
+		LaunchSubnetID: a.LaunchSubnetID, LaunchSecurityGroupIDs: a.LaunchSecurityGroupIDs,
 	}
 }
 
@@ -281,8 +335,19 @@ func (r CreateRequest) validate() error {
 }
 
 type Store struct {
-	db  *gorm.DB
-	enc *crypt.FieldEncrypt
+	db          *gorm.DB
+	enc         *crypt.FieldEncrypt
+	allocations AllocationReferenceChecker
+}
+
+// SetAllocationReferenceChecker wires Delete's cross-package reference
+// check (see AllocationReferenceChecker's own doc comment). Called once,
+// at boot (internals/karst/bootstrap), after both this Store and
+// relayalloc's own Store exist -- never from NewStore itself, so adding
+// this dependency needed no change to NewStore's signature or any of its
+// existing callers.
+func (s *Store) SetAllocationReferenceChecker(checker AllocationReferenceChecker) {
+	s.allocations = checker
 }
 
 // NewStore migrates the table. enc must be non-nil -- see
@@ -365,11 +430,23 @@ func (s *Store) List(ctx context.Context) ([]Account, error) {
 // account can never delete another's row by guessing an id. Deliberately
 // type-agnostic: unlike List/Create/Discover, delete never echoes the row's
 // type back on the wire, so there is no legacy-schema compatibility concern
-// to gate here.
+// to gate here. Refuses while a relay allocation (ADR-0063) still
+// references this connection and has not finished deprovisioning -- see
+// AllocationReferenceChecker; a nil checker (nothing wired yet) skips this
+// check entirely, unchanged from before it existed.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	accountID, err := accountFromContext(ctx)
 	if err != nil {
 		return err
+	}
+	if s.allocations != nil {
+		inUse, err := s.allocations.HasNonTerminalAllocations(ctx, accountID, id)
+		if err != nil {
+			return fmt.Errorf("cloud accounts: checking relay allocation references: %w", err)
+		}
+		if inUse {
+			return fmt.Errorf("%w: a relay allocation still references this connection; deprovision it first", ErrInvalid)
+		}
 	}
 	result := s.db.WithContext(ctx).Where("account_id = ? AND id = ?", accountID, id).Delete(&Account{})
 	if result.Error != nil {
@@ -379,6 +456,59 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// UpdateLaunchDefaultsRequest is Settings' own way to set or change the AWS
+// launch shape (ADR-0063; ADR-0045's 2026-11-04 addendum) a named relay
+// allocation actuates against -- deliberately separate from CreateRequest
+// so an admin can change these without re-entering the connection's secret.
+// Every field replaces the stored value, including to empty; there is no
+// partial-update shape here, matching this package's other full-replace
+// writes (Create itself never merges either).
+type UpdateLaunchDefaultsRequest struct {
+	Region           string   `json:"region,omitempty"`
+	AMIID            string   `json:"ami_id,omitempty"`
+	InstanceType     string   `json:"instance_type,omitempty"`
+	SubnetID         string   `json:"subnet_id,omitempty"`
+	SecurityGroupIDs []string `json:"security_group_ids,omitempty"`
+}
+
+// UpdateLaunchDefaults sets this connection's AWS launch shape. Refused for
+// any connection that is not currently a read-write AWS connection --
+// launch defaults have no meaning on any other type/mode, and
+// AWSActuationClient (aws.go) re-validates both anyway, so this is a
+// clearer error at write time rather than the only check.
+func (s *Store) UpdateLaunchDefaults(ctx context.Context, id string, req UpdateLaunchDefaultsRequest) (*Account, error) {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var record Account
+	if err := s.db.WithContext(ctx).Where("account_id = ? AND id = ?", accountID, id).First(&record).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("cloud accounts: get: %w", err)
+	}
+	if record.Type != TypeAWS || record.Mode != ModeReadWrite {
+		return nil, fmt.Errorf("%w: launch defaults only apply to a read-write AWS connection", ErrInvalid)
+	}
+	update := Account{
+		LaunchRegion:           req.Region,
+		LaunchAMIID:            req.AMIID,
+		LaunchInstanceType:     req.InstanceType,
+		LaunchSubnetID:         req.SubnetID,
+		LaunchSecurityGroupIDs: req.SecurityGroupIDs,
+	}
+	err = s.db.WithContext(ctx).Model(&record).
+		Select("LaunchRegion", "LaunchAMIID", "LaunchInstanceType", "LaunchSubnetID", "LaunchSecurityGroupIDs").
+		Updates(update).Error
+	if err != nil {
+		return nil, fmt.Errorf("cloud accounts: update launch defaults: %w", err)
+	}
+	record.LaunchRegion, record.LaunchAMIID, record.LaunchInstanceType = update.LaunchRegion, update.LaunchAMIID, update.LaunchInstanceType
+	record.LaunchSubnetID, record.LaunchSecurityGroupIDs = update.LaunchSubnetID, update.LaunchSecurityGroupIDs
+	return &record, nil
 }
 
 // get fetches one connection, scoped, with its secret decrypted -- used

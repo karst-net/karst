@@ -133,3 +133,50 @@ A general durable job/workflow system is added elsewhere in this codebase
 that this should use instead of a bespoke reconciliation loop, or the
 scaler's pool model gains per-member identity/capability tagging that could
 absorb one-off allocations instead of a separate entity.
+
+---
+
+> **Addendum, 2026-11-04 — the reconciliation loop moves in-process, Go,
+> inside the management server.** The decision above describes the
+> reconciliation loop as "sibling to `drive_loop.rs`... but not merged
+> into it" — a separate Rust process (`karst-scaler allocate`) polling the
+> control server over HTTP. In practice that process required manual,
+> per-deployment setup (a locally built `--features aws` binary, a
+> hand-written TOML config, a Nomad `raw_exec` task an operator had to
+> opt into) that nothing in the console flow this ADR describes ever told
+> an administrator to do — an allocation reached `requested` and then
+> simply never moved, with no signal why. That gap, not a defect in the
+> state machine or the console form, is what this addendum closes.
+>
+> The loop is now a goroutine inside `server/management`
+> (`internals/karst/relayalloc`), started unconditionally alongside the
+> other always-on background workers (`internals/karst/bootstrap`) the
+> same way `control`/`relay`/`console` are always-on rather than opt-in.
+> It drives the exact same state machine, in the exact same order, through
+> the exact same `relayservice.Store.Create`/`Delete` calls the HTTP
+> handlers (`handleRelayAllocationGrant`/`handleRelayAllocationRevoke`)
+> already made in-process — only the AWS-facing half (`RunInstances`/
+> `StopInstances`/`TerminateInstances`, previously `AwsDriver` in a
+> separate process) moves inside the same binary, as a direct port of
+> that driver's logic, not a new design. The six Scaler-role-only HTTP
+> routes this ADR's implementation added (`/pending`, `/provisioning`,
+> `/grant`, `/revoke`, `/deprovisioned`, `/failed`) are kept, marked
+> deprecated, for any external consumer that already built against them,
+> rather than removed outright.
+>
+> This required narrowing [ADR-0045](0045-cost-aware-geographic-scaling-across-providers.md)
+> §6's security boundary a second time — see that ADR's own 2026-11-04
+> addendum for the full rationale, the compensating controls (a
+> request-can't-choose-the-launch-shape rule, a code-level launch-defaults
+> allowlist check, a mandatory per-account concurrency ceiling), and why
+> this is scoped to this ADR's own admin-triggered path only:
+> `drive_loop.rs`'s unrelated continuous pool autoscaling keeps the full
+> separate-process boundary, unchanged.
+>
+> AWS launch parameters (AMI id, instance type, subnet, security groups) —
+> which this ADR's original form never collected, because the external
+> process read them from its own TOML file — now live on the
+> infrastructure connection itself (`infraconnections.Account`), set once
+> in Settings alongside the connection's credentials. An administrator who
+> has done that, and nothing else, now sees a `requested` allocation reach
+> `ready` with no separate operational step.

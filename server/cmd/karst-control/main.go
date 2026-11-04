@@ -121,6 +121,25 @@ const karstEphemeralAnchorsEnv = "KARST_EPHEMERAL_ANCHORS_FILE"
 // no document to reconcile at boot, only an address to dial per request.
 const karstScalerAdvisorURLEnv = "KARST_SCALER_ADVISOR_URL"
 
+// karstRelayAllocateControlAPIBaseEnv is this server's own
+// externally-reachable API base (e.g. "https://control.example.test/api"),
+// embedded in every relay allocation's launched instance's own enroll
+// bundle so karst-relay enroll knows where to call back -- ADR-0045's
+// 2026-11-04 addendum, replacing the external `karst-scaler allocate`
+// Rust process's own AllocateConfig.control_api_base TOML field. Unset
+// means every ADR-0063 relay allocation fails closed with a clear reason
+// instead of launching an instance that can never enroll.
+const karstRelayAllocateControlAPIBaseEnv = "KARST_RELAY_ALLOCATE_CONTROL_API_BASE"
+
+// karstRelayAllocateMaxConcurrentEnv is the per-account ceiling on
+// non-terminal (not yet fully deprovisioned) relay allocations --
+// ADR-0045 §6 bullet 4's "hard ceilings... are mandatory configuration,
+// with no 'unlimited' value," applied a second time by that ADR's
+// 2026-11-04 addendum now that this actuation runs in-process. Unset (or
+// non-positive) means every allocation request is refused, not
+// "unlimited" -- see relayalloc.Store.Create's own doc comment.
+const karstRelayAllocateMaxConcurrentEnv = "KARST_RELAY_ALLOCATE_MAX_CONCURRENT"
+
 // karstDemandHistoryIntervalEnv/karstDemandHistoryRetentionEnv configure
 // ADR-0045 §8 (Phase 3)'s demand-history retention worker. Unset means the
 // defaults below: hourly sampling (fine enough to see daily patterns,
@@ -224,6 +243,16 @@ func main() {
 		os.Exit(1)
 	}
 	scalerAdvisorURL := strings.TrimSuffix(os.Getenv(karstScalerAdvisorURLEnv), "/")
+	relayAllocateControlAPIBase := strings.TrimSuffix(os.Getenv(karstRelayAllocateControlAPIBaseEnv), "/")
+
+	relayAllocateMaxConcurrent := 0
+	if raw := os.Getenv(karstRelayAllocateMaxConcurrentEnv); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			log.Fatalf("karst: %s=%q must be a positive integer", karstRelayAllocateMaxConcurrentEnv, raw)
+		}
+		relayAllocateMaxConcurrent = parsed
+	}
 
 	demandHistoryInterval := karstDemandHistoryDefaultInterval
 	if raw := os.Getenv(karstDemandHistoryIntervalEnv); raw != "" {
@@ -269,7 +298,7 @@ func main() {
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, relays, tenancyGrants, allowedRegions, ephemeralAnchors, scalerAdvisorURL, demandHistoryInterval, demandHistoryRetention)
+		k, err := bootstrap.Install(s, pol, relays, tenancyGrants, allowedRegions, ephemeralAnchors, scalerAdvisorURL, demandHistoryInterval, demandHistoryRetention, relayAllocateControlAPIBase, relayAllocateMaxConcurrent)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no

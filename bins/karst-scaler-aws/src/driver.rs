@@ -224,11 +224,16 @@ impl Driver for AwsDriver {
                     };
                     // Read straight off this same DescribeInstances
                     // response's own tags -- no second API call, and
-                    // crucially survives a `karst-scaler allocate`
-                    // restart between create() and a later list(): the
-                    // same reason destroy() already reads this tag back
-                    // instead of trusting anything remembered in process
-                    // memory from create() (see describe_tls_server_name).
+                    // crucially survives a `karst-scaler drive` restart
+                    // between create() and a later list() (the Go-side
+                    // allocate worker for ADR-0063's own named
+                    // allocation -- see ADR-0045's 2026-11-04 addendum
+                    // -- ports this exact same tag-read idea in its own
+                    // provisionStep/grantStep rather than using this
+                    // driver directly): the same reason destroy()
+                    // already reads this tag back instead of trusting
+                    // anything remembered in process memory from
+                    // create() (see describe_tls_server_name).
                     let tls_server_name = i
                         .tags()
                         .iter()
