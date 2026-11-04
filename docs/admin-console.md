@@ -202,10 +202,18 @@ name-based migration is performed.
   `karst-scaler advise`'s own loopback `/recommendations` endpoint last
   returned — `karst-control` dials it server-to-server at an
   operator-configured address (`KARST_SCALER_ADVISOR_URL`); the browser
-  never reaches `karst-scaler` directly. Requires the `advisor` role, the
-  same as the demand-side endpoints this page's data ultimately derives
-  from. No mutation actions: there is nothing to mutate in Phase 1 — no
-  driver exists yet to act on a recommendation (that is Phase 2).
+  never reaches `karst-scaler` directly. Unlike the demand-side endpoints
+  this page's data ultimately derives from, this does **not** require the
+  `advisor` role (issue #531) — any role with read access to Karst (NOC,
+  Auditor, NetworkAdmin, Admin, Owner, Advisor) can view it, so an Owner or
+  Admin who hasn't separately been granted `advisor` can open this page and
+  see it, matching every other console page's lack of role gating. In a
+  deployment with more than one account, this does mean any of those roles
+  in any account can see this deployment-wide, cross-account cost model —
+  accepted deliberately for this endpoint; the demand-side endpoints keep
+  the stricter `advisor`-only gate. No mutation actions: there is nothing to
+  mutate in Phase 1 — no driver exists yet to act on a recommendation (that
+  is Phase 2).
 - **Configured-not-actual, labeled as such.** The "Configured" column is
   each pool's own `min_nodes` floor from its cost-model file, not an
   introspected live running count — `karst-scaler`'s own advise.rs module
@@ -229,8 +237,9 @@ name-based migration is performed.
   (an existing pool's region currently exceeding its configured p95
   threshold) and `region_candidates` (a region with anchor-RTT observations
   but no pool at all today, ranked by estimated p95 — a crude stand-in
-  ranking, not a verified formula). Same `advisor` role gate as
-  `/scaler/recommendations`, computed every tick regardless of the §7
+  ranking, not a verified formula). Same relaxed role gate as
+  `/scaler/recommendations` (no `advisor` requirement, issue #531), computed
+  every tick regardless of the §7
   Phase 1/2 mode. No console page renders this yet — a separate, later
   concern, same posture as this page's own missing per-pool drill-down
   above.
