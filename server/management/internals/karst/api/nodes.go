@@ -2579,17 +2579,25 @@ type scalerRecommendationsResponse struct {
 // raw bytes: every other response in this file is a typed, contract-checked
 // shape, and a byte-for-byte proxy would be the one response here a schema
 // drift in karst-scaler's own JSON could carry straight to the browser
-// unnoticed. Gated behind the same UserRoleAdvisor role as
-// demandRegions/demandAnchors above, for the identical reason -- this is
-// itself a view of the operator's single, deployment-wide cost model, not
-// account-scoped data.
+// unnoticed.
+//
+// Unlike demandRegions/demandAnchors above, this does NOT call
+// requireAdvisorRole (issue #531): any role with Read on modules.KarstControl
+// (NOC, Auditor, NetworkAdmin, Admin, Owner, Advisor) can call this. Decided
+// explicitly, not a bare deletion of the check -- the console's own nav and
+// Users-role-picker apply no finer-grained gating than that already, so
+// requiring the separate advisor role left every console user except those
+// granted it out-of-band (the role isn't even assignable from the console)
+// unable to open Scaler Advisor at all. This does reopen the exposure
+// requireAdvisorRole's own doc comment warns about: in a deployment with
+// more than one account, any of those per-account roles in ANY account now
+// sees this deployment-wide, cross-account cost model, the same way
+// demandRegions would if it dropped the check too. Accepted for this
+// endpoint specifically; demandRegions/demandAnchors keep the stricter gate
+// and are explicitly out of scope for this change (see #531).
 func (h *handler) scalerRecommendations(w http.ResponseWriter, r *http.Request) {
 	user, err := nbcontext.GetUserAuthFromContext(r.Context())
 	if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	if err := requireAdvisorRole(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
@@ -2654,16 +2662,14 @@ type scalerSuggestionsResponse struct {
 // scalerSuggestions proxies issue #381's manual-mode-shaped "suggested by
 // RTT" view from karst-scaler advise's own loopback /suggestions endpoint
 // -- the sibling scalerRecommendations above already proxies
-// /recommendations from, same role gate, same decode-and-re-encode
-// discipline (not a raw-bytes proxy, for the identical reason), same
-// reasoning throughout.
+// /recommendations from, same decode-and-re-encode discipline (not a
+// raw-bytes proxy, for the identical reason), same reasoning throughout --
+// including dropping requireAdvisorRole for the same reason and with the
+// same accepted cross-tenant tradeoff (issue #531; see scalerRecommendations'
+// own doc comment).
 func (h *handler) scalerSuggestions(w http.ResponseWriter, r *http.Request) {
 	user, err := nbcontext.GetUserAuthFromContext(r.Context())
 	if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	if err := requireAdvisorRole(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}

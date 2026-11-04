@@ -1832,12 +1832,13 @@ func TestDemandEndpointsAreAuditLoggedOnGET(t *testing.T) {
 // serializes, used across the scalerRecommendations tests below.
 const scalerFixtureBody = `{"tick_unix":1700000000,"recommendation":{"pools":[{"pool_id":"aws-use1","desired_nodes":5,"cost_delta":340.5,"binding_constraint":"headroom"}],"total_cost_delta":-10,"baseline_cost":500},"configured_nodes":{"aws-use1":2}}`
 
-// TestOnlyAdvisorRoleReachesScalerRecommendations mirrors
-// TestOnlyAdvisorRoleReachesDemandEndpoints: every other role that already
-// holds Read on modules.KarstControl must still be refused, or
-// UserRoleAdvisor's reason for existing would not hold for this endpoint
-// either.
-func TestOnlyAdvisorRoleReachesScalerRecommendations(t *testing.T) {
+// TestRoleGateOnScalerRecommendations covers issue #531: unlike the demand
+// endpoints (TestOnlyAdvisorRoleReachesDemandEndpoints), this one does not
+// call requireAdvisorRole, so every role that already holds Read on
+// modules.KarstControl (not just UserRoleAdvisor) must reach it, while a
+// role without that Read grant (UserRoleUser) must still be refused by
+// karstAuthorization's own blanket gate.
+func TestRoleGateOnScalerRecommendations(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(scalerFixtureBody))
 	}))
@@ -1845,25 +1846,25 @@ func TestOnlyAdvisorRoleReachesScalerRecommendations(t *testing.T) {
 
 	for _, role := range []types.UserRole{
 		types.UserRoleOwner, types.UserRoleAdmin, types.UserRoleNetworkAdmin,
-		types.UserRoleAuditor, types.UserRoleNOC, types.UserRoleUser,
+		types.UserRoleAuditor, types.UserRoleNOC, types.UserRoleAdvisor,
 	} {
 		router := mux.NewRouter()
 		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 		request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/recommendations", nil)
-		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "non-advisor-viewer"})
+		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "viewer"})
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
-		require.Equalf(t, http.StatusForbidden, response.Code, "role %s: %s", role, response.Body.String())
+		require.Equalf(t, http.StatusOK, response.Code, "role %s: %s", role, response.Body.String())
 	}
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/recommendations", nil)
-	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "no-read-viewer"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 }
 
 // TestScalerRecommendationsIsPreconditionFailedWhenUnconfigured covers a
@@ -1966,10 +1967,10 @@ func TestScalerRecommendationsIsAuditLoggedOnGET(t *testing.T) {
 // serializes (issue #381), used across the scalerSuggestions tests below.
 const scalerSuggestionsFixtureBody = `{"tick_unix":1700000000,"latency_breaches":[{"region":"eu-west-1","p95_rtt_ms":120,"threshold_ms":50}],"region_candidates":[{"provider":"aws","region":"us-west-2","estimated_p95_rtt_ms":35,"observations":42}]}`
 
-// TestOnlyAdvisorRoleReachesScalerSuggestions mirrors
-// TestOnlyAdvisorRoleReachesScalerRecommendations: the sibling endpoint
-// needs the identical role gate for the identical reason.
-func TestOnlyAdvisorRoleReachesScalerSuggestions(t *testing.T) {
+// TestRoleGateOnScalerSuggestions mirrors TestRoleGateOnScalerRecommendations:
+// the sibling endpoint needs the identical relaxed role gate for the
+// identical reason (issue #531).
+func TestRoleGateOnScalerSuggestions(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(scalerSuggestionsFixtureBody))
 	}))
@@ -1977,25 +1978,25 @@ func TestOnlyAdvisorRoleReachesScalerSuggestions(t *testing.T) {
 
 	for _, role := range []types.UserRole{
 		types.UserRoleOwner, types.UserRoleAdmin, types.UserRoleNetworkAdmin,
-		types.UserRoleAuditor, types.UserRoleNOC, types.UserRoleUser,
+		types.UserRoleAuditor, types.UserRoleNOC, types.UserRoleAdvisor,
 	} {
 		router := mux.NewRouter()
 		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
 		request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
-		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "non-advisor-viewer"})
+		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "viewer"})
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
-		require.Equalf(t, http.StatusForbidden, response.Code, "role %s: %s", role, response.Body.String())
+		require.Equalf(t, http.StatusOK, response.Code, "role %s: %s", role, response.Body.String())
 	}
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
-	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "no-read-viewer"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 }
 
 // TestScalerSuggestionsIsPreconditionFailedWhenUnconfigured mirrors
