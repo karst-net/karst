@@ -56,6 +56,7 @@ var aws = []Region{
 	{Provider: "aws", Code: "us-west-2-lax-1", Name: "Los Angeles Local Zone", Lat: 34.0522, Lon: -118.2437, Kind: KindLocalZone, ParentRegion: "us-west-2"},
 	{Provider: "aws", Code: "us-west-2-las-1", Name: "Las Vegas Local Zone", Lat: 36.1699, Lon: -115.1398, Kind: KindLocalZone, ParentRegion: "us-west-2"},
 	{Provider: "aws", Code: "us-west-2-phx-1", Name: "Phoenix Local Zone", Lat: 33.4484, Lon: -112.0740, Kind: KindLocalZone, ParentRegion: "us-west-2"},
+	{Provider: "aws", Code: "us-west-2-phx-2", Name: "Phoenix Local Zone", Lat: 33.4484, Lon: -112.0740, Kind: KindLocalZone, ParentRegion: "us-west-2"},
 	{Provider: "aws", Code: "us-west-2-den-1", Name: "Denver Local Zone", Lat: 39.7392, Lon: -104.9903, Kind: KindLocalZone, ParentRegion: "us-west-2"},
 	{Provider: "aws", Code: "us-west-2-hnl-1", Name: "Honolulu Local Zone", Lat: 21.3069, Lon: -157.8583, Kind: KindLocalZone, ParentRegion: "us-west-2"},
 }
