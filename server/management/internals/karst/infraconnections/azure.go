@@ -82,5 +82,5 @@ func azureRegion(loc armsubscriptions.Location) DiscoveredRegion {
 			}
 		}
 	}
-	return enrich(TypeAzure, code, name, cloudcatalog.KindRegion, true)
+	return enrich(TypeAzure, code, name, cloudcatalog.KindRegion, true, "")
 }

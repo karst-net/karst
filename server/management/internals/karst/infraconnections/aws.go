@@ -91,7 +91,7 @@ func discoverAWS(ctx context.Context, rawSecret string, mode Mode) ([]Discovered
 		if code == "" {
 			continue
 		}
-		out = append(out, enrich(TypeAWS, code, code, cloudcatalog.KindRegion, true))
+		out = append(out, enrich(TypeAWS, code, code, cloudcatalog.KindRegion, true, ""))
 
 		// Local zones are a per-region resource -- each enabled region needs
 		// its own AZ client to list its local zones.
@@ -153,6 +153,7 @@ func discoverAWSLocalZones(ctx context.Context, rawSecret, region string, mode M
 // an actually-enabled group as not).
 func localZonesFromAWS(zones []ec2types.AvailabilityZone) []DiscoveredRegion {
 	enabledByGroup := map[string]bool{}
+	parentByGroup := map[string]string{}
 	var order []string
 	for _, zone := range zones {
 		group := aws.ToString(zone.GroupName)
@@ -161,12 +162,16 @@ func localZonesFromAWS(zones []ec2types.AvailabilityZone) []DiscoveredRegion {
 		}
 		if _, seen := enabledByGroup[group]; !seen {
 			order = append(order, group)
+			// RegionName is this zone's own parent region, straight from AWS --
+			// every AZ-letter entry in a group shares one, so the first one
+			// seen settles it.
+			parentByGroup[group] = aws.ToString(zone.RegionName)
 		}
 		enabledByGroup[group] = enabledByGroup[group] || zone.OptInStatus == ec2types.AvailabilityZoneOptInStatusOptedIn
 	}
 	out := make([]DiscoveredRegion, 0, len(order))
 	for _, group := range order {
-		out = append(out, enrich(TypeAWS, group, group, cloudcatalog.KindLocalZone, enabledByGroup[group]))
+		out = append(out, enrich(TypeAWS, group, group, cloudcatalog.KindLocalZone, enabledByGroup[group], parentByGroup[group]))
 	}
 	return out
 }
