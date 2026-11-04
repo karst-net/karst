@@ -71,6 +71,7 @@ export function RelayServices() {
     <h2>Relays</h2>
     <p>Manage relay endpoints, group access, internet egress and health in one place. Ponor is the relay transport; a service stores the endpoint's access and publication settings.</p>
     <div className="actions"><button className="primary" onClick={() => setRegistering(true)}>Add relay</button><button onClick={() => setInstalling(true)}>Install a local relay</button><button onClick={() => setAllocating(true)}>Allocate a relay</button><button onClick={reload}>Refresh relays</button></div>
+    <p className="lede">Already have a relay running somewhere? Use <strong>Add relay</strong>. Have a host to put one on, but nothing running yet? <strong>Install a local relay</strong> generates a script for that host, then still finishes with Add relay. Want Karst to provision a new host for you through a cloud or cluster connection? Use <strong>Allocate a relay</strong> — the only one of the three that creates anything.</p>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {endpoints.error && <Failure message={endpoints.error} retry={endpoints.reload} />}
     {admission.error && services.some(service => service.access_managed) && <p role="alert">Admission writer observations unavailable: {admission.error}</p>}
