@@ -137,3 +137,31 @@ chain — environment variables, a shared config/credentials file, or an
 EC2 instance profile when `karst-scaler` itself runs on EC2 — the same
 "this driver adds no connection configuration of its own" posture the
 Kubernetes driver's kubeconfig discovery already has.
+
+## Configuring `karst-scaler allocate` (ADR-0063, #525) to use this driver
+
+`karst-scaler allocate`'s own `[driver]` table is the identical shape —
+`AllocateConfig` reuses `DriverSection` directly rather than inventing a
+second one for the same idea (`bins/karst-scaler/src/allocate_config.rs`):
+
+```toml
+# ALLOCATE_CONFIG.toml
+control_api_base = "https://example.test/api"
+pat_file = "/etc/karst-scaler/allocate.pat"   # a UserRoleScaler-scoped PAT
+poll_interval_secs = 15
+
+[driver]
+kind = "aws"
+region = "us-east-1"
+ami_id = "ami-0123456789abcdef0"
+instance_type = "t3.micro"
+subnet_id = "subnet-0123456789abcdef0"
+security_group_ids = ["sg-0123456789abcdef0"]
+enroll_pat_file = "/etc/karst-scaler/enroll.pat"   # a UserRoleScaler-scoped PAT
+```
+
+Same binary, same IAM policy (`deploy/aws/scaler/iam-policy.json` conditions
+on `karst:pool`, which this loop populates with the allocation's own id, not
+a pool id — ADR-0063's reuse of the same tag), same ambient credential
+chain. `deploy/nomad/prod/README.md`'s "Scaler allocate loop" section
+deploys this as a reference `raw_exec` task.

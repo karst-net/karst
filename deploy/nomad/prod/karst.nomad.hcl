@@ -107,6 +107,32 @@ variable "kc_master_admin_password" {
   description = "Pass with -var, never commit a real value here."
 }
 
+variable "scaler_allocate_enabled" {
+  type        = bool
+  default     = false
+  description = "Enables the karst-scaler allocate task (ADR-0063, #525) -- off by default so an existing deployment is unaffected until an operator has actually built the binary and written its config. See docs/OPERATIONS.md's Scaler section."
+}
+
+variable "scaler_allocate_binary" {
+  type        = string
+  default     = ""
+  description = "Absolute path, on node_name, to a karst-scaler binary built with `cargo build --release --features aws` (docs/operations/scaler-aws-driver.md) -- raw_exec, not docker: there is no published karst-scaler image. Required when scaler_allocate_enabled is true."
+  validation {
+    condition     = !var.scaler_allocate_enabled || var.scaler_allocate_binary != ""
+    error_message = "scaler_allocate_binary is required when scaler_allocate_enabled is true."
+  }
+}
+
+variable "scaler_allocate_config" {
+  type        = string
+  default     = ""
+  description = "Absolute path, on node_name, to this deployment's own ALLOCATE_CONFIG.toml -- see scaler-allocate-config.toml.example alongside this job file. Never checked into version control: it names subnet/security-group ids and a pat_file path, the same posture deployment.vars.hcl already has. Required when scaler_allocate_enabled is true."
+  validation {
+    condition     = !var.scaler_allocate_enabled || var.scaler_allocate_config != ""
+    error_message = "scaler_allocate_config is required when scaler_allocate_enabled is true."
+  }
+}
+
 job "karst" {
   datacenters = ["dc1"]
   type        = "service"
@@ -280,6 +306,46 @@ job "karst" {
       resources {
         cpu    = 200
         memory = 256
+      }
+    }
+  }
+
+  # ADR-0063/#525: the AWS allocate reconciliation loop for admin-triggered
+  # relay allocation. count is var-driven rather than fixed at 1 like every
+  # group above -- unlike control/relay/keycloak/console/caddy, this one is
+  # genuinely optional (a deployment with no infra connection configured has
+  # nothing for it to drive) and off by default on an existing deployment
+  # until an operator has actually built the binary and written its config.
+  #
+  # raw_exec, not docker: `karst-scaler` has no published container image
+  # (deliverables.yml builds karstd/karst-relay/karst-control/karst-console
+  # only), and docs/operations/scaler-aws-driver.md already documents this
+  # as a binary built with `cargo build --features aws`, run against AWS
+  # credentials resolved through aws-config's own ambient chain (an EC2
+  # instance profile on node_name, a shared credentials file, or env vars)
+  # -- exactly what raw_exec gives it for free and a container would only
+  # complicate. The Nomad client on node_name must have the raw_exec driver
+  # enabled (`plugin "raw_exec" { config { enabled = true } }` in its own
+  # agent config, outside this jobspec); see this directory's README.
+  group "scaler-allocate" {
+    count = var.scaler_allocate_enabled ? 1 : 0
+
+    constraint {
+      attribute = "${attr.unique.hostname}"
+      value     = var.node_name
+    }
+
+    task "scaler-allocate" {
+      driver = "raw_exec"
+
+      config {
+        command = var.scaler_allocate_binary
+        args    = [var.scaler_allocate_config]
+      }
+
+      resources {
+        cpu    = 100
+        memory = 128
       }
     }
   }

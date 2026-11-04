@@ -63,6 +63,26 @@ to change to deploy it.
    There is no admin-console UI for this yet — see the ADR's "Reconsider
    if" section.
 
+### Scaler (ADR-0045, ADR-0063)
+
+`karst-scaler drive` reconciles pool capacity against a cost model;
+`karst-scaler allocate` is its sibling for ADR-0063's admin-triggered,
+one-off named relay allocation — a separate loop, not a mode of `drive`,
+since a named allocation is not a pool member. Both share the same `Driver`
+trait and poll the control server with a `UserRoleScaler`-scoped PAT; neither
+has a published container image, so neither is containerized the way
+control/relay/console are.
+
+- [The Kubernetes scaler driver](operations/scaler-k8s-driver.md) and
+  [the AWS scaler driver](operations/scaler-aws-driver.md) document `drive`'s
+  `[driver]` config and each `Driver` implementation's own operational
+  caveats (verified/not-verified against a real cluster or EC2 account).
+- [`deploy/nomad/prod/README.md`](../deploy/nomad/prod/README.md)'s "Scaler
+  allocate loop" section deploys `karst-scaler allocate` for AWS as a
+  `raw_exec` task in the Nomad `prod` reference deployment — the gap #455
+  left open: without something running this loop, an allocation requested
+  against a real AWS infrastructure connection sits at `requested` forever.
+
 ### Gateway and Relay operational ownership
 
 Use [Gateway operations](subnet-routers-and-exit-nodes.md) for route readiness,
