@@ -59,7 +59,6 @@ export function Locations() {
     const connection = selectedConnection;
     const item = selectedResource;
     if (!connection || !item) { setMessage("Choose an infrastructure connection and a region, zone, namespace, or datacenter."); return; }
-    if (needsEnable) { setMessage(`${item.name || item.code} is not enabled yet — enable it first.`); return; }
     let lat: number, lon: number;
     if (needsManualCoords) {
       lat = Number(manualLat);
@@ -137,10 +136,10 @@ export function Locations() {
             </select></label>)}
 
         {needsEnable && selectedResource && <p className="lede">
-          {selectedResource.name || selectedResource.code} exists on this account but is not opted into use yet. Enabling it is a one-way AWS change (no opt-out API) that makes the zone launchable — it does not by itself create anything or incur a charge.
+          {selectedResource.name || selectedResource.code} exists on this account but is not opted into use yet. You can still record it as an authorized location now -- opting in is only required before anything can actually be deployed there, and since it's a one-way AWS change (no opt-out API), it's kept as a separate, explicit step below.
         </p>}
 
-        {selectedResource && !needsEnable && (needsManualCoords
+        {selectedResource && (needsManualCoords
           ? <>
             <p className="lede">{selectedConnection?.type === "kubernetes" ? "Kubernetes clusters" : selectedConnection?.type === "nomad" ? "Nomad clusters" : "LXD servers"} have no provider-supplied geography — enter this cluster's coordinates.</p>
             <label>Latitude<input aria-label="Location latitude" placeholder="51.5072" required value={manualLat} onChange={(event) => setManualLat(event.target.value)} /></label>
@@ -150,9 +149,8 @@ export function Locations() {
 
         <div className="actions">
           <button type="button" onClick={() => setOpen(false)}>Cancel</button>
-          {needsEnable
-            ? <button className="primary" type="button" disabled={!connectionId || !resourceCode || enabling} onClick={() => void enableZone()}>{enabling ? "Enabling…" : "Enable this zone"}</button>
-            : <button className="primary" type="submit" disabled={!connectionId || !resourceCode}>Add location</button>}
+          {needsEnable && <button type="button" disabled={!connectionId || !resourceCode || enabling} onClick={() => void enableZone()}>{enabling ? "Enabling…" : "Enable this zone"}</button>}
+          <button className="primary" type="submit" disabled={!connectionId || !resourceCode}>Add location</button>
         </div>
       </form>
     </Dialog>
