@@ -55,16 +55,25 @@ type DiscoveredResource struct {
 	Enabled      bool              `json:"enabled,omitempty"`
 }
 
-func enrich(typ Type, code, fallbackName string, kind cloudcatalog.Kind, enabled bool) DiscoveredRegion {
+// parentRegion is the caller's own API-known value (e.g. AWS's own
+// AvailabilityZone.RegionName), which always wins over the static catalog's
+// -- a catalog miss must not leave ParentRegion empty when the provider
+// already told us, since that silently blocks EnableLocalZone for any zone
+// the catalog has not been taught about yet (and the catalog is deliberately
+// non-exhaustive -- see cloudcatalog's own package doc).
+func enrich(typ Type, code, fallbackName string, kind cloudcatalog.Kind, enabled bool, parentRegion string) DiscoveredRegion {
 	if entry, ok := cloudcatalog.Lookup(string(typ), code); ok {
 		lat, lon := entry.Lat, entry.Lon
 		name := entry.Name
 		if name == "" {
 			name = fallbackName
 		}
-		return DiscoveredRegion{Code: code, Name: name, Kind: entry.Kind, Lat: &lat, Lon: &lon, ParentRegion: entry.ParentRegion, Enabled: enabled}
+		if parentRegion == "" {
+			parentRegion = entry.ParentRegion
+		}
+		return DiscoveredRegion{Code: code, Name: name, Kind: entry.Kind, Lat: &lat, Lon: &lon, ParentRegion: parentRegion, Enabled: enabled}
 	}
-	return DiscoveredRegion{Code: code, Name: fallbackName, Kind: kind, Enabled: enabled}
+	return DiscoveredRegion{Code: code, Name: fallbackName, Kind: kind, Enabled: enabled, ParentRegion: parentRegion}
 }
 
 func toResources(regions []DiscoveredRegion) []DiscoveredResource {
@@ -188,5 +197,5 @@ func (s *Store) EnableLocalZone(ctx context.Context, id, groupCode, parentRegion
 	if err := enableAWSLocalZone(ctx, account.Secret, parentRegion, groupCode); err != nil {
 		return DiscoveredRegion{}, err
 	}
-	return enrich(TypeAWS, groupCode, groupCode, cloudcatalog.KindLocalZone, true), nil
+	return enrich(TypeAWS, groupCode, groupCode, cloudcatalog.KindLocalZone, true, parentRegion), nil
 }

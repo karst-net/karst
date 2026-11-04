@@ -229,7 +229,7 @@ func TestDiscoverLegacyRefusesKubernetesRow(t *testing.T) {
 }
 
 func TestEnrichFallsBackWhenCatalogHasNoEntry(t *testing.T) {
-	got := enrich(TypeAWS, "aws-region-nobody-has-heard-of", "Mystery Region", "region", true)
+	got := enrich(TypeAWS, "aws-region-nobody-has-heard-of", "Mystery Region", "region", true, "")
 	if got.Lat != nil || got.Lon != nil {
 		t.Fatalf("got %+v, want no coordinates for an uncataloged region", got)
 	}
@@ -242,19 +242,37 @@ func TestEnrichFallsBackWhenCatalogHasNoEntry(t *testing.T) {
 }
 
 func TestEnrichUsesCatalogWhenPresent(t *testing.T) {
-	got := enrich(TypeAWS, "us-east-1", "fallback", "region", true)
+	got := enrich(TypeAWS, "us-east-1", "fallback", "region", true, "")
 	if got.Lat == nil || got.Lon == nil {
 		t.Fatal("want coordinates for a cataloged region")
 	}
 }
 
 func TestEnrichPassesThroughEnabledFalse(t *testing.T) {
-	got := enrich(TypeAWS, "us-east-1-bos-1", "Boston Local Zone", "local_zone", false)
+	got := enrich(TypeAWS, "us-east-1-bos-1", "Boston Local Zone", "local_zone", false, "")
 	if got.Enabled {
 		t.Fatal("want Enabled false to survive enrich, not be forced true by a catalog hit")
 	}
 	if got.Lat == nil {
 		t.Fatal("want this cataloged local zone to still get coordinates even though it is not enabled")
+	}
+}
+
+func TestEnrichUsesCallerParentRegionWhenCatalogHasNoEntry(t *testing.T) {
+	// The exact bug a stale catalog produced in practice: a Local Zone AWS
+	// actually reports (so the caller knows its real parent region) but the
+	// catalog has not been taught about yet must still get a parent region,
+	// not silently drop it and block EnableLocalZone.
+	got := enrich(TypeAWS, "us-west-2-phx-9", "Phoenix Local Zone", "local_zone", false, "us-west-2")
+	if got.ParentRegion != "us-west-2" {
+		t.Fatalf("got parent region %q, want the caller-supplied one when the catalog has no entry", got.ParentRegion)
+	}
+}
+
+func TestEnrichCallerParentRegionWinsOverCatalog(t *testing.T) {
+	got := enrich(TypeAWS, "us-east-1-bos-1", "Boston Local Zone", "local_zone", true, "us-east-1")
+	if got.ParentRegion != "us-east-1" {
+		t.Fatalf("got parent region %q, want the caller-supplied (API-sourced) value to win over the catalog's", got.ParentRegion)
 	}
 }
 

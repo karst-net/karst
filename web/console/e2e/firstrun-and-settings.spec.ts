@@ -79,6 +79,40 @@ test("an infrastructure connection feeds the Authorized Locations region picker"
   await page.getByRole("row", { name: /e2e-aws/ }).getByRole("button", { name: "Remove" }).click();
 });
 
+test("a Local Zone not yet opted into on AWS can still be added as an authorized location", async ({ page }) => {
+  await page.goto("/#/connections");
+  await page.getByRole("button", { name: "Add infrastructure connection" }).click();
+  await page.getByLabel("Connection type").selectOption("aws");
+  await page.getByLabel("Access key ID").fill("AKIAEXAMPLE");
+  await page.getByLabel("AWS secret access key").fill("shh-it-is-a-secret");
+  // Read-write only: the mock (matching AWS) hides a not-opted-in zone from a
+  // read-only credential entirely -- see discoverAWSLocalZones.
+  await page.getByLabel("Connection mode").selectOption("read_write");
+  await page.getByLabel("Connection label").fill("e2e-aws-rw");
+  await page.getByRole("button", { name: "Add connection" }).click();
+  await expect(page.getByText("e2e-aws-rw was added.")).toBeVisible();
+
+  await page.goto("/#/locations");
+  await page.getByRole("button", { name: "Add authorized location" }).click();
+  await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-aws-rw (AWS)" });
+  await page.getByRole("combobox", { name: "Region, zone, namespace, datacenter, or cluster member" })
+    .selectOption({ label: "Los Angeles Local Zone (us-west-2-lax-1) — not enabled yet" });
+  await expect(page.getByText("is not opted into use yet", { exact: false })).toBeVisible();
+  // The registry declares intent independent of AWS's own opt-in state --
+  // enabling is offered alongside, never required, to add the location.
+  await expect(page.getByRole("button", { name: "Enable this zone" })).toBeVisible();
+  await expect(page.getByText("Coordinates:", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Add location" }).click();
+  await expect(page.getByText("was added to the authorized locations registry.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("cell", { name: "Los Angeles Local Zone (us-west-2-lax-1)" })).toBeVisible();
+
+  page.on("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("row", { name: /Los Angeles Local Zone/ }).getByRole("button", { name: "Remove" }).click();
+  await page.goto("/#/connections");
+  await page.getByRole("row", { name: /e2e-aws-rw/ }).getByRole("button", { name: "Remove" }).click();
+});
+
 test("a Kubernetes connection's namespaces require inline coordinates in the Authorized Locations picker", async ({ page }) => {
   await page.goto("/#/connections");
   await page.getByRole("button", { name: "Add infrastructure connection" }).click();
