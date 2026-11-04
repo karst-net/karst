@@ -2216,15 +2216,22 @@ type GroupLocation struct {
 
 // InfrastructureConnection defines model for InfrastructureConnection.
 type InfrastructureConnection struct {
-	CreatedAt       *time.Time                   `json:"created_at,omitempty"`
-	Id              *string                      `json:"id,omitempty"`
-	Label           *string                      `json:"label,omitempty"`
-	LastError       *string                      `json:"last_error,omitempty"`
-	LastValidatedAt *time.Time                   `json:"last_validated_at,omitempty"`
-	Lat             *float32                     `json:"lat,omitempty"`
-	LocationLabel   *string                      `json:"location_label,omitempty"`
-	Lon             *float32                     `json:"lon,omitempty"`
-	Mode            InfrastructureConnectionMode `json:"mode"`
+	CreatedAt          *time.Time `json:"created_at,omitempty"`
+	Id                 *string    `json:"id,omitempty"`
+	Label              *string    `json:"label,omitempty"`
+	LastError          *string    `json:"last_error,omitempty"`
+	LastValidatedAt    *time.Time `json:"last_validated_at,omitempty"`
+	Lat                *float32   `json:"lat,omitempty"`
+	LaunchAmiId        *string    `json:"launch_ami_id,omitempty"`
+	LaunchInstanceType *string    `json:"launch_instance_type,omitempty"`
+
+	// LaunchRegion ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself.
+	LaunchRegion           *string                      `json:"launch_region,omitempty"`
+	LaunchSecurityGroupIds *[]string                    `json:"launch_security_group_ids,omitempty"`
+	LaunchSubnetId         *string                      `json:"launch_subnet_id,omitempty"`
+	LocationLabel          *string                      `json:"location_label,omitempty"`
+	Lon                    *float32                     `json:"lon,omitempty"`
+	Mode                   InfrastructureConnectionMode `json:"mode"`
 
 	// Status Empty until the first resources (Discover) call completes.
 	Status *InfrastructureConnectionStatus `json:"status,omitempty"`
@@ -2258,6 +2265,15 @@ type InfrastructureConnectionCreateMode string
 
 // InfrastructureConnectionCreateType defines model for InfrastructureConnectionCreate.Type.
 type InfrastructureConnectionCreateType string
+
+// InfrastructureConnectionLaunchDefaults ADR-0045's 2026-11-04 addendum. Every field replaces the stored value, including to empty -- there is no partial-update shape. Only meaningful for a read-write AWS connection; refused otherwise.
+type InfrastructureConnectionLaunchDefaults struct {
+	AmiId            *string   `json:"ami_id,omitempty"`
+	InstanceType     *string   `json:"instance_type,omitempty"`
+	Region           *string   `json:"region,omitempty"`
+	SecurityGroupIds *[]string `json:"security_group_ids,omitempty"`
+	SubnetId         *string   `json:"subnet_id,omitempty"`
+}
 
 // Location defines model for Location.
 type Location struct {
@@ -3461,6 +3477,9 @@ type SetGroupLocationJSONRequestBody = LocationCreate
 
 // CreateInfrastructureConnectionJSONRequestBody defines body for CreateInfrastructureConnection for application/json ContentType.
 type CreateInfrastructureConnectionJSONRequestBody = InfrastructureConnectionCreate
+
+// UpdateInfrastructureConnectionLaunchDefaultsJSONRequestBody defines body for UpdateInfrastructureConnectionLaunchDefaults for application/json ContentType.
+type UpdateInfrastructureConnectionLaunchDefaultsJSONRequestBody = InfrastructureConnectionLaunchDefaults
 
 // CreateDeviceInvitationJSONRequestBody defines body for CreateDeviceInvitation for application/json ContentType.
 type CreateDeviceInvitationJSONRequestBody = DeviceInvitationDraft
