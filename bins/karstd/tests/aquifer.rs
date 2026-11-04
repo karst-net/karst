@@ -4629,11 +4629,26 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
     };
 
     listener_on(&mut net, NS_DEST, "via A");
-    std::thread::sleep(Duration::from_millis(500));
+    // A single dial right after "offers" turns non-zero raced the same gap
+    // #109's excludeOfflineGateways comment above already names: the netmap
+    // carrying the offer and the recipient's own route activation are two
+    // separate steps, and a flat 500ms sleep does not reliably cover the
+    // second one under CI load. Retry for a bounded window instead, the
+    // same fix the failover dial below already applies to the identical
+    // "offers non-zero but not yet actually active" gap.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let (reply, reply_err) = loop {
+        let result = dial();
+        if result.0.contains("via A") || Instant::now() >= deadline {
+            break result;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
     assert!(
-        dial().0.contains("via A"),
+        reply.contains("via A"),
         "the recipient could not reach the destination through the initial \
-         gateway A\n── node A ──\n{}\n── node B ──\n{}",
+         gateway A: stdout={reply:?} stderr={reply_err:?}\n\
+         ── node A ──\n{}\n── node B ──\n{}",
         status(&net, "a", NS_A),
         status(&net, "b", NS_B),
     );
