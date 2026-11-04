@@ -28,7 +28,9 @@ import (
 	"github.com/rs/xid"
 	"gorm.io/gorm"
 
+	"github.com/netbirdio/netbird/management/internals/karst/cloudcatalog"
 	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
+	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	"github.com/netbirdio/netbird/management/server/types"
 )
 
@@ -115,7 +117,11 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("relay allocation: nil database")
 	}
-	if err := db.AutoMigrate(&Allocation{}, &AllocationHistory{}); err != nil {
+	// StoredLocation is locationreg's own table -- AutoMigrate is idempotent,
+	// so migrating it here too (requireAuthorizedLocation reads it) is safe
+	// regardless of whether bootstrap.go's own locationreg.NewStore has run
+	// yet, and lets this package's tests construct a Store standalone.
+	if err := db.AutoMigrate(&Allocation{}, &AllocationHistory{}, &locationreg.StoredLocation{}); err != nil {
 		return nil, err
 	}
 	return &Store{db: db}, nil
@@ -176,6 +182,51 @@ func validateDraft(draft Allocation) error {
 	return nil
 }
 
+// requireAuthorizedLocation rejects an allocation whose resolved coordinates
+// are not already in the account's Authorized Locations registry
+// (package locationreg) -- an allocation provisions a real host, so unlike
+// a bare declared-location field (relayreg, group-location, ...), it is
+// deliberately coupled to that registry rather than following locationreg's
+// own "not a foreign key" default (see its package doc): the operator's
+// own request (issue #439, discussed alongside ADR-0063) was specifically
+// to stop a host from being provisioned somewhere never authorized.
+//
+// Resolution stays entirely local, matching Create's own "no provider call
+// inside this transaction" rule: a cloud location's coordinates come from
+// the static cloudcatalog (the same source discover.go's enrich() uses),
+// never a live Discover call, and a cluster connection's (Kubernetes/Nomad/
+// LXD) own declared Lat/Lon is the only other source -- mirroring the
+// console's own locations.tsx fallback (resource's own coordinates, else
+// the connection's declared ones). A location this cannot resolve at all is
+// rejected, not let through: an unresolvable location can never be
+// confirmed authorized either.
+func requireAuthorizedLocation(tx *gorm.DB, accountID string, connection infraconnections.Account, location string) error {
+	var lat, lon float64
+	switch connection.Type {
+	case infraconnections.TypeAWS, infraconnections.TypeAzure, infraconnections.TypeGCP:
+		entry, ok := cloudcatalog.Lookup(string(connection.Type), location)
+		if !ok {
+			return fmt.Errorf("%w: location %q has no known coordinates to check against the authorized locations registry -- add it to the cloud catalog", ErrInvalid, location)
+		}
+		lat, lon = entry.Lat, entry.Lon
+	default:
+		if connection.Lat == nil || connection.Lon == nil {
+			return fmt.Errorf("%w: this connection has no declared location -- set one in Settings, or use a connection type with provider-supplied geography", ErrInvalid)
+		}
+		lat, lon = *connection.Lat, *connection.Lon
+	}
+	var authorized []locationreg.StoredLocation
+	if err := tx.Where("account_id = ?", accountID).Find(&authorized).Error; err != nil {
+		return err
+	}
+	for _, candidate := range authorized {
+		if candidate.Lat == lat && candidate.Lon == lon {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: location %q is not in the authorized locations registry -- add it there first", ErrInvalid, location)
+}
+
 // Create validates references in the caller's account and persists the
 // request as StateRequested in one transaction, with no provider call
 // inside it. The caller's own ID/AccountID/State/Revision are never
@@ -205,12 +256,15 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 		UpdatedAt:         now,
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var connections int64
-		if err := tx.Model(&infraconnections.Account{}).Where("account_id = ? AND id = ?", account, allocation.InfraConnectionID).Count(&connections).Error; err != nil {
+		var connection infraconnections.Account
+		if err := tx.Where("account_id = ? AND id = ?", account, allocation.InfraConnectionID).First(&connection).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: infra_connection_id is not registered in this account", ErrInvalid)
+			}
 			return err
 		}
-		if connections != 1 {
-			return fmt.Errorf("%w: infra_connection_id is not registered in this account", ErrInvalid)
+		if err := requireAuthorizedLocation(tx, account, connection, allocation.Location); err != nil {
+			return err
 		}
 		for _, id := range allocation.PermittedGroups {
 			var count int64

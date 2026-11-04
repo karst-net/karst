@@ -17,10 +17,19 @@ import { GroupPicker } from "./access";
  * which is credential CRUD only) and access.tsx's GroupPicker, and follows
  * relay-access.tsx's review/apply dialog shape rather than building a new
  * one.
+ *
+ * Unlike locations.tsx's own picker, this one offers only resources already
+ * in the Authorized Locations registry: an allocation provisions a real
+ * host, so (per the operator's own request alongside ADR-0063) it is
+ * deliberately coupled to that registry rather than following locationreg's
+ * usual "not a foreign key" default. The server enforces this independently
+ * (relayalloc.requireAuthorizedLocation) -- this filtering is for a sane
+ * picker, not the actual guarantee.
  */
 export function AllocateRelay({ onClose, onAllocated }: { onClose: () => void; onAllocated: () => void }) {
   const infraConnections = useResource(api.infrastructureConnections);
   const groups = useResource(api.groups);
+  const authorizedLocations = useResource(api.locations);
   const [connectionId, setConnectionId] = useState("");
   const resources = useResource(() => connectionId ? api.infrastructureConnectionResources(connectionId) : Promise.resolve([] as DiscoveredResource[]), [connectionId]);
   const [resourceCode, setResourceCode] = useState("");
@@ -32,7 +41,18 @@ export function AllocateRelay({ onClose, onAllocated }: { onClose: () => void; o
   const [message, setMessage] = useState<string>();
 
   const selectedConnection = (infraConnections.value ?? []).find(c => c.id === connectionId);
-  const selectedResource = (resources.value ?? []).find(r => r.code === resourceCode);
+  // A resource's own coordinates, falling back to its connection's declared
+  // ones -- Kubernetes/Nomad/LXD resources never carry their own (see
+  // DiscoveredResource's own doc), matching locations.tsx's identical
+  // fallback for the same reason.
+  const authorizedKeys = new Set((authorizedLocations.value ?? []).map(l => `${l.lat},${l.lon}`));
+  const isAuthorized = (r: DiscoveredResource) => {
+    const lat = r.lat ?? selectedConnection?.lat;
+    const lon = r.lon ?? selectedConnection?.lon;
+    return lat !== undefined && lon !== undefined && authorizedKeys.has(`${lat},${lon}`);
+  };
+  const authorizedResources = (resources.value ?? []).filter(isAuthorized);
+  const selectedResource = authorizedResources.find(r => r.code === resourceCode);
   const notEnabled = Boolean(selectedResource && selectedResource.kind === "local_zone" && !selectedResource.enabled);
   const ready = Boolean(name.trim()) && Boolean(selectedConnection) && Boolean(selectedResource) && !notEnabled && permittedGroups.length > 0;
 
@@ -57,14 +77,17 @@ export function AllocateRelay({ onClose, onAllocated }: { onClose: () => void; o
         {(infraConnections.value ?? []).map(c => <option key={c.id} value={c.id}>{c.label || c.type} ({c.type.toUpperCase()})</option>)}
       </select></label>
       {!infraConnections.loading && (infraConnections.value ?? []).length === 0 && <p className="lede">Add an infrastructure connection in Settings first.</p>}
-      {connectionId && (resources.loading
+      {connectionId && (resources.loading || authorizedLocations.loading
         ? <p>Loading regions/zones/namespaces…</p>
         : resources.error
           ? <Failure message={resources.error} retry={resources.reload} />
-          : <label>Location<select aria-label="Location" required value={resourceCode} onChange={event => setResourceCode(event.target.value)}>
-            <option value="">Choose one…</option>
-            {(resources.value ?? []).map(r => <option key={r.code} value={r.code}>{r.name ? `${r.name} (${r.code})` : r.code}{r.kind === "local_zone" && !r.enabled ? " — not enabled yet" : ""}</option>)}
-          </select></label>)}
+          : authorizedLocations.error
+            ? <Failure message={authorizedLocations.error} retry={authorizedLocations.reload} />
+            : <><label>Location<select aria-label="Location" required value={resourceCode} onChange={event => setResourceCode(event.target.value)}>
+              <option value="">Choose one…</option>
+              {authorizedResources.map(r => <option key={r.code} value={r.code}>{r.name ? `${r.name} (${r.code})` : r.code}{r.kind === "local_zone" && !r.enabled ? " — not enabled yet" : ""}</option>)}
+            </select></label>
+            <p className="lede">Only locations already in Authorized Locations are offered. {authorizedResources.length === 0 ? "None of this connection's discovered regions/zones/namespaces are authorized yet — " : "Missing one? "}add it on the Authorized locations page first.</p></>)}
       {notEnabled && selectedResource && <p className="lede">{selectedResource.name || selectedResource.code} is not opted into use yet — enable it on the Authorized locations page first.</p>}
       <fieldset><legend>Capabilities</legend>
         <label><input type="checkbox" checked readOnly disabled />Relay transport</label>

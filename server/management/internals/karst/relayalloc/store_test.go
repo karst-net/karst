@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
+	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	"github.com/netbirdio/netbird/management/server/types"
 )
 
@@ -41,6 +42,12 @@ func fixture(t *testing.T) env {
 	require.NoError(t, db.Create(&connection).Error)
 	group := types.Group{ID: "engineering", AccountID: "a", Name: "Engineering"}
 	require.NoError(t, db.Create(&group).Error)
+	// draft()'s own "us-west-2" location must already be authorized --
+	// requireAuthorizedLocation rejects a Create otherwise. Coordinates
+	// match cloudcatalog's own entry for it exactly, the same source
+	// requireAuthorizedLocation itself resolves a cloud location through.
+	authorized := locationreg.StoredLocation{AccountID: "a", ID: "loc-1", Lat: 45.8696, Lon: -119.6880, Label: "US West (Oregon)"}
+	require.NoError(t, db.Create(&authorized).Error)
 	return env{store: store, db: db, connectionID: connection.ID, groupID: group.ID}
 }
 
@@ -88,6 +95,60 @@ func TestCreateRejectsAnUnknownInfraConnectionAndWritesNothing(t *testing.T) {
 	require.Zero(t, count)
 	require.NoError(t, e.db.Model(&AllocationHistory{}).Count(&count).Error)
 	require.Zero(t, count)
+}
+
+func TestCreateRejectsALocationNotInTheAuthorizedLocationsRegistry(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	draft := e.draft()
+	// A real AWS region, resolvable via cloudcatalog -- but never added to
+	// account "a"'s Authorized Locations registry, unlike draft()'s own
+	// "us-west-2" (see fixture()).
+	draft.Location = "us-east-1"
+	_, err := e.store.Create(ctx, draft)
+	require.ErrorIs(t, err, ErrInvalid)
+	require.ErrorContains(t, err, "not in the authorized locations registry")
+
+	var count int64
+	require.NoError(t, e.db.Model(&Allocation{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestCreateRejectsALocationNotResolvableAtAll(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	draft := e.draft()
+	draft.Location = "aws-code-not-in-the-static-catalog"
+	_, err := e.store.Create(ctx, draft)
+	require.ErrorIs(t, err, ErrInvalid)
+	require.ErrorContains(t, err, "no known coordinates")
+}
+
+func TestCreateAcceptsAClusterConnectionsDeclaredLocationWhenAuthorized(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	lat, lon := 51.5072, -0.1276
+	cluster := infraconnections.Account{ID: "conn-k8s", AccountID: "a", Type: infraconnections.TypeKubernetes, Mode: infraconnections.ModeReadOnly, Label: "k8s", Lat: &lat, Lon: &lon}
+	require.NoError(t, e.db.Create(&cluster).Error)
+	require.NoError(t, e.db.Create(&locationreg.StoredLocation{AccountID: "a", ID: "loc-london", Lat: lat, Lon: lon, Label: "London cluster"}).Error)
+	draft := e.draft()
+	draft.InfraConnectionID = cluster.ID
+	draft.Location = "default"
+	_, err := e.store.Create(ctx, draft)
+	require.NoError(t, err)
+}
+
+func TestCreateRejectsAClusterConnectionWithNoDeclaredLocation(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	cluster := infraconnections.Account{ID: "conn-k8s", AccountID: "a", Type: infraconnections.TypeKubernetes, Mode: infraconnections.ModeReadOnly, Label: "k8s"}
+	require.NoError(t, e.db.Create(&cluster).Error)
+	draft := e.draft()
+	draft.InfraConnectionID = cluster.ID
+	draft.Location = "default"
+	_, err := e.store.Create(ctx, draft)
+	require.ErrorIs(t, err, ErrInvalid)
+	require.ErrorContains(t, err, "no declared location")
 }
 
 func TestCreateRejectsAnUnavailableGroupAndWritesNothing(t *testing.T) {
