@@ -998,6 +998,25 @@ export type InfrastructureConnection = {
     status?: 'ok' | 'error';
     readonly last_validated_at?: string;
     readonly last_error?: string;
+    /**
+     * ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself.
+     */
+    launch_region?: string;
+    launch_ami_id?: string;
+    launch_instance_type?: string;
+    launch_subnet_id?: string;
+    launch_security_group_ids?: Array<string>;
+};
+
+/**
+ * ADR-0045's 2026-11-04 addendum. Every field replaces the stored value, including to empty -- there is no partial-update shape. Only meaningful for a read-write AWS connection; refused otherwise.
+ */
+export type InfrastructureConnectionLaunchDefaults = {
+    region?: string;
+    ami_id?: string;
+    instance_type?: string;
+    subnet_id?: string;
+    security_group_ids?: Array<string>;
 };
 
 export type DiscoveredResource = {
@@ -1301,6 +1320,14 @@ export type InfrastructureConnectionWritable = {
      * Empty until the first resources (Discover) call completes.
      */
     status?: 'ok' | 'error';
+    /**
+     * ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself.
+     */
+    launch_region?: string;
+    launch_ami_id?: string;
+    launch_instance_type?: string;
+    launch_subnet_id?: string;
+    launch_security_group_ids?: Array<string>;
 };
 
 export type LocationWritable = LocationCreate;
@@ -4558,6 +4585,37 @@ export type ListInfrastructureConnectionResourcesResponses = {
 };
 
 export type ListInfrastructureConnectionResourcesResponse = ListInfrastructureConnectionResourcesResponses[keyof ListInfrastructureConnectionResourcesResponses];
+
+export type UpdateInfrastructureConnectionLaunchDefaultsData = {
+    body: InfrastructureConnectionLaunchDefaults;
+    path: {
+        connectionId: string;
+    };
+    query?: never;
+    url: '/infrastructure-connections/{connectionId}/launch-defaults';
+};
+
+export type UpdateInfrastructureConnectionLaunchDefaultsErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type UpdateInfrastructureConnectionLaunchDefaultsError = UpdateInfrastructureConnectionLaunchDefaultsErrors[keyof UpdateInfrastructureConnectionLaunchDefaultsErrors];
+
+export type UpdateInfrastructureConnectionLaunchDefaultsResponses = {
+    /**
+     * Updated connection
+     */
+    200: InfrastructureConnection;
+};
+
+export type UpdateInfrastructureConnectionLaunchDefaultsResponse = UpdateInfrastructureConnectionLaunchDefaultsResponses[keyof UpdateInfrastructureConnectionLaunchDefaultsResponses];
 
 export type GetBedrockData = {
     body?: never;

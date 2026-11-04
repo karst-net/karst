@@ -71,6 +71,40 @@ func awsConfig(ctx context.Context, rawSecret, region string) (aws.Config, error
 	)
 }
 
+// AWSActuationClient returns a ready EC2 client plus this connection's own
+// launch defaults, for relayalloc's reconciliation loop (ADR-0063; see
+// ADR-0045's 2026-11-04 addendum for why actuation is wired through this
+// package -- which has held the decrypted credential in-process since the
+// 2026-10-19 addendum -- rather than relayalloc re-deriving one). Built
+// fresh on every call, deliberately never cached: a rotated or edited
+// secret takes effect on the very next call, matching every other AWS
+// caller in this package (discoverAWS, discoverAWSLocalZones,
+// enableAWSLocalZone), none of which cache a client either.
+func (s *Store) AWSActuationClient(ctx context.Context, id string) (*ec2.Client, LaunchDefaults, error) {
+	record, err := s.get(ctx, id)
+	if err != nil {
+		return nil, LaunchDefaults{}, err
+	}
+	if record.Type != TypeAWS || record.Mode != ModeReadWrite {
+		return nil, LaunchDefaults{}, fmt.Errorf("%w: connection is not a read-write AWS connection", ErrInvalid)
+	}
+	defaults := LaunchDefaults{
+		Region:           record.LaunchRegion,
+		AMIID:            record.LaunchAMIID,
+		InstanceType:     record.LaunchInstanceType,
+		SubnetID:         record.LaunchSubnetID,
+		SecurityGroupIDs: record.LaunchSecurityGroupIDs,
+	}
+	if defaults.Region == "" || defaults.AMIID == "" || defaults.InstanceType == "" || defaults.SubnetID == "" || len(defaults.SecurityGroupIDs) == 0 {
+		return nil, LaunchDefaults{}, fmt.Errorf("%w: configure launch defaults for this connection before allocating a relay against it", ErrInvalid)
+	}
+	cfg, err := awsConfig(ctx, record.Secret, defaults.Region)
+	if err != nil {
+		return nil, LaunchDefaults{}, fmt.Errorf("aws: configure client: %w", err)
+	}
+	return ec2.NewFromConfig(cfg), defaults, nil
+}
+
 func discoverAWS(ctx context.Context, rawSecret string, mode Mode) ([]DiscoveredRegion, error) {
 	cfg, err := awsConfig(ctx, rawSecret, awsBootstrapRegion)
 	if err != nil {

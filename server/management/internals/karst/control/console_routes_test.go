@@ -467,6 +467,16 @@ func consoleMutations() []consoleCase {
 			path: "/karst/v1/infrastructure-connections/unknown-connection-id", body: "",
 			want: []int{http.StatusNotFound}, template: "/karst/v1/infrastructure-connections/{connectionId}",
 		},
+		{
+			// ADR-0045's 2026-11-04 addendum. Same "unknown-*" 404 shape as
+			// the cases above: proves the route is wired and account-scoped;
+			// deep coverage (type/mode gating, the actual field round trip)
+			// stays at the unit level in infraconnections_test.go.
+			name: "update an infrastructure connection's AWS launch defaults", method: http.MethodPut,
+			path: "/karst/v1/infrastructure-connections/unknown-connection-id/launch-defaults",
+			body: `{"region":"us-east-1","ami_id":"ami-0123456789abcdef0","instance_type":"t3.micro","subnet_id":"subnet-0123456789abcdef0","security_group_ids":["sg-0123456789abcdef0"]}`,
+			want: []int{http.StatusNotFound}, template: "/karst/v1/infrastructure-connections/{connectionId}/launch-defaults",
+		},
 	}
 }
 

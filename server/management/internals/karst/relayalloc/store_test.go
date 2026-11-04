@@ -38,6 +38,11 @@ func fixture(t *testing.T) env {
 	require.NoError(t, db.AutoMigrate(&infraconnections.Account{}, &types.Group{}))
 	store, err := NewStore(db)
 	require.NoError(t, err)
+	// Create refuses every request until this is set (ADR-0045 §6 bullet
+	// 4's "mandatory configuration, no unlimited value," applied to this
+	// actuator by that ADR's 2026-11-04 addendum) -- high enough that no
+	// existing test's own handful of allocations trips it.
+	store.SetMaxConcurrentAllocations(100)
 	connection := infraconnections.Account{ID: "conn-1", AccountID: "a", Type: infraconnections.TypeAWS, Mode: infraconnections.ModeReadWrite, Label: "aws"}
 	require.NoError(t, db.Create(&connection).Error)
 	group := types.Group{ID: "engineering", AccountID: "a", Name: "Engineering"}
@@ -416,4 +421,86 @@ func TestListIsAccountScoped(t *testing.T) {
 
 	_, err = e.store.List(context.Background())
 	require.ErrorIs(t, err, ErrNoAccount)
+}
+
+// TestCreateRefusesWhenConcurrencyCeilingNotConfigured is ADR-0045 §6
+// bullet 4's "mandatory configuration, no unlimited value" -- a Store
+// that never had SetMaxConcurrentAllocations called (not this test's own
+// fixture, which does) must fail closed, not silently allow an unbounded
+// number of real, billable instances per account.
+func TestCreateRefusesWhenConcurrencyCeilingNotConfigured(t *testing.T) {
+	e := fixture(t)
+	e.store.SetMaxConcurrentAllocations(0)
+	ctx := WithAccount(context.Background(), "a")
+
+	_, err := e.store.Create(ctx, e.draft())
+	require.ErrorIs(t, err, ErrInvalid)
+	require.ErrorContains(t, err, "KARST_RELAY_ALLOCATE_MAX_CONCURRENT")
+}
+
+// TestCreateRefusesOverTheConfiguredConcurrencyCeiling checks the ceiling
+// counts every non-deprovisioned allocation (requested through ready/
+// failed), not only ones actively being driven, and that it is scoped per
+// account -- a second account must never be blocked by the first's count.
+func TestCreateRefusesOverTheConfiguredConcurrencyCeiling(t *testing.T) {
+	e := fixture(t)
+	e.store.SetMaxConcurrentAllocations(2)
+	ctx := WithAccount(context.Background(), "a")
+
+	_, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	_, err = e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+
+	_, err = e.store.Create(ctx, e.draft())
+	require.ErrorIs(t, err, ErrInvalid)
+	require.ErrorContains(t, err, "ceiling")
+
+	// A different account's own ceiling is independent.
+	otherAccount := infraconnections.Account{ID: "conn-2", AccountID: "b", Type: infraconnections.TypeAWS, Mode: infraconnections.ModeReadWrite, Label: "aws"}
+	require.NoError(t, e.db.Create(&otherAccount).Error)
+	otherGroup := types.Group{ID: "eng-b", AccountID: "b", Name: "Engineering"}
+	require.NoError(t, e.db.Create(&otherGroup).Error)
+	otherLocation := locationreg.StoredLocation{AccountID: "b", ID: "loc-b", Lat: 45.8696, Lon: -119.6880, Label: "US West (Oregon)"}
+	require.NoError(t, e.db.Create(&otherLocation).Error)
+	otherCtx := WithAccount(context.Background(), "b")
+	_, err = e.store.Create(otherCtx, Allocation{Name: "denver", InfraConnectionID: otherAccount.ID, Location: "us-west-2", RelayTransport: true, PermittedGroups: []string{otherGroup.ID}})
+	require.NoError(t, err)
+}
+
+// TestHasNonTerminalAllocations backs infraconnections.Store.Delete's own
+// reference check (SetAllocationReferenceChecker) -- a deprovisioned
+// allocation must never block deleting the connection it used to
+// reference, and a different account's allocations must never be
+// visible to this check.
+func TestHasNonTerminalAllocations(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+
+	inUse, err := e.store.HasNonTerminalAllocations(context.Background(), "a", e.connectionID)
+	require.NoError(t, err)
+	require.True(t, inUse)
+
+	inUse, err = e.store.HasNonTerminalAllocations(context.Background(), "b", e.connectionID)
+	require.NoError(t, err)
+	require.False(t, inUse, "a different account's connection id must never match")
+
+	provisioning, err := e.store.Transition(ctx, created.ID, created.Revision, StateRequested, StateProvisioning, "", "inst-1", "")
+	require.NoError(t, err)
+	granting, err := e.store.Transition(ctx, created.ID, provisioning.Revision, StateProvisioning, StateGranting, "", "", "")
+	require.NoError(t, err)
+	ready, err := e.store.Transition(ctx, created.ID, granting.Revision, StateGranting, StateReady, "", "", "relay-1")
+	require.NoError(t, err)
+	revoking, err := e.store.RequestDeprovision(ctx, created.ID, ready.Revision)
+	require.NoError(t, err)
+	deprovisioning, err := e.store.Transition(ctx, created.ID, revoking.Revision, StateRevoking, StateDeprovisioning, "", "", "")
+	require.NoError(t, err)
+	_, err = e.store.Transition(ctx, created.ID, deprovisioning.Revision, StateDeprovisioning, StateDeprovisioned, "", "", "")
+	require.NoError(t, err)
+
+	inUse, err = e.store.HasNonTerminalAllocations(context.Background(), "a", e.connectionID)
+	require.NoError(t, err)
+	require.False(t, inUse, "a fully deprovisioned allocation must not block deleting its connection")
 }

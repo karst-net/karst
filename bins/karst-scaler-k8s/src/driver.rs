@@ -169,9 +169,12 @@ impl Driver for K8sDriver {
                     // back from -- but the FQDN is deterministic from
                     // the pod's own name plus this driver's own
                     // namespace, so it recomputes exactly rather than
-                    // needing to remember one, surviving a
-                    // `karst-scaler allocate` restart the same way
-                    // AwsDriver's own tag read does.
+                    // needing to remember one, surviving a restart of
+                    // whatever is driving this (`karst-scaler drive`,
+                    // or the Go-side allocate worker for ADR-0063's own
+                    // named allocation -- see ADR-0045's 2026-11-04
+                    // addendum) the same way AwsDriver's own tag read
+                    // does.
                     let tls_server_name = fqdn_for_pod_name(&id, pool_id, &self.namespace);
                     Instance {
                         id,

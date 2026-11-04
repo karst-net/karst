@@ -315,6 +315,121 @@ func TestMigrationPreservesExistingColumnOnRename(t *testing.T) {
 	}
 }
 
+// fakeAllocationChecker is a minimal AllocationReferenceChecker for
+// exercising Delete's own guard without pulling in package relayalloc
+// (which already imports this package the other way -- a test-only
+// import back would recreate the exact cycle SetAllocationReferenceChecker
+// exists to avoid).
+type fakeAllocationChecker struct {
+	inUse map[string]bool
+}
+
+func (f fakeAllocationChecker) HasNonTerminalAllocations(_ context.Context, _, connectionID string) (bool, error) {
+	return f.inUse[connectionID], nil
+}
+
+func TestDeleteRefusesWhileAReferenceCheckerReportsAnAllocationInUse(t *testing.T) {
+	s := newTestStore(t, newTestEncryptor(t))
+	ctx := WithAccount(context.Background(), "acct-a")
+	created, err := s.Create(ctx, awsRequest(t, ModeReadWrite))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	s.SetAllocationReferenceChecker(fakeAllocationChecker{inUse: map[string]bool{created.ID: true}})
+	if err := s.Delete(ctx, created.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("got %v, want ErrInvalid while a non-terminal allocation references this connection", err)
+	}
+
+	s.SetAllocationReferenceChecker(fakeAllocationChecker{inUse: map[string]bool{}})
+	if err := s.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("delete once nothing references the connection: %v", err)
+	}
+}
+
+func TestDeleteWithNoReferenceCheckerWiredBehavesAsBeforeItExisted(t *testing.T) {
+	s := newTestStore(t, newTestEncryptor(t))
+	ctx := WithAccount(context.Background(), "acct-a")
+	created, err := s.Create(ctx, awsRequest(t, ModeReadWrite))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := s.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("delete with a nil checker: %v", err)
+	}
+}
+
+func TestUpdateLaunchDefaultsRoundTripsAndRejectsTheWrongTypeOrMode(t *testing.T) {
+	s := newTestStore(t, newTestEncryptor(t))
+	ctx := WithAccount(context.Background(), "acct-a")
+	rw, err := s.Create(ctx, awsRequest(t, ModeReadWrite))
+	if err != nil {
+		t.Fatalf("create read-write: %v", err)
+	}
+
+	req := UpdateLaunchDefaultsRequest{Region: "us-east-1", AMIID: "ami-0123456789abcdef0", InstanceType: "t3.micro", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1", "sg-2"}}
+	updated, err := s.UpdateLaunchDefaults(ctx, rw.ID, req)
+	if err != nil {
+		t.Fatalf("update launch defaults: %v", err)
+	}
+	if updated.LaunchAMIID != req.AMIID || updated.LaunchSubnetID != req.SubnetID || len(updated.LaunchSecurityGroupIDs) != 2 {
+		t.Fatalf("got %+v, want the request's own fields persisted", updated)
+	}
+
+	rows, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 || rows[0].LaunchRegion != "us-east-1" {
+		t.Fatalf("got %+v, want launch defaults to survive a reload", rows)
+	}
+
+	ro, err := s.Create(ctx, awsRequest(t, ModeReadOnly))
+	if err != nil {
+		t.Fatalf("create read-only: %v", err)
+	}
+	if _, err := s.UpdateLaunchDefaults(ctx, ro.ID, req); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("got %v, want ErrInvalid for a read-only connection", err)
+	}
+}
+
+func TestAWSActuationClientRequiresCompleteLaunchDefaults(t *testing.T) {
+	s := newTestStore(t, newTestEncryptor(t))
+	ctx := WithAccount(context.Background(), "acct-a")
+	rw, err := s.Create(ctx, awsRequest(t, ModeReadWrite))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, _, err := s.AWSActuationClient(ctx, rw.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("got %v, want ErrInvalid before any launch defaults are configured", err)
+	}
+
+	if _, err := s.UpdateLaunchDefaults(ctx, rw.ID, UpdateLaunchDefaultsRequest{
+		Region: "us-east-1", AMIID: "ami-0123456789abcdef0", InstanceType: "t3.micro", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1"},
+	}); err != nil {
+		t.Fatalf("update launch defaults: %v", err)
+	}
+	client, defaults, err := s.AWSActuationClient(ctx, rw.ID)
+	if err != nil {
+		t.Fatalf("aws actuation client: %v", err)
+	}
+	if client == nil {
+		t.Fatal("got a nil ec2 client once launch defaults are complete")
+	}
+	if defaults.AMIID != "ami-0123456789abcdef0" || defaults.Region != "us-east-1" {
+		t.Fatalf("got %+v, want the stored launch defaults handed back", defaults)
+	}
+
+	ro, err := s.Create(ctx, awsRequest(t, ModeReadOnly))
+	if err != nil {
+		t.Fatalf("create read-only: %v", err)
+	}
+	if _, _, err := s.AWSActuationClient(ctx, ro.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("got %v, want ErrInvalid for a read-only connection even with no launch defaults set", err)
+	}
+}
+
 // validTestKubeconfig is syntactically valid (parses, has a current-context)
 // but points nowhere reachable -- it only needs to pass validateKubernetesSecret;
 // discoverKubernetes's live cluster calls are not exercised by these tests.

@@ -107,22 +107,16 @@ variable "kc_master_admin_password" {
   description = "Pass with -var, never commit a real value here."
 }
 
-variable "scaler_allocate_enabled" {
-  type        = bool
-  default     = false
-  description = "Enables the karst-scaler allocate task (ADR-0063, #525) -- off by default so an existing deployment is unaffected until an operator has actually built the binary and written its config. See docs/OPERATIONS.md's Scaler section."
-}
-
-variable "scaler_allocate_binary" {
+variable "relay_allocate_control_api_base" {
   type        = string
   default     = ""
-  description = "Absolute path, on node_name, to a karst-scaler binary built with `cargo build --release --features aws` (docs/operations/scaler-aws-driver.md) -- raw_exec, not docker: there is no published karst-scaler image. Required when scaler_allocate_enabled is true: Nomad only allows a variable's own validation block to reference itself, so that requirement cannot be enforced here and is checked at the `count = var.scaler_allocate_enabled ? 1 : 0` group below instead -- an empty path with the group enabled fails the raw_exec task at runtime rather than at `job validate`."
+  description = "ADR-0045's 2026-11-04 addendum (ADR-0063): this deployment's own externally-reachable control API base, embedded in a relay allocation's launched instance's own enroll bundle. Sets KARST_RELAY_ALLOCATE_CONTROL_API_BASE on the control task -- the in-process allocate worker always runs, but every allocation fails closed with a clear reason while this is empty. See docs/OPERATIONS.md's Scaler section."
 }
 
-variable "scaler_allocate_config" {
-  type        = string
-  default     = ""
-  description = "Absolute path, on node_name, to this deployment's own ALLOCATE_CONFIG.toml -- see scaler-allocate-config.toml.example alongside this job file. Never checked into version control: it names subnet/security-group ids and a pat_file path, the same posture deployment.vars.hcl already has. Required when scaler_allocate_enabled is true: Nomad only allows a variable's own validation block to reference itself, so that requirement cannot be enforced here and is checked at the `count = var.scaler_allocate_enabled ? 1 : 0` group below instead -- an empty path with the group enabled fails the raw_exec task at runtime rather than at `job validate`."
+variable "relay_allocate_max_concurrent" {
+  type        = number
+  default     = 0
+  description = "ADR-0045 §6 bullet 4's mandatory per-account concurrency ceiling on non-terminal relay allocations, applied to this in-process actuator by that ADR's 2026-11-04 addendum -- no \"unlimited\" value. Sets KARST_RELAY_ALLOCATE_MAX_CONCURRENT; 0 (the default) means every allocation request is refused, not unlimited."
 }
 
 job "karst" {
@@ -160,6 +154,13 @@ job "karst" {
         KARST_POLICY_FILE              = "/var/lib/karst/policy.json"
         KARST_BOOTSTRAP_SETUP_KEY_FILE = "/var/lib/karst/bootstrap.key"
         KARST_COMPONENT_VERSIONS_FILE  = "/run/karst-versions/components.json"
+        # ADR-0045's 2026-11-04 addendum (ADR-0063): the in-process relay-
+        # allocation allocate worker always runs inside this task; these two
+        # just configure it. Empty/0 (the defaults) mean every allocation
+        # fails closed with a clear reason -- no separate task, binary, or
+        # opt-in flag the way the now-removed scaler-allocate group needed.
+        KARST_RELAY_ALLOCATE_CONTROL_API_BASE = var.relay_allocate_control_api_base
+        KARST_RELAY_ALLOCATE_MAX_CONCURRENT   = var.relay_allocate_max_concurrent
       }
 
       resources {
@@ -302,43 +303,12 @@ job "karst" {
     }
   }
 
-  # ADR-0063/#525: the AWS allocate reconciliation loop for admin-triggered
-  # relay allocation. count is var-driven rather than fixed at 1 like every
-  # group above -- unlike control/relay/keycloak/console/caddy, this one is
-  # genuinely optional (a deployment with no infra connection configured has
-  # nothing for it to drive) and off by default on an existing deployment
-  # until an operator has actually built the binary and written its config.
-  #
-  # raw_exec, not docker: `karst-scaler` has no published container image
-  # (deliverables.yml builds karstd/karst-relay/karst-control/karst-console
-  # only), and docs/operations/scaler-aws-driver.md already documents this
-  # as a binary built with `cargo build --features aws`, run against AWS
-  # credentials resolved through aws-config's own ambient chain (an EC2
-  # instance profile on node_name, a shared credentials file, or env vars)
-  # -- exactly what raw_exec gives it for free and a container would only
-  # complicate. The Nomad client on node_name must have the raw_exec driver
-  # enabled (`plugin "raw_exec" { config { enabled = true } }` in its own
-  # agent config, outside this jobspec); see this directory's README.
-  group "scaler-allocate" {
-    count = var.scaler_allocate_enabled ? 1 : 0
-
-    constraint {
-      attribute = "${attr.unique.hostname}"
-      value     = var.node_name
-    }
-
-    task "scaler-allocate" {
-      driver = "raw_exec"
-
-      config {
-        command = var.scaler_allocate_binary
-        args    = [var.scaler_allocate_config]
-      }
-
-      resources {
-        cpu    = 100
-        memory = 128
-      }
-    }
-  }
+  # ADR-0063's admin-triggered relay allocation is driven in-process by the
+  # control task above (ADR-0045's 2026-11-04 addendum) -- there used to be
+  # a separate, opt-in "scaler-allocate" raw_exec group here (ADR-0063/#525)
+  # that ran an external `karst-scaler allocate` binary; that process, its
+  # opt-in flag, and its hand-written TOML config are gone. Nothing to
+  # deploy here now beyond the two KARST_RELAY_ALLOCATE_* env vars on
+  # control, and the AWS launch defaults an operator sets once in the
+  # console's Settings page.
 }

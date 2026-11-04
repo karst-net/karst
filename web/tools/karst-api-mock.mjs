@@ -894,6 +894,24 @@ const server = http.createServer((request, response) => {
     const resources = (discoveryFixtures[connection.type] ?? []).filter((r) => r.enabled || r.kind !== "local_zone" || connection.mode === "read_write");
     return json(response, 200, resources);
   }
+  // ADR-0045's 2026-11-04 addendum: the AWS launch shape a relay allocation
+  // (ADR-0063) actuates against, set once here rather than on the
+  // allocation request itself.
+  const infraConnectionLaunchDefaultsMatch = karst.match(/^\/infrastructure-connections\/([^/]+)\/launch-defaults$/);
+  if (infraConnectionLaunchDefaultsMatch && method === "PUT") {
+    const connection = infraConnections.find((item) => item.id === infraConnectionLaunchDefaultsMatch[1]);
+    if (!connection) return error(response, 404, "not_found", "infrastructure connection not found");
+    if (connection.type !== "aws" || connection.mode !== "read_write") return error(response, 422, "invalid_argument", "launch defaults only apply to a read-write AWS connection");
+    return readBody(request).then((body) => {
+      connection.launch_region = body.region ?? "";
+      connection.launch_ami_id = body.ami_id ?? "";
+      connection.launch_instance_type = body.instance_type ?? "";
+      connection.launch_subnet_id = body.subnet_id ?? "";
+      connection.launch_security_group_ids = Array.isArray(body.security_group_ids) ? body.security_group_ids : [];
+      const { secret, ...rest } = connection;
+      return json(response, 200, rest);
+    });
+  }
 
   if (method === "GET" && karst === "/bedrock") return json(response, 200, bedrock);
   if (method === "GET" && karst === "/bedrock/log") return json(response, 200, page(fixture.bedrockLog, url));

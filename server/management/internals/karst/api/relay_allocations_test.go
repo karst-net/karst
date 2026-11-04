@@ -54,6 +54,11 @@ func relayAllocationFixture(t *testing.T) relayAllocationEnv {
 	require.NoError(t, db.Create(&group).Error)
 	alloc, err := relayalloc.NewStore(db)
 	require.NoError(t, err)
+	// Create refuses every request until this is set (ADR-0045 §6 bullet
+	// 4's "mandatory configuration, no unlimited value," applied to this
+	// actuator by that ADR's 2026-11-04 addendum) -- high enough that no
+	// existing test's own handful of allocations trips it.
+	alloc.SetMaxConcurrentAllocations(100)
 	registry, err := relayreg.NewStore(db)
 	require.NoError(t, err)
 	grants, err := relayservice.NewStore(db)
