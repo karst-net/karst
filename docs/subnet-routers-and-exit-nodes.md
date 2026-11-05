@@ -144,6 +144,12 @@ decides the exit via `ExitNodeAutoConsent` and the menu shows it as
 "Managed by your organization," offering no local change at all —
 managed mode is unaffected by the revision above.
 
+The Mac App Store build (`KarstAppStore`, ADR-0036's Addendum) has the same
+**Exit node** menu and the same disclosure, but no `sudo karst` CLI front
+door at all — the sandboxed extension has no root-owned socket for it to
+reach — and no managed mode (ADR-0040 item 4): the menu is this build's only
+way to consent, always unmanaged.
+
 ## 4. Recovery
 
 | Situation | What restores it |

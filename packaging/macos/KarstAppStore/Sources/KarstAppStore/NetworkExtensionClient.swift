@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 //
-// A trimmed copy of packaging/macos/KarstStatus/Sources/KarstStatus/
-// NetworkExtensionClient.swift: `sendExitCommand`/`fetchExitManaged` are
-// dropped (minimal-viable scope has no exit-node menu — see
-// AppDelegate.swift's own header comment); `fetchStatusJSON`/
+// A copy of packaging/macos/KarstStatus/Sources/KarstStatus/
+// NetworkExtensionClient.swift, including `sendExitCommand` (#499) —
+// `fetchExitManaged` is still dropped, since ADR-0040 item 4 keeps managed-
+// device/`ExitNodeAutoConsent` coexistence out of scope for this
+// self-service-only distribution channel. `fetchStatusJSON`/
 // `fetchIdentityHandle` and the shared `sendVerb` plumbing are unchanged,
 // since `sendProviderMessage`'s wire shape does not depend on which
 // NetworkExtension packaging is on the other end.
@@ -31,6 +32,33 @@ struct NetworkExtensionStatusClient {
 
     func fetchIdentityHandle(completion: @escaping (Result<String, Error>) -> Void) {
         sendVerb("{\"verb\":\"identity\"}", completion: completion)
+    }
+
+    /// Consent to exit route `routeID`, or with `nil` withdraw consent
+    /// (ADR-0036 §3, extended to this build) —
+    /// `PacketTunnelProvider.handleAppMessage`'s `"exit-use"`/`"exit-disable"`
+    /// verbs. No local gate: this distribution channel is self-service only
+    /// (ADR-0040 item 4), so the extension never refuses this the way the
+    /// Developer-ID build's `managedExitAutoConsent` check can. Answers `{}`
+    /// on success or `{"error": "..."}`.
+    func sendExitCommand(
+        routeID: String?,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        var payload: [String: Any] = [
+            "verb": routeID == nil ? "exit-disable" : "exit-use",
+        ]
+        if let routeID {
+            payload["route_id"] = routeID
+        }
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: payload),
+            let json = String(data: data, encoding: .utf8)
+        else {
+            completion(.failure(NetworkExtensionStatusError.invalidResponseEncoding))
+            return
+        }
+        sendVerb(json, completion: completion)
     }
 
     private func sendVerb(_ requestJSON: String, completion: @escaping (Result<String, Error>) -> Void) {

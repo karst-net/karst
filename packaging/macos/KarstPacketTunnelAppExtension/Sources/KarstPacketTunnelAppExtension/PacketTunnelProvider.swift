@@ -26,11 +26,13 @@ import os.log
 ///    not actually bridge the two. A sandboxed App Extension and its host app
 ///    run as the *same* console user, so an App Group container is the right
 ///    mechanism here, not a repeat of that earlier mistake.
-/// 2. **`handleAppMessage` only answers `status`/`enroll`/`re-enroll`/
-///    `identity`.** `exit-use`/`exit-disable` and `ExitNodeAutoConsent`
-///    reconciliation are out of scope for this first pass (ADR-0040 item 4:
-///    the App Store build doesn't need managed-device/exit-node parity with
-///    the Developer-ID build) — a deliberate, named gap, not an oversight.
+/// 2. **`handleAppMessage` answers `status`/`enroll`/`re-enroll`/`identity`/
+///    `exit-use`/`exit-disable` (#499), but never `ExitNodeAutoConsent`
+///    reconciliation.** Managed-device coexistence stays out of scope for
+///    this self-service-only distribution channel (ADR-0040 item 4) — a
+///    deliberate, named gap, not an oversight. `exit-use`/`exit-disable`
+///    themselves need no managed check at all here for the same reason: this
+///    build has no managed mode to check against.
 /// 3. **No root-owned-file unattended-enrollment path.** `KarstPacketTunnel`'s
 ///    `enrollFromPendingInvitation` exists for the lab's root-provisioning
 ///    automation, which has no sandboxed equivalent and nothing here needs.
@@ -513,6 +515,31 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             worker.stackSize = 8 << 20
             worker.start()
+        case "exit-use", "exit-disable":
+            // No managed check here, unlike the Developer-ID build's
+            // `managedExitAutoConsent` gate: this distribution channel is
+            // self-service only (ADR-0040 item 4), so whoever is logged in
+            // locally may always change this Mac's exit node (ADR-0036 §3).
+            let line: String
+            if verb == "exit-use" {
+                guard let routeID = object["route_id"] as? String, ExitConsent.isPlausibleRouteID(routeID) else {
+                    completionHandler(Self.errorResponse("exit-use needs a valid route_id"))
+                    return
+                }
+                line = "exit-use \(routeID)"
+            } else {
+                line = "exit-disable"
+            }
+            guard engine != nil, let reply = ExitConsent.engineCommand(line, socketPath: socketPath) else {
+                completionHandler(Self.errorResponse("tunnel is not running"))
+                return
+            }
+            if let failure = reply.split(separator: "\n").first(where: { $0.hasPrefix("error = ") }) {
+                let message = failure.dropFirst("error = ".count).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                completionHandler(Self.errorResponse(message))
+                return
+            }
+            completionHandler(Self.okResponse())
         default:
             completionHandler(Self.errorResponse("unknown app message verb \(verb)"))
         }
