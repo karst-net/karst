@@ -71,7 +71,23 @@ let package = Package(
         .executableTarget(
             name: "KarstPacketTunnelAppExtension",
             dependencies: ["KarstFFI"],
-            path: "Sources/KarstPacketTunnelAppExtension"
+            path: "Sources/KarstPacketTunnelAppExtension",
+            // An App Extension's real entry point is Foundation's own
+            // `_NSExtensionMain` (undocumented — no public header declares
+            // it, so it cannot be called from Swift source the way
+            // `KarstPacketTunnel/main.swift` calls the System Extension's
+            // documented `NEProvider.startSystemExtensionMode()`), set
+            // directly as the linker entry point rather than through Swift
+            // code. Confirmed against a real report of building a packet-
+            // tunnel app extension outside Xcode this exact way
+            // (developer.apple.com/forums/thread/799336): `-e
+            // _NSExtensionMain` is what made that extension actually
+            // launch. `main.swift`'s own content is never reached at
+            // runtime once this flag takes effect — see that file's own
+            // comment for why it still needs to exist.
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"]),
+            ]
         ),
     ]
 )

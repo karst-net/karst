@@ -3,15 +3,19 @@
 
 - **Status:** Proposed
 - **Date:** 2026-09-25 (revised 2026-11-02: dropped the local authorization
-  gate for self-service installs — see Decision item 3 and "Revision")
+  gate for self-service installs — see Decision item 3 and "Revision";
+  extended 2026-11-04 to the Mac App Store build — see "Addendum")
 - **Deciders:** TBD
 - **Related:** #160 (exit-route validation, blocked on this), #165 (its
-  active-exit-withdrawal criterion), ADR-0024 (consent stays local and
-  root-gated), ADR-0031 (managed-device mode), ADR-0026 (Network Extension
-  backend), `spec/karst-control-v1.md` §5.4,
+  active-exit-withdrawal criterion), #499 (this ADR's extension to the Mac
+  App Store build), ADR-0024 (consent stays local and root-gated), ADR-0031
+  (managed-device mode), ADR-0026 (Network Extension backend), ADR-0040
+  (the sandboxed App Extension this ADR's Addendum covers),
+  `spec/karst-control-v1.md` §5.4,
   `docs/subnet-routers-and-exit-nodes.md` §3,
   `bins/karstd/src/exit_node.rs`, `bins/karstd/src/exit_policy.rs`,
-  `packaging/macos/KarstPacketTunnel/Sources/KarstPacketTunnel/PacketTunnelProvider.swift`
+  `packaging/macos/KarstPacketTunnel/Sources/KarstPacketTunnel/PacketTunnelProvider.swift`,
+  `packaging/macos/KarstPacketTunnelAppExtension/Sources/KarstPacketTunnelAppExtension/PacketTunnelProvider.swift`
 
 ---
 
@@ -220,3 +224,45 @@ household example actually depended on: a non-admin console user on a
 self-service Mac can now also change the exit node. Anyone who needs that
 specific boundary enforced should use managed/MDM mode, which this revision
 does not touch.
+
+---
+
+## Addendum (2026-11-04): the Mac App Store build (#499)
+
+This ADR's Decision and Revision above were written against
+`KarstPacketTunnel`, the Developer-ID **System Extension** that runs as
+root, with `Karst.app` running as the console user calling into it. ADR-0040
+added a second, **sandboxed App Extension** build —
+`KarstPacketTunnelAppExtension`, hosted by `KarstAppStore` — for Mac App
+Store distribution, which #499 asked this ADR to design consent for: does
+the existing `authd`/`AuthorizationExternalForm` administrator-authorization
+round trip apply when the extension isn't root, or is some other mechanism
+needed?
+
+**Decision: the same mechanism applies unchanged, and the root/non-root
+question above does not actually arise.** The Revision's condition for
+dropping the authorization gate was never "the extension happens to run as
+root" — it was that *neither side of the channel has a credential check
+available to it*: `Karst.app` runs as whoever is logged in, and any console
+user can already reach the extension's `sendProviderMessage` endpoint
+without OS help, so an authorization prompt in front of it would gate a
+request that already arrived with no stronger claim than "some local
+process asked." That condition holds, if anything more plainly, for the App
+Store build: `KarstAppStore` and `KarstPacketTunnelAppExtension` both run as
+the *same* sandboxed console user (this build's own `stateDir` doc comment
+on `PacketTunnelProvider.swift`), with neither ever holding root. There is
+no `authd` round trip to port because there was never a root boundary on
+either side of this specific channel to authorize across — `exit-use`/
+`exit-disable` just reuses the identical unauthenticated verb pair, and
+`ExitConsent.swift` (`KarstPacketTunnelAppExtension`'s copy, trimmed of
+`ManagedDecision`/`managedDecision`) is a straight port of
+`KarstPacketTunnel`'s own.
+
+The one real difference is `ExitNodeAutoConsent` (§4): the Mac App Store
+build has no managed-device story at all (ADR-0040 item 4 — this
+distribution channel is self-service only), so `handleAppMessage`'s
+`exit-use`/`exit-disable` branch on this build carries no
+`managedExitAutoConsent` check and never refuses on that basis. That is a
+narrower surface than the Developer-ID build, not a gap this Addendum
+defers: managed-device coexistence was never in scope for this channel in
+the first place.

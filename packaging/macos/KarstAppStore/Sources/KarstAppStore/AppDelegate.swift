@@ -13,9 +13,6 @@ import os.log
 ///
 /// **What this first pass deliberately leaves out, and why**, per the scope
 /// agreed before building this target:
-/// - No exit-node submenu, no `ExitNodeAuthorization`/`ExitConsent` round
-///   trip — `KarstPacketTunnelAppExtension.handleAppMessage` does not answer
-///   `exit-use`/`exit-disable` either (see that file's own header comment).
 /// - No managed-device-ownership banner (`ManagerOwnership`,
 ///   `NetworkExtensionEnrollment.currentOwnership` in the Developer-ID
 ///   build) — ADR-0040 item 4 is explicit that the App Store build does not
@@ -25,11 +22,15 @@ import os.log
 ///   works; the polished menu-bar presentation is feature-parity work for a
 ///   later pass, not foundational.
 ///
-/// What is kept: enroll/re-enroll, the identity display, and periodic status
-/// polling — the minimum needed to prove the sandboxed App Extension can be
-/// enrolled and queried at all, the same bar `KarstStatus`/`KarstPacketTunnel`
-/// themselves had to clear first (ADR-0026/27/28) before exit-node/
-/// managed-device features were layered on top of them.
+/// What is kept: enroll/re-enroll, the identity display, periodic status
+/// polling, and (#499) the Exit node menu — `KarstStatus`'s own
+/// `ExitNodeMenu`/`changeExitNode` ported verbatim, since ADR-0036 §3's
+/// decision (no local authorization gate on a self-service install) applies
+/// identically here: both this host app and its extension already run as
+/// the same console user with no credential check available to either side,
+/// which is the condition ADR-0036 §3 actually turns on, not a root/non-root
+/// distinction. Managed-device auto-consent (ADR-0036 §4) stays out of scope
+/// (ADR-0040 item 4).
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let log = OSLog(subsystem: "dev.karst.appstore", category: "app")
     private static let pollInterval: TimeInterval = 2.0
@@ -127,11 +128,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: established.isEmpty
             ? "No peers connected"
             : "\(established.count) of \(status.peers.count) peers connected", action: nil, keyEquivalent: "")
+        addExitNodeItem(to: menu, status: status)
         menu.addItem(NSMenuItem.separator())
         addIdentityAndEnrollItems(to: menu)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
+    }
+
+    /// The Exit node submenu (ADR-0036 §3) — see `ExitNodeMenu`. Always
+    /// unmanaged on this build: ADR-0040 item 4 keeps `ExitNodeAutoConsent`/
+    /// managed-device coexistence out of scope for this self-service-only
+    /// distribution channel, so there is no `exitManaged` state to track.
+    private func addExitNodeItem(to menu: NSMenu, status: DaemonStatus) {
+        ExitNodeMenu.addItems(
+            to: menu,
+            status: status,
+            exitManaged: false,
+            target: self,
+            useAction: #selector(runExitUse(_:)),
+            disableAction: #selector(runExitDisable)
+        )
+    }
+
+    @objc private func runExitUse(_ sender: NSMenuItem) {
+        guard let offer = sender.representedObject as? ExitOffer else { return }
+        // The disclosure docs/subnet-routers-and-exit-nodes.md §3 requires
+        // before consent, in the words that section uses.
+        let alert = NSAlert()
+        alert.messageText = "Send this Mac's traffic through \(offer.gatewayName ?? "the exit node")?"
+        alert.informativeText = """
+            All of this Mac's internet traffic will leave through the exit node, \
+            which can see the destinations it reaches (and the contents of anything \
+            not encrypted).
+            """
+        alert.addButton(withTitle: "Use Exit Node")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        changeExitNode(routeID: offer.routeID)
+    }
+
+    @objc private func runExitDisable() {
+        changeExitNode(routeID: nil)
+    }
+
+    /// Ask the extension to consent to `routeID` or, with `nil`, to
+    /// withdraw consent (ADR-0036 §3). Not gated locally — this build is
+    /// self-service only (ADR-0040 item 4).
+    private func changeExitNode(routeID: String?) {
+        client.sendExitCommand(routeID: routeID) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .failure(let error):
+                    self.showAlert(title: "Exit Node Not Changed", message: error.localizedDescription)
+                case .success(let text):
+                    if
+                        let data = text.data(using: .utf8),
+                        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                        let refusal = object["error"] as? String
+                    {
+                        self.showAlert(title: "Exit Node Not Changed", message: refusal)
+                    }
+                    self.refresh()
+                }
+            }
+        }
     }
 
     private func addIdentityAndEnrollItems(to menu: NSMenu) {

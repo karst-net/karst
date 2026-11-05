@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 //
-// A trimmed copy of packaging/macos/KarstStatus/Sources/KarstStatus/
-// StatusParser.swift: `exitOffers`/`selectedExit` and their parsing are
-// dropped — this target's minimal-viable scope has no exit-node menu (see
-// AppDelegate.swift's own header comment) — everything else is identical,
-// since the underlying status-json shape this reads is unchanged by which
-// NetworkExtension packaging produced it.
+// A copy of packaging/macos/KarstStatus/Sources/KarstStatus/StatusParser.swift
+// — including `exitOffers`/`selectedExit`/`controlSynchronized` and their
+// parsing (#499) — since the underlying status-json shape this reads is
+// unchanged by which NetworkExtension packaging produced it.
 
 import Foundation
 
@@ -32,6 +30,29 @@ struct DaemonStatus {
     var mtu = 0
     var peers: [PeerStatus] = []
     var refusal: String?
+    /// Exit routes offered to this device as a recipient, from
+    /// `control.routing.routes` (ADR-0036's Exit node menu).
+    var exitOffers: [ExitOffer] = []
+    /// The route ID the local user has consented to, if any
+    /// (`control.routing.selected_exit`) — kept even while that offer is
+    /// withdrawn, which is how consent stays dormant.
+    var selectedExit: String?
+    /// Whether the control-plane sync that actually populates `exitOffers`
+    /// has completed at least once since start — `control.control_synchronized`.
+    /// `true` when the field is absent, so neither reads as "stale" on a guess.
+    var controlSynchronized = true
+}
+
+/// One exit route offered to this device.
+struct ExitOffer: Equatable {
+    var routeID = ""
+    var prefix = ""
+    /// Whether this device currently routes through it (consented and
+    /// installed).
+    var active = false
+    /// The gateway peer's name, when one of this device's peers carries the
+    /// offer's prefix in its allowed IPs; nil if none does yet.
+    var gatewayName: String?
 }
 
 /// Parses `status_json`'s body — the same JSON
@@ -61,6 +82,9 @@ enum StatusParser {
         status.interface = object["interface"] as? String ?? ""
         status.mtu = object["mtu"] as? Int ?? 0
 
+        // An exit offer's gateway is the peer whose allowed IPs carry the
+        // offer's prefix (karstd routes it there before any consent).
+        var gatewayByPrefix: [String: String] = [:]
         for case let peerObject as [String: Any] in object["peers"] as? [Any] ?? [] {
             var peer = PeerStatus()
             peer.name = peerObject["name"] as? String ?? ""
@@ -76,6 +100,26 @@ enum StatusParser {
             peer.state = !established ? "connecting" : (rekeying ? "established (rekeying)" : "established")
 
             status.peers.append(peer)
+            let allowed = peerObject["allowed_ips"] as? [String] ?? []
+            for prefix in allowed where gatewayByPrefix[prefix] == nil {
+                gatewayByPrefix[prefix] = peer.name
+            }
+        }
+
+        let control = object["control"] as? [String: Any]
+        status.controlSynchronized = control?["control_synchronized"] as? Bool ?? true
+        let routing = control?["routing"] as? [String: Any]
+        status.selectedExit = routing?["selected_exit"] as? String
+        for case let route as [String: Any] in routing?["routes"] as? [Any] ?? [] {
+            guard route["kind"] as? String == "exit", route["role"] as? String == "recipient" else { continue }
+            var offer = ExitOffer()
+            offer.routeID = route["route_id"] as? String ?? ""
+            offer.prefix = route["prefix"] as? String ?? ""
+            offer.active = route["active"] as? Bool ?? false
+            offer.gatewayName = gatewayByPrefix[offer.prefix]
+            if !offer.routeID.isEmpty {
+                status.exitOffers.append(offer)
+            }
         }
         return status
     }

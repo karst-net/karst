@@ -39,6 +39,12 @@ netmap-cache*
 # dependency list that is wrong the moment Cargo.lock moves.
 *.cdx.json
 
+# ── Swift ───────────────────────────────────────────────────────────────────
+# `swift build`/`swift test` under packaging/macos/*/ write several hundred
+# MB of SwiftPM build products here per package — nothing a gitignore rule
+# previously covered.
+.build/
+
 # ── Node ────────────────────────────────────────────────────────────────────
 node_modules/
 dist/
