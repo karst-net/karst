@@ -63,17 +63,6 @@ ignore = [
     # upgrade exists, so there is nothing to bump to; re-evaluate if/when
     # `uniffi` moves off `askama` or `basic-toml` gains a maintainer.
     "RUSTSEC-2026-0374",
-    # RUSTSEC-2026-0441: `pin-utils` is unmaintained (upstream recommends
-    # `core::pin::pin!`, `pin-project`, or `pin-project-lite` instead). It
-    # is not a direct dependency of anything in this tree -- it reaches it
-    # transitively via `aws-sdk-ec2` 1.177.0's own `aws-smithy-http`
-    # internals, pulled in by `bins/karst-anchor-scheduler` and
-    # `bins/karst-scaler-aws` (-> `karst-scaler`). `pin-utils` itself has
-    # had no release since the announcement, so there is no version to
-    # bump to; a fix would mean the upstream `aws-sdk-ec2`/`aws-smithy-http`
-    # crates dropping it, which is outside this repo's control.
-    # Re-evaluate when a newer `aws-sdk-ec2` release stops depending on it.
-    "RUSTSEC-2026-0441",
 ]
 
 [sources]
