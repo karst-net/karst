@@ -14,6 +14,7 @@ do not replace a failed applicable scenario with a `Not applicable` mark.
 | DNS apply/query/revert (NET-01–04) |  |  |  |  |  |
 | Direct and relay paths (FND-09–10) |  |  |  |  |  |
 | Explicit exit-node use/disable (NET-06) |  |  |  |  |  |
+| Software identity and compatibility reporting (SWV-01–05) |  |  |  |  |  |
 
 | Shared service or browser surface | Required evidence |
 | --- | --- |

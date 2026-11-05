@@ -17,7 +17,7 @@ as evidence.
 | --- | --- |
 | [00-command-procedures.md](00-command-procedures.md) | Command-by-command procedures for every scenario ID below |
 | [01-foundation-and-connectivity.md](01-foundation-and-connectivity.md) | `karst-control`, `karst-relay`, `karstd`, `karst`; UC-01, UC-02, UC-04, UC-08 |
-| [02-clients-and-networking.md](02-clients-and-networking.md) | Linux, macOS, Windows clients; TUN/userspace, KarstDNS, subnet routing and exit nodes; UC-01, UC-06, UC-07, UC-08 |
+| [02-clients-and-networking.md](02-clients-and-networking.md) | Linux, macOS, Windows clients; TUN/userspace, KarstDNS, subnet routing and exit nodes; software identity and compatibility reporting ([#496](https://github.com/karst-net/karst/issues/496)); UC-01, UC-06, UC-07, UC-08 |
 | [03-administration-and-portal.md](03-administration-and-portal.md) | Admin console, user portal, IdP/SCIM, policy, lifecycle, DNS, routes and relay registry; UC-03 through UC-08 |
 | [04-bedrock-audit-and-operations.md](04-bedrock-audit-and-operations.md) | `karst-bedrock`, control, relay telemetry, audit, posture, metrics and support tooling; UC-09 and UC-10 |
 | [05-release-matrix.md](05-release-matrix.md) | Cross-component, platform, accessibility, upgrade, recovery and regression sign-off |
