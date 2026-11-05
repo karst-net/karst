@@ -1,0 +1,47 @@
+SWV-03 raw evidence: installed CLI vs. running daemon version, captured
+across an in-place binary replacement that deliberately precedes the daemon
+restart, on both throwaway Linux client containers in the isolated `karst496`
+deployment on turing. Commands run via `docker exec`/`docker cp`/`docker
+restart` against containers `issue496-preschema` and `issue496-baseline`.
+
+=== issue496-preschema (preschema build -> HEAD) ===
+
+pre-swap   2026-11-05T01:38:52Z
+  $ karst --version   -> karst 0.0.0+git.8279d90e4eec944343a49d17a1bd03202a6a6bbe
+  $ karst version      -> version = "0.0.0+git.8279d90e4eec944343a49d17a1bd03202a6a6bbe"
+
+swap (docker cp new karstd/karst into the running container; daemon process
+NOT restarted)   2026-11-05T01:39:07Z
+
+post-swap, pre-restart
+  $ karst --version   -> karst 0.0.0+git.3abe96e8d7e35d200c33f9ca89b344d25c3aa3e7   (installed binary: NEW)
+  $ karst version      -> version = "0.0.0+git.8279d90e4eec944343a49d17a1bd03202a6a6bbe"  (running daemon: still OLD)
+
+restart   2026-11-05T01:39:13Z
+
+post-restart
+  $ karst version      -> version = "0.0.0+git.3abe96e8d7e35d200c33f9ca89b344d25c3aa3e7"  (running daemon: NEW)
+
+=== issue496-baseline (e67b50c build -> HEAD) ===
+
+pre-swap
+  $ karst --version   -> karst 0.0.0+git.e67b50c575ede1c2d713ab62c3707a50f0f790c4
+  $ karst version      -> version = "0.0.0+git.e67b50c575ede1c2d713ab62c3707a50f0f790c4"
+
+swap   2026-11-05T01:39:54Z
+
+post-swap, pre-restart
+  $ karst --version   -> karst 0.0.0+git.3abe96e8d7e35d200c33f9ca89b344d25c3aa3e7   (installed binary: NEW)
+  $ karst version      -> version = "0.0.0+git.e67b50c575ede1c2d713ab62c3707a50f0f790c4"  (running daemon: still OLD)
+
+restart (same timestamp, 2026-11-05T01:39:54Z)
+
+post-restart
+  $ karst version      -> version = "0.0.0+git.3abe96e8d7e35d200c33f9ca89b344d25c3aa3e7"  (running daemon: NEW)
+
+Conclusion: in both cases the installed-binary query (`karst --version`)
+reflects the replacement immediately, while the running-daemon query (`karst
+version`, served over the daemon's live control socket) keeps reporting the
+pre-upgrade build until the daemon process actually restarts. The two
+disagree for exactly the window between binary replacement and restart, and
+agree again immediately after restart. (SWV-03: Pass.)

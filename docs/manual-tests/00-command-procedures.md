@@ -313,6 +313,73 @@ docs/operations/macos-managed-device-mdm.md for background.
    updates within a few polling intervals (~2-10s), without a full
    tunnel restart.
 
+## SWV-01 through SWV-05: software identity and compatibility
+
+See docs/operations/software-versions.md for the full field semantics this
+section verifies against.
+
+1. Enroll a released build with compliance collection left disabled. While it
+   is synchronizing, open **Machines → Status → Software version** (or the
+   Gateway inventory's **Agent software**) for that device:
+
+   ```sh
+   sudo karst status
+   sudo karst version
+   ```
+
+   Record the displayed release, source revision, and artifact identity
+   (`sha256:<digest>` on Linux). Confirm these populate whether or not
+   compliance collection is enabled.
+2. Without SSH or log access, compare three devices in the console: this
+   newly-synced node, a node that has never reported software (unknown
+   identity), and a node stopped for over 15 minutes (stale). Then, on the
+   first node, replace the installed binary with a different release and
+   restart the service:
+
+   ```sh
+   sudo systemctl stop karstd
+   sudo cp <new-build-path> /usr/local/bin/karstd
+   sudo systemctl start karstd
+   sudo karst status
+   ```
+
+   Confirm the console's reported identity and receipt time fully replace
+   the prior build's fields — none of the old release/revision/artifact
+   fields may persist alongside the new ones.
+3. Before restarting the service, compare the installed-package version
+   against the running daemon's reported version:
+
+   ```sh
+   karst --version        # installed CLI/package, no daemon contact
+   sudo karst version      # running daemon
+   sudo karst status --json | grep -i version
+   ```
+
+   The installed-version query must reflect the replaced binary immediately;
+   the running-daemon query must still report the pre-upgrade build until the
+   service actually restarts (step 2's restart). Record both outputs at each
+   stage.
+4. Enroll a build below a currently required control capability schema (an
+   old relay-lifecycle or gateway-ingress level). Inspect the device's control
+   capability check in the console:
+
+   ```sh
+   sudo karst status
+   ```
+
+   Confirm control's rejection names the specific capability and
+   required/reported schema with upgrade guidance, and that the device's
+   software identity (step 1) remains visible despite the rejection. Upgrade
+   that node to a compliant build, restart, and confirm a later sync clears
+   the rejection. A second node already on an accepted release must not be
+   treated as compatible with the rejected node merely for sharing a release
+   string.
+5. For every platform run, retain: the release tag/revision installed,
+   `uname -a` or platform/OS version, a console screenshot or the raw
+   `GET /api/karst/v1/versions` response, and UTC timestamps for enrollment,
+   stop/restart, and upgrade. Compile-only, cross-compiled, or mocked-API
+   evidence does not satisfy this row for any platform.
+
 ## ADM-01 through ADM-11: Console and portal
 
 Use a separate private browser window for each role; preserve no bearer tokens.
