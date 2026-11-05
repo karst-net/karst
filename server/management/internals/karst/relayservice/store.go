@@ -110,6 +110,9 @@ func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 	// Never accept account ownership from a caller-supplied record.
 	service.AccountID = account
 	service.Revision = 1
+	if !service.AccessManaged {
+		return nil, fmt.Errorf("%w: access_managed must be true and at least one allowed group selected", ErrInvalid)
+	}
 	if err := validate(service); err != nil {
 		return nil, err
 	}
@@ -120,15 +123,6 @@ func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 		}
 		if count != 1 {
 			return fmt.Errorf("%w: ponor_id is not registered in this account", ErrInvalid)
-		}
-		if !service.AccessManaged {
-			var locked int64
-			if err := tx.Model(&BackendAccess{}).Where("account_id = ? AND relay_id = ?", account, service.PonorID).Count(&locked).Error; err != nil {
-				return err
-			}
-			if locked > 0 {
-				return fmt.Errorf("%w: backend requires explicit group access", ErrInvalid)
-			}
 		}
 		if err := s.configureAccess(ctx, tx, service); err != nil {
 			return err

@@ -4,14 +4,18 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
@@ -34,16 +38,30 @@ func TestRelayServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	require.NoError(t, db.AutoMigrate(&relayreg.StoredRelay{}))
-	require.NoError(t, db.Create(&relayreg.StoredRelay{AccountID: "a", ID: "ponor-a"}).Error)
+	require.NoError(t, db.AutoMigrate(&relayreg.StoredRelay{}, &types.Group{}, &policy.Version{}))
+	ponor, err := relayreg.NewStore(db)
+	require.NoError(t, err)
+	registered, err := ponor.Create(relayreg.WithAccount(context.Background(), "a"), relayreg.Entry{
+		Address: "203.0.113.1:443", TLSServerName: "relay.example.com",
+		IdentityKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, relayreg.IdentityKeySize)),
+	})
+	require.NoError(t, err)
 	require.NoError(t, db.Create(&relayreg.StoredRelay{AccountID: "b", ID: "ponor-b"}).Error)
+	require.NoError(t, db.Create(&types.Group{ID: "eng", AccountID: "a", Name: "Engineering"}).Error)
 	store, err := relayservice.NewStore(db)
 	require.NoError(t, err)
+	ctx := relayservice.WithAccount(context.Background(), "a")
+	_, err = store.SetPublication(ctx, "services")
+	require.NoError(t, err)
+	require.NoError(t, store.RefreshAdmissionLease(registered.ID))
 	router := mux.NewRouter()
 	RegisterRelayServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store)
-	w := serviceRequest(router, http.MethodPost, "", `{"id":"one","ponor_id":"ponor-b"}`, true)
+	// issue #530: POST no longer accepts an unmanaged ("legacy") association.
+	w := serviceRequest(router, http.MethodPost, "", fmt.Sprintf(`{"id":"one","ponor_id":%q}`, registered.ID), true)
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
-	w = serviceRequest(router, http.MethodPost, "", `{"id":"one","ponor_id":"ponor-a"}`, true)
+	w = serviceRequest(router, http.MethodPost, "", `{"id":"one","ponor_id":"ponor-b","access_managed":true,"allowed_groups":["eng"]}`, true)
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+	w = serviceRequest(router, http.MethodPost, "", fmt.Sprintf(`{"id":"one","ponor_id":%q,"access_managed":true,"allowed_groups":["eng"]}`, registered.ID), true)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	w = serviceRequest(router, http.MethodGet, "", "", true)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())

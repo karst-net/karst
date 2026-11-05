@@ -104,3 +104,14 @@ explicitly migrated; adding a narrow grant does not cancel a broad legacy rule.
 A remote relay management agent supplies authenticated roster delivery, provider
 provisioning acquires durable orchestration, or membership-driven account-wide
 refresh becomes a bottleneck.
+
+> **Addendum, 2026-11-04 (issue #530).** `Create` no longer accepts
+> `access_managed: false`. The migration bridge this ADR introduced —
+> creating a `RelayService` with no groups to opt an already account-wide
+> relay into service-publication mode before later assigning it group
+> access — is removed; `POST /relay-services` always requires
+> `access_managed: true` and at least one allowed group, so the association
+> can only be created through the same group-selection flow "Configure
+> relay" uses. Rows created as unmanaged before this change are
+> grandfathered: this addendum does not migrate or delete them, only closes
+> the path that created new ones.

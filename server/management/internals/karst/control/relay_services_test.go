@@ -44,8 +44,10 @@ func TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback(t *test
 	p, err := ponor.Create(relayreg.WithAccount(context.Background(), "acct"), entry)
 	require.NoError(t, err)
 	ctx := relayservice.WithAccount(context.Background(), "acct")
-	_, err = services.Create(ctx, relayservice.Service{ID: "primary", PonorID: p.ID})
-	require.NoError(t, err)
+	// A pre-existing unmanaged association, grandfathered rather than
+	// created through Create, which now always requires managed access
+	// (issue #530); this test is about publication authority, not that.
+	require.NoError(t, db.Create(&relayservice.Service{AccountID: "acct", ID: "primary", PonorID: p.ID, Revision: 1}).Error)
 	f.handler.RelayServices = services
 	f.handler.Relays = []*proto.KarstRelay{{Address: "203.0.113.9:443"}}
 	lifecycleRequest := func(known uint64) *proto.KarstNetmapResponse {

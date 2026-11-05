@@ -94,7 +94,7 @@ The authenticated management API exposes these additive endpoints under
 | Method and path | Effect |
 |---|---|
 | `GET /relay-services` | List this account's associations and Ponor registry presence |
-| `POST /relay-services` | Create an explicit association to an existing account-local registry record |
+| `POST /relay-services` | Create a group-managed association to an existing account-local registry record |
 | `DELETE /relay-services/{serviceId}` | Delete the association; withdraw its otherwise unused endpoint when service publication is active |
 | `GET /relay-services/publication` | Read the persistent authority choice: `legacy` or `services` |
 | `POST /relay-services/publication/preview` | Validate and list the service associations without changing publication |
@@ -105,12 +105,20 @@ request cannot supply an account ID, identity key, or credential. Unknown
 fields and multiple JSON documents are rejected. The referenced registry ID
 must belong to the caller's authenticated account.
 
-Example request body (substitute the existing registry ID):
+`POST /relay-services` always requires `access_managed: true` and at least
+one entry in `allowed_groups`; there is no account-wide bypass. Service
+publication must already be active and the backend must have a live,
+identity-bound admission writer (ADR-0058) before the group-managed
+association can be created.
+
+Example request body (substitute the existing registry ID and group IDs):
 
 ```json
 {
   "id": "primary",
-  "ponor_id": "existing-ponor-registry-id"
+  "ponor_id": "existing-ponor-registry-id",
+  "access_managed": true,
+  "allowed_groups": ["existing-group-id"]
 }
 ```
 
@@ -134,20 +142,28 @@ address, region, or provider.
 3. Upgrade control before using `/relay-services`. Older control versions do
    not expose this API. Existing client wire projections remain unchanged,
    so this step requires no client upgrade.
-4. Create each association while publication is in legacy mode, then list it
-   and inspect the presence field. An invalid reference returns 422; a
-   duplicate service ID returns 409. Existing file-only registry entries must
-   first be represented in the account-local registry before they can be
-   associated; do not guess IDs.
+4. Install the identity-bound admission writer for each backend and confirm
+   its lease is live (`GET /relay-services/admission-targets`), and confirm
+   the account groups to grant already exist. `POST /relay-services` always
+   requires `access_managed: true` and at least one allowed group — there is
+   no unmanaged bridge to create the association in before groups are
+   chosen. Existing file-only registry entries must first be represented in
+   the account-local registry before they can be associated; do not guess
+   IDs.
 5. Use **Preview service publication** (or the preview API). It validates
    account-local references before activation.
-6. Review the service list and acknowledge the connectivity change before
-   applying service publication. Control revalidates the configuration,
-   persists the authority choice, and notifies connected clients. Only the
-   referenced endpoint is projected into the existing `relays` field; pins
-   remain protocol-specific. An empty service set publishes no Relay
-   endpoints and never falls back to global/legacy entries.
-7. To roll back, explicitly restore `legacy` publication before downgrading
+6. Review the acknowledgment and switch publication to `services` before
+   creating any association: `configureAccess` requires that authority
+   already be active. With no services created yet this briefly publishes no
+   Relay endpoints — it never falls back to legacy/global entries — so
+   proceed straight to the next step.
+7. Create each association with its `allowed_groups`, then list it and
+   inspect the presence field, to restore access without an extended gap. An
+   invalid reference returns 422; a duplicate service ID returns 409. Control
+   revalidates the configuration and notifies connected clients as each
+   association is added. Only the referenced endpoint is projected into the
+   existing `relays` field; pins remain protocol-specific.
+8. To roll back, explicitly restore `legacy` publication before downgrading
    control. This can republish previously omitted legacy endpoints; review
    the old registry first. Older control binaries ignore the publication
    table, so downgrading without this step bypasses the chosen service
