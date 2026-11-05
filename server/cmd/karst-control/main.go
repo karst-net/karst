@@ -245,13 +245,12 @@ func main() {
 	scalerAdvisorURL := strings.TrimSuffix(os.Getenv(karstScalerAdvisorURLEnv), "/")
 	relayAllocateControlAPIBase := strings.TrimSuffix(os.Getenv(karstRelayAllocateControlAPIBaseEnv), "/")
 
-	relayAllocateMaxConcurrent := 0
-	if raw := os.Getenv(karstRelayAllocateMaxConcurrentEnv); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 {
-			log.Fatalf("karst: %s=%q must be a positive integer", karstRelayAllocateMaxConcurrentEnv, raw)
-		}
-		relayAllocateMaxConcurrent = parsed
+	relayAllocateMaxConcurrent, warnRefuseAll, err := parseRelayAllocateMaxConcurrent(os.Getenv(karstRelayAllocateMaxConcurrentEnv))
+	if err != nil {
+		log.Fatalf("karst: %s=%v", karstRelayAllocateMaxConcurrentEnv, err)
+	}
+	if warnRefuseAll {
+		log.Printf("karst: %s -- every relay allocation request will be refused (ADR-0045 §6)", karstRelayAllocateMaxConcurrentEnv)
 	}
 
 	demandHistoryInterval := karstDemandHistoryDefaultInterval
@@ -616,6 +615,29 @@ func checkLegacyTurnConfig(cfg *nbserver.Config) error {
 		"%d server(s)), which karst-control does not support — Karst dropped standalone TURN "+
 		"support in favor of Relay-only transport fallback. Remove the turn block from the config file.",
 		turn.TimeBasedCredentials, len(turn.Turns))
+}
+
+// parseRelayAllocateMaxConcurrent is main's testable half for
+// karstRelayAllocateMaxConcurrentEnv. Unset (raw == "") returns 0 with no
+// warning -- the in-process default. A non-integer raw value is a genuine
+// misconfiguration and comes back as err. A successfully parsed non-positive
+// value comes back as 0 with warn=true rather than err: this const's own doc
+// comment and relayalloc.Store.Create's both treat non-positive as "refuse
+// every allocation request," not a startup failure -- it is this
+// deployment's documented default, not a typo the way a non-numeric value
+// above is.
+func parseRelayAllocateMaxConcurrent(raw string) (value int, warn bool, err error) {
+	if raw == "" {
+		return 0, false, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false, fmt.Errorf("%q is not an integer", raw)
+	}
+	if parsed <= 0 {
+		return 0, true, nil
+	}
+	return parsed, false, nil
 }
 
 func loadPolicy() (*policy.Document, error) {
