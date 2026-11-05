@@ -20,6 +20,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/rollout"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
+	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/auth"
 )
 
@@ -46,18 +47,21 @@ func rolloutFixture(t *testing.T) rolloutEnv {
 	return rolloutEnv{db: db, store: store, nodes: nodes}
 }
 
-func rolloutRouter(e rolloutEnv) *mux.Router {
+// role is baked into the router at construction, via the same scanPermissions
+// fake (nodes_test.go) every other RegisterXEndpoints test in this package
+// uses -- karstAuthorization(manager) is what actually puts the role in
+// context for a real request (see RegisterRolloutEndpoints's own doc
+// comment), so unlike before #539's fix, a test can no longer inject a role
+// onto an individual request against an already-built router.
+func rolloutRouter(e rolloutEnv, role string) *mux.Router {
 	router := mux.NewRouter()
-	RegisterRolloutEndpoints(router, e.store, e.nodes)
+	RegisterRolloutEndpoints(router, scanPermissions{role: types.UserRole(role)}, e.store, e.nodes)
 	return router
 }
 
-func rolloutRequest(router *mux.Router, role, method, path, body string) *httptest.ResponseRecorder {
+func rolloutRequest(router *mux.Router, method, path, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, "/karst/v1/rollouts"+path, strings.NewReader(body))
 	r = nbcontext.SetUserAuthInRequest(r, auth.UserAuth{AccountId: "a", UserId: "admin"})
-	if role != "" {
-		r = r.WithContext(nbcontext.WithRole(r.Context(), role))
-	}
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
 	return w
@@ -84,39 +88,39 @@ func threeComponentPlanBody() string {
 // component applies.
 func TestRolloutAPIHappyPathToCompleted(t *testing.T) {
 	e := rolloutFixture(t)
-	router := rolloutRouter(e)
+	router := rolloutRouter(e, "admin")
 
-	w := rolloutRequest(router, "admin", http.MethodPost, "", threeComponentPlanBody())
+	w := rolloutRequest(router, http.MethodPost, "", threeComponentPlanBody())
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	created := decodeRolloutPayload(t, w)
 	require.Equal(t, rollout.StatePlanned, created.State)
 	require.Len(t, created.Components, 3)
 	require.Empty(t, created.Compatibility, "no component declares a required schema")
 
-	w = rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/start",
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/start",
 		fmt.Sprintf(`{"revision":%d,"acknowledge":true}`, created.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	started := decodeRolloutPayload(t, w)
 	require.Equal(t, rollout.StateInProgress, started.State)
 
 	// Out of order: relay_job is sequence 1, control is sequence 0.
-	w = rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/components/relay_job/mark-applied",
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/components/relay_job/mark-applied",
 		fmt.Sprintf(`{"revision":%d}`, started.Revision))
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
 
-	w = rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/components/control/mark-applied",
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/components/control/mark-applied",
 		fmt.Sprintf(`{"revision":%d}`, started.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	afterControl := decodeRolloutPayload(t, w)
 	require.Equal(t, rollout.StateInProgress, afterControl.State)
 	require.Contains(t, afterControl.Note, "scripts/compose-versions.py", "no deployment snapshot is configured in this test")
 
-	w = rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/components/relay_job/mark-applied",
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/components/relay_job/mark-applied",
 		fmt.Sprintf(`{"revision":%d}`, afterControl.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	afterRelay := decodeRolloutPayload(t, w)
 
-	w = rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/components/console/mark-applied",
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/components/console/mark-applied",
 		fmt.Sprintf(`{"revision":%d}`, afterRelay.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	completed := decodeRolloutPayload(t, w)
@@ -132,7 +136,7 @@ func TestRolloutAPIHappyPathToCompleted(t *testing.T) {
 // an explicit override_incompatibility proceeds.
 func TestRolloutAPIBlocksStartOnIncompatibleFleetUnlessOverridden(t *testing.T) {
 	e := rolloutFixture(t)
-	router := rolloutRouter(e)
+	router := rolloutRouter(e, "admin")
 
 	require.NoError(t, e.db.Create(&node.Identity{Handle: "peer-1", PublicKey: []byte{1}}).Error)
 	require.NoError(t, e.db.Exec("INSERT INTO peers VALUES (?, ?)", "peer-1", "a").Error)
@@ -141,18 +145,18 @@ func TestRolloutAPIBlocksStartOnIncompatibleFleetUnlessOverridden(t *testing.T) 
 	body := fmt.Sprintf(`{"target_release":"v0.9.0","components":[
 		{"name":"control","sequence":0,"target_digest":%q,"verification_ref":"ok","requires_relay_lifecycle_schema":2}
 	]}`, testValidDigest)
-	w := rolloutRequest(router, "admin", http.MethodPost, "", body)
+	w := rolloutRequest(router, http.MethodPost, "", body)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	created := decodeRolloutPayload(t, w)
 	require.Len(t, created.Compatibility, 1)
 	require.True(t, created.Compatibility[0].Blocking)
 	require.EqualValues(t, 1, created.Compatibility[0].IncompatiblePeerCount)
 
-	w = rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/start",
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/start",
 		fmt.Sprintf(`{"revision":%d,"acknowledge":true}`, created.Revision))
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String(), "blocking compatibility must refuse start without an override")
 
-	w = rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/start",
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/start",
 		fmt.Sprintf(`{"revision":%d,"acknowledge":true,"override_incompatibility":true}`, created.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	started := decodeRolloutPayload(t, w)
@@ -163,13 +167,14 @@ func TestRolloutAPIBlocksStartOnIncompatibleFleetUnlessOverridden(t *testing.T) 
 // this workflow has no device-facing or Scaler-role action at all.
 func TestRolloutAPIRoleGating(t *testing.T) {
 	e := rolloutFixture(t)
-	router := rolloutRouter(e)
 	for _, role := range []string{"user", "noc", "auditor", ""} {
-		w := rolloutRequest(router, role, http.MethodGet, "", "")
+		router := rolloutRouter(e, role)
+		w := rolloutRequest(router, http.MethodGet, "", "")
 		require.Equal(t, http.StatusForbidden, w.Code, "role %q must be refused", role)
 	}
 	for _, role := range []string{"admin", "owner"} {
-		w := rolloutRequest(router, role, http.MethodGet, "", "")
+		router := rolloutRouter(e, role)
+		w := rolloutRequest(router, http.MethodGet, "", "")
 		require.Equal(t, http.StatusOK, w.Code, "role %q must be allowed", role)
 	}
 }
@@ -179,20 +184,20 @@ func TestRolloutAPIRoleGating(t *testing.T) {
 // audit, and that the plan cannot be deleted afterward.
 func TestRolloutAPIFailComponentAndRollBack(t *testing.T) {
 	e := rolloutFixture(t)
-	router := rolloutRouter(e)
+	router := rolloutRouter(e, "admin")
 
-	created := decodeRolloutPayload(t, rolloutRequest(router, "admin", http.MethodPost, "", threeComponentPlanBody()))
-	started := decodeRolloutPayload(t, rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/start",
+	created := decodeRolloutPayload(t, rolloutRequest(router, http.MethodPost, "", threeComponentPlanBody()))
+	started := decodeRolloutPayload(t, rolloutRequest(router, http.MethodPost, "/"+created.ID+"/start",
 		fmt.Sprintf(`{"revision":%d,"acknowledge":true}`, created.Revision)))
 
-	w := rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/components/control/mark-failed",
+	w := rolloutRequest(router, http.MethodPost, "/"+created.ID+"/components/control/mark-failed",
 		fmt.Sprintf(`{"revision":%d,"reason":"nomad job run failed"}`, started.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	failed := decodeRolloutPayload(t, w)
 	require.Equal(t, rollout.StateFailed, failed.State)
 	require.Equal(t, "control", failed.FailedComponent)
 
-	w = rolloutRequest(router, "admin", http.MethodPost, "/"+created.ID+"/rollback",
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/rollback",
 		fmt.Sprintf(`{"revision":%d,"acknowledge_rollback":true,"reason":"operator reverted digest"}`, failed.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	rolledBack := decodeRolloutPayload(t, w)
@@ -203,7 +208,7 @@ func TestRolloutAPIFailComponentAndRollBack(t *testing.T) {
 		}
 	}
 
-	w = rolloutRequest(router, "admin", http.MethodDelete, fmt.Sprintf("/%s?revision=%d", created.ID, rolledBack.Revision), "")
+	w = rolloutRequest(router, http.MethodDelete, fmt.Sprintf("/%s?revision=%d", created.ID, rolledBack.Revision), "")
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String(), "a rolled_back plan must stay for audit, not be deletable")
 }
 
@@ -212,9 +217,9 @@ func TestRolloutAPIFailComponentAndRollBack(t *testing.T) {
 // baseline API tests.
 func TestRolloutAPIDeleteRequiresPlannedState(t *testing.T) {
 	e := rolloutFixture(t)
-	router := rolloutRouter(e)
-	created := decodeRolloutPayload(t, rolloutRequest(router, "admin", http.MethodPost, "", threeComponentPlanBody()))
-	require.Equal(t, http.StatusNoContent, rolloutRequest(router, "admin", http.MethodDelete,
+	router := rolloutRouter(e, "admin")
+	created := decodeRolloutPayload(t, rolloutRequest(router, http.MethodPost, "", threeComponentPlanBody()))
+	require.Equal(t, http.StatusNoContent, rolloutRequest(router, http.MethodDelete,
 		fmt.Sprintf("/%s?revision=%d", created.ID, created.Revision), "").Code)
 
 	var remaining int64
@@ -224,7 +229,7 @@ func TestRolloutAPIDeleteRequiresPlannedState(t *testing.T) {
 
 func TestRolloutAPIRejectsUnauthenticated(t *testing.T) {
 	e := rolloutFixture(t)
-	router := rolloutRouter(e)
+	router := rolloutRouter(e, "admin")
 	r := httptest.NewRequest(http.MethodGet, "/karst/v1/rollouts", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)

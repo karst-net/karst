@@ -16,6 +16,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/rollout"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
+	"github.com/netbirdio/netbird/management/server/permissions"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/management/http/util"
 	"github.com/netbirdio/netbird/shared/management/status"
@@ -74,17 +75,34 @@ type rolloutPlanPayload struct {
 // workflow. Every route is uniformly admin/owner-gated via
 // requireRolloutAdminOrOwner, the same role check versions.go's own
 // handler.versions already uses -- unlike relay allocation, there is no
-// device/Scaler-role action to allowlist through karstAuthorization,
-// because v1 has no reconciliation loop (ADR-0066): the operator drives
-// every step by hand through the console, which reaches control only
-// through the normal admin user session.
-func RegisterRolloutEndpoints(router *mux.Router, store rolloutStore, fleet rolloutFleetChecker, options ...RolloutOptions) {
+// device/Scaler-role action to allowlist through karstAuthorization's own
+// per-route rules. That gate is still what this mounts behind, though:
+// requireRolloutAdminOrOwner only reads nbcontext.RoleFromContext, it does
+// not populate it, and nothing upstream of this package's own routes does
+// either -- versions.go's identical check only works because handler.versions
+// is registered on nodes.go's karstRouter, which wraps every route in
+// karstAuthorization(permissionsManager), and that call is what puts the
+// role in context via ValidateAccountAccess/nbcontext.WithRole. This
+// package's routes are mounted directly on the bootstrap-level router
+// instead (RegisterAPIExtension, not RegisterEndpoints), so without wrapping
+// them in karstAuthorization here too, RoleFromContext always came back
+// !ok and every request -- admin, owner, anyone -- was refused.
+func RegisterRolloutEndpoints(router *mux.Router, manager permissions.Manager, store rolloutStore, fleet rolloutFleetChecker, options ...RolloutOptions) {
 	var config RolloutOptions
 	if len(options) > 0 {
 		config = options[0]
 	}
 	routes := router.PathPrefix("/karst/v1/rollouts").Subrouter()
 	routes.Use((&handler{audit: config.Audit}).auditMutations)
+	routes.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if manager == nil {
+				util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "rollout authorization is not configured"), w)
+				return
+			}
+			karstAuthorization(manager)(next).ServeHTTP(w, r)
+		})
+	})
 	routes.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
@@ -140,9 +158,11 @@ func RegisterRolloutEndpoints(router *mux.Router, store rolloutStore, fleet roll
 }
 
 // requireRolloutAdminOrOwner mirrors versions.go's own handler.versions role
-// check exactly -- this workflow is administrative, not device-facing, so
-// it is gated the same way rather than through karstAuthorization's
-// device-role allowlist.
+// check exactly -- this workflow is administrative, not device-facing, so it
+// narrows past karstAuthorization's own module-level allowlist (which this
+// package's RegisterRolloutEndpoints now wraps every route in, see its own
+// doc comment) to admin/owner specifically, the same way handler.versions
+// narrows past karstRouter's identical wrapping.
 func requireRolloutAdminOrOwner(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {

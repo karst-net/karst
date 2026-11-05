@@ -47,6 +47,19 @@ server {
     server_name _;
     root /usr/share/nginx/html;
 
+    # nginx:alpine's stock /etc/nginx/mime.types has no .mjs entry, so it
+    # falls back to application/octet-stream. Harmless for a <script> tag
+    # (browsers sniff those), but fatal for maplibre-gl's worker chunk
+    # (maplibre-gl-worker-*.mjs, see console/src/views/noc.tsx's own
+    # setWorkerUrl comment): a same-origin `new Worker(url, {type:
+    # "module"})` enforces a real JavaScript MIME type on the response with
+    # no sniffing and no library-level fallback, so the worker silently
+    # failed to load and the NOC map rendered as an empty box -- in Chrome;
+    # Safari's more lenient module-worker handling masked it there.
+    location ~* \.mjs$ {
+        default_type application/javascript;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }
