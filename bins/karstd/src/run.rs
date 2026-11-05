@@ -1156,6 +1156,11 @@ fn run_engine(
                                     .lock()
                                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                                     .clone();
+                                let installed_routes = routes_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .installed()
+                                    .clone();
                                 if command == ipc::Command::GatewayStatus {
                                     return routing_report(
                                         &current,
@@ -1163,6 +1168,7 @@ fn run_engine(
                                         exit_route_active,
                                         gateway_active,
                                         gateway_error.as_deref(),
+                                        &installed_routes,
                                     );
                                 }
                                 return status_json(
@@ -1191,6 +1197,7 @@ fn run_engine(
                                             exit_route_active,
                                             gateway_active,
                                             gateway_error.as_deref(),
+                                            &installed_routes,
                                         ),
                                     }),
                                 );
@@ -1257,12 +1264,18 @@ fn run_engine(
                                     .lock()
                                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                                     .clone();
+                                let installed_routes = routes_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .installed()
+                                    .clone();
                                 output.push_str(&routing_report(
                                     &current,
                                     selected.as_deref(),
                                     exit_route_active,
                                     gateway_active,
                                     gateway_error.as_deref(),
+                                    &installed_routes,
                                 ));
                             }
                             output
@@ -3611,6 +3624,14 @@ fn exit_node_command(
 struct Routes(std::collections::BTreeSet<(std::net::IpAddr, u8)>);
 
 impl Routes {
+    /// The prefixes actually installed over the tunnel right now — the
+    /// ground truth `routing_report`/`routing_json` read a subnet
+    /// recipient's own readiness from, since those routes live in the main
+    /// table rather than behind a policy manager like the exit case.
+    fn installed(&self) -> &std::collections::BTreeSet<(std::net::IpAddr, u8)> {
+        &self.0
+    }
+
     /// Which prefixes a configuration needs routed over the tunnel.
     ///
     /// A prefix already inside an interface address's on-link network is
@@ -4424,12 +4445,25 @@ fn active_exit_route<'a>(
         .filter(|_| exit_route_installed)
 }
 
+/// Whether a subnet recipient offer's own prefix is actually in the main
+/// routing table — the `Routes::installed` counterpart to
+/// `active_exit_route`'s policy check, read directly rather than through a
+/// selection step: unlike an exit route, a subnet recipient route has no
+/// local-consent gate, so "installed" is the only readiness signal there is.
+fn subnet_route_installed(
+    offer: &crate::route_offer::Offer,
+    installed_routes: &std::collections::BTreeSet<(std::net::IpAddr, u8)>,
+) -> bool {
+    installed_routes.contains(&(offer.prefix.base(), offer.prefix.len()))
+}
+
 fn routing_report(
     config: &Config,
     selected_exit: Option<&str>,
     exit_route_installed: bool,
     gateway_active: bool,
     gateway_error: Option<&str>,
+    installed_routes: &std::collections::BTreeSet<(std::net::IpAddr, u8)>,
 ) -> String {
     use std::fmt::Write as _;
 
@@ -4455,7 +4489,10 @@ fn routing_report(
         let active = role == "gateway" && gateway_active
             || kind == "exit"
                 && role == "recipient"
-                && active_exit == Some(offer.route_id.as_str());
+                && active_exit == Some(offer.route_id.as_str())
+            || kind == "subnet"
+                && role == "recipient"
+                && subnet_route_installed(offer, installed_routes);
         let _ = writeln!(out, "\n[[route]]");
         let _ = writeln!(out, "route_id = {:?}", offer.route_id);
         let _ = writeln!(out, "prefix = {:?}", offer.prefix.to_string());
@@ -4865,6 +4902,7 @@ fn routing_json(
     exit_route_installed: bool,
     gateway_active: bool,
     gateway_error: Option<&str>,
+    installed_routes: &std::collections::BTreeSet<(std::net::IpAddr, u8)>,
 ) -> RoutingJson {
     let active_exit = active_exit_route(config, selected_exit, exit_route_installed);
     let routes = config
@@ -4882,7 +4920,10 @@ fn routing_json(
             let active = role == "gateway" && gateway_active
                 || kind == "exit"
                     && role == "recipient"
-                    && active_exit == Some(offer.route_id.as_str());
+                    && active_exit == Some(offer.route_id.as_str())
+                || kind == "subnet"
+                    && role == "recipient"
+                    && subnet_route_installed(offer, installed_routes);
             RouteJson {
                 route_id: offer.route_id.clone(),
                 prefix: offer.prefix.to_string(),
@@ -6204,6 +6245,7 @@ mod route_tests {
         dns_query_report, dns_report, routing_report, underlay_addresses, url_authority, Routes,
     };
     use crate::config::Config;
+    use std::collections::BTreeSet;
     use std::net::IpAddr;
 
     /// A config with the given interface addresses and peer ranges.
@@ -6433,6 +6475,24 @@ mod route_tests {
         assert!(Routes::wanted(&cfg, Some("not-offered")).is_empty());
     }
 
+    fn subnet_offer(route_id: &str, prefix: &str) -> crate::route_offer::Offer {
+        use karst_control_client::transport::pb;
+        crate::route_offer::Offer::from_wire(
+            pb::KarstRouteOffer {
+                route_id: route_id.to_owned(),
+                prefix: prefix.to_owned(),
+                gateway_id: vec![1],
+                metric: 100,
+                kind: pb::KarstRouteKind::Subnet as i32,
+                masquerade: false,
+                keep_route: false,
+                role: pb::KarstRouteRole::Recipient as i32,
+            },
+            &[],
+        )
+        .expect("subnet offer")
+    }
+
     fn gateway_offer(route_id: &str, prefix: &str) -> crate::route_offer::Offer {
         use karst_control_client::transport::pb;
         crate::route_offer::Offer::from_wire(
@@ -6505,17 +6565,47 @@ mod route_tests {
             false,
             false,
             Some("nft unavailable"),
+            &BTreeSet::new(),
         );
         assert!(dormant.contains("selected_exit = Some(\"withdrawn-id\")"));
         assert!(dormant.contains("exit_route_active = false"));
         assert!(dormant.contains("gateway_error = Some(\"nft unavailable\")"));
 
-        let active = routing_report(&cfg, Some("exit-eu"), true, false, None);
+        let active = routing_report(&cfg, Some("exit-eu"), true, false, None, &BTreeSet::new());
         assert!(active.contains("exit_route_active = true"));
         assert!(active.contains("route_id = \"exit-eu\""));
         assert!(active.contains("kind = \"exit\""));
         assert!(active.contains("role = \"recipient\""));
         assert!(active.contains("active = true"));
+    }
+
+    /// GitHub issue #521: a subnet recipient offer has no selection step —
+    /// unlike the exit case, there is no `active_exit_route`-style gate to
+    /// mirror — so `subnet_route_installed` must be the only thing that
+    /// decides its `active` field, and it must actually be able to report
+    /// `true`, not just `false` by construction.
+    #[test]
+    fn subnet_recipient_route_reports_active_once_its_kernel_route_is_installed() {
+        let mut cfg = config(&["100.64.0.1/16"], &[&["10.99.0.0/24"]]);
+        cfg.route_offers
+            .push(subnet_offer("dest-lan", "10.99.0.0/24"));
+
+        let not_yet_installed = routing_report(&cfg, None, false, false, None, &BTreeSet::new());
+        assert!(not_yet_installed.contains("kind = \"subnet\""));
+        assert!(not_yet_installed.contains("role = \"recipient\""));
+        assert!(not_yet_installed.contains("active = false"));
+
+        let installed_routes = Routes::wanted(&cfg, None);
+        assert!(
+            !installed_routes.is_empty(),
+            "the subnet recipient offer's prefix must actually be wanted over the tunnel"
+        );
+        let installed = routing_report(&cfg, None, false, false, None, &installed_routes);
+        assert!(
+            installed.contains("active = true"),
+            "a subnet recipient's own kernel route being installed must be \
+             observable through karst status; got: {installed}"
+        );
     }
 
     #[test]
@@ -6547,7 +6637,7 @@ mod route_tests {
             .push(gateway_offer("office-lan", "10.20.0.0/16"));
         cfg.route_offers.push(exit_offer("internet"));
 
-        let report = routing_report(&cfg, None, false, true, None);
+        let report = routing_report(&cfg, None, false, true, None, &BTreeSet::new());
         assert!(report.contains("offers = 2"));
         assert!(report.contains("gateway_active = true"));
         assert!(report.contains("selected_exit = None"));
@@ -6615,7 +6705,14 @@ mod route_tests {
         let control = super::ControlJson {
             control_synchronized: true,
             control_peers: 3,
-            routing: super::routing_json(&cfg_with_offer, Some("exit-eu"), true, false, None),
+            routing: super::routing_json(
+                &cfg_with_offer,
+                Some("exit-eu"),
+                true,
+                false,
+                None,
+                &BTreeSet::new(),
+            ),
         };
         let text_with_control = super::status_json(
             &cfg_with_offer,

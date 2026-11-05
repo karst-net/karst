@@ -213,9 +213,11 @@ daemon rejects it explicitly and the CLI exits unsuccessfully. Use the existing
 
 `gateway status` uses the same routing report as `karst status`; it lists both
 recipient and forwarding roles, not just exit offers. Its `active` field retains
-current status semantics: forwarding readiness for Gateway rows and installed,
-consented exit use for recipient exit rows. Subnet recipient rows are offers,
-not a separate proof of installed kernel routes; inspect `ip route` as below.
+current status semantics: forwarding readiness for Gateway rows, installed,
+consented exit use for recipient exit rows, and — since #521 — whether the
+recipient's own kernel route for the offer's prefix is actually installed for
+subnet recipient rows (there is no consent step for these, so "installed" is
+the whole signal). `ip route` remains the independent cross-check as below.
 Unified configuration, APIs/UI and Relay lifecycle remain pending in #404.
 
 - **`karst status`** — the `[routing]` block reports `gateway_active`,
