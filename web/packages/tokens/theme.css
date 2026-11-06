@@ -3,12 +3,29 @@
 
 :root {
   color-scheme: light dark;
-  --surface: #ffffff;
-  --surface-raised: #f4f7fa;
-  --text: #17202a;
-  --muted: #52616b;
-  --border: #c6d1d9;
-  --accent: #075985;
+  /* DM Sans/DM Mono/Fraunces, matching karst-net.github.io's own stack
+     (its styles.css, fetched 2026-11-06). Not color-scheme dependent, so
+     defined once here rather than repeated in the dark blocks below. */
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, monospace;
+  --font-display: Fraunces, serif;
+  /* Cave palette, light mode -- the "daytime" half of the marketing site's
+     theme.css (its first :root block, before its own unconditional dark
+     override). --accent is NOT the site's literal --water (#36a8b5): that
+     hex is ~2.7:1 against this --surface, which fails WCAG AA for the body
+     text and nav links this token has to carry here. The site itself never
+     uses raw --water for text either -- its own buttons go through --ink,
+     and its one text use of this hue (.hero h1 em) is a separately
+     hand-picked, darker #209aaa reserved for display-size text where the
+     3:1 large-text floor applies. #0c6c78 is that same hue pushed further,
+     tuned for this token's small-text role: ~5.8:1 on --surface and
+     ~5.3:1 on --surface-raised, both comfortably past 4.5:1. */
+  --surface: #fbf8ee;
+  --surface-raised: #f3eedc;
+  --text: #073d47;
+  --muted: #51717a;
+  --border: #d2d8d2;
+  --accent: #0c6c78;
   --accent-text: #ffffff;
   --danger: #a61b1b;
   --success: #176b3a;
@@ -47,15 +64,22 @@
    inside the media query — as this file used to — leaves a toggle with nothing
    to switch, which is how the console shipped an inert Theme button and a
    dark-mode test that graded a white page. */
+/* Cave palette, dark mode -- this is the marketing site's actual rendered
+   theme: its own second :root block (unconditional, no media guard) always
+   wins over its first, so karst-net.github.io only ever ships dark. Values
+   below are lifted directly rather than re-derived: --accent (#d9aa55) is
+   ~8.5:1 against --surface and, with --accent-text (#151612, the site's own
+   .button-primary text color on this bg), ~8.5:1 the other way too -- both
+   already well past 4.5:1 with no adjustment needed. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --surface: #101820;
-    --surface-raised: #1a2630;
-    --text: #edf4f7;
-    --muted: #b3c2c9;
-    --border: #52616b;
-    --accent: #63c5f3;
-    --accent-text: #07131a;
+    --surface: #131716;
+    --surface-raised: #1b1f1a;
+    --text: #e2dfc5;
+    --muted: #aca88e;
+    --border: #3c3f39;
+    --accent: #d9aa55;
+    --accent-text: #151612;
     --danger: #ff9b9b;
     --success: #9be4b5;
     --warning: #ffd18a;
@@ -69,13 +93,13 @@
 }
 
 :root[data-theme="dark"] {
-  --surface: #101820;
-  --surface-raised: #1a2630;
-  --text: #edf4f7;
-  --muted: #b3c2c9;
-  --border: #52616b;
-  --accent: #63c5f3;
-  --accent-text: #07131a;
+  --surface: #131716;
+  --surface-raised: #1b1f1a;
+  --text: #e2dfc5;
+  --muted: #aca88e;
+  --border: #3c3f39;
+  --accent: #d9aa55;
+  --accent-text: #151612;
   --danger: #ff9b9b;
   --success: #9be4b5;
   --warning: #ffd18a;

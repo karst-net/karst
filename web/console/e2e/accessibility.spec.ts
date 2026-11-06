@@ -30,7 +30,7 @@ for (const route of ["posture", "machines", "access"]) {
     const light = await background(page);
     await page.getByLabel("Theme").selectOption("dark");
     await expect.poll(() => background(page)).not.toBe(light);
-    expect(await background(page)).toBe("rgb(16, 24, 32)");
+    expect(await background(page)).toBe("rgb(19, 23, 22)");
     const result = await new AxeBuilder({ page }).analyze();
     expect(result.violations).toEqual([]);
   });
@@ -41,9 +41,9 @@ test("an explicit light choice overrides a dark system preference", async ({ pag
   // cannot get a light console.
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/#/posture");
-  expect(await background(page)).toBe("rgb(16, 24, 32)");
+  expect(await background(page)).toBe("rgb(19, 23, 22)");
   await page.getByLabel("Theme").selectOption("light");
-  expect(await background(page)).toBe("rgb(255, 255, 255)");
+  expect(await background(page)).toBe("rgb(251, 248, 238)");
 });
 
 test("the theme choice survives a reload", async ({ page }) => {
@@ -51,7 +51,7 @@ test("the theme choice survives a reload", async ({ page }) => {
   await page.getByLabel("Theme").selectOption("dark");
   await page.reload();
   await expect(page.getByLabel("Theme")).toHaveValue("dark");
-  expect(await background(page)).toBe("rgb(16, 24, 32)");
+  expect(await background(page)).toBe("rgb(19, 23, 22)");
 });
 
 test("posture opens on exceptions, worst first", async ({ page }) => {
