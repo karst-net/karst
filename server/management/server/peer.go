@@ -1125,11 +1125,23 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 		SSHKey:                      peer.SSHKey,
 		LastLogin:                   &registrationTime,
 		CreatedAt:                   registrationTime,
-		LoginExpirationEnabled:      userID != "" && !temporary,
+		// userID is non-empty here for two different reasons: a genuine JWT
+		// login (addedByUser), or -- for a setup key created by
+		// CreateDeviceInvitation -- the invitation's assigned owner, copied
+		// in above purely for display/ownership (see the "userID = owner"
+		// assignment above and SetupKeyIsInvitation's own doc comment). Only
+		// the former peer can ever clear a login/inactivity expiry: it has a
+		// real identity-provider session to present again. The latter has
+		// none -- the console's own invitation UI promises "No
+		// identity-provider login is needed to enroll" -- so enabling either
+		// expiry for it leaves the device permanently unable to reconnect
+		// once it trips, with no recovery short of an admin deleting the
+		// peer and re-enrolling from scratch.
+		LoginExpirationEnabled:      userID != "" && !temporary && !peerAddConfig.SetupKeyIsInvitation,
 		Ephemeral:                   ephemeral,
 		ProxyMeta:                   peer.ProxyMeta,
 		Location:                    peer.Location,
-		InactivityExpirationEnabled: userID != "" && !temporary,
+		InactivityExpirationEnabled: userID != "" && !temporary && !peerAddConfig.SetupKeyIsInvitation,
 		ExtraDNSLabels:              peer.ExtraDNSLabels,
 		AllowExtraDNSLabels:         peerAddConfig.AllowExtraDNSLabels,
 	}
