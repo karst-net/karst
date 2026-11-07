@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 import { AxeBuilder } from "@axe-core/playwright";
 
 const gatewayInventory = { schema_version: 1, gateways: [], unresolved_routes: [], unsupported_routes: [] };
-const connection = { id: "conn-aws", type: "aws", mode: "read_write", label: "Primary AWS", created_at: "2026-01-01T00:00:00Z" };
+const connection = { id: "conn-aws", type: "aws", mode: "read_write", label: "Primary AWS", created_at: "2026-01-01T00:00:00Z", supports_allocation: true };
 const resources = [{ code: "us-west-2", name: "US West (Oregon)", kind: "region", lat: 45.84, lon: -119.7 }];
 const group = { id: "group-engineering", name: "engineering", peers_count: 32, resources_count: 0 };
 // requireAuthorizedLocation (server) and AllocateRelay's own picker (console)
@@ -43,7 +43,8 @@ test("allocating a relay walks discovery, reviews, and posts the expected reques
   });
 
   await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Allocate a relay" }).click();
+  await page.getByRole("button", { name: "Add relay" }).click();
+  await page.getByRole("button", { name: "No, provision one for me" }).click();
   await expect(page.getByRole("heading", { name: "Allocate a relay" })).toBeVisible();
 
   await page.getByLabel("Name", { exact: true }).fill("denver");
@@ -119,7 +120,8 @@ test("only resources already in Authorized Locations are offered", async ({ page
   await page.route("**/api/karst/v1/locations", (route) => route.fulfill({ json: authorizedLocations }));
 
   await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Allocate a relay" }).click();
+  await page.getByRole("button", { name: "Add relay" }).click();
+  await page.getByRole("button", { name: "No, provision one for me" }).click();
   await page.getByLabel("Infrastructure connection", { exact: true }).selectOption(connection.id);
 
   const location = page.getByLabel("Location", { exact: true });
@@ -133,7 +135,8 @@ test("no infrastructure connections configured is explained, not a dead end", as
   await page.route("**/api/karst/v1/relay-allocations", (route) => route.fulfill({ json: [] }));
   await page.route("**/api/karst/v1/infrastructure-connections", (route) => route.fulfill({ json: [] }));
   await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Allocate a relay" }).click();
+  await page.getByRole("button", { name: "Add relay" }).click();
+  await page.getByRole("button", { name: "No, provision one for me" }).click();
   await expect(page.getByText("Add an infrastructure connection in Settings first.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Review allocation" })).toBeDisabled();
 });

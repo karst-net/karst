@@ -30,7 +30,8 @@ async function fixture(page: import("@playwright/test").Page, existing = false) 
 test("downloaded installation handoff contains settings without reporting deployment success", async ({ page }) => {
   const requests = await fixture(page);
   await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Install a local relay", exact: true }).click();
+  await page.getByRole("button", { name: "Add relay", exact: true }).click();
+  await page.getByRole("button", { name: "I have a host, but nothing is running on it yet" }).click();
   await expect(page.getByRole("button", { name: "Download installation handoff" })).toBeDisabled();
   await page.getByLabel("Installation relay address").fill(entry.address);
   await page.getByLabel("TLS server name", { exact: true }).fill(entry.tls_server_name);
@@ -54,6 +55,7 @@ test("receipt registration leads to named group configuration without key entry"
   const requests = await fixture(page);
   await page.goto("/#/relays");
   await page.getByRole("button", { name: "Add relay", exact: true }).click();
+  await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "receipt.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(receipt)) });
   await expect(page.getByText("Installation receipt loaded for", { exact: false })).toBeVisible();
   await expect(page.getByLabel("Relay identity key")).toBeHidden();
@@ -70,6 +72,7 @@ test("reimporting an installed identity reuses its registration", async ({ page 
   const requests = await fixture(page, true);
   await page.goto("/#/relays");
   await page.getByRole("button", { name: "Add relay", exact: true }).click();
+  await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "receipt.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(receipt)) });
   await page.getByRole("button", { name: "Register installed relay" }).click();
   await expect(page.getByRole("dialog", { name: "Configure a relay" })).toBeVisible();
@@ -80,6 +83,7 @@ test("unrelated receipts show an error without registration or stale form data",
   const requests = await fixture(page);
   await page.goto("/#/relays");
   await page.getByRole("button", { name: "Add relay", exact: true }).click();
+  await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "receipt.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(receipt)) });
   await expect(page.getByRole("button", { name: "Register installed relay" })).toBeVisible();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "wrong.json", mimeType: "application/json", buffer: Buffer.from("{}") });

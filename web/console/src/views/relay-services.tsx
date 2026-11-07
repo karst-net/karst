@@ -121,7 +121,7 @@ export function RelayServices() {
         })}
       </Rows>}
 
-    <Dialog open={addRelayStep === "choice"} title="Add relay" onClose={() => setAddRelayStep(undefined)}>
+    {addRelayStep === "choice" && <Dialog open title="Add relay" onClose={() => setAddRelayStep(undefined)}>
       <p>Is this relay already running somewhere?</p>
       <div className="actions">
         <button className="primary" onClick={() => setAddRelayStep("register")}>Yes — register it</button>
@@ -130,7 +130,7 @@ export function RelayServices() {
       </div>
       <p className="lede">Installing generates a script for an existing control host, then still finishes by registering the result. Provisioning is the only one of the three that creates anything, through an already-configured infrastructure connection.</p>
       <div className="actions"><button onClick={() => setAddRelayStep(undefined)}>Cancel</button></div>
-    </Dialog>
+    </Dialog>}
     {addRelayStep === "install" && <RelayInstallation onClose={() => setAddRelayStep(undefined)} onContinue={() => setAddRelayStep("register")} />}
     {addRelayStep === "register" && <RelayRegistration onClose={() => setAddRelayStep(undefined)} onAdded={endpoint => { setAddRelayStep(undefined); reload(); setRelayId(endpoint.id); setConfiguring(services.find(service => service.ponor_id === endpoint.id) ?? "new"); setMessage("Endpoint registered. Configure group access to complete setup."); }} />}
     {addRelayStep === "allocate" && <AllocateRelay onClose={() => setAddRelayStep(undefined)} onAllocated={() => { setAddRelayStep(undefined); reload(); setMessage("Relay allocation requested. It will show as pending until it registers and access is granted."); }} />}
