@@ -542,6 +542,9 @@ const server = http.createServer((request, response) => {
   if (method === "POST" && karst === "/me/devices/enroll") return json(response, 201, { key: "member-one-time-key", expires_at: "2026-08-22T20:47:00Z" });
   if (method === "GET" && karst === "/me/access") return json(response, 200, memberAccess);
   if (method === "GET" && karst === "/me/sessions") return json(response, 200, memberSessions);
+  // No cross-tenant access in this fixture -- same empty-list fallback the
+  // real server returns when tenancy isn't configured for the caller.
+  if (method === "GET" && karst === "/me/tenancy-accounts") return json(response, 200, []);
   const memberDevice = karst.match(/^\/me\/devices\/([^/]+)$/);
   if (memberDevice && method === "PATCH") return readBody(request).then((body) => { const device = memberDevices.find((item) => item.handle === memberDevice[1]); if (!device) return error(response, 404, "not_found", "device not found"); if (typeof body.name !== "string" || !body.name.trim()) return error(response, 400, "invalid_argument", "name is required"); device.name = body.name.trim(); return json(response, 200, device); });
   if (memberDevice && method === "DELETE") { const index = memberDevices.findIndex((item) => item.handle === memberDevice[1]); if (index < 0) return error(response, 404, "not_found", "device not found"); memberDevices.splice(index, 1); return noContent(response); }

@@ -16,6 +16,17 @@ for (const route of routes) {
   });
 }
 
+// Regression for the account switcher's cross-tenant lookup 404ing on every
+// page load because it was missing from the dev-mode API mock entirely.
+test("the account switcher's cross-tenant lookup does not 404", async ({ page }) => {
+  const responses: number[] = [];
+  page.on("response", (response) => { if (response.url().includes("/me/tenancy-accounts")) responses.push(response.status()); });
+  await page.goto("/#/domains");
+  await expect(page.getByRole("main").getByRole("heading", { level: 2 }).first()).toBeVisible();
+  expect(responses.length).toBeGreaterThan(0);
+  expect(responses.every((status) => status === 200)).toBe(true);
+});
+
 const background = (page: Page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
 // Assert the page actually went dark before running axe against it. The
