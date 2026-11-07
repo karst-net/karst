@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { Dialog, EmptyState } from "@karst-net/ui";
 import type { AllowedRegion } from "@karst-net/api-client";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 import { TutorialHint } from "../tutorial";
 
@@ -12,7 +12,15 @@ type Draft = { provider: string; region: string };
 const blank: Draft = { provider: "", region: "" };
 
 export function Scaler() {
-  const resource = useResource(api.scalerRecommendations);
+  // A 412 here means KARST_SCALER_ADVISOR_URL is configured-but-absent on
+  // this deployment, not a transient failure — it is treated as "no
+  // recommendation feed" rather than routed through Failure's retry UI,
+  // which would otherwise tell an operator to retry something that will
+  // never succeed without a server-side configuration change.
+  const resource = useResource(async () => {
+    try { return await api.scalerRecommendations(); }
+    catch (error) { if (error instanceof ApiError && error.status === 412) return undefined; throw error; }
+  });
   const regions = useResource(api.allowedRegions);
   const { message, setMessage, run } = useMutation(regions.reload);
   const [draft, setDraft] = useState<Draft>();
@@ -38,7 +46,9 @@ export function Scaler() {
     <h2>Scaler Advisor</h2>
     <TutorialHint>A logical planning view, not a control: karst-scaler advise computes how many nodes each capacity pool should have, from recorded demand, and this page just shows that recommendation next to what is actually configured. ADR-0045 §7 Phase 1: the Advisor's recommended node count per pool this tick, compared against each pool's own configured floor. Read-only — nothing here actuates a change.</TutorialHint>
     {pools.length === 0
-      ? <EmptyState title="No recommendation yet">karst-scaler advise has not produced a recommendation for any pool.</EmptyState>
+      ? <EmptyState title={data ? "No recommendation yet" : "Scaler Advisor is not configured"}>
+          {data ? "karst-scaler advise has not produced a recommendation for any pool." : "This deployment has not set KARST_SCALER_ADVISOR_URL, so no Advisor recommendation feed is available."}
+        </EmptyState>
       : <Rows head={<><th>Pool</th><th>Recommended</th><th>Configured</th><th>Cost delta</th><th>Binding constraint</th></>}>
         {pools.map((pool) => <tr key={pool.pool_id}>
           <td><code>{pool.pool_id}</code></td>
