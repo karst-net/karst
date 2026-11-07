@@ -27,7 +27,14 @@ import { GroupPicker } from "./access";
  * picker, not the actual guarantee.
  */
 export function AllocateRelay({ onClose, onAllocated }: { onClose: () => void; onAllocated: () => void }) {
-  const infraConnections = useResource(api.infrastructureConnections);
+  const infraConnectionsResource = useResource(api.infrastructureConnections);
+  // Only offer a connection whose type has a registered allocation driver
+  // (ADR-0067) -- every other connection stays visible for registration/
+  // discovery on the Infrastructure connections page, but picking it here
+  // would only fail, generically, the first time the worker ticks; the
+  // server enforces this independently (relayalloc.Store.Create), this is
+  // for a sane picker, not the actual guarantee.
+  const infraConnections = { ...infraConnectionsResource, value: infraConnectionsResource.value?.filter(c => c.supports_allocation) };
   const groups = useResource(api.groups);
   const authorizedLocations = useResource(api.locations);
   const [connectionId, setConnectionId] = useState("");
@@ -76,7 +83,7 @@ export function AllocateRelay({ onClose, onAllocated }: { onClose: () => void; o
         <option value="">Choose one…</option>
         {(infraConnections.value ?? []).map(c => <option key={c.id} value={c.id}>{c.label || c.type} ({c.type.toUpperCase()})</option>)}
       </select></label>
-      {!infraConnections.loading && (infraConnections.value ?? []).length === 0 && <p className="lede">Add an infrastructure connection in Settings first.</p>}
+      {!infraConnections.loading && (infraConnections.value ?? []).length === 0 && <p className="lede">{(infraConnectionsResource.value ?? []).length === 0 ? "Add an infrastructure connection in Settings first." : "None of your infrastructure connections can provision a relay yet — only AWS and Nomad connections can. Add one in Settings, or install/register a relay instead."}</p>}
       {connectionId && (resources.loading || authorizedLocations.loading
         ? <p>Loading regions/zones/namespaces…</p>
         : resources.error

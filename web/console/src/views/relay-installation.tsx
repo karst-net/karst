@@ -7,7 +7,7 @@ import { api } from "../api";
 import { Failure, useResource } from "../common";
 import { downloadInstaller, type InstallationSettings } from "../relay-installation";
 
-export function RelayInstallation({ onClose }: { onClose: () => void }) {
+export function RelayInstallation({ onClose, onContinue }: { onClose: () => void; onContinue?: () => void }) {
   const locations = useResource(api.locations);
   const [settings, setSettings] = useState<InstallationSettings>({ schema_version: 1, address: "", tls_server_name: "", region: "default", image: "ghcr.io/karst-net/karst-relay:dev", control_image: "ghcr.io/karst-net/karst-control:dev", location: null });
   const [acknowledged, setAcknowledged] = useState(false);
@@ -30,7 +30,9 @@ export function RelayInstallation({ onClose }: { onClose: () => void }) {
       <label><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the deployment scope and interruption to existing relay access.</label>
       <button className="primary" type="submit" disabled={!acknowledged}>Download installation handoff</button>
     </form>
-    {downloaded && <div role="status"><p>Handoff downloaded. Installation has not run.</p><ol><li>Copy the file to the existing control host.</li><li>Run <code>python3 karst-relay-install.py --directory /path/to/compose</code> to check prerequisites, then repeat with <code>--apply</code> to install. No file editing is required.</li><li>Import <code>state/relay-install/receipt.json</code> using Add relay, then review allowed groups and optional internet egress. Enable service publication through its preview if necessary.</li><li>Check admission and Gateway observations before relying on the relay. A running container does not prove traffic readiness.</li></ol><p>Failed installations record their stage locally. Retry the same handoff; keys are preserved. Keep using the generated Compose overlay for future lifecycle operations.</p></div>}
+    {downloaded && <div role="status"><p>Handoff downloaded. Installation has not run.</p><ol><li>Copy the file to the existing control host.</li><li>Run <code>python3 karst-relay-install.py --directory /path/to/compose</code> to check prerequisites, then repeat with <code>--apply</code> to install. No file editing is required.</li><li>Import <code>state/relay-install/receipt.json</code>{onContinue ? " using the next step" : " using Add relay"}, then review allowed groups and optional internet egress. Enable service publication through its preview if necessary.</li><li>Check admission and Gateway observations before relying on the relay. A running container does not prove traffic readiness.</li></ol><p>Failed installations record their stage locally. Retry the same handoff; keys are preserved. Keep using the generated Compose overlay for future lifecycle operations.</p>
+      {onContinue && <button className="primary" onClick={onContinue}>Continue to Add relay</button>}
+    </div>}
     <button onClick={onClose}>Close</button>
   </Dialog>;
 }

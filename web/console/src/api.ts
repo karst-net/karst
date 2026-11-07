@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, InfrastructureConnectionLaunchDefaults, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayAllocation, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, RolloutComponent, RolloutPlan, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, InfrastructureConnectionLaunchDefaults, InfrastructureConnectionNomadLaunchDefaults, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayAllocation, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, RolloutComponent, RolloutPlan, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -424,6 +424,10 @@ export const api = {
   // against, set once here rather than on the allocation request itself.
   updateInfrastructureConnectionLaunchDefaults: (id: string, defaults: InfrastructureConnectionLaunchDefaults) =>
     request<InfrastructureConnection>(`/infrastructure-connections/${encodeURIComponent(id)}/launch-defaults`, { method: "PUT", body: body(defaults) }),
+  // ADR-0067: the Nomad analog -- a pre-registered parameterized job ID
+  // and datacenter, same full-replace semantics.
+  updateInfrastructureConnectionNomadLaunchDefaults: (id: string, defaults: InfrastructureConnectionNomadLaunchDefaults) =>
+    request<InfrastructureConnection>(`/infrastructure-connections/${encodeURIComponent(id)}/nomad-launch-defaults`, { method: "PUT", body: body(defaults) }),
   // ADR-0045 §6's second addendum: the one mutating call this API makes --
   // opts an AWS Local Zone's group into use. A one-way door on AWS's side
   // (no opt-out API), so the caller must have already confirmed this with
