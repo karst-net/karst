@@ -1060,6 +1060,15 @@ func TestAssignedInvitationThroughControl(t *testing.T) {
 				peer, err := am.Store.GetPeerByPeerPubKey(ctx, store.LockingStrengthNone, karstnode.Handle(signer.Public()))
 				require.NoError(t, err)
 				require.Equal(t, user.Id, peer.UserID)
+				// peer.UserID above is ownership for display, copied from the
+				// invitation's assignee -- never proof of an identity-provider
+				// login (no JWT was ever presented: the login request above
+				// carries only a setup key). Enabling either expiry here would
+				// leave this device unable to reconnect once it trips, with no
+				// way to log back in -- the console's own invitation UI
+				// promises no IdP login is needed to enroll.
+				require.False(t, peer.LoginExpirationEnabled, "an invitation-assigned peer has no way to log back in once this expires")
+				require.False(t, peer.InactivityExpirationEnabled, "an invitation-assigned peer has no way to log back in once this expires")
 				peerGroups, err := am.Store.GetPeerGroups(ctx, store.LockingStrengthNone, user.AccountID, peer.ID)
 				require.NoError(t, err)
 				groupIDs := make([]string, 0, len(peerGroups))

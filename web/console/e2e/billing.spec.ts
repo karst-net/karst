@@ -34,3 +34,19 @@ test("owners can inspect coverage and opt into an acknowledged relay cap", async
   await expect(page.getByRole("status")).toContainText("Relay spending cap saved");
   await expect(page.getByText("Cap is enabled: $15.25 USD")).toBeVisible();
 });
+
+// Both endpoints answer 412 when the feature is configured-but-absent for
+// this account (no Paddle, no billing schedule yet) -- an expected account
+// state, not a broken page. The billing view must say so plainly rather
+// than showing its generic Failure/retry banner, which would tell an
+// operator to retry something that can never succeed without a
+// server-side configuration change.
+test("an unconfigured account sees plain explanations instead of billing errors", async ({ page }) => {
+  await page.route(`**/api/karst/v1/billing/payments*`, (route) => route.fulfill({ status: 412, json: { message: "Paddle billing is not enabled for this account" } }));
+  await page.route(`**/api/karst/v1/usage/relay-alerts*`, (route) => route.fulfill({ status: 412, json: { message: "no billing schedule is assigned for this period" } }));
+  await page.goto("/#/billing");
+
+  await expect(page.getByText("Paddle billing is not enabled for this account.")).toBeVisible();
+  await expect(page.getByText(/No billing schedule is assigned for .+; relay usage alerts are unavailable\./)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Could not load this view" })).toHaveCount(0);
+});

@@ -3,7 +3,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import type { RelayCapDraft } from "@karst-net/api-client";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
 const currentMonth = () => new Date().toISOString().slice(0, 7);
@@ -47,8 +47,18 @@ export function Billing() {
     ]);
     return { devices, relays };
   }, [reportMonth]);
-  const alerts = useResource(() => api.relayAlerts(reportMonth), [reportMonth]);
-  const payment = useResource(() => api.billingPayment(reportMonth), [reportMonth]);
+  // A 412 means "no billing schedule is assigned for this period" (relay
+  // alerts) or "Paddle billing is not enabled for this account" (the
+  // invoice) -- both are expected, non-error account states, not something
+  // a Failure-with-retry banner should present as broken.
+  const alerts = useResource(async () => {
+    try { return await api.relayAlerts(reportMonth); }
+    catch (error) { if (error instanceof ApiError && error.status === 412) return null; throw error; }
+  }, [reportMonth]);
+  const payment = useResource(async () => {
+    try { return await api.billingPayment(reportMonth); }
+    catch (error) { if (error instanceof ApiError && error.status === 412) return null; throw error; }
+  }, [reportMonth]);
   const paymentNotices = useResource(() => api.billingPaymentNotices(reportMonth), [reportMonth]);
   const cap = useResource(() => api.relayCap(capMonth), [capMonth]);
   const { message, setMessage, run } = useMutation(cap.reload);
@@ -103,6 +113,7 @@ export function Billing() {
       </>}
       {alerts.loading && <p>Loading billing alerts…</p>}
       {alertError && <ErrorMessage message={alertError} />}
+      {alerts.value === null && <p>No billing schedule is assigned for {reportMonth}; relay usage alerts are unavailable.</p>}
       {alerts.value && <>
         {alerts.value.coverage_warning && <p>{alerts.value.coverage_warning}</p>}
         {alerts.value.alerts.length === 0
@@ -136,6 +147,7 @@ export function Billing() {
       </section>
       {payment.loading && <p>Loading invoice…</p>}
       {payment.error && <p role="alert">{payment.error}</p>}
+      {payment.value === null && <p>Paddle billing is not enabled for this account.</p>}
       {payment.value && <>
         <p>Finalized invoice for {reportMonth}: devices <strong>${formatUsdMinor(payment.value.device_minor)}</strong>, managed relay <strong>${formatUsdMinor(payment.value.relay_minor)}</strong>, total <strong>${formatUsdMinor(payment.value.total_minor)} USD before tax</strong>.</p>
         <p>Payment status: <strong>{payment.value.state.replaceAll("_", " ")}</strong>.</p>
