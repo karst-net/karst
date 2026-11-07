@@ -393,7 +393,7 @@ func TestUpdateLaunchDefaultsRoundTripsAndRejectsTheWrongTypeOrMode(t *testing.T
 	}
 }
 
-func TestAWSActuationClientRequiresCompleteLaunchDefaults(t *testing.T) {
+func TestActuationDriverRequiresCompleteAWSLaunchDefaults(t *testing.T) {
 	s := newTestStore(t, newTestEncryptor(t))
 	ctx := WithAccount(context.Background(), "acct-a")
 	rw, err := s.Create(ctx, awsRequest(t, ModeReadWrite))
@@ -401,7 +401,7 @@ func TestAWSActuationClientRequiresCompleteLaunchDefaults(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	if _, _, err := s.AWSActuationClient(ctx, rw.ID); !errors.Is(err, ErrInvalid) {
+	if _, err := s.ActuationDriver(ctx, rw.ID); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("got %v, want ErrInvalid before any launch defaults are configured", err)
 	}
 
@@ -410,23 +410,56 @@ func TestAWSActuationClientRequiresCompleteLaunchDefaults(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("update launch defaults: %v", err)
 	}
-	client, defaults, err := s.AWSActuationClient(ctx, rw.ID)
+	driver, err := s.ActuationDriver(ctx, rw.ID)
 	if err != nil {
-		t.Fatalf("aws actuation client: %v", err)
+		t.Fatalf("actuation driver: %v", err)
 	}
-	if client == nil {
-		t.Fatal("got a nil ec2 client once launch defaults are complete")
-	}
-	if defaults.AMIID != "ami-0123456789abcdef0" || defaults.Region != "us-east-1" {
-		t.Fatalf("got %+v, want the stored launch defaults handed back", defaults)
+	if driver == nil {
+		t.Fatal("got a nil driver once launch defaults are complete")
 	}
 
 	ro, err := s.Create(ctx, awsRequest(t, ModeReadOnly))
 	if err != nil {
 		t.Fatalf("create read-only: %v", err)
 	}
-	if _, _, err := s.AWSActuationClient(ctx, ro.ID); !errors.Is(err, ErrInvalid) {
+	if _, err := s.ActuationDriver(ctx, ro.ID); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("got %v, want ErrInvalid for a read-only connection even with no launch defaults set", err)
+	}
+}
+
+func TestActuationDriverRequiresCompleteNomadLaunchDefaults(t *testing.T) {
+	s := newTestStore(t, newTestEncryptor(t))
+	ctx := WithAccount(context.Background(), "acct-a")
+	rw, err := s.Create(ctx, CreateRequest{Type: TypeNomad, Mode: ModeReadWrite, Secret: json.RawMessage(`{"address":"http://nomad.internal:4646"}`)})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, err := s.ActuationDriver(ctx, rw.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("got %v, want ErrInvalid before a launch job id is configured", err)
+	}
+
+	if _, err := s.UpdateNomadLaunchDefaults(ctx, rw.ID, UpdateNomadLaunchDefaultsRequest{JobID: "relay-launch", Datacenter: "dc1"}); err != nil {
+		t.Fatalf("update nomad launch defaults: %v", err)
+	}
+	driver, err := s.ActuationDriver(ctx, rw.ID)
+	if err != nil {
+		t.Fatalf("actuation driver: %v", err)
+	}
+	if driver == nil {
+		t.Fatal("got a nil driver once launch defaults are complete")
+	}
+}
+
+func TestActuationDriverRejectsAConnectionTypeWithNoDriver(t *testing.T) {
+	s := newTestStore(t, newTestEncryptor(t))
+	ctx := WithAccount(context.Background(), "acct-a")
+	gcp, err := s.Create(ctx, CreateRequest{Type: TypeGCP, Mode: ModeReadWrite, Secret: json.RawMessage(`{"project_id":"p","service_account_key":{}}`)})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := s.ActuationDriver(ctx, gcp.ID); !errors.Is(err, ErrUnsupportedType) {
+		t.Fatalf("got %v, want ErrUnsupportedType for a GCP connection", err)
 	}
 }
 

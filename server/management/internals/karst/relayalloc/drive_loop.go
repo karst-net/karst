@@ -11,12 +11,11 @@
 // console flow ever told an administrator to do, so a requested
 // allocation reached that state and simply stopped, with no signal why.
 //
-// Every state transition and relayservice call this loop makes is
-// identical to what api/relay_allocations.go's handler for the same step
-// already made in-process (that package's own HTTP handlers are kept,
-// deprecated, for any external consumer still polling them) -- only the
-// AWS-facing half (awsdrive.go) is new, a direct port of
-// bins/karst-scaler-aws's own driver.
+// ADR-0067 generalized the AWS-only half of this loop (previously
+// awsdrive.go, calling the EC2 SDK by name) into infraprovision.Driver,
+// so this file never names a cloud SDK call itself -- it drives whichever
+// Driver infraconnections.Store.ActuationDriver returns for the
+// allocation's own infrastructure connection, AWS or Nomad today.
 package relayalloc
 
 import (
@@ -27,9 +26,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
-
 	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
+	"github.com/netbirdio/netbird/management/internals/karst/infraprovision"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 )
@@ -54,7 +52,7 @@ type relayFinder interface {
 }
 
 // relayDeenroller is relayreg.Store's own DeleteByTLSServerName -- issue
-// #329's AWS-driver teardown call, now made directly instead of through
+// #329's driver-teardown call, now made directly instead of through
 // enroll::deenroll's HTTP round-trip.
 type relayDeenroller interface {
 	DeleteByTLSServerName(ctx context.Context, tlsServerName string) error
@@ -69,21 +67,20 @@ type relayGrantStore interface {
 	Delete(context.Context, string) error
 }
 
-// infraConnections is infraconnections.Store's own AWSActuationClient --
-// narrowed to exactly what this loop needs to actuate against a
-// connection, so this package depends on infraconnections.Store's method
-// set, not its storage internals.
+// infraConnections is infraconnections.Store's own ActuationDriver
+// (ADR-0067) -- narrowed to exactly what this loop needs to actuate
+// against a connection, so this package depends on infraconnections.Store's
+// method set, not its storage internals.
 type infraConnections interface {
-	AWSActuationClient(ctx context.Context, id string) (*ec2.Client, infraconnections.LaunchDefaults, error)
+	ActuationDriver(ctx context.Context, id string) (infraprovision.Driver, error)
 }
 
-// enrollTokenExpiry bounds how long the token minted for a newly launched
-// instance stays usable -- the boot window between launchInstance
-// returning and that instance's own `karst-relay enroll` redeeming it,
-// not an operator-facing window. Mirrors
-// server.defaultRelayEnrollKeyExpiry's own value; that constant is
-// unexported, so this package keeps its own copy rather than reaching
-// into package server for it.
+// enrollTokenExpiry bounds how long the token minted for a newly created
+// instance stays usable -- the boot window between Create returning and
+// that instance's own `karst-relay enroll` redeeming it, not an
+// operator-facing window. Mirrors server.defaultRelayEnrollKeyExpiry's own
+// value; that constant is unexported, so this package keeps its own copy
+// rather than reaching into package server for it.
 const enrollTokenExpiry = 10 * time.Minute
 
 // AllocateDeps bundles everything RunAllocateWorker needs beyond the
@@ -98,13 +95,13 @@ type AllocateDeps struct {
 	Deenroll         relayDeenroller
 	Grants           relayGrantStore
 	// ControlAPIBase is the management server's own externally-reachable
-	// API base URL, embedded in every launched instance's enroll bundle
-	// so karst-relay enroll knows where to call back -- the Rust loop's
-	// own AllocateConfig.control_api_base, now an operator-configured
-	// value (KARST_RELAY_ALLOCATE_CONTROL_API_BASE) threaded down from
+	// API base URL, embedded in every created instance's enroll bundle so
+	// karst-relay enroll knows where to call back -- the Rust loop's own
+	// AllocateConfig.control_api_base, now an operator-configured value
+	// (KARST_RELAY_ALLOCATE_CONTROL_API_BASE) threaded down from
 	// cmd/karst-control/main.go the same way KARST_SCALER_ADVISOR_URL
 	// already is. Empty fails every requested allocation closed, with a
-	// clear reason, rather than launching an instance that can never
+	// clear reason, rather than creating an instance that can never
 	// enroll.
 	ControlAPIBase string
 }
@@ -129,19 +126,14 @@ func RunAllocateWorker(ctx context.Context, store *Store, deps AllocateDeps, int
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Synchronous, deliberately: RunInstances/StopInstances/
-			// TerminateInstances are slow, side-effecting AWS calls, so a
-			// tick that outlasts interval must never run concurrently
-			// with the next one -- calling tick() inline, rather than
-			// `go tick()`, makes that structural. time.Ticker drops a
-			// tick instead of queuing one while the previous send on
-			// ticker.C is still unread, so a slow tick simply delays the
-			// next one rather than overlapping it.
-			// karstbilling.RunRelayAlertWorker's own loop (the precedent
-			// this one otherwise follows) gets the same property for
-			// free since its tick is read-only and fast; here it is the
-			// deliberate fix for the double-RunInstances race a naive
-			// `go tick()` would risk.
+			// Synchronous, deliberately: a Driver's Create/Drain/Destroy
+			// are slow, side-effecting calls, so a tick that outlasts
+			// interval must never run concurrently with the next one --
+			// calling tick() inline, rather than `go tick()`, makes that
+			// structural. time.Ticker drops a tick instead of queuing one
+			// while the previous send on ticker.C is still unread, so a
+			// slow tick simply delays the next one rather than
+			// overlapping it.
 			tick()
 		}
 	}
@@ -196,35 +188,31 @@ func driveOne(ctx scopedContexts, store *Store, deps AllocateDeps, allocation Al
 	}
 }
 
-// provisionStep is allocate_loop.rs::provision, ported: look for an
-// already-live instance under this allocation's own pool tag first (a
-// retry after a crash between launchInstance succeeding and this
-// function's own Transition call landing), and only mint a token and
-// launch a new one if nothing is found.
+// provisionStep calls the allocation's own Driver.Create, which looks for
+// an already-live instance under this allocation's own correlation first
+// (a retry after a crash between a previous successful Create and this
+// function's own Transition call landing) before provisioning a new one.
 func provisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocation Allocation) error {
-	client, defaults, err := deps.InfraConnections.AWSActuationClient(ctx.infra, allocation.InfraConnectionID)
+	driver, err := deps.InfraConnections.ActuationDriver(ctx.infra, allocation.InfraConnectionID)
 	if err != nil {
 		return failAllocation(ctx.alloc, store, allocation, StateRequested, err)
 	}
-	instanceID, _, err := describeLiveInstanceByPool(ctx.infra, client, allocation.ID)
+	if deps.ControlAPIBase == "" {
+		return failAllocation(ctx.alloc, store, allocation, StateRequested,
+			errors.New("KARST_RELAY_ALLOCATE_CONTROL_API_BASE is not configured"))
+	}
+	token, err := deps.Enroll.MintRelayEnrollKey(ctx.alloc, allocation.AccountID, allocation.ID, enrollTokenExpiry)
 	if err != nil {
 		return failAllocation(ctx.alloc, store, allocation, StateRequested, err)
 	}
-	if instanceID == "" {
-		if deps.ControlAPIBase == "" {
-			return failAllocation(ctx.alloc, store, allocation, StateRequested,
-				errors.New("KARST_RELAY_ALLOCATE_CONTROL_API_BASE is not configured"))
-		}
-		token, err := deps.Enroll.MintRelayEnrollKey(ctx.alloc, allocation.AccountID, allocation.ID, enrollTokenExpiry)
-		if err != nil {
-			return failAllocation(ctx.alloc, store, allocation, StateRequested, err)
-		}
-		instanceID, _, err = launchInstance(ctx.infra, client, defaults, allocation.ID, deps.ControlAPIBase, token)
-		if err != nil {
-			return failAllocation(ctx.alloc, store, allocation, StateRequested, err)
-		}
+	instance, err := driver.Create(ctx.infra, allocation.ID, infraprovision.CreateRequest{
+		ControlAPIBase: deps.ControlAPIBase,
+		Token:          token,
+	})
+	if err != nil {
+		return failAllocation(ctx.alloc, store, allocation, StateRequested, err)
 	}
-	_, err = store.Transition(ctx.alloc, allocation.ID, allocation.Revision, StateRequested, StateProvisioning, "", instanceID, "")
+	_, err = store.Transition(ctx.alloc, allocation.ID, allocation.Revision, StateRequested, StateProvisioning, "", instance.ID, "")
 	return err
 }
 
@@ -232,23 +220,24 @@ func provisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocati
 // handleRelayAllocationGrant already performed in-process, now one
 // function instead of an HTTP round trip between them. Reached from both
 // StateProvisioning (first attempt) and StateGranting (a resumed one
-// after this loop itself restarted) -- tls_server_name is re-derived from
-// the instance's own AWS tag every time, never cached in this process,
-// for the same restart-survival reason driver.rs's own list() does.
+// after this loop itself restarted) -- the Driver's own TLSServerName is
+// re-read every time, never cached in this process, for the same
+// restart-survival reason.
 func grantStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocation Allocation) error {
-	client, _, err := deps.InfraConnections.AWSActuationClient(ctx.infra, allocation.InfraConnectionID)
+	driver, err := deps.InfraConnections.ActuationDriver(ctx.infra, allocation.InfraConnectionID)
 	if err != nil {
 		return failAllocation(ctx.alloc, store, allocation, allocation.State, err)
 	}
-	name, err := describeTLSServerName(ctx.infra, client, allocation.InstanceID)
+	name, err := driver.TLSServerName(ctx.infra, allocation.InstanceID)
 	if err != nil {
 		return failAllocation(ctx.alloc, store, allocation, allocation.State, err)
 	}
 	if name == "" {
-		// The instance exists but has not finished its own tag write yet
-		// (should be instantaneous after launchInstance, but AWS's own
-		// eventual-consistency window on a just-created resource is real)
-		// -- not a failure, retry next tick.
+		// The instance exists but has not finished announcing its own
+		// correlation label yet (should be near-instantaneous after
+		// Create, but a provider's own eventual-consistency window on a
+		// just-created resource is real) -- not a failure, retry next
+		// tick.
 		return nil
 	}
 	relay, err := deps.Relays.FindByTLSServerName(ctx.relay, name)
@@ -297,24 +286,25 @@ func revokeStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocation 
 }
 
 // deprovisionStep drains then destroys the instance, deenrolling its
-// relayreg row by the same tls-server-name tag grantStep already relied
+// relayreg row by the same correlation label grantStep already relied
 // on -- the grant was already withdrawn by revokeStep above, before this
 // ever runs, so nothing here can leave an access grant pointing at
 // compute the system believes torn down. Idempotent once nothing is left
-// to destroy (InstanceID already empty, or AWS reports it already gone).
+// to destroy (InstanceID already empty, or the Driver reports it already
+// gone).
 func deprovisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocation Allocation) error {
 	if allocation.InstanceID == "" {
 		_, err := store.Transition(ctx.alloc, allocation.ID, allocation.Revision, StateDeprovisioning, StateDeprovisioned, "", "", "")
 		return err
 	}
-	client, _, err := deps.InfraConnections.AWSActuationClient(ctx.infra, allocation.InfraConnectionID)
+	driver, err := deps.InfraConnections.ActuationDriver(ctx.infra, allocation.InfraConnectionID)
 	if err != nil {
 		return failAllocation(ctx.alloc, store, allocation, StateDeprovisioning, err)
 	}
-	if err := drainInstance(ctx.infra, client, allocation.InstanceID); err != nil {
+	if err := driver.Drain(ctx.infra, allocation.InstanceID); err != nil {
 		return failAllocation(ctx.alloc, store, allocation, StateDeprovisioning, err)
 	}
-	tlsServerName, err := destroyInstance(ctx.infra, client, allocation.InstanceID)
+	tlsServerName, err := driver.Destroy(ctx.infra, allocation.InstanceID)
 	if err != nil {
 		return failAllocation(ctx.alloc, store, allocation, StateDeprovisioning, err)
 	}

@@ -133,7 +133,13 @@ func TestCreateAcceptsAClusterConnectionsDeclaredLocationWhenAuthorized(t *testi
 	e := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
 	lat, lon := 51.5072, -0.1276
-	cluster := infraconnections.Account{ID: "conn-k8s", AccountID: "a", Type: infraconnections.TypeKubernetes, Mode: infraconnections.ModeReadOnly, Label: "k8s", Lat: &lat, Lon: &lon}
+	// TypeNomad, not TypeKubernetes: both fall into requireAuthorizedLocation's
+	// same "cluster connection, declared Lat/Lon" default branch, but only
+	// Nomad has a registered infraprovision.Driver (ADR-0067) -- Create now
+	// rejects a Kubernetes connection before ever reaching that check (see
+	// TestCreateRejectsAnUnsupportedConnectionType), so this test picks the
+	// cluster type that still exercises the location logic end to end.
+	cluster := infraconnections.Account{ID: "conn-nomad", AccountID: "a", Type: infraconnections.TypeNomad, Mode: infraconnections.ModeReadOnly, Label: "nomad", Lat: &lat, Lon: &lon}
 	require.NoError(t, e.db.Create(&cluster).Error)
 	require.NoError(t, e.db.Create(&locationreg.StoredLocation{AccountID: "a", ID: "loc-london", Lat: lat, Lon: lon, Label: "London cluster"}).Error)
 	draft := e.draft()
@@ -146,7 +152,7 @@ func TestCreateAcceptsAClusterConnectionsDeclaredLocationWhenAuthorized(t *testi
 func TestCreateRejectsAClusterConnectionWithNoDeclaredLocation(t *testing.T) {
 	e := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
-	cluster := infraconnections.Account{ID: "conn-k8s", AccountID: "a", Type: infraconnections.TypeKubernetes, Mode: infraconnections.ModeReadOnly, Label: "k8s"}
+	cluster := infraconnections.Account{ID: "conn-nomad", AccountID: "a", Type: infraconnections.TypeNomad, Mode: infraconnections.ModeReadOnly, Label: "nomad"}
 	require.NoError(t, e.db.Create(&cluster).Error)
 	draft := e.draft()
 	draft.InfraConnectionID = cluster.ID
@@ -154,6 +160,26 @@ func TestCreateRejectsAClusterConnectionWithNoDeclaredLocation(t *testing.T) {
 	_, err := e.store.Create(ctx, draft)
 	require.ErrorIs(t, err, ErrInvalid)
 	require.ErrorContains(t, err, "no declared location")
+}
+
+func TestCreateRejectsAnUnsupportedConnectionType(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	lat, lon := 51.5072, -0.1276
+	cluster := infraconnections.Account{ID: "conn-k8s", AccountID: "a", Type: infraconnections.TypeKubernetes, Mode: infraconnections.ModeReadOnly, Label: "k8s", Lat: &lat, Lon: &lon}
+	require.NoError(t, e.db.Create(&cluster).Error)
+	require.NoError(t, e.db.Create(&locationreg.StoredLocation{AccountID: "a", ID: "loc-london", Lat: lat, Lon: lon, Label: "London cluster"}).Error)
+	draft := e.draft()
+	draft.InfraConnectionID = cluster.ID
+	draft.Location = "default"
+
+	_, err := e.store.Create(ctx, draft)
+
+	require.ErrorIs(t, err, ErrInvalid)
+	require.ErrorContains(t, err, `"kubernetes"`)
+	var count int64
+	require.NoError(t, e.db.Model(&Allocation{}).Count(&count).Error)
+	require.Zero(t, count, "a connection type with no driver must never reach StateRequested")
 }
 
 func TestCreateRejectsAnUnavailableGroupAndWritesNothing(t *testing.T) {

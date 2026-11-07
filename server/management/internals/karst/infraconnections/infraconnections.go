@@ -84,6 +84,12 @@ var (
 	// "internal server error" (see discoverAWS).
 	ErrCredentialsRejected = errors.New("cloud accounts: the provider rejected the stored credentials")
 	ErrInvalid             = errors.New("cloud accounts: invalid request")
+	// ErrUnsupportedType means ActuationDriver was asked to actuate a
+	// connection whose Type has no infraprovision.Driver implementation
+	// registered yet -- see SupportsActuation and ADR-0067. Distinct from
+	// ErrInvalid so a caller (relayalloc.Store.Create) can give a clearer,
+	// type-naming message than ErrInvalid's generic one.
+	ErrUnsupportedType = errors.New("cloud accounts: this connection type does not support relay allocation yet")
 )
 
 // Type identifies what kind of infrastructure a connection authenticates
@@ -110,6 +116,18 @@ const (
 
 func (t Type) Valid() bool {
 	return t == TypeAWS || t == TypeAzure || t == TypeGCP || t == TypeKubernetes || t == TypeNomad || t == TypeLXD
+}
+
+// SupportsActuation reports whether t has a registered
+// infraprovision.Driver implementation at all -- a static, credential-
+// free fact, never an API call, so relayalloc.Store.Create can check it
+// inside its own transaction without violating ADR-0058's "no provider
+// call inside a transaction" rule (ADR-0067). TypeAzure/TypeGCP/
+// TypeKubernetes/TypeLXD have no driver yet; see ActuationDriver and
+// ADR-0067's "v1 driver scope" for why, and for Kubernetes specifically as
+// the most likely next one.
+func (t Type) SupportsActuation() bool {
+	return t == TypeAWS || t == TypeNomad
 }
 
 // IsLegacy reports whether t is one of the three types the /cloud-accounts
@@ -182,6 +200,12 @@ func accountFromContext(ctx context.Context) (string, error) {
 // request itself. Meaningful only for Type TypeAWS, Mode ModeReadWrite;
 // zero value on every other row, including pre-existing ones, which is
 // exactly "no launch defaults configured yet".
+//
+// LaunchNomadJobID/LaunchNomadDatacenter (ADR-0067) are the Nomad analog:
+// a pre-registered, parameterized job this connection dispatches a relay
+// instance from, plus an optional datacenter passed through as dispatch
+// Meta. Meaningful only for Type TypeNomad, Mode ModeReadWrite, the same
+// gating the AWS fields already follow.
 type Account struct {
 	ID                     string `gorm:"primaryKey"`
 	AccountID              string `gorm:"index"`
@@ -201,21 +225,11 @@ type Account struct {
 	LaunchInstanceType     string   `gorm:"column:launch_instance_type"`
 	LaunchSubnetID         string   `gorm:"column:launch_subnet_id"`
 	LaunchSecurityGroupIDs []string `gorm:"column:launch_security_group_ids;serializer:json"`
+	LaunchNomadJobID       string   `gorm:"column:launch_nomad_job_id"`
+	LaunchNomadDatacenter  string   `gorm:"column:launch_nomad_datacenter"`
 }
 
 func (Account) TableName() string { return "karst_cloud_accounts" }
-
-// LaunchDefaults is Account's AWS launch shape, as handed to
-// relayalloc's reconciliation loop by AWSActuationClient (aws.go) --
-// pulled out as its own type so that loop never has to reach into Account
-// itself or re-derive these five fields' names.
-type LaunchDefaults struct {
-	Region           string
-	AMIID            string
-	InstanceType     string
-	SubnetID         string
-	SecurityGroupIDs []string
-}
 
 // AllocationReferenceChecker lets Delete refuse to remove a connection a
 // live ADR-0063 relay allocation still depends on, without this package
@@ -267,6 +281,12 @@ type Response struct {
 	LaunchInstanceType     string     `json:"launch_instance_type,omitempty"`
 	LaunchSubnetID         string     `json:"launch_subnet_id,omitempty"`
 	LaunchSecurityGroupIDs []string   `json:"launch_security_group_ids,omitempty"`
+	LaunchNomadJobID       string     `json:"launch_nomad_job_id,omitempty"`
+	LaunchNomadDatacenter  string     `json:"launch_nomad_datacenter,omitempty"`
+	// SupportsAllocation mirrors Type.SupportsActuation() -- a derived,
+	// read-only convenience so a console caller never has to duplicate
+	// that type-list itself (ADR-0067).
+	SupportsAllocation bool `json:"supports_allocation"`
 }
 
 func (a *Account) ToResponse() Response {
@@ -276,6 +296,8 @@ func (a *Account) ToResponse() Response {
 		Status: a.Status, LastValidatedAt: a.LastValidatedAt, LastError: a.LastError,
 		LaunchRegion: a.LaunchRegion, LaunchAMIID: a.LaunchAMIID, LaunchInstanceType: a.LaunchInstanceType,
 		LaunchSubnetID: a.LaunchSubnetID, LaunchSecurityGroupIDs: a.LaunchSecurityGroupIDs,
+		LaunchNomadJobID: a.LaunchNomadJobID, LaunchNomadDatacenter: a.LaunchNomadDatacenter,
+		SupportsAllocation: a.Type.SupportsActuation(),
 	}
 }
 
@@ -476,7 +498,7 @@ type UpdateLaunchDefaultsRequest struct {
 // UpdateLaunchDefaults sets this connection's AWS launch shape. Refused for
 // any connection that is not currently a read-write AWS connection --
 // launch defaults have no meaning on any other type/mode, and
-// AWSActuationClient (aws.go) re-validates both anyway, so this is a
+// ActuationDriver (actuation.go) re-validates both anyway, so this is a
 // clearer error at write time rather than the only check.
 func (s *Store) UpdateLaunchDefaults(ctx context.Context, id string, req UpdateLaunchDefaultsRequest) (*Account, error) {
 	accountID, err := accountFromContext(ctx)
@@ -508,6 +530,46 @@ func (s *Store) UpdateLaunchDefaults(ctx context.Context, id string, req UpdateL
 	}
 	record.LaunchRegion, record.LaunchAMIID, record.LaunchInstanceType = update.LaunchRegion, update.LaunchAMIID, update.LaunchInstanceType
 	record.LaunchSubnetID, record.LaunchSecurityGroupIDs = update.LaunchSubnetID, update.LaunchSecurityGroupIDs
+	return &record, nil
+}
+
+// UpdateNomadLaunchDefaultsRequest is Settings' own way to set or change
+// the Nomad launch shape (ADR-0067) a named relay allocation actuates
+// against -- the Nomad analog of UpdateLaunchDefaultsRequest, same
+// full-replace semantics.
+type UpdateNomadLaunchDefaultsRequest struct {
+	JobID      string `json:"job_id,omitempty"`
+	Datacenter string `json:"datacenter,omitempty"`
+}
+
+// UpdateNomadLaunchDefaults sets this connection's Nomad launch shape.
+// Refused for any connection that is not currently a read-write Nomad
+// connection -- see UpdateLaunchDefaults's own doc comment for why this
+// is a clearer error at write time rather than the only check;
+// ActuationDriver re-validates both anyway.
+func (s *Store) UpdateNomadLaunchDefaults(ctx context.Context, id string, req UpdateNomadLaunchDefaultsRequest) (*Account, error) {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var record Account
+	if err := s.db.WithContext(ctx).Where("account_id = ? AND id = ?", accountID, id).First(&record).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("cloud accounts: get: %w", err)
+	}
+	if record.Type != TypeNomad || record.Mode != ModeReadWrite {
+		return nil, fmt.Errorf("%w: launch defaults only apply to a read-write Nomad connection", ErrInvalid)
+	}
+	update := Account{LaunchNomadJobID: req.JobID, LaunchNomadDatacenter: req.Datacenter}
+	err = s.db.WithContext(ctx).Model(&record).
+		Select("LaunchNomadJobID", "LaunchNomadDatacenter").
+		Updates(update).Error
+	if err != nil {
+		return nil, fmt.Errorf("cloud accounts: update nomad launch defaults: %w", err)
+	}
+	record.LaunchNomadJobID, record.LaunchNomadDatacenter = update.LaunchNomadJobID, update.LaunchNomadDatacenter
 	return &record, nil
 }
 
