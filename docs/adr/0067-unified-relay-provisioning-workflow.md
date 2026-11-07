@@ -187,6 +187,20 @@ against that `Account.Type`" — no console change, no new state machine, no
 new admin-facing field, because the one workflow and the one interface
 already exist.
 
+Kubernetes deserves a narrower callout than Azure/GCP/LXD, which have no
+actuation code anywhere in this repository. `bins/karst-scaler-k8s`'s own
+`K8sDriver` already proves real Kubernetes actuation — it is the pool
+autoscaler's second working driver, alongside AWS's. It is not reused here
+for the same reason the Rust pool `Driver` trait isn't: it is Rust, and
+this loop is Go, in-process (ADR-0063's 2026-11-04 addendum). But unlike
+Azure/GCP/LXD, a Kubernetes `infraprovision.Driver` has a concrete,
+working reference implementation to port from rather than one to invent
+from scratch — the same relationship AWS's own port to `awsdriver` already
+had to `bins/karst-scaler-aws`'s `AwsDriver`. That makes Kubernetes the
+most likely next driver this interface gains, not a third slot that
+happens to be unimplemented for the same reason as the other two. This ADR
+does not implement it: v1 ships AWS and Nomad only.
+
 ### Alternatives rejected
 
 - **Reuse the Rust `Driver` trait from Go directly.** Rejected: no
@@ -267,7 +281,10 @@ already exist.
   registration-and-discovery-only after this ADR ships. The "mechanism
   abstracted from the admin" promise is only real for the two provider
   types this ADR implements; connecting an Azure account today still cannot
-  provision a relay through this workflow.
+  provision a relay through this workflow. Kubernetes sits in this same
+  bucket today only because this ADR chose not to implement it yet, not
+  because it is architecturally harder than Nomad — see "v1 driver scope"
+  above.
 
 ### Reconsider if
 

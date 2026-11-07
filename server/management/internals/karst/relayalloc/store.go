@@ -114,10 +114,11 @@ type Store struct {
 	// maxConcurrentAllocations is ADR-0045 §6 bullet 4's "hard ceilings...
 	// are mandatory configuration, with no 'unlimited' value," applied a
 	// second time by that ADR's 2026-11-04 addendum now that this package
-	// itself actuates AWS (awsdrive.go/awsdrive_loop.go): zero (the
-	// default, before SetMaxConcurrentAllocations is called) means Create
-	// refuses every request rather than silently allowing an unbounded
-	// number of real, billable instances per account.
+	// itself actuates infrastructure (drive_loop.go, via
+	// infraprovision.Driver -- ADR-0067): zero (the default, before
+	// SetMaxConcurrentAllocations is called) means Create refuses every
+	// request rather than silently allowing an unbounded number of real,
+	// billable instances per account.
 	maxConcurrentAllocations int
 }
 
@@ -284,6 +285,15 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 				return fmt.Errorf("%w: infra_connection_id is not registered in this account", ErrInvalid)
 			}
 			return err
+		}
+		// A static, credential-free type check -- not a provider call, so
+		// it belongs inside this same transaction (ADR-0058) -- so an
+		// admin picking a connection type with no infraprovision.Driver
+		// implementation (ADR-0067) is rejected now, not left with a
+		// `requested` allocation the worker can never move (see
+		// docs/adr/0067-unified-relay-provisioning-workflow.md's Context).
+		if !connection.Type.SupportsActuation() {
+			return fmt.Errorf("%w: connection type %q does not support relay allocation yet", ErrInvalid, connection.Type)
 		}
 		if err := requireAuthorizedLocation(tx, account, connection, allocation.Location); err != nil {
 			return err
