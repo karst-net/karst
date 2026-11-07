@@ -1420,6 +1420,22 @@ paths:
         '200': {description: Updated connection, content: {application/json: {schema: {$ref: '#/components/schemas/InfrastructureConnection'}}}}
         '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
+  /infrastructure-connections/{connectionId}/kubernetes-launch-defaults:
+    parameters: [{name: connectionId, in: path, required: true, schema: {type: string}}]
+    put:
+      operationId: updateInfrastructureConnectionKubernetesLaunchDefaults
+      tags: [settings]
+      description: >-
+        ADR-0067. Requires the admin or owner role. Sets the Kubernetes
+        Pod shape (image/cpu/memory/service account) an ADR-0063 relay
+        allocation against this connection actuates -- refused for any
+        connection that is not currently a read-write Kubernetes
+        connection.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/InfrastructureConnectionKubernetesLaunchDefaults'}}}}
+      responses:
+        '200': {description: Updated connection, content: {application/json: {schema: {$ref: '#/components/schemas/InfrastructureConnection'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
   /bedrock:
     get:
       operationId: getBedrock
@@ -2320,7 +2336,12 @@ components:
         launch_security_group_ids: {type: array, items: {type: string}}
         launch_nomad_job_id: {type: string, description: 'ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.'}
         launch_nomad_datacenter: {type: string}
-        supports_allocation: {type: boolean, description: 'True if this connection''s type has a registered relay-allocation driver (ADR-0067) -- aws and nomad today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.'}
+        launch_kubernetes_namespace: {type: string, description: 'ADR-0067. The Kubernetes launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Kubernetes connection, set via PUT .../kubernetes-launch-defaults.'}
+        launch_kubernetes_image: {type: string}
+        launch_kubernetes_cpu: {type: string}
+        launch_kubernetes_memory: {type: string}
+        launch_kubernetes_service_account: {type: string}
+        supports_allocation: {type: boolean, description: 'True if this connection''s type has a registered relay-allocation driver (ADR-0067) -- aws, nomad and kubernetes today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.'}
     InfrastructureConnectionLaunchDefaults:
       type: object
       additionalProperties: false
@@ -2347,6 +2368,24 @@ components:
       properties:
         job_id: {type: string}
         datacenter: {type: string}
+    InfrastructureConnectionKubernetesLaunchDefaults:
+      type: object
+      additionalProperties: false
+      description: >-
+        ADR-0067. The Kubernetes analog of
+        InfrastructureConnectionLaunchDefaults -- every field replaces the
+        stored value, including to empty. Only meaningful for a
+        read-write Kubernetes connection; refused otherwise. Unlike Nomad,
+        there is no pre-registered job: this connection's own driver
+        builds the Pod itself from these fields. cpu/memory use
+        Kubernetes's own resource.Quantity syntax (e.g. "250m", "256Mi")
+        and are used as both the container's request and its limit.
+      properties:
+        namespace: {type: string}
+        image: {type: string}
+        cpu: {type: string}
+        memory: {type: string}
+        service_account: {type: string}
     # One resource (region/local zone/zone/namespace/datacenter/cluster_member)
     # as discovered live from a connection, enriched with cloudcatalog's
     # static coordinates where available -- lat/lon are absent, not zero,

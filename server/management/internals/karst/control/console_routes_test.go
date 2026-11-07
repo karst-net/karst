@@ -487,6 +487,16 @@ func consoleMutations() []consoleCase {
 			body: `{"job_id":"karst-relay","datacenter":"dc1"}`,
 			want: []int{http.StatusNotFound}, template: "/karst/v1/infrastructure-connections/{connectionId}/nomad-launch-defaults",
 		},
+		{
+			// ADR-0067's Kubernetes analog of the AWS/Nomad launch-defaults
+			// cases above -- same "unknown-*" 404 shape and same division of
+			// coverage (deep gating stays at the unit level in
+			// infraconnections_test.go).
+			name: "update an infrastructure connection's Kubernetes launch defaults", method: http.MethodPut,
+			path: "/karst/v1/infrastructure-connections/unknown-connection-id/kubernetes-launch-defaults",
+			body: `{"namespace":"default","image":"ghcr.io/karst-net/karst-relay:dev","cpu":"250m","memory":"256Mi"}`,
+			want: []int{http.StatusNotFound}, template: "/karst/v1/infrastructure-connections/{connectionId}/kubernetes-launch-defaults",
+		},
 	}
 }
 

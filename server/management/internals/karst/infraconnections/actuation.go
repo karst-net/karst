@@ -11,6 +11,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/infraprovision"
 	"github.com/netbirdio/netbird/management/internals/karst/infraprovision/awsdriver"
+	"github.com/netbirdio/netbird/management/internals/karst/infraprovision/kubernetesdriver"
 	"github.com/netbirdio/netbird/management/internals/karst/infraprovision/nomaddriver"
 )
 
@@ -22,8 +23,7 @@ import (
 // actuating caller in this package.
 //
 // Returns ErrUnsupportedType for any connection whose Type has no driver
-// registered (see Type.SupportsActuation) -- Azure, GCP, Kubernetes, and
-// LXD today.
+// registered (see Type.SupportsActuation) -- Azure, GCP, and LXD today.
 func (s *Store) ActuationDriver(ctx context.Context, id string) (infraprovision.Driver, error) {
 	record, err := s.get(ctx, id)
 	if err != nil {
@@ -40,6 +40,8 @@ func (s *Store) ActuationDriver(ctx context.Context, id string) (infraprovision.
 		return s.awsActuationDriver(ctx, record)
 	case TypeNomad:
 		return s.nomadActuationDriver(record)
+	case TypeKubernetes:
+		return s.kubernetesActuationDriver(record)
 	default:
 		// Unreachable: SupportsActuation's case list and this switch's
 		// case list must stay in lockstep -- a mismatch here is a bug in
@@ -75,4 +77,19 @@ func (s *Store) nomadActuationDriver(record *Account) (infraprovision.Driver, er
 		return nil, fmt.Errorf("nomad: configure client: %w", err)
 	}
 	return nomaddriver.New(client, record.LaunchNomadJobID, record.LaunchNomadDatacenter), nil
+}
+
+func (s *Store) kubernetesActuationDriver(record *Account) (infraprovision.Driver, error) {
+	defaults := kubernetesdriver.LaunchDefaults{
+		Image: record.LaunchKubernetesImage, CPU: record.LaunchKubernetesCPU,
+		Memory: record.LaunchKubernetesMemory, ServiceAccount: record.LaunchKubernetesServiceAccount,
+	}
+	if record.LaunchKubernetesNamespace == "" || defaults.Image == "" {
+		return nil, fmt.Errorf("%w: configure launch defaults for this connection before allocating a relay against it", ErrInvalid)
+	}
+	clientset, err := kubernetesClient(record.Secret)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: configure client: %w", err)
+	}
+	return kubernetesdriver.New(clientset, record.LaunchKubernetesNamespace, defaults), nil
 }

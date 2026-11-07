@@ -2216,15 +2216,22 @@ type GroupLocation struct {
 
 // InfrastructureConnection defines model for InfrastructureConnection.
 type InfrastructureConnection struct {
-	CreatedAt             *time.Time `json:"created_at,omitempty"`
-	Id                    *string    `json:"id,omitempty"`
-	Label                 *string    `json:"label,omitempty"`
-	LastError             *string    `json:"last_error,omitempty"`
-	LastValidatedAt       *time.Time `json:"last_validated_at,omitempty"`
-	Lat                   *float32   `json:"lat,omitempty"`
-	LaunchAmiId           *string    `json:"launch_ami_id,omitempty"`
-	LaunchInstanceType    *string    `json:"launch_instance_type,omitempty"`
-	LaunchNomadDatacenter *string    `json:"launch_nomad_datacenter,omitempty"`
+	CreatedAt              *time.Time `json:"created_at,omitempty"`
+	Id                     *string    `json:"id,omitempty"`
+	Label                  *string    `json:"label,omitempty"`
+	LastError              *string    `json:"last_error,omitempty"`
+	LastValidatedAt        *time.Time `json:"last_validated_at,omitempty"`
+	Lat                    *float32   `json:"lat,omitempty"`
+	LaunchAmiId            *string    `json:"launch_ami_id,omitempty"`
+	LaunchInstanceType     *string    `json:"launch_instance_type,omitempty"`
+	LaunchKubernetesCpu    *string    `json:"launch_kubernetes_cpu,omitempty"`
+	LaunchKubernetesImage  *string    `json:"launch_kubernetes_image,omitempty"`
+	LaunchKubernetesMemory *string    `json:"launch_kubernetes_memory,omitempty"`
+
+	// LaunchKubernetesNamespace ADR-0067. The Kubernetes launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Kubernetes connection, set via PUT .../kubernetes-launch-defaults.
+	LaunchKubernetesNamespace      *string `json:"launch_kubernetes_namespace,omitempty"`
+	LaunchKubernetesServiceAccount *string `json:"launch_kubernetes_service_account,omitempty"`
+	LaunchNomadDatacenter          *string `json:"launch_nomad_datacenter,omitempty"`
 
 	// LaunchNomadJobId ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
 	LaunchNomadJobId *string `json:"launch_nomad_job_id,omitempty"`
@@ -2240,7 +2247,7 @@ type InfrastructureConnection struct {
 	// Status Empty until the first resources (Discover) call completes.
 	Status *InfrastructureConnectionStatus `json:"status,omitempty"`
 
-	// SupportsAllocation True if this connection's type has a registered relay-allocation driver (ADR-0067) -- aws and nomad today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.
+	// SupportsAllocation True if this connection's type has a registered relay-allocation driver (ADR-0067) -- aws, nomad and kubernetes today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.
 	SupportsAllocation bool                         `json:"supports_allocation"`
 	Type               InfrastructureConnectionType `json:"type"`
 }
@@ -2272,6 +2279,15 @@ type InfrastructureConnectionCreateMode string
 
 // InfrastructureConnectionCreateType defines model for InfrastructureConnectionCreate.Type.
 type InfrastructureConnectionCreateType string
+
+// InfrastructureConnectionKubernetesLaunchDefaults ADR-0067. The Kubernetes analog of InfrastructureConnectionLaunchDefaults -- every field replaces the stored value, including to empty. Only meaningful for a read-write Kubernetes connection; refused otherwise. Unlike Nomad, there is no pre-registered job: this connection's own driver builds the Pod itself from these fields. cpu/memory use Kubernetes's own resource.Quantity syntax (e.g. "250m", "256Mi") and are used as both the container's request and its limit.
+type InfrastructureConnectionKubernetesLaunchDefaults struct {
+	Cpu            *string `json:"cpu,omitempty"`
+	Image          *string `json:"image,omitempty"`
+	Memory         *string `json:"memory,omitempty"`
+	Namespace      *string `json:"namespace,omitempty"`
+	ServiceAccount *string `json:"service_account,omitempty"`
+}
 
 // InfrastructureConnectionLaunchDefaults ADR-0045's 2026-11-04 addendum. Every field replaces the stored value, including to empty -- there is no partial-update shape. Only meaningful for a read-write AWS connection; refused otherwise.
 type InfrastructureConnectionLaunchDefaults struct {
@@ -3490,6 +3506,9 @@ type SetGroupLocationJSONRequestBody = LocationCreate
 
 // CreateInfrastructureConnectionJSONRequestBody defines body for CreateInfrastructureConnection for application/json ContentType.
 type CreateInfrastructureConnectionJSONRequestBody = InfrastructureConnectionCreate
+
+// UpdateInfrastructureConnectionKubernetesLaunchDefaultsJSONRequestBody defines body for UpdateInfrastructureConnectionKubernetesLaunchDefaults for application/json ContentType.
+type UpdateInfrastructureConnectionKubernetesLaunchDefaultsJSONRequestBody = InfrastructureConnectionKubernetesLaunchDefaults
 
 // UpdateInfrastructureConnectionLaunchDefaultsJSONRequestBody defines body for UpdateInfrastructureConnectionLaunchDefaults for application/json ContentType.
 type UpdateInfrastructureConnectionLaunchDefaultsJSONRequestBody = InfrastructureConnectionLaunchDefaults
