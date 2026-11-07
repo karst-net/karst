@@ -152,7 +152,7 @@ for (const scopedIngress of [true, false]) {
     await page.getByLabel("Registered relay",{exact:true}).selectOption("ponor");
     await page.getByRole("group",{name:"Groups allowed to use this relay",exact:true}).getByRole("checkbox",{name:"sre",exact:true}).check();
     await page.getByRole("checkbox",{name:"Offer internet access over IPv4",exact:true}).check();
-    await page.getByLabel("Enrolled Gateway machine",{exact:true}).selectOption("gateway-key");
+    await page.getByLabel("Enrolled Gateway device",{exact:true}).selectOption("gateway-key");
     if (!scopedIngress) {
       await expect(page.getByRole("alert")).toContainText("Upgrade the control service to support destination-scoped Gateway ingress");
       await expect(page.getByRole("button",{name:"Review relay configuration",exact:true})).toBeDisabled();

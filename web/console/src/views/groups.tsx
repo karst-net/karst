@@ -115,7 +115,7 @@ export function Groups() {
     <Dialog open={creating !== undefined} title="Create group" onClose={() => setCreating(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void create(); }}>
         <label>Group name<input aria-label="Group name" placeholder="sre" value={creating ?? ""} onChange={(event) => setCreating(event.target.value)} /></label>
-        <p className="lede">Members are added by enrolling a machine with an auth key that auto-assigns this group, or by editing a user’s auto-assigned groups.</p>
+        <p className="lede">Members are added by enrolling a device with an auth key that auto-assigns this group, or by editing a user’s auto-assigned groups.</p>
         <div className="actions"><button type="button" onClick={() => setCreating(undefined)}>Cancel</button><button className="primary" type="submit">Create group</button></div>
       </form>
     </Dialog>
@@ -131,7 +131,7 @@ export function Groups() {
 
     <Dialog open={Boolean(locating)} title={locating ? `Declare ${locating.group.name}'s location` : ""} onClose={() => setLocating(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void saveLocation(); }}>
-        <p className="lede">This is where this group's machines are, for the NOC map only — it places a marker for any exit-node or subnet-router route whose routing group is this one.</p>
+        <p className="lede">This is where this group's devices are, for the NOC map only — it places a marker for any exit-node or subnet-router route whose routing group is this one.</p>
         <label>Latitude<input aria-label="Group latitude" placeholder="51.5072" value={locating?.lat ?? ""} onChange={(event) => setLocating((current) => current && { ...current, lat: event.target.value })} /></label>
         <label>Longitude<input aria-label="Group longitude" placeholder="-0.1276" value={locating?.lon ?? ""} onChange={(event) => setLocating((current) => current && { ...current, lon: event.target.value })} /></label>
         <label>Location label<input aria-label="Group location label" placeholder="London" value={locating?.label ?? ""} onChange={(event) => setLocating((current) => current && { ...current, label: event.target.value })} /></label>

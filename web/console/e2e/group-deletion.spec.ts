@@ -53,7 +53,7 @@ test("deletion requires acknowledgment and rechecks changed membership before de
   state.members.push({ id: "peer-2", name: "Second laptop" });
   await submit.click();
   await expect(dialog.getByRole("alert")).toContainText("access changed");
-  await expect(dialog).toContainText("2 machines");
+  await expect(dialog).toContainText("2 devices");
   await expect(acknowledge).not.toBeChecked();
   expect(state.deleted).toBe(0);
   await acknowledge.check();

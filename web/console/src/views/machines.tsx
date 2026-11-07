@@ -52,7 +52,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
     return nodes.filter((node) => [node.name, node.handle, node.user_id, ...node.tags].some((field) => field?.toLowerCase().includes(needle)));
   }, [nodes, filter]);
 
-  if (tab !== "add" && resource.loading) return <p>Loading machines…</p>;
+  if (tab !== "add" && resource.loading) return <p>Loading devices…</p>;
   if (tab !== "add" && resource.error) return <Failure message={resource.error} retry={resource.reload} />;
 
   const deprovision = (node: Node) => {
@@ -62,7 +62,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
   const rename = async () => {
     if (!renaming) return;
     const name = renaming.name.trim();
-    if (!name) { setMessage("A machine needs a name."); return; }
+    if (!name) { setMessage("A device needs a name."); return; }
     if (await run(() => api.renameNode(renaming.node.handle, name), `${renaming.node.name} is now named ${name}.`)) setRenaming(undefined);
   };
   const move = async () => {
@@ -91,22 +91,24 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
     catch (error) { setCompliance({ node, error: (error as Error).message }); }
   };
   return <section>
-    <h2>Machines</h2>
-    <nav aria-label="Machines view" className="actions">
-      <button aria-pressed={tab === "manage"} onClick={() => { location.hash = "/machines"; }}>Manage</button>
-      <button aria-pressed={tab === "status"} onClick={() => { location.hash = "/machines/status"; }}>Status</button>
-      <button aria-pressed={tab === "add"} onClick={() => { location.hash = "/machines/add"; }}>Add machine</button>
-    </nav>
+    <h2>Devices</h2>
+    <div className="actions">
+      <nav aria-label="Devices view" className="actions">
+        <button aria-pressed={tab === "manage"} onClick={() => { location.hash = "/machines"; }}>Manage</button>
+        <button aria-pressed={tab === "status"} onClick={() => { location.hash = "/machines/status"; }}>Status</button>
+      </nav>
+      <button className="primary" onClick={() => { location.hash = "/machines/add"; }}>Add Device</button>
+    </div>
     {tab === "add" ? <Setup go={(route) => { location.hash = `/${route}`; }} /> : tab === "manage" ? <>
       <p className="lede">Add a device by creating an enrollment invitation.</p>
       <div className="actions">
-        <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
+        <label>Filter<input aria-label="Filter devices" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
       </div>
       <Notice message={message} />
       {nodes.length === 0
-        ? <EmptyState title="No machines yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
+        ? <EmptyState title="No devices yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
         : shown.length === 0
-          ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
+          ? <EmptyState title="No devices match that filter">Clear the filter to see all {nodes.length} devices.</EmptyState>
           : <Rows head={<><th>Name</th><th>Domain</th><th>Owner</th><th>Tags</th><th>Actions</th></>}>
             {shown.map((node) => <tr key={node.handle}>
               <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
@@ -124,12 +126,12 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
     </> : <>
       <p className="lede">Connection state always includes its last observation time.</p>
       <div className="actions">
-        <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
+        <label>Filter<input aria-label="Filter devices" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
       </div>
       {nodes.length === 0
-        ? <EmptyState title="No machines yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
+        ? <EmptyState title="No devices yet">Create an invitation, then install Karst and paste it into setup on the device.</EmptyState>
         : shown.length === 0
-          ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
+          ? <EmptyState title="No devices match that filter">Clear the filter to see all {nodes.length} devices.</EmptyState>
           : <Rows head={<><th>Name</th><th>Crypto posture</th><th>Control compatibility</th><th>Observed</th><th>Actions</th></>}>
             {shown.map((node) => <tr key={node.handle}>
               <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
@@ -145,15 +147,15 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
           </Rows>}
     </>}
 
-    {renaming && <Dialog open title="Rename machine" onClose={() => setRenaming(undefined)}>
+    {renaming && <Dialog open title="Rename device" onClose={() => setRenaming(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void rename(); }}>
-        <label>Machine name<input aria-label="Machine name" value={renaming?.name ?? ""} onChange={(event) => setRenaming((current) => current && { ...current, name: event.target.value })} /></label>
+        <label>Device name<input aria-label="Device name" value={renaming?.name ?? ""} onChange={(event) => setRenaming((current) => current && { ...current, name: event.target.value })} /></label>
         <p className="lede">The handle <code>{renaming?.node.handle}</code> is derived from the node’s identity key and never changes.</p>
         <div className="actions"><button type="button" onClick={() => setRenaming(undefined)}>Cancel</button><button className="primary" type="submit">Save name</button></div>
       </form>
     </Dialog>}
 
-    {moving && <Dialog open title="Move machine" onClose={() => setMoving(undefined)}>
+    {moving && <Dialog open title="Move device" onClose={() => setMoving(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void move(); }}>
         <label>Domain<select aria-label="Domain" value={moving?.domainId ?? ""} onChange={(event) => setMoving((current) => current && { ...current, domainId: event.target.value })}>
           <option value="" disabled>Choose a domain</option>
@@ -162,7 +164,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
         <p className="lede">{moving && (() => {
           const target = domainDNSName(domains.find((domain) => domain.id === moving.domainId));
           const qualified = target ? `${moving.node.name}.${target}` : moving.node.name;
-          return <>Moving changes how this machine resolves on the mesh: it will become reachable as <code>{qualified}</code>. This is not a network change on the device itself, only where it is named.</>;
+          return <>Moving changes how this device resolves on the mesh: it will become reachable as <code>{qualified}</code>. This is not a network change on the device itself, only where it is named.</>;
         })()}</p>
         <div className="actions"><button type="button" onClick={() => setMoving(undefined)}>Cancel</button><button className="primary" type="submit">Move</button></div>
       </form>
@@ -170,7 +172,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
 
     {paths && <Dialog open title={`Paths — ${paths?.node.name ?? ""}`} onClose={() => setPaths(undefined)}>
       {paths?.error ? <p role="alert">{paths.error}</p> : !paths?.value ? <p>Loading paths…</p> : paths.value.paths.length === 0
-        ? <p>No paths observed. The machine has not reached another peer in this window.</p>
+        ? <p>No paths observed. The device has not reached another peer in this window.</p>
         : <Rows head={<><th>Peer</th><th>Kind</th><th>Endpoint</th><th>Sent</th><th>Received</th><th>Observed</th></>}>
           {paths.value.paths.map((path, index) => <tr key={index}>
             <td><code>{path.peer_handle}</code></td>
@@ -181,7 +183,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
             <td><Observed at={path.observed_at} /></td>
           </tr>)}
         </Rows>}
-      <p className="lede">Sent/received are running totals for this session, as this machine last reported them — not a live rate.</p>
+      <p className="lede">Sent/received are running totals for this session, as this device last reported them — not a live rate.</p>
       <div className="actions"><button onClick={() => setPaths(undefined)}>Close</button></div>
     </Dialog>}
 

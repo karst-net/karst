@@ -89,8 +89,8 @@ function UserDetails({ user, onClose }: { user: AccountUser; onClose: () => void
   const pending = invitations.value?.filter(invitation => invitation.assigned_user_id === user.id && invitation.state === "pending") ?? [];
   return <Dialog open title={`${user.name} — details`} onClose={onClose}>
     <p>{user.email}</p>
-    <h3>Machines</h3>
-    {nodes.loading ? <p>Loading machines…</p> : nodes.error ? <Failure message={nodes.error} retry={nodes.reload} /> : machines.length ? <ul>{machines.map(node => <li key={node.handle}>{node.name} — {node.platform}</li>)}</ul> : <p>No machines assigned.</p>}
+    <h3>Devices</h3>
+    {nodes.loading ? <p>Loading devices…</p> : nodes.error ? <Failure message={nodes.error} retry={nodes.reload} /> : machines.length ? <ul>{machines.map(node => <li key={node.handle}>{node.name} — {node.platform}</li>)}</ul> : <p>No devices assigned.</p>}
     <h3>Outstanding invitations</h3>
     {invitations.loading ? <p>Loading invitations…</p> : invitations.error ? <Failure message={invitations.error} retry={invitations.reload} /> : pending.length ? <ul>{pending.map(invitation => <li key={invitation.id}>{invitation.name} — expires {new Date(invitation.expires_at).toLocaleString()}{invitation.reusable && <> — {invitation.used_times ?? 0} / {invitation.usage_limit || "∞"} uses</>}</li>)}</ul> : <p>No outstanding invitations.</p>}
     <button onClick={onClose}>Close</button>

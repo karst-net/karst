@@ -54,22 +54,22 @@ export function GroupMembership({ id, onClose, onSaved }: { id: string; onClose:
   const original = snapshot?.group.peers?.map(peer => peer.id) ?? [];
   const added = selected.filter(id => !original.includes(id));
   const removed = original.filter(id => !selected.includes(id));
-  const name = (id: string) => machines.find(machine => machine.id === id)?.name ?? snapshot?.group.peers?.find(machine => machine.id === id)?.name ?? "Unavailable machine";
+  const name = (id: string) => machines.find(machine => machine.id === id)?.name ?? snapshot?.group.peers?.find(machine => machine.id === id)?.name ?? "Unavailable device";
   const editable = snapshot && (snapshot.group.issued ?? "api") === "api" && snapshot.group.name !== "All";
   return <Dialog open title={snapshot ? `Members of ${snapshot.group.name}` : "Group membership"} onClose={() => { if (!busy) onClose(); }}>
     {busy && <p>Loading group information…</p>}
     {error && <p role="alert">{error}</p>}
     {snapshot && !editable && <p>This group is built in or managed by an identity provider. Edit its membership at its source.</p>}
     {snapshot && editable && (!reviewing ? <>
-      <p>Select machines, then review how their group access will change.</p>
-      <fieldset disabled={busy || conflicted}><legend>Machines</legend>{machines.map(machine => <label key={machine.id}><input type="checkbox" checked={selected.includes(machine.id)} onChange={event => setSelected(event.target.checked ? [...selected, machine.id] : selected.filter(id => id !== machine.id))} />{machine.name}</label>)}</fieldset>
+      <p>Select devices, then review how their group access will change.</p>
+      <fieldset disabled={busy || conflicted}><legend>Devices</legend>{machines.map(machine => <label key={machine.id}><input type="checkbox" checked={selected.includes(machine.id)} onChange={event => setSelected(event.target.checked ? [...selected, machine.id] : selected.filter(id => id !== machine.id))} />{machine.name}</label>)}</fieldset>
       <button disabled={busy || conflicted || added.length + removed.length === 0} onClick={() => void review()}>Review membership changes</button>
     </> : <>
-      <h3>Machines gaining group access</h3>{added.length ? <ul>{added.map(id => <li key={id}>{name(id)}</li>)}</ul> : <p>None</p>}
-      <h3>Machines losing group access</h3>{removed.length ? <ul>{removed.map(id => <li key={id}>{name(id)}</li>)}</ul> : <p>None</p>}
+      <h3>Devices gaining group access</h3>{added.length ? <ul>{added.map(id => <li key={id}>{name(id)}</li>)}</ul> : <p>None</p>}
+      <h3>Devices losing group access</h3>{removed.length ? <ul>{removed.map(id => <li key={id}>{name(id)}</li>)}</ul> : <p>None</p>}
       <h3>Group assignments</h3>{impact?.dependencies.length ? <ul>{impact.dependencies.map(item => <li key={item.key}><a href={item.href}>{item.label}</a></li>)}</ul> : <p>No assignments found in the console's supported resource forms.</p>}
       <p>Changes affect access supplied by this group. Other groups and legacy rules may still allow access. Relay admission converges on the next roster refresh; internet egress still requires client consent and Gateway readiness.</p>
-      <label><input type="checkbox" disabled={busy || conflicted} checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the machines and group assignments.</label>
+      <label><input type="checkbox" disabled={busy || conflicted} checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the devices and group assignments.</label>
       <div className="actions"><button disabled={busy} onClick={() => { setReviewing(false); setAcknowledged(false); }}>Back</button><button className="primary" disabled={busy || conflicted || !acknowledged} onClick={() => void save()}>Apply membership changes</button></div>
     </>)}
     <div className="actions"><button disabled={busy} onClick={onClose}>Cancel</button><button disabled={busy} onClick={() => void reload()}>Reload latest group</button></div>

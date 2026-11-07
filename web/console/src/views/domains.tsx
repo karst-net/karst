@@ -154,7 +154,7 @@ export function RootRenameDialog({ initialSuffix, onClose, onCommitted }: { init
     finally { setBusy(false); }
   };
   return <Dialog open title="Rename account root" onClose={() => { if (!busy) onClose(); }}>
-    <p>This requires account-wide domain administration. Machine identities, domain memberships and access rules stay unchanged.</p>
+    <p>This requires account-wide domain administration. Device identities, domain memberships and access rules stay unchanged.</p>
     {error && <p role="alert">{error}</p>}
     <form onSubmit={(event) => { event.preventDefault(); void loadPreview(); }}>
       <label>New root suffix<input aria-label="New root suffix" required disabled={busy} value={suffix} onChange={(event) => { setSuffix(event.target.value); setPreview(undefined); setConfirmed(false); }} placeholder="corp.example" /></label>

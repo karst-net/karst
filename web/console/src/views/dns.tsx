@@ -37,7 +37,7 @@ export function Dns() {
     if (done) setDraft(undefined);
   };
   const remove = (group: NameserverGroup) => {
-    if (!confirm(`Delete ${group.name}? Machines in its distribution groups fall back to their next matching resolver.`)) return;
+    if (!confirm(`Delete ${group.name}? Devices in its distribution groups fall back to their next matching resolver.`)) return;
     void run(() => api.deleteNameserverGroup(group.id), `Nameserver group ${group.name} was deleted.`);
   };
   const setServer = (index: number, patch: Partial<NameserverGroupDraft["nameservers"][number]>) =>
@@ -45,20 +45,20 @@ export function Dns() {
 
   return <section>
     <h2>DNS</h2>
-    <TutorialHint>A purely logical/configuration layer: these settings tell each enrolled machine's own Karst client which DNS resolver to use for which domains, pushed down the same control channel as everything else. No separate DNS server runs here — "managed" means a resolver this account has declared, not a service Karst operates. Which resolvers your machines use, and which groups Karst leaves alone.</TutorialHint>
+    <TutorialHint>A purely logical/configuration layer: these settings tell each enrolled device's own Karst client which DNS resolver to use for which domains, pushed down the same control channel as everything else. No separate DNS server runs here — "managed" means a resolver this account has declared, not a service Karst operates. Which resolvers your devices use, and which groups Karst leaves alone.</TutorialHint>
     <Notice message={message} />
 
     <h3>Managed resolvers</h3>
     <label htmlFor="dns-groups">Groups excluded from DNS management</label>
     <input id="dns-groups" value={excluded} onChange={(event) => setExcluded(event.target.value)} />
-    <p className="lede">Machines in these groups keep the resolver configuration they already have. Separate group IDs with commas.</p>
+    <p className="lede">Devices in these groups keep the resolver configuration they already have. Separate group IDs with commas.</p>
     <div className="actions"><button className="primary" onClick={saveSettings}>Save DNS settings</button></div>
 
     <h3>Nameserver groups</h3>
     <div className="actions"><button onClick={() => setDraft({ value: blank })}>Add nameserver group</button></div>
     {servers.error ? <Failure message={servers.error} retry={servers.reload} />
       : (servers.value ?? []).length === 0
-        ? <EmptyState title="No nameserver groups">Add one to point selected machines at a private resolver.</EmptyState>
+        ? <EmptyState title="No nameserver groups">Add one to point selected devices at a private resolver.</EmptyState>
         : <Rows head={<><th>Name</th><th>Nameservers</th><th>Match domains</th><th>Distributed to</th><th>State</th><th>Actions</th></>}>
           {(servers.value ?? []).map((group) => <tr key={group.id}>
             <td><strong>{group.name}</strong>{group.description && <><br /><span className="lede">{group.description}</span></>}</td>

@@ -136,10 +136,10 @@ test("setup requires a label, groups, and assignee and refuses issuance over HTT
 // Invitation issuance, keyboard submission, reusable usage counts, and
 // retained revocation records are covered in invitations.spec.ts.
 
-test("a machine can be renamed", async ({ page }) => {
+test("a device can be renamed", async ({ page }) => {
   await page.goto("/#/machines");
   await page.locator("tbody tr").filter({ hasText: "sre-laptop" }).getByRole("button", { name: "Rename" }).click();
-  await page.getByLabel("Machine name", { exact: true }).fill("alice-laptop");
+  await page.getByLabel("Device name", { exact: true }).fill("alice-laptop");
   await page.getByRole("button", { name: "Save name" }).click();
   await expect(page.getByRole("status")).toContainText("is now named alice-laptop");
   await expect(page.locator("tbody tr").filter({ hasText: "alice-laptop" })).toBeVisible();
@@ -148,7 +148,7 @@ test("a machine can be renamed", async ({ page }) => {
 // ADR-0032: sre-laptop is seeded already placed in engineering.acme
 // (fixtures/karst-api.mjs), so this exercises both directions of the move,
 // not just the empty-to-domain case.
-test("a machine's mesh domain can be shown and changed", async ({ page }) => {
+test("a device's mesh domain can be shown and changed", async ({ page }) => {
   await page.goto("/#/machines");
   const row = page.locator("tbody tr").filter({ hasText: "sre-laptop" });
   await expect(row).toContainText("engineering.acme");
@@ -174,30 +174,34 @@ test("a machine's mesh domain can be shown and changed", async ({ page }) => {
   await expect(row.locator("code").first()).toHaveText("sre-laptop.karst");
 });
 
-test("adding a machine opens the invitation flow", async ({ page }) => {
+test("adding a device opens the invitation flow", async ({ page }) => {
   await page.goto("/#/machines");
-  await page.getByRole("button", { name: "Add machine" }).click();
-  await expect(page.getByRole("heading", { name: "Add machine", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Add Device" }).click();
+  await expect(page.getByRole("heading", { name: "Add Device", exact: true })).toBeVisible();
   await expect(page).toHaveURL(/#\/machines\/add$/);
-  await expect(page.getByRole("heading", { name: "Machines", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Machines", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "Devices", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Devices", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("link", { name: "Add device", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Device name")).toBeVisible();
   await expect(page.getByLabel("Domain", { exact: true })).toHaveCount(1);
   await expect(page.getByText("No identity-provider login is needed to enroll.", { exact: false })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Device name")).toBeVisible();
-  await page.getByRole("button", { name: "View machines", exact: true }).click();
+  await page.getByRole("button", { name: "View devices", exact: true }).click();
   await expect(page).toHaveURL(/#\/machines$/);
   await page.goBack();
   await expect(page.getByLabel("Device name")).toBeVisible();
   await page.goto("/#/enroll");
-  await expect(page.getByRole("heading", { name: "Machines", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add machine", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("heading", { name: "Devices", exact: true })).toBeVisible();
+  // "Add Device" is an action, not a view toggle: it carries no
+  // aria-pressed, and neither view-toggle button is pressed while on it.
+  await expect(page.getByRole("button", { name: "Add Device", exact: true })).not.toHaveAttribute("aria-pressed");
+  await expect(page.getByRole("button", { name: "Manage", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "Status", exact: true })).toHaveAttribute("aria-pressed", "false");
 
 });
 
-test("a machine's paths show sent/received totals, not just kind and endpoint", async ({ page }) => {
+test("a device's paths show sent/received totals, not just kind and endpoint", async ({ page }) => {
   await page.goto("/#/machines/status");
   await page.locator("tbody tr").filter({ hasText: "sre-laptop" }).getByRole("button", { name: "Paths" }).click();
   const row = page.locator("dialog[open] tbody tr").first();
@@ -208,7 +212,7 @@ test("a machine's paths show sent/received totals, not just kind and endpoint", 
 
 // ADR-0055: self-reported evidence, never a pass/fail verdict -- the console
 // has no compliance requirements to evaluate against yet.
-test("a machine's compliance dialog shows self-reported evidence with no pass/fail verdict", async ({ page }) => {
+test("a device's compliance dialog shows self-reported evidence with no pass/fail verdict", async ({ page }) => {
   await page.goto("/#/machines/status");
   await page.locator("tbody tr").filter({ hasText: "sre-laptop" }).getByRole("button", { name: "Compliance" }).click();
   const dialog = page.locator("dialog[open]");
@@ -223,12 +227,12 @@ test("a machine's compliance dialog shows self-reported evidence with no pass/fa
   await expect(page.locator("dialog[open]")).toContainText("No compliance evidence has been reported");
 });
 
-test("the machine filter narrows the list without hiding the count", async ({ page }) => {
+test("the device filter narrows the list without hiding the count", async ({ page }) => {
   await page.goto("/#/machines");
-  await page.getByLabel("Filter machines").fill("prod-db-01");
+  await page.getByLabel("Filter devices").fill("prod-db-01");
   await expect(page.locator("tbody tr")).toHaveCount(1);
-  await page.getByLabel("Filter machines").fill("no-such-machine");
-  await expect(page.getByRole("heading", { name: "No machines match that filter" })).toBeVisible();
+  await page.getByLabel("Filter devices").fill("no-such-machine");
+  await expect(page.getByRole("heading", { name: "No devices match that filter" })).toBeVisible();
 });
 
 test("a user can be edited and blocked", async ({ page }) => {
@@ -486,7 +490,7 @@ test("Escape closes a create dialog without submitting it", async ({ page }) => 
   await expect(page.locator("tbody tr").filter({ hasText: "abandoned" })).toHaveCount(0);
 });
 
-test("machine deprovisioning is keyboard accessible", async ({ page }) => {
+test("device deprovisioning is keyboard accessible", async ({ page }) => {
   await page.goto("/#/machines");
   page.on("dialog", (dialog) => dialog.accept());
   const action = page.getByRole("button", { name: "Deprovision" }).first();
@@ -528,7 +532,7 @@ test.afterEach(async ({ page }) => { await setUncovered(page, uncovered); await 
 
 test("empty-account list views explain what happens next", async ({ page }) => {
   await setFixture(page, true);
-  for (const [route, title] of [["machines", "No machines yet"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No relays configured"]]) {
+  for (const [route, title] of [["machines", "No devices yet"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No relays configured"]]) {
     await page.goto(`/#/${route}`);
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
   }
@@ -541,7 +545,7 @@ test("network lock acknowledgment is keyboard accessible", async ({ page }) => {
   // deriving this list from posture would list the wrong machines here.
   await expect(page.getByRole("listitem").filter({ hasText: "sre-laptop" })).toBeVisible();
   await expect(page.getByRole("listitem")).toHaveCount(2);
-  await page.getByLabel("I understand these machines may be cut off.").focus();
+  await page.getByLabel("I understand these devices may be cut off.").focus();
   await page.keyboard.press("Space");
   const action = page.getByRole("button", { name: "Enable network lock" });
   await action.focus();
@@ -551,15 +555,15 @@ test("network lock acknowledgment is keyboard accessible", async ({ page }) => {
 
 test("network lock re-acknowledges when the cut-off set moves under it", async ({ page }) => {
   await page.goto("/#/bedrock");
-  await page.getByLabel("I understand these machines may be cut off.").check();
+  await page.getByLabel("I understand these devices may be cut off.").check();
   // A node enrolls, or a signature lands, after the admin read the list.
   await setUncovered(page, [...uncovered, "node-0017-karst-fixture-handle"]);
   await page.getByRole("button", { name: "Enable network lock" }).click();
   await expect(page.getByRole("status")).toContainText("changed while you were reviewing it");
-  await expect(page.getByLabel("I understand these machines may be cut off.")).not.toBeChecked();
+  await expect(page.getByLabel("I understand these devices may be cut off.")).not.toBeChecked();
   await expect(page.getByRole("listitem")).toHaveCount(3);
   // Acknowledging the updated list succeeds without a reload.
-  await page.getByLabel("I understand these machines may be cut off.").check();
+  await page.getByLabel("I understand these devices may be cut off.").check();
   await page.getByRole("button", { name: "Enable network lock" }).click();
   await expect(page.getByRole("status")).toContainText("enforcing");
 });

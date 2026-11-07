@@ -37,11 +37,11 @@ export function GroupDeletion({ id, onClose, onDeleted }: { id: string; onClose:
     {error && <p role="alert">{error}</p>}
     {review && <>
       <p>Delete <strong>{review.group.name}</strong>?</p>
-      <p>{review.group.peers_count} machines belong to this group. Deleting the group removes their membership; the machines remain enrolled.</p>
-      {(review.group.peers?.length ?? 0) > 0 && <details><summary>Affected machines</summary><ul>{review.group.peers?.map(peer => <li key={peer.id}>{peer.name}</li>)}</ul></details>}
+      <p>{review.group.peers_count} devices belong to this group. Deleting the group removes their membership; the devices remain enrolled.</p>
+      {(review.group.peers?.length ?? 0) > 0 && <details><summary>Affected devices</summary><ul>{review.group.peers?.map(peer => <li key={peer.id}>{peer.name}</li>)}</ul></details>}
       {!editable && <p>This group is built in or managed by an identity provider and cannot be deleted here.</p>}
       {review.dependencies.length > 0 ? <><h3>Resolve these dependencies first</h3><ul>{review.dependencies.map(dependency => <li key={dependency.key}><a href={dependency.href}>{dependency.label}</a></li>)}</ul><p>Update or remove these assignments in their owning forms, then refresh this review. Access grants and relay restrictions are not deleted automatically.</p></> : <p>No dependencies found in access grants, relays, Gateway routes, DNS, user assignments or active invitations. The server also checks inherited management settings when deleting.</p>}
-      {review.history.length > 0 && <><h3>Retained invitation history</h3><ul>{review.history.map((entry, index) => <li key={index}>{entry}</li>)}</ul><p>These invitations can no longer enroll machines. Their history remains after group deletion.</p></>}
+      {review.history.length > 0 && <><h3>Retained invitation history</h3><ul>{review.history.map((entry, index) => <li key={index}>{entry}</li>)}</ul><p>These invitations can no longer enroll devices. Their history remains after group deletion.</p></>}
       <label><input type="checkbox" disabled={Boolean(blocked || busy)} checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the impact and want to delete this group.</label>
     </>}
     <div className="actions"><button disabled={busy} onClick={onClose}>Cancel</button><button disabled={busy} onClick={() => void refresh()}>Refresh review</button><button className="danger" disabled={Boolean(blocked || busy || !acknowledged)} onClick={() => void remove()}>Delete group</button></div>
