@@ -40,8 +40,8 @@ type NavItem = { route: Route; label: string; hash: string; group?: string };
 // section header whenever `group` changes between consecutive items --
 // Observe's list stays flat (no `group`) since it's short enough on its own.
 const navConfigure: NavItem[] = [
-  { route: "machines", label: "Machines", hash: "/machines", group: "Identity & Access" },
   { route: "users", label: "Users", hash: "/users", group: "Identity & Access" },
+  { route: "machines", label: "Devices", hash: "/machines", group: "Identity & Access" },
   { route: "groups", label: "Groups & access", hash: "/groups", group: "Identity & Access" },
   { route: "bedrock", label: "Network lock", hash: "/bedrock", group: "Identity & Access" },
   { route: "domains", label: "Domains", hash: "/domains", group: "Network" },
@@ -59,7 +59,7 @@ const navObserve: NavItem[] = [
   { route: "noc", label: "NOC view", hash: "/noc" },
   { route: "posture", label: "Crypto posture", hash: "/posture" },
   { route: "audit", label: "Audit log", hash: "/audit" },
-  { route: "machines", label: "Machines", hash: "/machines/status" },
+  { route: "machines", label: "Devices", hash: "/machines/status" },
   { route: "routes", label: "Gateways", hash: "/gateways/metrics" },
 ];
 

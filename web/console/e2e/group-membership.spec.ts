@@ -37,19 +37,19 @@ async function edit(page: Page) {
   await page.getByRole("button", { name: "Review membership changes" }).click();
 }
 
-test("membership review names added and removed machines, resource assignments and requires acknowledgment", async ({ page }) => {
+test("membership review names added and removed devices, resource assignments and requires acknowledgment", async ({ page }) => {
   const state = await fixture(page);
   state.grants = [{ id: "web", name: "Production web", source_groups: ["engineering"], target_groups: ["servers"], ports: "443" }];
   await edit(page);
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("Machines gaining group accessNew laptop");
-  await expect(dialog).toContainText("Machines losing group accessOld laptop");
+  await expect(dialog).toContainText("Devices gaining group accessNew laptop");
+  await expect(dialog).toContainText("Devices losing group accessOld laptop");
   await expect(dialog.getByRole("link", { name: "Relay: Denver" })).toBeVisible();
   await expect(dialog.getByRole("link", { name: "Access grant: Production web" })).toBeVisible();
   const apply = dialog.getByRole("button", { name: "Apply membership changes" });
   await expect(apply).toBeDisabled(); expect(state.puts).toBe(0);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-  await dialog.getByRole("checkbox", { name: "I reviewed the machines and group assignments.", exact: true }).check();
+  await dialog.getByRole("checkbox", { name: "I reviewed the devices and group assignments.", exact: true }).check();
   await apply.focus(); await page.keyboard.press("Enter");
   await expect(page.getByRole("status")).toContainText("Group membership saved");
   expect(state.members).toEqual(["new"]); expect(state.puts).toBe(1);
@@ -58,7 +58,7 @@ test("membership review names added and removed machines, resource assignments a
 test("a changed group snapshot blocks submission until explicit reload", async ({ page }) => {
   const state = await fixture(page); await edit(page);
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("checkbox", { name: "I reviewed the machines and group assignments.", exact: true }).check(); state.revision++;
+  await dialog.getByRole("checkbox", { name: "I reviewed the devices and group assignments.", exact: true }).check(); state.revision++;
   await dialog.getByRole("button", { name: "Apply membership changes" }).click();
   await expect(dialog.getByRole("alert")).toContainText("group changed since you opened");
   expect(state.puts).toBe(0);
@@ -69,7 +69,7 @@ test("a changed group snapshot blocks submission until explicit reload", async (
 
 test("a write-time conflict keeps the draft and never retries automatically", async ({ page }) => {
   const state = await fixture(page); await edit(page); state.reject = true;
-  const dialog = page.getByRole("dialog"); await dialog.getByRole("checkbox", { name: "I reviewed the machines and group assignments.", exact: true }).check();
+  const dialog = page.getByRole("dialog"); await dialog.getByRole("checkbox", { name: "I reviewed the devices and group assignments.", exact: true }).check();
   await dialog.getByRole("button", { name: "Apply membership changes" }).click();
   await expect(dialog.getByRole("alert")).toContainText("group changed; reload before saving");
   await expect(dialog.getByRole("button", { name: "Apply membership changes" })).toBeDisabled();
@@ -78,15 +78,15 @@ test("a write-time conflict keeps the draft and never retries automatically", as
 
 test("changed assignments require another review and dependency failures cannot apply", async ({ page }) => {
   const state = await fixture(page); await edit(page);
-  const dialog = page.getByRole("dialog"); await dialog.getByRole("checkbox", { name: "I reviewed the machines and group assignments.", exact: true }).check();
+  const dialog = page.getByRole("dialog"); await dialog.getByRole("checkbox", { name: "I reviewed the devices and group assignments.", exact: true }).check();
   state.grants = [{ id: "new", name: "New access", source_groups: ["engineering"], target_groups: ["servers"], ports: "*" }];
   // A policy edit increments its version in production; alter the dependency
   // list here to exercise the independently loaded impact snapshot.
   await dialog.getByRole("button", { name: "Apply membership changes" }).click();
   await expect(dialog.getByRole("alert")).toContainText("assignments changed");
-  await expect(dialog.getByRole("checkbox", { name: "I reviewed the machines and group assignments.", exact: true })).not.toBeChecked(); expect(state.puts).toBe(0);
+  await expect(dialog.getByRole("checkbox", { name: "I reviewed the devices and group assignments.", exact: true })).not.toBeChecked(); expect(state.puts).toBe(0);
   await page.route("**/api/karst/v1/relay-services", route => route.fulfill({ status: 503, json: { message: "Relay inventory unavailable" } }));
-  await dialog.getByRole("checkbox", { name: "I reviewed the machines and group assignments.", exact: true }).check();
+  await dialog.getByRole("checkbox", { name: "I reviewed the devices and group assignments.", exact: true }).check();
   await dialog.getByRole("button", { name: "Apply membership changes" }).click();
   await expect(dialog.getByRole("alert")).toContainText("Relay inventory unavailable"); expect(state.puts).toBe(0);
 });

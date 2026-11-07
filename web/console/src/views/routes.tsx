@@ -18,7 +18,7 @@ const fresh = (network = ""): NetworkRouteDraft => ({ ...blank, network, skip_au
 
 function GroupSelect({ label, value, groups, onChange }: { label: string; value: string[]; groups: Group[]; onChange: (ids: string[]) => void }) {
   return <label>{label}<select aria-label={label} multiple size={Math.min(7, Math.max(3, groups.length))} value={value} onChange={(event) => onChange(Array.from(event.currentTarget.selectedOptions, (option) => option.value))}>
-    {groups.map((group) => <option key={group.id} value={group.id}>{group.name} ({group.peers_count} machines)</option>)}
+    {groups.map((group) => <option key={group.id} value={group.id}>{group.name} ({group.peers_count} devices)</option>)}
   </select></label>;
 }
 
@@ -42,10 +42,10 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
   const save = async () => {
     if (!draft) return;
     const value = { ...draft.value, network_id: draft.value.network_id.trim(), network: draft.value.network.trim() };
-    if (!value.network_id) { setMessage("A route needs a short identifier — it is what appears on machines that install it."); return; }
+    if (!value.network_id) { setMessage("A route needs a short identifier — it is what appears on devices that install it."); return; }
     if (!cidr.test(value.network)) { setMessage("The network must be a CIDR prefix, such as 10.10.0.0/16."); return; }
-    if (value.peer_groups.length === 0) { setMessage("Select at least one routing group: the machines that forward this traffic."); return; }
-    if (value.groups.length === 0) { setMessage("Select at least one distribution group, or no machine is offered the route."); return; }
+    if (value.peer_groups.length === 0) { setMessage("Select at least one routing group: the devices that forward this traffic."); return; }
+    if (value.groups.length === 0) { setMessage("Select at least one distribution group, or no device is offered the route."); return; }
     if (value.access_control_groups.length === 0) { setMessage("Select at least one access-control group. Distribution alone is not authorization."); return; }
     value.skip_auto_apply = isExit(value.network);
     const done = draft.id
@@ -87,12 +87,12 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
             <td><p>{gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "ready").length} ready · {gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "degraded").length} degraded · {gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "unreported").length} unreported enabled behaviors</p>{gateway.forwarding_readiness === "ready" ? "Ready" : gateway.forwarding_readiness === "degraded" ? "Degraded — check the node for an nftables apply failure." : <>Unreported — inspect <code>karst gateway status</code> on the node.</>}</td>
           </tr>)}
         </Rows> : <p>No Gateway nodes resolved from the configured route offers.</p>}
-        {Boolean(inventory.value?.unresolved_routes.length) && <p role="status">Routes without a visible eligible node: {inventory.value?.unresolved_routes.join(", ")}. Check routing groups and enrolled machines.</p>}
+        {Boolean(inventory.value?.unresolved_routes.length) && <p role="status">Routes without a visible eligible node: {inventory.value?.unresolved_routes.join(", ")}. Check routing groups and enrolled devices.</p>}
         {Boolean(inventory.value?.unsupported_routes.length) && <p role="status">Routes outside the CIDR Gateway model: {inventory.value?.unsupported_routes.join(", ")}.</p>}
       </>}
     </section> : <>
       <h3>Gateway behaviors</h3>
-      <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled machines ("gateways") will carry traffic to it. Advertise a subnet or default route through enrolled gateway machines. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
+      <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled devices ("gateways") will carry traffic to it. Advertise a subnet or default route through enrolled gateway devices. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
       <div className="actions">
         <button className="primary" onClick={() => addBehavior()}>Add Gateway behavior</button>
         <button onClick={() => setDraft({ value: fresh() })}>Add subnet route</button>
@@ -131,7 +131,7 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
         {isExit(draft?.value.network ?? "") && <p className="lede">The server only offers this default route. Each client must run <code>karst gateway exit use &lt;route-id&gt;</code> locally before it becomes active. IPv4 and IPv6 consent are independent.</p>}
         <label>Description<input aria-label="Route description" value={draft?.value.description ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, description: event.target.value } })} /></label>
         <GroupSelect label="Routing groups" groups={groups} value={draft?.value.peer_groups ?? []} onChange={(peer_groups) => setDraft((current) => current && { ...current, value: { ...current.value, peer_groups } })} />
-        <p className="lede">These machines must have Linux forwarding and nftables available. Multiple members form a failover set; the selected route metric determines preference.</p>
+        <p className="lede">These devices must have Linux forwarding and nftables available. Multiple members form a failover set; the selected route metric determines preference.</p>
         <GroupSelect label="Distribution groups" groups={groups} value={draft?.value.groups ?? []} onChange={(selected) => setDraft((current) => current && { ...current, value: { ...current.value, groups: selected } })} />
         <GroupSelect label="Access-control groups" groups={groups} value={draft?.value.access_control_groups ?? []} onChange={(access_control_groups) => setDraft((current) => current && { ...current, value: { ...current.value, access_control_groups } })} />
         <p className="lede">Recipients must be both distributed the offer and authorized by access control. The two gates are intentionally independent.</p>

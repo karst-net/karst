@@ -100,7 +100,7 @@ export function Bedrock() {
       const required = error instanceof ApiError ? error.requiredCutOff : undefined;
       // The set moved between load and save — a node enrolled, or a signature
       // landed. Re-acknowledge against the new list rather than retrying.
-      if (required) { setOverride(required); setAcknowledged(false); setMessage("The list of machines that would be cut off changed while you were reviewing it. Review the updated list and acknowledge it again."); return; }
+      if (required) { setOverride(required); setAcknowledged(false); setMessage("The list of devices that would be cut off changed while you were reviewing it. Review the updated list and acknowledge it again."); return; }
       setMessage(`Network lock was not changed: ${(error as Error).message}`);
     }
   };
@@ -120,23 +120,23 @@ export function Bedrock() {
 
   return <section>
     <h2>Network lock</h2>
-    <TutorialHint>Bedrock is a purely logical mechanism, not a separate server: a signed, append-only log of which machines are authorized, held by this control plane and verified by a quorum of signing authorities offline. It talks to nodes only indirectly, through the mode below — no node connects to "Bedrock" itself.</TutorialHint>
-    <p>Current mode: <strong>{status?.mode}</strong> · quorum {status?.quorum} · {status?.covered_count} machine(s) covered by the signed log.</p>
-    <p className="lede">Off: signatures are ignored. Advisory: unsigned machines are reported and still connect. Enforcing: unsigned machines are refused. A node’s own configuration is a floor — a node set to <code>enforcing</code> stays there whatever this says.</p>
+    <TutorialHint>Bedrock is a purely logical mechanism, not a separate server: a signed, append-only log of which devices are authorized, held by this control plane and verified by a quorum of signing authorities offline. It talks to nodes only indirectly, through the mode below — no node connects to "Bedrock" itself.</TutorialHint>
+    <p>Current mode: <strong>{status?.mode}</strong> · quorum {status?.quorum} · {status?.covered_count} device(s) covered by the signed log.</p>
+    <p className="lede">Off: signatures are ignored. Advisory: unsigned devices are reported and still connect. Enforcing: unsigned devices are refused. A node’s own configuration is a floor — a node set to <code>enforcing</code> stays there whatever this says.</p>
 
     <h3>Acknowledge potential cut-off</h3>
     {named.length
-      ? <ul>{named.map(({ handle, node }) => <li key={handle}>{node?.name ?? "Unknown machine"} — <code>{handle}</code>{node ? ` (${node.posture.status.replaceAll("_", " ")})` : " (not in this account's machine list)"}</li>)}</ul>
+      ? <ul>{named.map(({ handle, node }) => <li key={handle}>{node?.name ?? "Unknown device"} — <code>{handle}</code>{node ? ` (${node.posture.status.replaceAll("_", " ")})` : " (not in this account's device list)"}</li>)}</ul>
       : <p>No nodes are currently expected to be cut off.</p>}
-    <p>Enforcing network lock may disconnect the machines above. Review this list before continuing.</p>
-    <label><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} /> I understand these machines may be cut off.</label>
+    <p>Enforcing network lock may disconnect the devices above. Review this list before continuing.</p>
+    <label><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} /> I understand these devices may be cut off.</label>
     <div className="actions">
       <button className="danger" disabled={!acknowledged} onClick={() => void setMode("enforcing", "Network lock is enforcing.")}>Enable network lock</button>
       {/* Advisory and off cannot cut anyone off, so neither is gated on the
           acknowledgment — the server only requires it for enforcing. Gating
           them anyway would make the safe direction harder than the dangerous
           one, which is the wrong way round for an incident. */}
-      <button disabled={status?.mode === "advisory"} onClick={() => void setMode("advisory", "Network lock is advisory. Unsigned machines are reported and still connect.")}>Set advisory</button>
+      <button disabled={status?.mode === "advisory"} onClick={() => void setMode("advisory", "Network lock is advisory. Unsigned devices are reported and still connect.")}>Set advisory</button>
       <button disabled={status?.mode === "off"} onClick={() => void setMode("off", "Network lock is off. Signatures are no longer enforced.")}>Turn off</button>
     </div>
     <Notice message={message} />

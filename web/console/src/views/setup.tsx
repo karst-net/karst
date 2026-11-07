@@ -59,7 +59,7 @@ export function Setup({ go }: { go: (route: string) => void }) {
   const chosenDomain = domains.find((domain) => domainId ? domain.id === domainId : domain.is_root);
   const chosenName = domainDNSName(chosenDomain);
   const rootName = domainDNSName(domains.find((domain) => domain.is_root));
-  return <section><h3>Add machine</h3>
+  return <section><h3>Add Device</h3>
     <p>Create an invitation and assign its devices to a user. The recipient installs Karst and pastes it into setup. No identity-provider login is needed to enroll.</p>
     {error && <p role="alert">{error}</p>}
     <form onSubmit={event => { event.preventDefault(); void create(); }}>
@@ -94,6 +94,6 @@ export function Setup({ go }: { go: (route: string) => void }) {
       {item.state === "pending" && <button disabled={busy} onClick={() => { void revoke(item.id); }}>Revoke {item.name}</button>}
     </li>)}</ul>
     <p>Network policy and any required Bedrock approval determine when a registered device can connect.</p>
-    <button onClick={() => go("machines")}>View machines</button>
+    <button onClick={() => go("machines")}>View devices</button>
   </section>;
 }
