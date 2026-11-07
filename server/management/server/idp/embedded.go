@@ -3,6 +3,7 @@ package idp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/dexidp/dex/storage"
-	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/netbirdio/netbird/idp/dex"
@@ -48,8 +48,15 @@ type EmbeddedIdPConfig struct {
 	DashboardRedirectURIs []string
 	// DashboardRedirectURIs are the OAuth2 redirect URIs for the dashboard client
 	CLIRedirectURIs []string
-	// Owner is the initial owner/admin user (optional, can be nil)
-	Owner *OwnerConfig
+	// Owner is deprecated and no longer used. It could only seed a Dex-local
+	// login, never the account-side Owner row, so it never actually worked as
+	// a bootstrap mechanism; nothing in this codebase ever constructed one.
+	// Kept as raw JSON, read only, so NewEmbeddedIdPManager can detect and warn
+	// about a stale config that still sets it. Use the `admin user
+	// create-owner` CLI command to create a break-glass owner instead.
+	//
+	// Deprecated: no longer used; retained only to warn about stale config.
+	Owner json.RawMessage
 	// SignKeyRefreshEnabled enables automatic key rotation for signing keys
 	SignKeyRefreshEnabled bool
 	// LocalAuthDisabled disables the local (email/password) authentication connector.
@@ -98,16 +105,6 @@ type EmbeddedStorageTypeConfig struct {
 	File string
 	// DSN is the connection string for postgres
 	DSN string
-}
-
-// OwnerConfig represents the initial owner/admin user for the embedded IdP.
-type OwnerConfig struct {
-	// Email is the user's email address (required)
-	Email string
-	// Hash is the bcrypt hash of the user's password (required)
-	Hash string
-	// Username is the display name for the user (optional, defaults to email)
-	Username string
 }
 
 // buildIdpStorageConfig builds the Dex storage config map based on the storage type.
@@ -212,22 +209,6 @@ func (c *EmbeddedIdPConfig) ToYAMLConfig() (*dex.YAMLConfig, error) {
 	// MFAChain on clients is NOT set here — it's synced from the DB setting on startup.
 	if err := configureMFA(cfg, c.MfaSessionMaxLifetime, c.MfaSessionIdleTimeout, c.MfaSessionRememberMe, c.SessionCookieEncryptionKey); err != nil {
 		return nil, err
-	}
-
-	// Add owner user if provided
-	if c.Owner != nil && c.Owner.Email != "" && c.Owner.Hash != "" {
-		username := c.Owner.Username
-		if username == "" {
-			username = c.Owner.Email
-		}
-		cfg.StaticPasswords = []dex.Password{
-			{
-				Email:    c.Owner.Email,
-				Hash:     []byte(c.Owner.Hash),
-				Username: username,
-				UserID:   uuid.New().String(),
-			},
-		}
 	}
 
 	return cfg, nil
@@ -371,6 +352,18 @@ type EmbeddedIdPManager struct {
 	mfaEnabled bool
 }
 
+// warnIfDeprecatedOwnerConfigSet logs a deprecation warning when a loaded
+// config still sets the removed EmbeddedIdPConfig.Owner field, so operators
+// carrying it over from an old management.json notice it stopped doing
+// anything instead of silently losing their bootstrap-owner setup.
+func warnIfDeprecatedOwnerConfigSet(ctx context.Context, owner json.RawMessage) {
+	trimmed := strings.TrimSpace(string(owner))
+	if trimmed == "" || trimmed == "null" {
+		return
+	}
+	log.WithContext(ctx).Warn("embedded IdP config field 'Owner' is deprecated and no longer used - remove it from your config and run 'admin user create-owner' to create a break-glass owner instead")
+}
+
 // NewEmbeddedIdPManager creates a new instance of EmbeddedIdPManager from a configuration.
 // It instantiates the underlying Dex provider internally.
 // Note: Storage defaults are applied in config loading (applyEmbeddedIdPConfig) based on Datadir.
@@ -378,6 +371,8 @@ func NewEmbeddedIdPManager(ctx context.Context, config *EmbeddedIdPConfig, appMe
 	if config == nil {
 		return nil, fmt.Errorf("embedded IdP config is required")
 	}
+
+	warnIfDeprecatedOwnerConfigSet(ctx, config.Owner)
 
 	// Apply defaults for CLI redirect URIs
 	if len(config.CLIRedirectURIs) == 0 {

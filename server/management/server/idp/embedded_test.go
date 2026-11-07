@@ -3,10 +3,13 @@ package idp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/sirupsen/logrus"
+	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -312,6 +315,23 @@ func TestEmbeddedIdPManager_UpdateUserPassword(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "new password must be different")
 	})
+}
+
+func TestWarnIfDeprecatedOwnerConfigSet(t *testing.T) {
+	hook := logrustest.NewGlobal()
+	t.Cleanup(func() { logrus.StandardLogger().ReplaceHooks(make(logrus.LevelHooks)) })
+
+	warnIfDeprecatedOwnerConfigSet(context.Background(), nil)
+	require.Empty(t, hook.Entries)
+
+	warnIfDeprecatedOwnerConfigSet(context.Background(), json.RawMessage("null"))
+	require.Empty(t, hook.Entries)
+
+	warnIfDeprecatedOwnerConfigSet(context.Background(), json.RawMessage(`{"Email":"owner@example.com","Hash":"x"}`))
+	require.Len(t, hook.Entries, 1)
+	assert.Equal(t, logrus.WarnLevel, hook.Entries[0].Level)
+	assert.Contains(t, hook.Entries[0].Message, "deprecated")
+	assert.Contains(t, hook.Entries[0].Message, "create-owner")
 }
 
 func TestEmbeddedIdPConfig_ToYAMLConfig_IncludesDeviceCallbackRedirectURI(t *testing.T) {

@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/mail"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/dexidp/dex/storage"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
@@ -130,7 +132,49 @@ func NewCommands(openers Openers) *cobra.Command {
 	}
 	addUserSelectorFlags(resetMFACmd, &resetSelector)
 
-	userCmd.AddCommand(passwordCmd, resetMFACmd)
+	var createOwnerEmail, createOwnerName, createOwnerAccountID string
+	var createOwnerPassword, createOwnerPasswordFile string
+	createOwnerCmd := &cobra.Command{
+		Use:   "create-owner --email email --name name (--password password | --password-file path) [--account-id id]",
+		Short: "Create a local owner user outside any identity provider",
+		Long: "Creates a local, password-authenticated user in the embedded IdP and grants it the Owner role " +
+			"on an existing account, without going through normal sign-in or invite flows. Use this for " +
+			"break-glass recovery when an account has no reachable admin.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			email := strings.TrimSpace(createOwnerEmail)
+			if email == "" {
+				return fmt.Errorf("--email is required")
+			}
+			if _, err := mail.ParseAddress(email); err != nil {
+				return fmt.Errorf("invalid email %q: %w", email, err)
+			}
+			name := strings.TrimSpace(createOwnerName)
+			if name == "" {
+				return fmt.Errorf("--name is required")
+			}
+			password, err := resolvePasswordInput(cmd, createOwnerPassword, createOwnerPasswordFile)
+			if err != nil {
+				return err
+			}
+			if password == "" {
+				return fmt.Errorf("password is required")
+			}
+			if err := server.ValidatePassword(password); err != nil {
+				return fmt.Errorf("invalid password: %w", err)
+			}
+			return openers.Resources(cmd, func(ctx context.Context, resources Resources) error {
+				return runCreateOwner(ctx, resources, cmd.OutOrStdout(), email, name, password, createOwnerAccountID)
+			})
+		},
+	}
+	createOwnerCmd.Flags().StringVar(&createOwnerEmail, "email", "", "Owner's email address")
+	createOwnerCmd.Flags().StringVar(&createOwnerName, "name", "", "Owner's display name")
+	createOwnerCmd.Flags().StringVar(&createOwnerPassword, "password", "", "Owner's password")
+	createOwnerCmd.Flags().StringVar(&createOwnerPasswordFile, "password-file", "", "Read owner's password from file ('-' for stdin)")
+	createOwnerCmd.Flags().StringVar(&createOwnerAccountID, "account-id", "", "Account to grant ownership on (required if more than one account exists)")
+
+	userCmd.AddCommand(passwordCmd, resetMFACmd, createOwnerCmd)
 
 	mfaCmd := &cobra.Command{
 		Use:   "mfa",
@@ -345,6 +389,101 @@ func runResetMFA(ctx context.Context, idpStorage storage.Storage, w io.Writer, s
 		_, _ = fmt.Fprintf(w, "MFA reset for %s. The user will re-enroll at next login.\n", user.Email)
 	} else {
 		_, _ = fmt.Fprintf(w, "No MFA enrollment found for %s.\n", user.Email)
+	}
+	return nil
+}
+
+func runCreateOwner(ctx context.Context, resources Resources, w io.Writer, email, name, password, accountIDFlag string) error {
+	if resources.Store == nil {
+		return fmt.Errorf("management store is required")
+	}
+	if resources.IDPStorage == nil {
+		return fmt.Errorf("embedded IdP storage is required")
+	}
+
+	accountID, err := resolveAccountID(ctx, resources.Store, accountIDFlag)
+	if err != nil {
+		return err
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+
+	userID := uuid.New().String()
+	if err := resources.IDPStorage.CreatePassword(ctx, storage.Password{
+		Email:    email,
+		Username: name,
+		UserID:   userID,
+		Hash:     hash,
+	}); err != nil {
+		if errors.Is(err, storage.ErrAlreadyExists) {
+			return fmt.Errorf("a local user with email %s already exists; use 'admin user change-password' to regain access instead", email)
+		}
+		return fmt.Errorf("create local user %s: %w", email, err)
+	}
+
+	owner := types.NewOwnerUser(nbdex.EncodeDexUserID(userID, idp.LocalConnectorID), email, name)
+	owner.AccountID = accountID
+
+	if err := resources.Store.SaveUser(ctx, owner); err != nil {
+		if deleteErr := resources.IDPStorage.DeletePassword(ctx, email); deleteErr != nil && !errors.Is(deleteErr, storage.ErrNotFound) {
+			return fmt.Errorf("save owner user for account %s: %w (also failed to roll back embedded IdP user: %v)", accountID, err, deleteErr)
+		}
+		return fmt.Errorf("save owner user for account %s: %w", accountID, err)
+	}
+
+	if err := storeUserCreatedActivity(ctx, resources.EventStore, accountID, owner.Id); err != nil {
+		_, _ = fmt.Fprintf(w, "Warning: failed to record audit event: %v\n", err)
+	}
+
+	_, _ = fmt.Fprintf(w, "Created owner %s (%s) on account %s. If this account already had an owner, it now has more than one; demote the other from the console if that is not intended.\n", email, owner.Id, accountID)
+	return nil
+}
+
+// resolveAccountID returns accountID if non-empty and it exists, or the store's
+// single account if there is exactly one and accountID was not given.
+func resolveAccountID(ctx context.Context, s store.Store, accountID string) (string, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID != "" {
+		exists, err := s.AccountExists(ctx, store.LockingStrengthNone, accountID)
+		if err != nil {
+			return "", fmt.Errorf("check account %q: %w", accountID, err)
+		}
+		if !exists {
+			return "", fmt.Errorf("account %q not found", accountID)
+		}
+		return accountID, nil
+	}
+
+	count, err := s.GetAccountsCounter(ctx)
+	if err != nil {
+		return "", fmt.Errorf("count accounts: %w", err)
+	}
+	if count == 0 {
+		return "", fmt.Errorf("no accounts exist yet; use the management server's initial setup flow to create the first account and owner")
+	}
+	if count != 1 {
+		return "", fmt.Errorf("found %d accounts; specify --account-id to pick one", count)
+	}
+
+	return s.GetAnyAccountID(ctx)
+}
+
+func storeUserCreatedActivity(ctx context.Context, eventStore activity.Store, accountID, userID string) error {
+	if eventStore == nil {
+		return nil
+	}
+	_, err := eventStore.Save(ctx, &activity.Event{
+		Timestamp:   time.Now().UTC(),
+		Activity:    activity.UserCreated,
+		InitiatorID: string(hook.SystemSource),
+		TargetID:    userID,
+		AccountID:   accountID,
+	})
+	if err != nil {
+		return fmt.Errorf("save user created audit event: %w", err)
 	}
 	return nil
 }

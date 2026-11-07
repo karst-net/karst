@@ -244,6 +244,121 @@ func TestBillingAssignmentCommandRegisteredWithStoreOpener(t *testing.T) {
 	require.Equal(t, "assign-pilot", command.Name())
 }
 
+func newTestManagementStoreWithAccounts(t *testing.T, accountIDs ...string) mgmtstore.Store {
+	t.Helper()
+	ctx := context.Background()
+	st, err := mgmtstore.NewStore(ctx, types.SqliteStoreEngine, t.TempDir(), nil, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close(ctx)) })
+	for _, id := range accountIDs {
+		require.NoError(t, st.SaveAccount(ctx, &types.Account{Id: id, Settings: &types.Settings{}}))
+	}
+	return st
+}
+
+func TestRunCreateOwner(t *testing.T) {
+	ctx := context.Background()
+	managementStore := newTestManagementStoreWithAccounts(t, "account-1")
+	idpStorage := memory.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var out bytes.Buffer
+
+	err := runCreateOwner(ctx, Resources{Store: managementStore, IDPStorage: idpStorage}, &out, "owner@example.com", "Break Glass", "NewPass1!", "")
+	require.NoError(t, err)
+	require.Contains(t, out.String(), "Created owner owner@example.com")
+
+	password, err := idpStorage.GetPassword(ctx, "owner@example.com")
+	require.NoError(t, err)
+	require.NoError(t, bcrypt.CompareHashAndPassword(password.Hash, []byte("NewPass1!")))
+
+	users, err := managementStore.GetAccountUsers(ctx, mgmtstore.LockingStrengthNone, "account-1")
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	require.Equal(t, types.UserRoleOwner, users[0].Role)
+	require.Equal(t, "owner@example.com", users[0].Email)
+	require.Equal(t, nbdex.EncodeDexUserID(password.UserID, idp.LocalConnectorID), users[0].Id)
+}
+
+func TestRunCreateOwnerRequiresAccountIDWithMultipleAccounts(t *testing.T) {
+	ctx := context.Background()
+	managementStore := newTestManagementStoreWithAccounts(t, "account-1", "account-2")
+	idpStorage := memory.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	err := runCreateOwner(ctx, Resources{Store: managementStore, IDPStorage: idpStorage}, io.Discard, "owner@example.com", "Break Glass", "NewPass1!", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "specify --account-id")
+
+	_, err = idpStorage.GetPassword(ctx, "owner@example.com")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
+func TestRunCreateOwnerWithExplicitAccountID(t *testing.T) {
+	ctx := context.Background()
+	managementStore := newTestManagementStoreWithAccounts(t, "account-1", "account-2")
+	idpStorage := memory.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	err := runCreateOwner(ctx, Resources{Store: managementStore, IDPStorage: idpStorage}, io.Discard, "owner@example.com", "Break Glass", "NewPass1!", "account-2")
+	require.NoError(t, err)
+
+	users, err := managementStore.GetAccountUsers(ctx, mgmtstore.LockingStrengthNone, "account-2")
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+}
+
+func TestRunCreateOwnerRejectsUnknownAccountID(t *testing.T) {
+	ctx := context.Background()
+	managementStore := newTestManagementStoreWithAccounts(t, "account-1")
+	idpStorage := memory.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	err := runCreateOwner(ctx, Resources{Store: managementStore, IDPStorage: idpStorage}, io.Discard, "owner@example.com", "Break Glass", "NewPass1!", "no-such-account")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
+
+	_, err = idpStorage.GetPassword(ctx, "owner@example.com")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
+func TestRunCreateOwnerErrorsWithNoAccounts(t *testing.T) {
+	ctx := context.Background()
+	managementStore := newTestManagementStoreWithAccounts(t)
+	idpStorage := memory.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	err := runCreateOwner(ctx, Resources{Store: managementStore, IDPStorage: idpStorage}, io.Discard, "owner@example.com", "Break Glass", "NewPass1!", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no accounts exist")
+}
+
+func TestRunCreateOwnerRejectsExistingEmail(t *testing.T) {
+	ctx := context.Background()
+	managementStore := newTestManagementStoreWithAccounts(t, "account-1")
+	idpStorage := newTestIDPStorage(t)
+
+	err := runCreateOwner(ctx, Resources{Store: managementStore, IDPStorage: idpStorage}, io.Discard, "user@example.com", "Break Glass", "NewPass1!", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already exists")
+
+	users, err := managementStore.GetAccountUsers(ctx, mgmtstore.LockingStrengthNone, "account-1")
+	require.NoError(t, err)
+	require.Empty(t, users)
+}
+
+func TestCreateOwnerCommandValidatesInputBeforeOpeningResources(t *testing.T) {
+	opened := false
+	cmd := NewCommands(Openers{
+		Resources: func(cmd *cobra.Command, fn func(ctx context.Context, resources Resources) error) error {
+			opened = true
+			return nil
+		},
+	})
+	cmd.SetArgs([]string{"user", "create-owner", "--name", "Break Glass", "--password", "NewPass1!"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--email is required")
+	require.False(t, opened)
+}
+
 func TestResolvePasswordInputFromStdin(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetIn(strings.NewReader("NewPass1!\n"))
