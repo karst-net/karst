@@ -24,9 +24,12 @@ export function RelayServices() {
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5_000); return () => clearInterval(timer); }, []);
   const reload = () => { resource.reload(); endpoints.reload(); groups.reload(); gateways.reload(); admission.reload(); allocations.reload(); setNow(Date.now()); };
   const { message, setMessage, run } = useMutation(reload);
-  const [installing, setInstalling] = useState(false);
-  const [registering, setRegistering] = useState(false);
-  const [allocating, setAllocating] = useState(false);
+  // One "Add relay" entry point (ADR-0067), not three differently shaped
+  // pages: "choice" is the branching question, the other three steps are
+  // today's unchanged dialogs, just reached from here instead of their
+  // own buttons. "install" can hand off directly into "register" once its
+  // own handoff is downloaded (RelayInstallation's onContinue).
+  const [addRelayStep, setAddRelayStep] = useState<"choice" | "register" | "install" | "allocate">();
   const [relayId, setRelayId] = useState<string>();
   const [details, setDetails] = useState<Relay>();
   const [saving, setSaving] = useState(false);
@@ -58,8 +61,8 @@ export function RelayServices() {
   return <section>
     <h2>Relays</h2>
     <p>Manage relay endpoints, group access, internet egress and health in one place. Ponor is the relay transport; a service stores the endpoint's access and publication settings.</p>
-    <div className="actions"><button className="primary" onClick={() => setRegistering(true)}>Add relay</button><button onClick={() => setInstalling(true)}>Install a local relay</button><button onClick={() => setAllocating(true)}>Allocate a relay</button><button onClick={reload}>Refresh relays</button></div>
-    <p className="lede">Already have a relay running somewhere? Use <strong>Add relay</strong>. Have a host to put one on, but nothing running yet? <strong>Install a local relay</strong> generates a script for that host, then still finishes with Add relay. Want Karst to provision a new host for you through a cloud or cluster connection? Use <strong>Allocate a relay</strong> — the only one of the three that creates anything.</p>
+    <div className="actions"><button className="primary" onClick={() => setAddRelayStep("choice")}>Add relay</button><button onClick={reload}>Refresh relays</button></div>
+    <p className="lede">One workflow covers all three situations: a relay already running somewhere, a host with nothing on it yet, or no host at all. <strong>Add relay</strong> asks which applies, then takes you through the right steps — only the last one, provisioning a new host, actually creates anything.</p>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {endpoints.error && <Failure message={endpoints.error} retry={endpoints.reload} />}
     {admission.error && services.some(service => service.access_managed) && <p role="alert">Admission writer observations unavailable: {admission.error}</p>}
@@ -73,7 +76,7 @@ export function RelayServices() {
       {publication.mode === "services" && <button disabled={saving || Boolean(resource.error)} onClick={async () => { if (!confirm("Return to legacy registry publication? Previously unassociated legacy endpoints may become available to clients again.")) return; setSaving(true); await run(() => api.setRelayPublication("legacy"), "Legacy registry publication restored."); setSaving(false); }}>Restore legacy publication</button>}
     </div>
     </details>
-    {!modeDraft && !details && !allocating && preview === undefined && <Notice message={message} />}
+    {!modeDraft && !details && !addRelayStep && preview === undefined && <Notice message={message} />}
     {!resource.error && !endpoints.error && services.length === 0 && ponor.length === 0 ? <EmptyState title="No relays configured">Add a running relay, then choose its allowed groups and optional internet egress.</EmptyState> :
       <Rows head={<><th>Relay</th><th>Endpoint and health</th><th>Access</th><th>Operational status</th><th>Actions</th></>}>
         {services.map((service) => {
@@ -102,7 +105,7 @@ export function RelayServices() {
     <p className="lede">ADR-0063: name a host, pick its infrastructure connection and location, and choose the permitted groups — provisioning and granting access happen in the background. Internet egress is not yet supported by this workflow.</p>
     {allocations.error && <Failure message={allocations.error} retry={allocations.reload} />}
     {!allocations.error && (allocations.value ?? []).length === 0
-      ? <EmptyState title="No relay allocations">Allocate a relay to provision a new host through a real infrastructure connection.</EmptyState>
+      ? <EmptyState title="No relay allocations">Use Add relay — "No, provision one for me" — to provision a new host through a real infrastructure connection.</EmptyState>
       : <Rows head={<><th>Name</th><th>Location</th><th>Permitted groups</th><th>Status</th><th>Actions</th></>}>
         {(allocations.value ?? []).map(allocation => {
           const status = allocationStatus(allocation);
@@ -118,9 +121,19 @@ export function RelayServices() {
         })}
       </Rows>}
 
-    {installing && <RelayInstallation onClose={() => setInstalling(false)} />}
-    {registering && <RelayRegistration onClose={() => setRegistering(false)} onAdded={endpoint => { setRegistering(false); reload(); setRelayId(endpoint.id); setConfiguring(services.find(service => service.ponor_id === endpoint.id) ?? "new"); setMessage("Endpoint registered. Configure group access to complete setup."); }} />}
-    {allocating && <AllocateRelay onClose={() => setAllocating(false)} onAllocated={() => { setAllocating(false); reload(); setMessage("Relay allocation requested. It will show as pending until it registers and access is granted."); }} />}
+    {addRelayStep === "choice" && <Dialog open title="Add relay" onClose={() => setAddRelayStep(undefined)}>
+      <p>Is this relay already running somewhere?</p>
+      <div className="actions">
+        <button className="primary" onClick={() => setAddRelayStep("register")}>Yes — register it</button>
+        <button onClick={() => setAddRelayStep("install")}>I have a host, but nothing is running on it yet</button>
+        <button onClick={() => setAddRelayStep("allocate")}>No, provision one for me</button>
+      </div>
+      <p className="lede">Installing generates a script for an existing control host, then still finishes by registering the result. Provisioning is the only one of the three that creates anything, through an already-configured infrastructure connection.</p>
+      <div className="actions"><button onClick={() => setAddRelayStep(undefined)}>Cancel</button></div>
+    </Dialog>}
+    {addRelayStep === "install" && <RelayInstallation onClose={() => setAddRelayStep(undefined)} onContinue={() => setAddRelayStep("register")} />}
+    {addRelayStep === "register" && <RelayRegistration onClose={() => setAddRelayStep(undefined)} onAdded={endpoint => { setAddRelayStep(undefined); reload(); setRelayId(endpoint.id); setConfiguring(services.find(service => service.ponor_id === endpoint.id) ?? "new"); setMessage("Endpoint registered. Configure group access to complete setup."); }} />}
+    {addRelayStep === "allocate" && <AllocateRelay onClose={() => setAddRelayStep(undefined)} onAllocated={() => { setAddRelayStep(undefined); reload(); setMessage("Relay allocation requested. It will show as pending until it registers and access is granted."); }} />}
     <Dialog open={Boolean(details)} title="Relay endpoint details" onClose={() => setDetails(undefined)}>
       {details && <><Notice message={message} /><dl><dt>Address</dt><dd>{details.address}</dd><dt>TLS server name</dt><dd>{details.tls_server_name}</dd><dt>Region</dt><dd>{details.region}</dd><dt>Location</dt><dd>{details.location?.label || (details.location ? `${details.location.lat}, ${details.location.lon}` : "No location")}</dd><dt>Last confirmed</dt><dd><Observed at={details.health.last_confirmed_at} /></dd></dl>
       <p>Health is the relay's signed report. A stale report does not prove the process stopped forwarding traffic.</p>

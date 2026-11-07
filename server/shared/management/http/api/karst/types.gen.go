@@ -2216,14 +2216,18 @@ type GroupLocation struct {
 
 // InfrastructureConnection defines model for InfrastructureConnection.
 type InfrastructureConnection struct {
-	CreatedAt          *time.Time `json:"created_at,omitempty"`
-	Id                 *string    `json:"id,omitempty"`
-	Label              *string    `json:"label,omitempty"`
-	LastError          *string    `json:"last_error,omitempty"`
-	LastValidatedAt    *time.Time `json:"last_validated_at,omitempty"`
-	Lat                *float32   `json:"lat,omitempty"`
-	LaunchAmiId        *string    `json:"launch_ami_id,omitempty"`
-	LaunchInstanceType *string    `json:"launch_instance_type,omitempty"`
+	CreatedAt             *time.Time `json:"created_at,omitempty"`
+	Id                    *string    `json:"id,omitempty"`
+	Label                 *string    `json:"label,omitempty"`
+	LastError             *string    `json:"last_error,omitempty"`
+	LastValidatedAt       *time.Time `json:"last_validated_at,omitempty"`
+	Lat                   *float32   `json:"lat,omitempty"`
+	LaunchAmiId           *string    `json:"launch_ami_id,omitempty"`
+	LaunchInstanceType    *string    `json:"launch_instance_type,omitempty"`
+	LaunchNomadDatacenter *string    `json:"launch_nomad_datacenter,omitempty"`
+
+	// LaunchNomadJobId ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
+	LaunchNomadJobId *string `json:"launch_nomad_job_id,omitempty"`
 
 	// LaunchRegion ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself.
 	LaunchRegion           *string                      `json:"launch_region,omitempty"`
@@ -2235,7 +2239,10 @@ type InfrastructureConnection struct {
 
 	// Status Empty until the first resources (Discover) call completes.
 	Status *InfrastructureConnectionStatus `json:"status,omitempty"`
-	Type   InfrastructureConnectionType    `json:"type"`
+
+	// SupportsAllocation True if this connection's type has a registered relay-allocation driver (ADR-0067) -- aws and nomad today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.
+	SupportsAllocation bool                         `json:"supports_allocation"`
+	Type               InfrastructureConnectionType `json:"type"`
 }
 
 // InfrastructureConnectionMode defines model for InfrastructureConnection.Mode.
@@ -2273,6 +2280,12 @@ type InfrastructureConnectionLaunchDefaults struct {
 	Region           *string   `json:"region,omitempty"`
 	SecurityGroupIds *[]string `json:"security_group_ids,omitempty"`
 	SubnetId         *string   `json:"subnet_id,omitempty"`
+}
+
+// InfrastructureConnectionNomadLaunchDefaults ADR-0067. The Nomad analog of InfrastructureConnectionLaunchDefaults -- every field replaces the stored value, including to empty. Only meaningful for a read-write Nomad connection; refused otherwise. job_id names a parameterized job the operator has already registered against this connection's Nomad cluster; this endpoint does not register or validate the job itself.
+type InfrastructureConnectionNomadLaunchDefaults struct {
+	Datacenter *string `json:"datacenter,omitempty"`
+	JobId      *string `json:"job_id,omitempty"`
 }
 
 // Location defines model for Location.
@@ -3480,6 +3493,9 @@ type CreateInfrastructureConnectionJSONRequestBody = InfrastructureConnectionCre
 
 // UpdateInfrastructureConnectionLaunchDefaultsJSONRequestBody defines body for UpdateInfrastructureConnectionLaunchDefaults for application/json ContentType.
 type UpdateInfrastructureConnectionLaunchDefaultsJSONRequestBody = InfrastructureConnectionLaunchDefaults
+
+// UpdateInfrastructureConnectionNomadLaunchDefaultsJSONRequestBody defines body for UpdateInfrastructureConnectionNomadLaunchDefaults for application/json ContentType.
+type UpdateInfrastructureConnectionNomadLaunchDefaultsJSONRequestBody = InfrastructureConnectionNomadLaunchDefaults
 
 // CreateDeviceInvitationJSONRequestBody defines body for CreateDeviceInvitation for application/json ContentType.
 type CreateDeviceInvitationJSONRequestBody = DeviceInvitationDraft

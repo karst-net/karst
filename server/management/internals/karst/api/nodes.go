@@ -306,6 +306,10 @@ type infraConnectionReadWriter interface {
 	// set here rather than collected on the allocation request itself --
 	// see UpdateLaunchDefaultsRequest's own doc comment.
 	UpdateLaunchDefaults(ctx context.Context, id string, req infraconnections.UpdateLaunchDefaultsRequest) (*infraconnections.Account, error)
+	// UpdateNomadLaunchDefaults is UpdateLaunchDefaults's Nomad analog
+	// (ADR-0067): the pre-registered parameterized job ID/datacenter a
+	// named relay allocation against a Nomad connection actuates.
+	UpdateNomadLaunchDefaults(ctx context.Context, id string, req infraconnections.UpdateNomadLaunchDefaultsRequest) (*infraconnections.Account, error)
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -699,6 +703,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}", h.infraConnectionsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/resources", h.infraConnectionResources).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/launch-defaults", h.infraConnectionUpdateLaunchDefaults).Methods(http.MethodPut, http.MethodOptions)
+	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/nomad-launch-defaults", h.infraConnectionUpdateNomadLaunchDefaults).Methods(http.MethodPut, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/regions/{provider}/{region}", h.regionsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -3473,6 +3478,39 @@ func (h *handler) infraConnectionUpdateLaunchDefaults(w http.ResponseWriter, r *
 		return
 	}
 	connection, err := h.infraConnections.UpdateLaunchDefaults(r.Context(), mux.Vars(r)["connectionId"], req)
+	if errors.Is(err, infraconnections.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "infrastructure connection not found"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, connection.ToResponse())
+}
+
+// infraConnectionUpdateNomadLaunchDefaults is
+// infraConnectionUpdateLaunchDefaults's Nomad analog (ADR-0067) -- same
+// gate, same shape, a different provider's launch fields.
+func (h *handler) infraConnectionUpdateNomadLaunchDefaults(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.infraConnections == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "infrastructure connections are not configured"), w)
+		return
+	}
+	if err := requireInfraConnectionAdminRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var req infraconnections.UpdateNomadLaunchDefaultsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	connection, err := h.infraConnections.UpdateNomadLaunchDefaults(r.Context(), mux.Vars(r)["connectionId"], req)
 	if errors.Is(err, infraconnections.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "infrastructure connection not found"), w)
 		return

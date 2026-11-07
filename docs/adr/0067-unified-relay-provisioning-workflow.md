@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0067: One provisioning workflow, with the cloud mechanism hidden behind a driver
 
-- **Status:** Proposed
+- **Status:** Accepted and implemented — the `infraprovision.Driver` abstraction (AWS, Nomad; #550) and the collapsed console "Add relay" workflow below are both shipped
 - **Date:** 2026-11-07
 - **Deciders:** Project owner
 - **Related:** ADR-0045, ADR-0058, ADR-0059, ADR-0062, ADR-0063, ADR-0065, ADR-0066

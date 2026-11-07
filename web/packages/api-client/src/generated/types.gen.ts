@@ -1006,6 +1006,15 @@ export type InfrastructureConnection = {
     launch_instance_type?: string;
     launch_subnet_id?: string;
     launch_security_group_ids?: Array<string>;
+    /**
+     * ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
+     */
+    launch_nomad_job_id?: string;
+    launch_nomad_datacenter?: string;
+    /**
+     * True if this connection's type has a registered relay-allocation driver (ADR-0067) -- aws and nomad today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.
+     */
+    supports_allocation: boolean;
 };
 
 /**
@@ -1017,6 +1026,14 @@ export type InfrastructureConnectionLaunchDefaults = {
     instance_type?: string;
     subnet_id?: string;
     security_group_ids?: Array<string>;
+};
+
+/**
+ * ADR-0067. The Nomad analog of InfrastructureConnectionLaunchDefaults -- every field replaces the stored value, including to empty. Only meaningful for a read-write Nomad connection; refused otherwise. job_id names a parameterized job the operator has already registered against this connection's Nomad cluster; this endpoint does not register or validate the job itself.
+ */
+export type InfrastructureConnectionNomadLaunchDefaults = {
+    job_id?: string;
+    datacenter?: string;
 };
 
 export type DiscoveredResource = {
@@ -1328,6 +1345,15 @@ export type InfrastructureConnectionWritable = {
     launch_instance_type?: string;
     launch_subnet_id?: string;
     launch_security_group_ids?: Array<string>;
+    /**
+     * ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
+     */
+    launch_nomad_job_id?: string;
+    launch_nomad_datacenter?: string;
+    /**
+     * True if this connection's type has a registered relay-allocation driver (ADR-0067) -- aws and nomad today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.
+     */
+    supports_allocation: boolean;
 };
 
 export type LocationWritable = LocationCreate;
@@ -4616,6 +4642,37 @@ export type UpdateInfrastructureConnectionLaunchDefaultsResponses = {
 };
 
 export type UpdateInfrastructureConnectionLaunchDefaultsResponse = UpdateInfrastructureConnectionLaunchDefaultsResponses[keyof UpdateInfrastructureConnectionLaunchDefaultsResponses];
+
+export type UpdateInfrastructureConnectionNomadLaunchDefaultsData = {
+    body: InfrastructureConnectionNomadLaunchDefaults;
+    path: {
+        connectionId: string;
+    };
+    query?: never;
+    url: '/infrastructure-connections/{connectionId}/nomad-launch-defaults';
+};
+
+export type UpdateInfrastructureConnectionNomadLaunchDefaultsErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type UpdateInfrastructureConnectionNomadLaunchDefaultsError = UpdateInfrastructureConnectionNomadLaunchDefaultsErrors[keyof UpdateInfrastructureConnectionNomadLaunchDefaultsErrors];
+
+export type UpdateInfrastructureConnectionNomadLaunchDefaultsResponses = {
+    /**
+     * Updated connection
+     */
+    200: InfrastructureConnection;
+};
+
+export type UpdateInfrastructureConnectionNomadLaunchDefaultsResponse = UpdateInfrastructureConnectionNomadLaunchDefaultsResponses[keyof UpdateInfrastructureConnectionNomadLaunchDefaultsResponses];
 
 export type GetBedrockData = {
     body?: never;

@@ -477,6 +477,16 @@ func consoleMutations() []consoleCase {
 			body: `{"region":"us-east-1","ami_id":"ami-0123456789abcdef0","instance_type":"t3.micro","subnet_id":"subnet-0123456789abcdef0","security_group_ids":["sg-0123456789abcdef0"]}`,
 			want: []int{http.StatusNotFound}, template: "/karst/v1/infrastructure-connections/{connectionId}/launch-defaults",
 		},
+		{
+			// ADR-0067's Nomad analog of the AWS launch-defaults case
+			// above -- same "unknown-*" 404 shape and same division of
+			// coverage (deep gating stays at the unit level in
+			// infraconnections_test.go).
+			name: "update an infrastructure connection's Nomad launch defaults", method: http.MethodPut,
+			path: "/karst/v1/infrastructure-connections/unknown-connection-id/nomad-launch-defaults",
+			body: `{"job_id":"karst-relay","datacenter":"dc1"}`,
+			want: []int{http.StatusNotFound}, template: "/karst/v1/infrastructure-connections/{connectionId}/nomad-launch-defaults",
+		},
 	}
 }
 

@@ -387,6 +387,7 @@ test("a relay with a DNS name for an address is refused before it is sent", asyn
   await expect(page.getByRole("button", { name: "Add relay", exact: true })).toBeVisible();
   const rowsBefore = await page.locator("tbody tr").count();
   await page.getByRole("button", { name: "Add relay" }).click();
+  await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Relay address").fill("relay.example.com:443");
   await page.getByLabel("TLS server name").fill("relay.example.com");
   await page.getByLabel("Relay identity key").fill("fixture-public-key");
@@ -400,6 +401,7 @@ test("a relay with a DNS name for an address is refused before it is sent", asyn
 test("a relay can be added and removed", async ({ page }) => {
   await page.goto("/#/relays");
   await page.getByRole("button", { name: "Add relay" }).click();
+  await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Relay address").fill("203.0.113.9:443");
   await page.getByLabel("TLS server name").fill("relay-new.example.test");
   await page.getByLabel("Relay identity key").fill("fixture-public-key-new");

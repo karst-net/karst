@@ -1404,6 +1404,22 @@ paths:
         '200': {description: Updated connection, content: {application/json: {schema: {$ref: '#/components/schemas/InfrastructureConnection'}}}}
         '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
+  /infrastructure-connections/{connectionId}/nomad-launch-defaults:
+    parameters: [{name: connectionId, in: path, required: true, schema: {type: string}}]
+    put:
+      operationId: updateInfrastructureConnectionNomadLaunchDefaults
+      tags: [settings]
+      description: >-
+        ADR-0067. Requires the admin or owner role. Sets the Nomad launch
+        shape (a pre-registered parameterized job ID and datacenter) an
+        ADR-0063 relay allocation against this connection actuates --
+        refused for any connection that is not currently a read-write
+        Nomad connection.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/InfrastructureConnectionNomadLaunchDefaults'}}}}
+      responses:
+        '200': {description: Updated connection, content: {application/json: {schema: {$ref: '#/components/schemas/InfrastructureConnection'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
   /bedrock:
     get:
       operationId: getBedrock
@@ -2284,7 +2300,7 @@ components:
         location_label: {type: string}
     InfrastructureConnection:
       type: object
-      required: [id, type, mode, created_at]
+      required: [id, type, mode, created_at, supports_allocation]
       properties:
         id: {type: string, readOnly: true}
         type: {type: string, enum: [aws, azure, gcp, kubernetes, nomad, lxd]}
@@ -2302,6 +2318,9 @@ components:
         launch_instance_type: {type: string}
         launch_subnet_id: {type: string}
         launch_security_group_ids: {type: array, items: {type: string}}
+        launch_nomad_job_id: {type: string, description: 'ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.'}
+        launch_nomad_datacenter: {type: string}
+        supports_allocation: {type: boolean, description: 'True if this connection''s type has a registered relay-allocation driver (ADR-0067) -- aws and nomad today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.'}
     InfrastructureConnectionLaunchDefaults:
       type: object
       additionalProperties: false
@@ -2315,6 +2334,19 @@ components:
         instance_type: {type: string}
         subnet_id: {type: string}
         security_group_ids: {type: array, items: {type: string}}
+    InfrastructureConnectionNomadLaunchDefaults:
+      type: object
+      additionalProperties: false
+      description: >-
+        ADR-0067. The Nomad analog of InfrastructureConnectionLaunchDefaults
+        -- every field replaces the stored value, including to empty.
+        Only meaningful for a read-write Nomad connection; refused
+        otherwise. job_id names a parameterized job the operator has
+        already registered against this connection's Nomad cluster; this
+        endpoint does not register or validate the job itself.
+      properties:
+        job_id: {type: string}
+        datacenter: {type: string}
     # One resource (region/local zone/zone/namespace/datacenter/cluster_member)
     # as discovered live from a connection, enriched with cloudcatalog's
     # static coordinates where available -- lat/lon are absent, not zero,

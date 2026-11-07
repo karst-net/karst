@@ -27,6 +27,15 @@ function blankLaunchDefaultsDraft(connection: InfrastructureConnection): LaunchD
   };
 }
 
+/** Draft for the "Launch defaults" dialog's Nomad analog (ADR-0067) -- a
+ *  pre-registered parameterized job ID and datacenter, the Nomad shape of
+ *  the same "set once in Settings, never on the allocation request"
+ *  principle the AWS fields above already follow. */
+type NomadLaunchDefaultsDraft = { jobId: string; datacenter: string };
+function blankNomadLaunchDefaultsDraft(connection: InfrastructureConnection): NomadLaunchDefaultsDraft {
+  return { jobId: connection.launch_nomad_job_id ?? "", datacenter: connection.launch_nomad_datacenter ?? "" };
+}
+
 type ConnectionDraft = {
   type: ConnectionType;
   mode: ConnectionMode;
@@ -94,6 +103,8 @@ export function InfrastructureConnections() {
   const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft>();
   const [launchDefaultsFor, setLaunchDefaultsFor] = useState<InfrastructureConnection>();
   const [launchDefaultsDraft, setLaunchDefaultsDraft] = useState<LaunchDefaultsDraft>();
+  const [nomadLaunchDefaultsFor, setNomadLaunchDefaultsFor] = useState<InfrastructureConnection>();
+  const [nomadLaunchDefaultsDraft, setNomadLaunchDefaultsDraft] = useState<NomadLaunchDefaultsDraft>();
 
   const addConnection = async () => {
     if (!connectionDraft) return;
@@ -129,6 +140,14 @@ export function InfrastructureConnections() {
     }
   };
 
+  const saveNomadLaunchDefaults = async () => {
+    if (!nomadLaunchDefaultsFor || !nomadLaunchDefaultsDraft) return;
+    const defaults = { job_id: nomadLaunchDefaultsDraft.jobId.trim(), datacenter: nomadLaunchDefaultsDraft.datacenter.trim() };
+    if (await run(() => api.updateInfrastructureConnectionNomadLaunchDefaults(nomadLaunchDefaultsFor.id, defaults), `Launch defaults for ${nomadLaunchDefaultsFor.label || nomadLaunchDefaultsFor.type} were saved.`)) {
+      setNomadLaunchDefaultsFor(undefined);
+    }
+  };
+
   return <section>
     <h2>Infrastructure connections</h2>
     <TutorialHint>Lets Authorized Locations offer real regions, local zones, Kubernetes namespaces, Nomad datacenters, and LXD cluster members instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces/datacenters/cluster-members) — they cannot place an order or create a workload. "Read-write" connections may make live changes and incur costs: enabling an AWS Local Zone that exists but isn't opted into use yet, and — once its own launch defaults below are set — actuating a relay allocated against it on the Relay allocations page. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</TutorialHint>
@@ -148,6 +167,8 @@ export function InfrastructureConnections() {
             <td>
               {connection.type === "aws" && connection.mode === "read_write" &&
                 <button onClick={() => { setLaunchDefaultsFor(connection); setLaunchDefaultsDraft(blankLaunchDefaultsDraft(connection)); }}>Launch defaults</button>}
+              {connection.type === "nomad" && connection.mode === "read_write" &&
+                <button onClick={() => { setNomadLaunchDefaultsFor(connection); setNomadLaunchDefaultsDraft(blankNomadLaunchDefaultsDraft(connection)); }}>Launch defaults</button>}
               {" "}<button className="danger" onClick={() => removeConnection(connection)}>Remove</button>
             </td>
           </tr>)}
@@ -233,6 +254,16 @@ export function InfrastructureConnections() {
         <label>Security group IDs<textarea aria-label="Launch security group IDs" rows={3} placeholder={"sg-0123456789abcdef0\nsg-0123456789abcdef1"} required value={launchDefaultsDraft.securityGroupIds} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, securityGroupIds: event.target.value })} /></label>
         <p className="lede">One per line or comma-separated.</p>
         <div className="actions"><button type="button" onClick={() => setLaunchDefaultsFor(undefined)}>Cancel</button><button className="primary" type="submit">Save launch defaults</button></div>
+      </form>}
+    </Dialog>
+
+    <Dialog open={Boolean(nomadLaunchDefaultsFor)} title="Launch defaults" onClose={() => setNomadLaunchDefaultsFor(undefined)}>
+      <p>The Nomad job a relay allocated against {nomadLaunchDefaultsFor?.label || nomadLaunchDefaultsFor?.type} on the Relay allocations page actually dispatches — set once here, not on the allocation itself.</p>
+      {nomadLaunchDefaultsDraft && <form onSubmit={(event) => { event.preventDefault(); void saveNomadLaunchDefaults(); }}>
+        <label>Job ID<input aria-label="Launch Nomad job ID" placeholder="karst-relay" required value={nomadLaunchDefaultsDraft.jobId} onChange={(event) => setNomadLaunchDefaultsDraft((current) => current && { ...current, jobId: event.target.value })} /></label>
+        <p className="lede">A parameterized job already registered against this connection's Nomad cluster. This dialog does not register or validate it.</p>
+        <label>Datacenter<input aria-label="Launch Nomad datacenter" placeholder="dc1" required value={nomadLaunchDefaultsDraft.datacenter} onChange={(event) => setNomadLaunchDefaultsDraft((current) => current && { ...current, datacenter: event.target.value })} /></label>
+        <div className="actions"><button type="button" onClick={() => setNomadLaunchDefaultsFor(undefined)}>Cancel</button><button className="primary" type="submit">Save launch defaults</button></div>
       </form>}
     </Dialog>
   </section>;
