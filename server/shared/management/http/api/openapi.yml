@@ -2835,6 +2835,8 @@ components:
         - okta
         - pocketid
         - microsoft
+        - authentik
+        - keycloak
         - adfs
       example: oidc
     IdentityProvider:

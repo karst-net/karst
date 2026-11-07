@@ -539,8 +539,10 @@ func (e GroupMinimumIssued) Valid() bool {
 // Defines values for IdentityProviderType.
 const (
 	IdentityProviderTypeAdfs      IdentityProviderType = "adfs"
+	IdentityProviderTypeAuthentik IdentityProviderType = "authentik"
 	IdentityProviderTypeEntra     IdentityProviderType = "entra"
 	IdentityProviderTypeGoogle    IdentityProviderType = "google"
+	IdentityProviderTypeKeycloak  IdentityProviderType = "keycloak"
 	IdentityProviderTypeMicrosoft IdentityProviderType = "microsoft"
 	IdentityProviderTypeOidc      IdentityProviderType = "oidc"
 	IdentityProviderTypeOkta      IdentityProviderType = "okta"
@@ -553,9 +555,13 @@ func (e IdentityProviderType) Valid() bool {
 	switch e {
 	case IdentityProviderTypeAdfs:
 		return true
+	case IdentityProviderTypeAuthentik:
+		return true
 	case IdentityProviderTypeEntra:
 		return true
 	case IdentityProviderTypeGoogle:
+		return true
+	case IdentityProviderTypeKeycloak:
 		return true
 	case IdentityProviderTypeMicrosoft:
 		return true

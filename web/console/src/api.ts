@@ -133,13 +133,24 @@ export type Token = { id: string; name: string; expiration_date: string; created
 
 export type DnsSettings = { disabled_management_groups: string[] };
 
-// Only the identifying fields the console actually shows. The fork's own
-// `Account` also carries a large settings blob (peer login expiration, DNS,
-// JWT groups, …) that is not part of Karst's product surface here — SSO,
-// SCIM and webhooks are explicitly server configuration, not console-owned,
-// per the note in Settings below, so nothing in that blob belongs on this
-// page even though the endpoint returns it.
-export type Account = { id: string; domain: string; created_at: string; created_by: string };
+// Only the identifying fields the console actually shows, plus
+// embedded_idp_enabled -- the one settings field read outside Settings
+// itself, since it decides whether identity-provider connectors are
+// console-managed (see identity-providers.tsx) or purely server startup
+// configuration (Settings' own note). The fork's own `Account` also carries
+// a large settings blob (peer login expiration, DNS, JWT groups, …) that is
+// not part of Karst's product surface here, so nothing else from that blob
+// belongs on these pages even though the endpoint returns it.
+export type Account = { id: string; domain: string; created_at: string; created_by: string; embedded_idp_enabled?: boolean };
+
+export type IdentityProviderType = "oidc" | "zitadel" | "entra" | "google" | "okta" | "pocketid" | "microsoft" | "authentik" | "keycloak" | "adfs";
+export type IdentityProvider = { id?: string; type: IdentityProviderType; name: string; issuer: string; client_id: string };
+/** client_secret is required on every write: the server never returns a
+ * stored secret back (IdentityProvider omits it entirely), so there is
+ * nothing to preserve client-side on an edit -- re-entering the secret is
+ * mandatory, not optional, because the server overwrites it with whatever
+ * is sent, blank included. */
+export type IdentityProviderDraft = { type: IdentityProviderType; name: string; issuer: string; client_id: string; client_secret: string };
 
 export type BedrockLogEntry = { sequence: number; op: string; tier: string; subject: string; signed_at: string; signers: string[] };
 /** An offline signing bundle is intentionally opaque to the console: it is
@@ -331,6 +342,16 @@ export const api = {
   currentUser: () => management<AccountUser>("/users/current"),
   updateUser: (id: string, changes: { role: string; is_blocked: boolean; auto_groups: string[] }) => management<AccountUser>(`/users/${encodeURIComponent(id)}`, { method: "PUT", body: body(changes) }),
   deprovisionUser: (id: string) => management<void>(`/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // ── identity providers ────────────────────────────────────────────────────
+  // Only meaningful when the account's embedded_idp_enabled is true (see
+  // identity-providers.tsx) -- create/update/delete 500 on the server, and
+  // list silently returns [], when this deployment instead uses a single
+  // external identity provider configured at startup.
+  identityProviders: () => management<IdentityProvider[]>("/identity-providers"),
+  createIdentityProvider: (draft: IdentityProviderDraft) => management<IdentityProvider>("/identity-providers", { method: "POST", body: body(draft) }),
+  updateIdentityProvider: (id: string, draft: IdentityProviderDraft) => management<IdentityProvider>(`/identity-providers/${encodeURIComponent(id)}`, { method: "PUT", body: body(draft) }),
+  deleteIdentityProvider: (id: string) => management<void>(`/identity-providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── organization ───────────────────────────────────────────────────────────
   // The fork's endpoint is plural (`getAllAccounts`) but scopes to the

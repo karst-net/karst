@@ -4,7 +4,7 @@
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-const routes = ["enroll", "domains", "machines", "access", "groups/compliance", "users", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "connections", "billing", "settings"];
+const routes = ["enroll", "domains", "machines", "access", "groups/compliance", "users", "identity-providers", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "connections", "billing", "settings"];
 
 for (const route of routes) {
   test(`${route} has no accessibility violations`, async ({ page }) => {
@@ -260,6 +260,47 @@ test("a user can be edited and blocked", async ({ page }) => {
   await expect(page.getByRole("status")).toContainText("was blocked");
   await expect(row).toContainText("blocked");
   await expect(row.getByRole("button", { name: "Unblock" })).toBeVisible();
+});
+
+test("an identity provider connector can be added, edited and removed", async ({ page }) => {
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.goto("/#/identity-providers");
+  const seeded = page.locator("tbody tr").filter({ hasText: "Corporate SSO" });
+  await expect(seeded).toContainText("Generic OIDC");
+
+  await page.getByRole("button", { name: "Add identity provider" }).click();
+  await page.getByLabel("Identity provider type").selectOption("okta");
+  await page.getByLabel("Identity provider name").fill("Okta prod");
+  await page.getByLabel("Identity provider issuer URL").fill("https://acme.okta.com");
+  await page.getByLabel("Identity provider client ID").fill("okta-client-id");
+  await page.getByLabel("Identity provider client secret").fill("okta-client-secret");
+  await page.getByRole("button", { name: "Add identity provider" }).nth(1).click();
+  await expect(page.getByRole("status")).toContainText("was added");
+  const added = page.locator("tbody tr").filter({ hasText: "Okta prod" });
+  await expect(added).toContainText("Okta");
+  await expect(added).toContainText("okta-client-id");
+
+  await added.getByRole("button", { name: "Edit" }).click();
+  // Type is locked once created -- changing it mid-life would rewrite what
+  // the connector actually is, not just rename it.
+  await expect(page.getByLabel("Identity provider type")).toBeDisabled();
+  await page.getByLabel("Identity provider name").fill("Okta production");
+  await page.getByLabel("Identity provider client secret").fill("rotated-secret");
+  await page.getByRole("button", { name: "Save identity provider" }).click();
+  await expect(page.getByRole("status")).toContainText("was updated");
+  await expect(page.locator("tbody tr").filter({ hasText: "Okta production" })).toBeVisible();
+
+  await page.locator("tbody tr").filter({ hasText: "Okta production" }).getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByRole("status")).toContainText("was removed");
+  await expect(page.locator("tbody tr").filter({ hasText: "Okta production" })).toHaveCount(0);
+});
+
+test("identity providers are server startup configuration without the embedded IdP", async ({ page }) => {
+  await setEmbeddedIdpEnabled(page, false);
+  await page.goto("/#/identity-providers");
+  await expect(page.getByRole("heading", { name: "Identity providers" })).toBeVisible();
+  await expect(page.getByText("configured on the coordination server at startup", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add identity provider" })).toHaveCount(0);
 });
 
 test("the signed-in user cannot deprovision themselves", async ({ page }) => {
@@ -538,12 +579,14 @@ const setUncovered = (page: Page, handles: string[]) =>
   page.request.put("http://127.0.0.1:4010/__mock__/bedrock/uncovered", { data: { uncovered_handles: handles } });
 const setFixture = (page: Page, empty: boolean) =>
   page.request.put("http://127.0.0.1:4010/__mock__/fixture", { data: { empty } });
+const setEmbeddedIdpEnabled = (page: Page, enabled: boolean) =>
+  page.request.put("http://127.0.0.1:4010/__mock__/embedded-idp", { data: { enabled } });
 
-test.afterEach(async ({ page }) => { await setUncovered(page, uncovered); await setFixture(page, false); });
+test.afterEach(async ({ page }) => { await setUncovered(page, uncovered); await setFixture(page, false); await setEmbeddedIdpEnabled(page, true); });
 
 test("empty-account list views explain what happens next", async ({ page }) => {
   await setFixture(page, true);
-  for (const [route, title] of [["machines", "No devices yet"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No relays configured"]]) {
+  for (const [route, title] of [["machines", "No devices yet"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No relays configured"], ["identity-providers", "No identity providers configured"]]) {
     await page.goto(`/#/${route}`);
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
   }

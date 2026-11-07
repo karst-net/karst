@@ -100,7 +100,7 @@ export function Settings() {
       : account.value && <Rows head={<><th>Organization ID</th><th>Domain</th><th>Created</th></>}>
         <tr><td><code>{account.value.id}</code></td><td>{account.value.domain || "—"}</td><td><Observed at={account.value.created_at} /></td></tr>
       </Rows>}
-    <p className="lede">Single sign-on, SCIM provisioning and webhooks are configured on the coordination server rather than here — they are server startup configuration, and a console that pretended to own them would be editing a file it cannot read. See <code>management.json</code> and the getting-started guide.</p>
+    <p className="lede">SCIM provisioning and webhooks are configured on the coordination server rather than here — they are server startup configuration, and a console that pretended to own them would be editing a file it cannot read. See <code>management.json</code> and the getting-started guide. {account.value?.embedded_idp_enabled ? "Single sign-on connectors for this deployment's embedded identity provider are managed on the Identity providers page." : "Single sign-on is likewise server startup configuration here, since this deployment authenticates against a single external identity provider."}</p>
 
     <h3>Control plane location</h3>
     <p className="lede">Where this account's control plane is, shown on the NOC map. Optional, operator-declared — never inferred. There is no per-replica placement registry yet (see ADR-0054), so this is one declared point for the account, not one per replica.</p>

@@ -25,6 +25,11 @@ const seedGroups = () => [
   { id: "group-gateways", name: "gateways", peers_count: 4, resources_count: 0, issued: "api" },
 ];
 const seedTokens = () => ({ "user-it": [{ id: "token-fixture-1", name: "ci-deploy", expiration_date: "2026-11-20T12:00:00Z", created_at: "2026-08-01T12:00:00Z", last_used: "2026-08-22T06:00:00Z" }] });
+// client_secret is deliberately absent, matching the server's own response
+// (identity_provider.go's toAPIResponse never returns a stored secret).
+const seedIdentityProviders = () => [
+  { id: "idp-fixture-oidc", type: "oidc", name: "Corporate SSO", issuer: "https://login.example.test", client_id: "karst-console" },
+];
 
 let fixture = buildFixture();
 let relayCaps = new Map();
@@ -47,7 +52,8 @@ let domainBindings = [];
 let users = seedUsers();
 let groups = seedGroups();
 let sinks = [];
-const account = { id: "account-fixture", domain: "example.test", domain_category: "private", created_at: "2026-01-01T00:00:00Z", created_by: "user-it" };
+let identityProviders = seedIdentityProviders();
+const account = { id: "account-fixture", domain: "example.test", domain_category: "private", created_at: "2026-01-01T00:00:00Z", created_by: "user-it", embedded_idp_enabled: true };
 // Mirrors server/management/internals/karst/policy/schema.go's shape closely
 // enough to exercise the console's own autocomplete against — not the full
 // document (descriptions, patterns), which nothing here reads.
@@ -291,6 +297,9 @@ const server = http.createServer((request, response) => {
       return json(response, 200, payment);
     });
   }
+  if (path === "/__mock__/embedded-idp" && method === "PUT") {
+    return readBody(request).then((body) => { account.embedded_idp_enabled = Boolean(body.enabled); return json(response, 200, account); });
+  }
   if (path === "/__mock__/fixture" && method === "PUT") {
     return readBody(request).then((body) => {
       const empty = Boolean(body.empty);
@@ -302,6 +311,7 @@ const server = http.createServer((request, response) => {
       users = empty ? [] : seedUsers();
       groups = empty ? [] : seedGroups();
       sinks = [];
+      identityProviders = empty ? [] : seedIdentityProviders();
       routes = fixture.routes.map((route) => ({ ...route }));
       nameservers = fixture.nameservers.map((group) => ({ ...group }));
       tokens = empty ? {} : seedTokens();
@@ -379,6 +389,21 @@ const server = http.createServer((request, response) => {
   }
 
   if (path === "/api/accounts" && method === "GET") return json(response, 200, [account]);
+
+  if (path === "/api/identity-providers" && method === "GET") return json(response, 200, identityProviders);
+  if (path === "/api/identity-providers" && method === "POST") {
+    return readBody(request).then((draft) => {
+      if (!draft.name) return error(response, 422, "invalid_argument", "name is required");
+      if (!draft.client_id) return error(response, 422, "invalid_argument", "client ID is required");
+      // client_secret is accepted but, like the real server, never echoed back.
+      const provider = { id: id("idp"), type: draft.type ?? "oidc", name: draft.name, issuer: draft.issuer ?? "", client_id: draft.client_id };
+      identityProviders.push(provider);
+      return json(response, 201, provider);
+    });
+  }
+  const identityProviderMatch = path.match(/^\/api\/identity-providers\/([^/]+)$/);
+  if (identityProviderMatch && method === "PUT") return readBody(request).then((body) => replace(identityProviders, identityProviderMatch[1], { type: body.type, name: body.name, issuer: body.issuer ?? "", client_id: body.client_id }, response));
+  if (identityProviderMatch && method === "DELETE") return remove(identityProviders, identityProviderMatch[1], response);
 
   if (path === "/api/groups" && method === "GET") return json(response, 200, groups);
   if (path === "/api/groups" && method === "POST") {

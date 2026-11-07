@@ -13,6 +13,7 @@ import { Domains } from "./views/domains";
 import { Machines } from "./views/machines";
 import { GroupsAccess } from "./views/groups-access";
 import { Users } from "./views/users";
+import { IdentityProviders } from "./views/identity-providers";
 import { Bedrock } from "./views/bedrock";
 import { Posture } from "./views/posture";
 import { Dns } from "./views/dns";
@@ -26,7 +27,7 @@ import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "domains" | "machines" | "access" | "compliance" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
+type Route = "domains" | "machines" | "access" | "compliance" | "users" | "identity-providers" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
 type Mode = "configure" | "observe";
 type NavItem = { route: Route; label: string; hash: string; group?: string };
 
@@ -41,6 +42,7 @@ type NavItem = { route: Route; label: string; hash: string; group?: string };
 // Observe's list stays flat (no `group`) since it's short enough on its own.
 const navConfigure: NavItem[] = [
   { route: "users", label: "Users", hash: "/users", group: "Identity & Access" },
+  { route: "identity-providers", label: "Identity providers", hash: "/identity-providers", group: "Identity & Access" },
   { route: "machines", label: "Devices", hash: "/machines", group: "Identity & Access" },
   { route: "groups", label: "Groups & access", hash: "/groups", group: "Identity & Access" },
   { route: "bedrock", label: "Network lock", hash: "/bedrock", group: "Identity & Access" },
@@ -167,6 +169,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "access" && <GroupsAccess tab="access" />}
       {route === "compliance" && <GroupsAccess tab="compliance" />}
       {route === "users" && <Users />}
+      {route === "identity-providers" && <IdentityProviders />}
       {route === "groups" && <GroupsAccess tab="groups" />}
       {route === "bedrock" && <Bedrock />}
       {route === "posture" && <Posture />}
