@@ -210,8 +210,9 @@ usages across that function kept compiling unchanged through ordinary
   change — tracked as GitHub issue #553.
 - `pinned_egress_ip` is a declaration, not a verified fact. An operator who
   misconfigures it, or a Gateway whose real egress address drifts (a cloud
-  NAT reassignment, say), gets no signal from this change alone — tracked as
-  GitHub issue #554.
+  NAT reassignment, say), gets no signal from this change alone. Closed by
+  issue #554 (see the addendum below) — detection and alerting exist now;
+  automatic remediation remains out of scope, by that issue's own design.
 - A learned affinity pin can keep sending traffic to a Gateway for up to one
   hour (`zone_route::MAX_PIN`) after the control plane withdraws its zone
   binding, since the cache is deliberately independent of the netmap's own
@@ -220,12 +221,45 @@ usages across that function kept compiling unchanged through ordinary
 
 ### Reconsider if
 
-The Go control plane gains the ability to actuate or verify a Gateway's
-egress address (for example, extending `infraprovision.Driver` from ADR-0067
-the way that ADR's own "Reconsider if" already anticipated reuse for Gateway
-provisioning) — at that point `pinned_egress_ip` should become a verified,
-drift-alerted fact rather than a bare declaration. Also reconsider if a
-Gateway ever needs automatic failover at all (GitHub issue #109): a pinned
+A Gateway ever needs automatic failover at all (GitHub issue #109): a pinned
 route's "no silent cross-IP failover" rule would need its own answer to that
 question, not inherit whatever issue #109 eventually decides for ordinary
-routes.
+routes. Also reconsider if an operator asks for automatic *remediation* of a
+detected drift (re-pinning, or actuating the Gateway's egress address) —
+issue #554 below deliberately stops at detection and alerting.
+
+---
+
+## Addendum: issue #554, egress-IP verification
+
+`pinned_egress_ip` is now a verified fact, not a bare declaration. A
+Gateway candidate with a pinned route self-reports its own observed
+outbound address — a local, zero-traffic UDP route-table lookup
+(`bins/karstd/src/gateway.rs::observed_egress_ip`), never a network probe —
+over the same authenticated channel `KarstRouteObservation`'s other fields
+(`bytes`, `forwarding_active`) already use. The control plane compares it
+against the route's declared `pinned_egress_ip` at read time and surfaces a
+mismatch in the console's route detail view (`routes.tsx`'s Metrics tab),
+the same declared-vs-observed drift idiom `ClientVersionObservation`
+already established for agent/control version skew.
+
+**Decision: an independent observation/alerting path, not inside
+`infraprovision.Driver` (ADR-0067).** ADR-0067's own "Reconsider if" named
+that Driver as the natural extension point once the control plane could
+"actuate or verify Gateway infrastructure directly," which read as an
+invitation to put this there. Reading the interface itself
+(`server/management/internals/karst/infraprovision/infraprovision.go`)
+shows why that would be the wrong fit: `Driver` is strictly compute
+lifecycle for one named relay allocation instance —
+`Create`/`TLSServerName`/`Drain`/`Destroy` — with no concept of a running
+node's network path or a self-reported observation at all. Egress-IP drift
+is a fact about an already-running, already-enrolled Gateway, reported the
+same way every other netmap-request observation is; it has nothing to do
+with provisioning compute for a relay allocation. Forcing it through
+`Driver` would mean inventing a method that interface's every other
+implementation (AWS, Kubernetes, Nomad) would have to either implement
+meaninglessly or stub out, for a concern that already has a working,
+narrower mechanism. Automatic *remediation* of a detected drift — actually
+changing a Gateway's egress address, as opposed to reporting it — remains
+the one place `infraprovision.Driver` could plausibly apply in the future,
+and remains explicitly out of scope here (see "Reconsider if" above).

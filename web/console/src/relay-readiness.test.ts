@@ -7,8 +7,8 @@ import { admissionObservation, exitObservations } from "./relay-readiness";
 
 const service = { id: "denver", ponor_id: "backend", gateway_handle: "bound-key", exit_ipv4: true, exit_ipv6: true };
 const inventory = (): GatewayInventory => ({ schema_version: 1, unresolved_routes: [], unsupported_routes: [], gateways: [{ node_id: "native-id", node_handle: "bound-key", name: "Denver host", control_connected: true, forwarding_readiness: "ready", offers: [
-  { id: "relay-exit-denver-0", network_id: "denver", prefix: "0.0.0.0/0", kind: "default_ipv4", enabled: true, masquerade: true, metric: 9999, requires_client_consent: true, forwarding_readiness: "ready" },
-  { id: "relay-exit-denver-1", network_id: "denver", prefix: "::/0", kind: "default_ipv6", enabled: true, masquerade: true, metric: 9999, requires_client_consent: true, forwarding_readiness: "degraded" },
+  { id: "relay-exit-denver-0", network_id: "denver", prefix: "0.0.0.0/0", kind: "default_ipv4", enabled: true, masquerade: true, metric: 9999, requires_client_consent: true, forwarding_readiness: "ready", egress_drift: false },
+  { id: "relay-exit-denver-1", network_id: "denver", prefix: "::/0", kind: "default_ipv6", enabled: true, masquerade: true, metric: 9999, requires_client_consent: true, forwarding_readiness: "degraded", egress_drift: false },
 ] }] });
 
 test("writer observations expire at the server lease boundary and reject unknown clock data", () => {

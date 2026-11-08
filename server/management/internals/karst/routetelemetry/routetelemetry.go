@@ -58,7 +58,17 @@ type StoredGatewayHealth struct {
 	GatewayID         string `gorm:"primaryKey"`
 	RouteID           string `gorm:"primaryKey"`
 	ForwardingActive  bool
-	ReportedAt        time.Time
+	// ObservedEgressIP is issue #554's verification half of ADR-0068's
+	// pinned_egress_ip: this candidate's own self-reported outbound
+	// address toward the route, read back from
+	// `KarstRouteObservation.observed_egress_ip`. Empty when the route
+	// carries no pinned_egress_ip (nothing to compare against) or the
+	// node's local probe failed. Never compared to a stored copy of
+	// pinned_egress_ip here -- the live route record is the only source
+	// of truth for that, read at query time, so the two can never drift
+	// apart from each other independently of the real world.
+	ObservedEgressIP string
+	ReportedAt       time.Time
 }
 
 func (StoredGatewayHealth) TableName() string { return "karst_gateway_health" }
@@ -87,6 +97,9 @@ type RouteReport struct {
 	IngressBytes     uint64
 	IngressPackets   uint64
 	ForwardingActive bool
+	// ObservedEgressIP, issue #554 -- see StoredGatewayHealth's own doc
+	// comment on this field.
+	ObservedEgressIP string
 }
 
 // RecordRouteBytes replaces the stored counters for one route. An upsert,
@@ -118,7 +131,8 @@ func (s *Store) RecordRouteBytes(ctx context.Context, accountID, routeID string,
 	if report.GatewayID != "" {
 		health := StoredGatewayHealth{AccountID: accountID, GatewayID: report.GatewayID,
 			RouteID: routeID, ForwardingActive: report.ForwardingActive, ReportedAt: record.ReportedAt,
-			ReadinessReported: report.ReadinessReported || report.ForwardingActive}
+			ReadinessReported: report.ReadinessReported || report.ForwardingActive,
+			ObservedEgressIP:  report.ObservedEgressIP}
 		if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "account_id"}, {Name: "gateway_id"}, {Name: "route_id"}},
 			UpdateAll: true,

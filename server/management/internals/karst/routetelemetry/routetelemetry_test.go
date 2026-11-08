@@ -101,6 +101,39 @@ func TestForwardingActiveReplacesOnEachReportIncludingToFalse(t *testing.T) {
 	}
 }
 
+func TestObservedEgressIPReplacesOnEachReport(t *testing.T) {
+	// Issue #554: the same replace-not-accumulate contract as
+	// ForwardingActive above, since this is also a self-reported current
+	// fact, not a running total -- a stale observed address surviving a
+	// later report (e.g. after a cloud NAT reassignment) would hide the
+	// very drift this field exists to surface.
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{GatewayID: "primary", ObservedEgressIP: "203.0.113.9"}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	rows, err := s.LatestByGateway(ctx, "acct-a")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got := rows["primary"]["route-1"].ObservedEgressIP; got != "203.0.113.9" {
+		t.Fatalf("got observed egress IP %q, want 203.0.113.9", got)
+	}
+	// Simulates the address changing after the binding was saved (#554's
+	// own acceptance criterion): a later report from the same candidate
+	// observes a different address.
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{GatewayID: "primary", ObservedEgressIP: "203.0.113.99"}); err != nil {
+		t.Fatalf("record drifted: %v", err)
+	}
+	rows, err = s.LatestByGateway(ctx, "acct-a")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got := rows["primary"]["route-1"].ObservedEgressIP; got != "203.0.113.99" {
+		t.Fatalf("got observed egress IP %q, want the replaced 203.0.113.99", got)
+	}
+}
+
 func TestLatestByRouteIsScopedToOneAccount(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

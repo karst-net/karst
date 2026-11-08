@@ -19,6 +19,18 @@ export type GatewayOffer = {
      * Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
      */
     forwarding_readiness: 'unreported' | 'ready' | 'degraded';
+    /**
+     * ADR-0068's operator-declared address for this candidate, if any. Absent for an ordinary, unpinned offer.
+     */
+    pinned_egress_ip?: string;
+    /**
+     * Issue #554: this candidate's own self-reported outbound address toward the route. Absent when the route has no pinned_egress_ip or no report has arrived yet.
+     */
+    observed_egress_ip?: string;
+    /**
+     * True only on a confident, comparable mismatch between pinned_egress_ip and observed_egress_ip. False covers both "confirmed matching" and "not enough information yet" -- it is never a confirmation by itself.
+     */
+    egress_drift: boolean;
 };
 
 export type GatewayNode = {

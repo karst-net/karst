@@ -234,6 +234,19 @@ message KarstRouteObservation {
   // absent (false). Without this marker they would be mistaken for failures.
   // A true field 6 remains evidence of readiness from #422-era agents.
   bool forwarding_readiness_reported = 7;
+  // Issue #554: this gateway's own observed outbound address toward the
+  // route's destination prefix, read back via a local, zero-traffic UDP
+  // route-table lookup (`bins/karstd/src/gateway.rs::observed_egress_ip`) —
+  // never an assertion the server trusts outright, same posture every other
+  // field on this message already takes. Empty when the route carries no
+  // `pinned_egress_ip` (ADR-0068; nothing to compare against) or the local
+  // probe itself failed. No new schema gate: this is additive to a message
+  // a server already accepts from any agent, the same way
+  // ingress_bytes/packets (issue #371) extended it with no schema bump —
+  // unlike `dns_zone_affinity_schema` above, there is no "an old agent
+  // silently misinterprets a new server field" direction here, since the
+  // agent is the one sending this field, not receiving it.
+  string observed_egress_ip = 8;
 }
 
 // KarstAnchorRtt is one region's measured anchor RTT, ADR-0045 §4b.

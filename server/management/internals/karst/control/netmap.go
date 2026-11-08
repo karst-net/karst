@@ -1032,8 +1032,10 @@ func (h *NetmapHandler) recordAnchorRTT(ctx context.Context, self string, report
 }
 
 // recordRouteObservations validates and records issues #281 and #371's
-// per-route egress and ingress telemetry, plus #404's forwarding_active
-// readiness flag.
+// per-route egress and ingress telemetry, #404's forwarding_active
+// readiness flag, and #554's self-reported observed_egress_ip (ADR-0068
+// verification -- compared against the route's own pinned_egress_ip at
+// read time, in api/gateways.go, never stored as a second copy here).
 //
 // **Defense in depth, not trust.** `offers` is the same, just-computed
 // response this request is about to send self — so checking a reported
@@ -1048,10 +1050,13 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 	if h.RouteTelemetry == nil || len(reports) == 0 {
 		return
 	}
-	gateways := make(map[string]struct{}, len(offers))
+	// Issue #554: keyed to the offer itself, not just presence, so an
+	// observation can be checked against the offer's own pinned_egress_ip
+	// without a second lookup.
+	gateways := make(map[string]*proto.KarstRouteOffer, len(offers))
 	for _, offer := range offers {
 		if offer.GetRole() == proto.KarstRouteRole_KARST_ROUTE_ROLE_GATEWAY && string(offer.GetGatewayId()) == self {
-			gateways[offer.GetRouteId()] = struct{}{}
+			gateways[offer.GetRouteId()] = offer
 		}
 	}
 	for _, report := range reports {
@@ -1069,6 +1074,7 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 			IngressBytes:      report.GetIngressBytes(),
 			IngressPackets:    report.GetIngressPackets(),
 			ForwardingActive:  report.GetForwardingActive(),
+			ObservedEgressIP:  report.GetObservedEgressIp(),
 		}); err != nil {
 			// Advisory, like session/anchor-RTT telemetry above: a database
 			// failure here must not cost the node its netmap.

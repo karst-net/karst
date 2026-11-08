@@ -94,6 +94,44 @@ func TestRecordRouteObservationsStoresForwardingActive(t *testing.T) {
 	}
 }
 
+// Issue #554: observed_egress_ip is recorded alongside the other
+// self-reported fields, keyed by the authenticated gateway -- the same
+// defense-in-depth role check already covered by the non-gateway
+// rejection test below, exercised here on its accepting path.
+func TestRecordRouteObservationsStoresObservedEgressIP(t *testing.T) {
+	store := newRouteTelemetryTestStore(t)
+	h := &NetmapHandler{RouteTelemetry: store}
+	route := effectiveRoute("route-a:selected-peer-id", "10.20.0.0/16", "gateway-a")
+	offers, err := projectRouteOffers(&types.NetworkMap{Routes: []*nbroute.Route{route}}, "gateway-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reports := []*proto.KarstRouteObservation{{RouteId: "route-a", ObservedEgressIp: "203.0.113.9"}}
+	h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", reports, offers)
+
+	rows, err := store.LatestByGateway(context.Background(), "acct-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows["gateway-a"]["route-a"].ObservedEgressIP; got != "203.0.113.9" {
+		t.Fatalf("got observed egress IP %q, want 203.0.113.9", got)
+	}
+
+	// #554's own acceptance criterion: simulate the address changing after
+	// the binding was saved. A later report from the same authenticated
+	// gateway must replace, not accumulate alongside, the earlier one.
+	reports = []*proto.KarstRouteObservation{{RouteId: "route-a", ObservedEgressIp: "203.0.113.99"}}
+	h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", reports, offers)
+	rows, err = store.LatestByGateway(context.Background(), "acct-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows["gateway-a"]["route-a"].ObservedEgressIP; got != "203.0.113.99" {
+		t.Fatalf("got observed egress IP %q, want the replaced 203.0.113.99", got)
+	}
+}
+
 // self is route-a's recipient, not its gateway — the report must be
 // rejected outright, egress and ingress alike, rather than partially
 // recorded, or a node could pollute another gateway's NOC-visible
