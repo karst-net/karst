@@ -217,6 +217,13 @@ pub struct RouteView<'a> {
     pub masquerade: bool,
     pub keep_route: bool,
     pub role: u32,
+    /// ADR-0068. Empty for an ordinary, unscoped offer — see
+    /// `control/netmap.go`'s `NetmapVersion`, which hashes exactly this
+    /// string (never canonicalized server-side) in the same position.
+    pub dns_zone: &'a str,
+    /// ADR-0068. Empty for an unpinned offer — same hashing rule as
+    /// `dns_zone` above.
+    pub pinned_egress_ip: &'a str,
 }
 
 /// One structured resolver, as the version hash sees it — ADR-0034. Shared by
@@ -414,6 +421,8 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
         h.update(u32::from(route.masquerade).to_be_bytes());
         h.update(u32::from(route.keep_route).to_be_bytes());
         h.update(route.role.to_be_bytes());
+        push(&mut h, route.dns_zone.as_bytes());
+        push(&mut h, route.pinned_egress_ip.as_bytes());
     }
     push(&mut h, b"karst-dns");
     push(&mut h, content.dns.zone.as_bytes());

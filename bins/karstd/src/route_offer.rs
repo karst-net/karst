@@ -76,6 +76,15 @@ pub struct Offer {
     /// a claim inserted into `AllowedIps`: see `zone_route`'s module doc for
     /// why a zone-scoped offer's prefix must never reach `AllowedIps::build`.
     pub dns_zone: Option<String>,
+    /// The exact wire text `dns_zone` was parsed from (empty when absent) —
+    /// kept verbatim, unlike `dns_zone` itself, which is lower-cased and
+    /// dot-trimmed by [`canonical_zone`]. The Go server hashes the raw
+    /// string it stored (`route.DnsZone`, never canonicalized server-side)
+    /// into the netmap version (`control/netmap.go`'s `NetmapVersion`), so
+    /// [`Offer::view`] must push this text, not the canonicalized form, or
+    /// the two implementations disagree the moment an operator's zone isn't
+    /// already all-lowercase.
+    dns_zone_text: String,
     /// ADR-0068: the stable address a legacy network's own firewall is
     /// expected to allowlist for this gateway candidate. `None` (the wire's
     /// empty string) is an ordinary, unpinned offer. This field is a
@@ -83,6 +92,12 @@ pub struct Offer {
     /// struct's `from_wire`/`parse_all` for the one thing it actually does:
     /// reject HA candidates for the same route that disagree about it.
     pub pinned_egress_ip: Option<IpAddr>,
+    /// The exact wire text `pinned_egress_ip` was parsed from (empty when
+    /// absent) — kept verbatim for [`Offer::view`], the same reason
+    /// `dns_zone_text` exists: the Go server hashes the string it stored,
+    /// not a round-tripped `IpAddr::to_string()`, which need not format
+    /// identically (most visibly for IPv6).
+    pinned_egress_ip_text: String,
 }
 
 impl Offer {
@@ -161,7 +176,9 @@ impl Offer {
             prefix,
             prefix_text: wire.prefix,
             dns_zone,
+            dns_zone_text: wire.dns_zone,
             pinned_egress_ip,
+            pinned_egress_ip_text: wire.pinned_egress_ip,
             gateway_id: wire.gateway_id,
             metric: wire.metric,
             kind,
@@ -188,10 +205,8 @@ impl Offer {
                 Role::Recipient => pb::KarstRouteRole::Recipient as i32,
                 Role::Gateway => pb::KarstRouteRole::Gateway as i32,
             },
-            dns_zone: self.dns_zone.clone().unwrap_or_default(),
-            pinned_egress_ip: self
-                .pinned_egress_ip
-                .map_or_else(String::new, |ip| ip.to_string()),
+            dns_zone: self.dns_zone_text.clone(),
+            pinned_egress_ip: self.pinned_egress_ip_text.clone(),
         }
     }
 
@@ -226,6 +241,8 @@ impl Offer {
                 Role::Recipient => 1,
                 Role::Gateway => 2,
             },
+            dns_zone: &self.dns_zone_text,
+            pinned_egress_ip: &self.pinned_egress_ip_text,
         }
     }
 }

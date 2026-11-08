@@ -188,6 +188,13 @@ struct VersionRoute {
     masquerade: bool,
     keep_route: bool,
     role: u32,
+    /// ADR-0068. Absent in every vector case recorded before issue #554
+    /// taught this crate to hash it too — defaults to empty, same as an
+    /// ordinary unscoped offer.
+    #[serde(default)]
+    dns_zone: String,
+    #[serde(default)]
+    pinned_egress_ip: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -719,6 +726,8 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
             masquerade: route.masquerade,
             keep_route: route.keep_route,
             role: route.role,
+            dns_zone: &route.dns_zone,
+            pinned_egress_ip: &route.pinned_egress_ip,
         })
         .collect();
 
