@@ -265,6 +265,7 @@ fn config() -> karstd::config::Config {
         tracing_collector: None,
         peers: Vec::new(),
         routes: karstd::routing::AllowedIps::build(Vec::new()).expect("routes"),
+        zone_routes: karstd::zone_route::ZoneRoutes::build(Vec::new()).expect("zones"),
         skipped: Vec::new(),
         filter: karstd::filter::PacketFilter::unrestricted(),
         ssh_filter: karstd::filter::SshFilter::absent(),

@@ -126,6 +126,8 @@ pub enum ConfigError {
     },
     /// Two peers claim the same address range.
     Conflict(crate::routing::Conflict),
+    /// Two peers claim the same `dns_zone` — ADR-0068.
+    ZoneConflict(crate::zone_route::ZoneConflict),
     /// Two peers share a name, so log lines and `karst status` could not tell
     /// them apart.
     DuplicatePeerName(String),
@@ -158,6 +160,7 @@ impl fmt::Display for ConfigError {
             }
             Self::Prefix { peer, source } => write!(f, "peer {peer:?}: {source}"),
             Self::Conflict(c) => write!(f, "{c}"),
+            Self::ZoneConflict(c) => write!(f, "{c}"),
             Self::DuplicatePeerName(n) => write!(f, "two peers are both named {n:?}"),
             Self::Unusable(m) => write!(f, "{m}"),
         }
@@ -1016,6 +1019,12 @@ pub struct Config {
     pub peers: Vec<Peer>,
     /// Cryptokey routing table over the roster.
     pub routes: AllowedIps,
+    /// DNS-zone-scoped Gateway affinity — ADR-0068. Built from the same
+    /// effective route offers as `routes`, but from the `dns_zone`-bearing
+    /// ones, which are never inserted into `routes` itself — see
+    /// `zone_route`'s module doc. Empty for a static TOML roster, which has
+    /// no server-assigned zone bindings.
+    pub zone_routes: crate::zone_route::ZoneRoutes,
     /// Peers the netmap carried that this node could not use.
     ///
     /// Kept rather than discarded so `karst status` can show them: a peer that
@@ -1180,6 +1189,10 @@ impl Config {
             gateway_forwarding: file.gateway.forwarding,
             peers,
             routes,
+            // A static TOML roster has no control server to project a
+            // `dns_zone`-bearing offer, so this is always empty — the same
+            // reasoning `route_offers: Vec::new()` just above already uses.
+            zone_routes: crate::zone_route::ZoneRoutes::default(),
             skipped: Vec::new(),
             filter: PacketFilter::unrestricted(),
             ssh_filter: SshFilter::absent(),
@@ -1317,6 +1330,12 @@ impl Config {
         // makes a gateway-group route usable at all instead of a build-time
         // `Conflict`.
         let effective_routes = crate::route_offer::select_effective(&netmap.routes);
+        // ADR-0068: a `dns_zone`-bearing offer's `prefix` never joins `pairs`
+        // below — ordinary offers already hard-conflict on an identical
+        // range in `AllowedIps::build`, which is exactly the ambiguity a
+        // zone-scoped offer's overlapping `prefix` is allowed to have.
+        // Collected separately and built into its own table after this loop.
+        let mut zone_triples: Vec<(String, usize, Prefix)> = Vec::new();
         for offer in &effective_routes {
             if offer.role != crate::route_offer::Role::Recipient {
                 continue;
@@ -1330,6 +1349,10 @@ impl Config {
                     offer.route_id
                 )));
             };
+            if let Some(zone) = &offer.dns_zone {
+                zone_triples.push((zone.clone(), index, offer.prefix));
+                continue;
+            }
             let Some(peer) = peers.get_mut(index) else {
                 return Err(ConfigError::Unusable(format!(
                     "route {:?} resolved outside the usable peer roster",
@@ -1341,6 +1364,8 @@ impl Config {
         }
 
         let routes = AllowedIps::build(pairs).map_err(ConfigError::Conflict)?;
+        let zone_routes = crate::zone_route::ZoneRoutes::build(zone_triples)
+            .map_err(ConfigError::ZoneConflict)?;
         // Compiled against the same peer order the datapath indexes by, since a
         // rule names peers by handle and the engine knows them by position.
         if netmap.packet_filter.iter().any(|r| !r.dst_cidrs.is_empty())
@@ -1397,6 +1422,7 @@ impl Config {
             exit_node_state_file: local.exit_node_state_file,
             gateway_forwarding: local.gateway_forwarding,
             routes,
+            zone_routes,
             skipped,
             filter,
             ssh_filter,
@@ -3155,6 +3181,7 @@ mod skip_tests {
                 masquerade: true,
                 keep_route: false,
                 role: pb::KarstRouteRole::Recipient as i32,
+                ..Default::default()
             },
             b"self",
         )

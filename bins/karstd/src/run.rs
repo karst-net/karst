@@ -415,6 +415,7 @@ mod run_embedded_tests {
             relays: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
+            zone_routes: crate::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
@@ -535,6 +536,26 @@ fn run_engine(
     let gateway_error = Mutex::new(None);
     apply_gateway(&gateway, &gateway_error, config);
 
+    // ADR-0068: a DNS-zone affinity pin needs the live `Engine` — its
+    // `zone_routes` can change on every netmap refresh — but the DNS
+    // listener below must be able to start before `Engine::new` runs a few
+    // hundred lines down (`run_engine`'s long-established sequencing: ready
+    // signals, the status socket, and `announce` all sit between the two,
+    // and reordering past them is its own review, not a side effect of this
+    // feature). `dns_engine` is the deferred link: empty until `engine`
+    // exists below, after which every call the hook makes finds it. Before
+    // then, a learned answer is simply dropped — there is no datapath for
+    // it to route through yet regardless.
+    let dns_engine: Arc<std::sync::OnceLock<Arc<Engine>>> = Arc::new(std::sync::OnceLock::new());
+    let dns_hook: Arc<crate::dns::AnswerHook> = {
+        let dns_engine = Arc::clone(&dns_engine);
+        Arc::new(move |name: &str, resolved: &[(IpAddr, Duration)]| {
+            if let Some(engine) = dns_engine.get() {
+                engine.note_dns_answer(name, resolved);
+            }
+        })
+    };
+
     // DNS is an authenticated netmap service, not an ambient host service: a
     // static roster or MagicDNS-off map starts no listener. A failed bind is
     // reported but never changes host DNS, so it cannot turn daemon startup
@@ -545,8 +566,11 @@ fn run_engine(
                 stack,
                 config.dns.stub_address.port(),
                 resolver,
+                Arc::clone(&dns_hook),
             ),
-            None => crate::dns::Runtime::start(config.dns.stub_address, resolver),
+            None => {
+                crate::dns::Runtime::start(config.dns.stub_address, resolver, Arc::clone(&dns_hook))
+            }
         } {
             Ok(runtime) => Some(runtime),
             Err(error) => {
@@ -701,7 +725,13 @@ fn run_engine(
     let started = Instant::now();
     // No mutex. The engine locks per peer internally — see its module docs and
     // PLAN.md §3.4. Wrapping it in one here would undo all of that.
-    let engine = Engine::new(config);
+    //
+    // `Arc`, not a bare value, solely so `dns_engine` above can hold a
+    // `'static`-safe handle for the DNS listener's detached background
+    // threads to reach through — every other reference to `engine` in this
+    // function is still an ordinary borrow, as it always was.
+    let engine = Arc::new(Engine::new(config));
+    let _ = dns_engine.set(Arc::clone(&engine));
 
     // AVEN state, shared between the receive loop and the timer that drives
     // probing. A static roster has no server-issued handles or disco keys, so
@@ -1398,6 +1428,7 @@ fn run_engine(
             let disco_refresh = &disco;
             let home_refresh = &home_selector;
             let dns_refresh = &dns_runtime;
+            let dns_hook_refresh = &dns_hook;
             let dns_host_refresh = &dns_host;
             let exit_node_refresh = exit_node.as_ref();
             let gateway_refresh = &gateway;
@@ -1425,6 +1456,7 @@ fn run_engine(
                     exit_policy_refresh,
                     control_endpoint_refresh,
                     dns_refresh,
+                    dns_hook_refresh,
                     exit_node_refresh,
                     dns_host_refresh,
                     gateway_refresh,
@@ -5540,6 +5572,7 @@ fn refresh_netmap(
     exit_policy: &Mutex<crate::exit_policy::Manager>,
     control_endpoint: Option<&str>,
     dns_runtime: &Mutex<Option<crate::dns::Runtime>>,
+    dns_hook: &Arc<crate::dns::AnswerHook>,
     exit_node: Option<&Mutex<crate::exit_node::Selection>>,
     dns_host: &Mutex<crate::dns::HostRuntime>,
     gateway: &Mutex<crate::gateway::Manager>,
@@ -5875,7 +5908,12 @@ fn refresh_netmap(
             let mut listener = dns_runtime
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Err(error) = crate::dns::reconcile(&mut listener, &updated, tun.userspace()) {
+            if let Err(error) = crate::dns::reconcile(
+                &mut listener,
+                &updated,
+                tun.userspace(),
+                Arc::clone(dns_hook),
+            ) {
                 tracing::warn!("karstd: DNS listener update failed: {error}");
             }
             let listener_live = listener.is_some();
@@ -6310,6 +6348,7 @@ mod route_tests {
             relays: Vec::new(),
             peers,
             routes: crate::routing::AllowedIps::build(pairs).expect("no conflicts"),
+            zone_routes: crate::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
@@ -6460,6 +6499,7 @@ mod route_tests {
                 masquerade: true,
                 keep_route: false,
                 role: pb::KarstRouteRole::Recipient as i32,
+                ..Default::default()
             },
             &[],
         )
@@ -6487,6 +6527,7 @@ mod route_tests {
                 masquerade: false,
                 keep_route: false,
                 role: pb::KarstRouteRole::Recipient as i32,
+                ..Default::default()
             },
             &[],
         )
@@ -6509,6 +6550,7 @@ mod route_tests {
                 masquerade: true,
                 keep_route: false,
                 role: pb::KarstRouteRole::Gateway as i32,
+                ..Default::default()
             },
             &[1],
         )
@@ -7123,6 +7165,7 @@ mod probe_tests {
             relays,
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
+            zone_routes: crate::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
@@ -7996,6 +8039,7 @@ mod probe_tests {
             relays,
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
+            zone_routes: crate::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),

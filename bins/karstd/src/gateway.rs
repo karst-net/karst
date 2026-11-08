@@ -639,6 +639,7 @@ mod tests {
                 masquerade,
                 keep_route: false,
                 role: role as i32,
+                ..Default::default()
             },
             &[7],
         )
@@ -674,6 +675,7 @@ mod tests {
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::<(Prefix, usize)>::new())
                 .expect("empty routes"),
+            zone_routes: crate::zone_route::ZoneRoutes::build(Vec::new()).expect("empty zones"),
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),

@@ -1242,6 +1242,11 @@ impl Netmap {
             gateway_ingress_schema: u32::from(
                 self.packet_filter.iter().any(|r| !r.dst_cidrs.is_empty()),
             ),
+            dns_zone_affinity_schema: u32::from(
+                self.routes
+                    .iter()
+                    .any(|offer| offer.dns_zone.is_some() || offer.pinned_egress_ip.is_some()),
+            ),
             version: self.version,
             psk_epoch: self.psk_epoch,
             node_id: self.node_id.clone(),
@@ -1443,6 +1448,7 @@ mod tests {
             masquerade: true,
             keep_route: false,
             role: pb::KarstRouteRole::Recipient as i32,
+            ..Default::default()
         };
         let mut from_full = Netmap::new();
         let mut full_response = full(vec![wire_peer("aaa", "100.64.0.2")]);

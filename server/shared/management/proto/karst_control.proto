@@ -189,6 +189,15 @@ message KarstNetmapRequest {
   // forever, never falling back to anything else, which is worse than not
   // sending it.
   uint32 candidate_distribution_schema = 12;
+
+  // Additive compatibility declaration, the same pattern `gateway_ingress_schema`
+  // above uses — ADR-0068. 1 means this node understands `KarstRouteOffer`'s
+  // `dns_zone`/`pinned_egress_ip` fields and will refuse a route offer using
+  // either one without this schema's exact declaration, rather than silently
+  // treating an unrecognized zone binding as an ordinary prefix claim. A
+  // server MUST NOT send a zone-scoped or pinned offer to a node declaring
+  // less than 1.
+  uint32 dns_zone_affinity_schema = 13;
 }
 
 // KarstRouteObservation is one route's egress and ingress bytes/packets
@@ -586,6 +595,35 @@ message KarstRouteOffer {
   bool masquerade = 6;
   bool keep_route = 7;
   KarstRouteRole role = 8;
+
+  // Nonempty binds this offer's effective routing to a DNS zone instead of
+  // to `prefix` by longest-prefix match alone — ADR-0068, for a legacy
+  // network reachable through more than one gateway candidate whose address
+  // ranges are allowed to overlap (longest-prefix routing cannot disambiguate
+  // those by address alone). `prefix` remains required and becomes the
+  // authorized bound a resolved address must fall inside before a client may
+  // act on it; it is never inserted into ordinary cryptokey routing the way
+  // an empty-`dns_zone` offer's prefix is, so two zone-scoped offers MAY
+  // declare identical or overlapping `prefix` ranges without being a
+  // `Conflict` the way two ordinary offers claiming the same range are.
+  // Requires `kind == KARST_ROUTE_KIND_SUBNET`; a zone-scoped exit offer has
+  // no meaning. Canonical lowercase, no trailing dot — the same convention
+  // `KarstDNSRoute.match_domain` already uses. Requires
+  // `dns_zone_affinity_schema >= 1`.
+  string dns_zone = 9;
+
+  // Nonempty declares the stable address a legacy network's own firewall is
+  // expected to allowlist for this gateway candidate — ADR-0068. Candidates
+  // in the same HA family (same `prefix`/`dns_zone` and `role`) MUST agree on
+  // this value or the netmap is rejected, the same way they must already
+  // agree on `kind`/`masquerade`/`keep_route`; HA failover among candidates
+  // that genuinely share one externally-visible address (for example, a
+  // floating IP) is fine and uses the existing metric/gateway-id tiebreak.
+  // This field is a declaration for client-side consistency checking and
+  // admin-facing drift detection, never itself a verification that the named
+  // gateway's real egress address matches — see ADR-0068's "Reconsider if".
+  // Requires `dns_zone_affinity_schema >= 1`.
+  string pinned_egress_ip = 10;
 }
 
 enum KarstRouteKind {
@@ -629,6 +667,16 @@ message KarstNetmapResponse {
   string compliance_policy_revision = 27;
   // 1 when packet_filter contains forwarding-only destination-scoped rules.
   uint32 gateway_ingress_schema = 28;
+
+  // 1 when `routes` may contain a `KarstRouteOffer` using `dns_zone` or
+  // `pinned_egress_ip` — ADR-0068. Sent even on unchanged responses, excluded
+  // from the policy content hash, and reset on reconnect — same rules as
+  // `gateway_ingress_schema`. Before responding, including unchanged
+  // responses, reject a node lacking this exact schema if it would receive
+  // such an offer; the agent independently rejects one received without
+  // having declared it, the same discipline `KarstNetmapRequest`'s own
+  // `dns_zone_affinity_schema` describes.
+  uint32 dns_zone_affinity_schema = 29;
 
   reserved 8;  // never assigned; reserved so the gap stops looking accidental.
   reserved 16; // was KarstTurnServer turn_servers; Karst dropped standalone TURN support in favor of Relay-only transport fallback.

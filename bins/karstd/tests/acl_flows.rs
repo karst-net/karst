@@ -106,6 +106,7 @@ fn config_for(
             candidates: Vec::new(),
         }],
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
+        zone_routes: karstd::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
         skipped: Vec::new(),
         filter,
         // Absent, not deny-all: these tests are about the general ACL/flow

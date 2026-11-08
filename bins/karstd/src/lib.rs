@@ -57,6 +57,7 @@ pub mod setup;
 mod socks5;
 pub mod trace_export;
 pub mod wake;
+pub mod zone_route;
 
 pub use config::{Config, ConfigError};
 pub use engine::Engine;

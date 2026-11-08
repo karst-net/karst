@@ -184,6 +184,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         },
         peers,
         routes: AllowedIps::build(pairs).expect("no conflicts"),
+        zone_routes: karstd::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
         skipped: Vec::new(),
         filter: karstd::filter::PacketFilter::unrestricted(),
         ssh_filter: karstd::filter::SshFilter::absent(),

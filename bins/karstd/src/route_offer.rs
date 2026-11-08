@@ -3,6 +3,8 @@
 
 //! Validated subnet and exit-route offers from the authenticated netmap.
 
+use std::net::IpAddr;
+
 use karst_control_client::{netmap::RouteView, transport::pb};
 
 use crate::routing::Prefix;
@@ -22,6 +24,40 @@ pub enum Role {
     Gateway,
 }
 
+/// Groups an offer with its HA candidates — see [`Offer::group_key`]. Owned
+/// rather than borrowed: both call sites use it only as a map key built and
+/// consumed within one function, so there is no lifetime worth threading
+/// through for it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum RouteKey {
+    Prefix(String),
+    Zone(String),
+}
+
+/// Canonicalize a `dns_zone`: ASCII lower-case, no trailing root dot, and
+/// reject anything that is not a plausible DNS name. Deliberately a local,
+/// minimal check rather than a dependency on `karst-dns`'s own
+/// `canonical_name` (`pub(crate)` there, and route-offer validation has no
+/// other reason to depend on that crate) — the zone's actual DNS semantics
+/// are `zone_route`'s concern, not this wire-validation layer's.
+fn canonical_zone(raw: &str) -> Option<String> {
+    let name = raw.trim_end_matches('.');
+    if name.is_empty() || name.len() > 253 || !name.is_ascii() {
+        return None;
+    }
+    for label in name.split('.') {
+        if label.is_empty()
+            || label.len() > 63
+            || !label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        {
+            return None;
+        }
+    }
+    Some(name.to_ascii_lowercase())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Offer {
     pub route_id: String,
@@ -33,6 +69,20 @@ pub struct Offer {
     pub masquerade: bool,
     pub keep_route: bool,
     pub role: Role,
+    /// ADR-0068: binds this offer to a DNS zone rather than to `prefix` by
+    /// longest-prefix match alone. `None` (the wire's empty string) is every
+    /// offer as it worked before this field existed — ordinary, unambiguous
+    /// prefix-based routing. `Some` means `prefix` is an authorized bound, not
+    /// a claim inserted into `AllowedIps`: see `zone_route`'s module doc for
+    /// why a zone-scoped offer's prefix must never reach `AllowedIps::build`.
+    pub dns_zone: Option<String>,
+    /// ADR-0068: the stable address a legacy network's own firewall is
+    /// expected to allowlist for this gateway candidate. `None` (the wire's
+    /// empty string) is an ordinary, unpinned offer. This field is a
+    /// consistency-checked declaration, not a verified fact — see this
+    /// struct's `from_wire`/`parse_all` for the one thing it actually does:
+    /// reject HA candidates for the same route that disagree about it.
+    pub pinned_egress_ip: Option<IpAddr>,
 }
 
 impl Offer {
@@ -85,10 +135,33 @@ impl Offer {
             _ => return Err(format!("route {:?} has an unknown role", wire.route_id)),
         };
 
+        let dns_zone = if wire.dns_zone.is_empty() {
+            None
+        } else {
+            let zone = canonical_zone(&wire.dns_zone)
+                .ok_or_else(|| format!("route {:?} has an invalid dns_zone", wire.route_id))?;
+            if kind != Kind::Subnet {
+                return Err(format!(
+                    "route {:?} is dns_zone-scoped but not a subnet offer",
+                    wire.route_id
+                ));
+            }
+            Some(zone)
+        };
+        let pinned_egress_ip = if wire.pinned_egress_ip.is_empty() {
+            None
+        } else {
+            Some(wire.pinned_egress_ip.parse::<IpAddr>().map_err(|_| {
+                format!("route {:?} has an invalid pinned_egress_ip", wire.route_id)
+            })?)
+        };
+
         Ok(Self {
             route_id: wire.route_id,
             prefix,
             prefix_text: wire.prefix,
+            dns_zone,
+            pinned_egress_ip,
             gateway_id: wire.gateway_id,
             metric: wire.metric,
             kind,
@@ -115,7 +188,25 @@ impl Offer {
                 Role::Recipient => pb::KarstRouteRole::Recipient as i32,
                 Role::Gateway => pb::KarstRouteRole::Gateway as i32,
             },
+            dns_zone: self.dns_zone.clone().unwrap_or_default(),
+            pinned_egress_ip: self
+                .pinned_egress_ip
+                .map_or_else(String::new, |ip| ip.to_string()),
         }
+    }
+
+    /// The key that groups this offer with its HA candidates: by `dns_zone`
+    /// when it is zone-scoped, by `prefix` otherwise. Two zone-scoped offers
+    /// are allowed to declare the same (or an overlapping) `prefix`, so
+    /// grouping a zone-scoped offer by `prefix` the way an ordinary offer is
+    /// would wrongly fold two distinct zones' candidates into one HA family
+    /// and silently discard one zone's gateway entirely.
+    fn group_key(&self) -> (RouteKey, Role) {
+        let key = match &self.dns_zone {
+            Some(zone) => RouteKey::Zone(zone.clone()),
+            None => RouteKey::Prefix(self.prefix_text.clone()),
+        };
+        (key, self.role)
     }
 
     #[must_use]
@@ -158,26 +249,37 @@ impl Offer {
 ///
 /// # Errors
 /// A description of the first malformed offer, or of two offers sharing a
-/// `(prefix, role)` that disagree on kind, masquerade, or `keep_route` —
+/// `(prefix, role)` — or, for a zone-scoped offer, a `(dns_zone, role)` — that
+/// disagree on kind, masquerade, `keep_route`, or `pinned_egress_ip` —
 /// genuinely conflicting route definitions, not one HA family (plan §3.4
-/// still fails closed on that ambiguity).
+/// still fails closed on that ambiguity). Two zone-scoped offers that share
+/// an overlapping or identical `prefix` are never a conflict on that basis
+/// alone — see [`Offer::group_key`].
 pub fn parse_all(wire: Vec<pb::KarstRouteOffer>, self_id: &[u8]) -> Result<Vec<Offer>, String> {
-    let mut seen: std::collections::BTreeMap<(String, Role), (Kind, bool, bool)> =
+    // The fields an HA family must agree on: kind, masquerade, keep_route,
+    // and (ADR-0068) pinned_egress_ip.
+    type AgreedFields = (Kind, bool, bool, Option<IpAddr>);
+    let mut seen: std::collections::BTreeMap<(RouteKey, Role), AgreedFields> =
         std::collections::BTreeMap::new();
     let mut offers = Vec::with_capacity(wire.len());
     for route in wire {
         let offer = Offer::from_wire(route, self_id)?;
-        let key = (offer.prefix_text.clone(), offer.role);
-        let fields = (offer.kind, offer.masquerade, offer.keep_route);
-        if let Some(&first) = seen.get(&key) {
-            if first != fields {
+        let seen_key = offer.group_key();
+        let fields = (
+            offer.kind,
+            offer.masquerade,
+            offer.keep_route,
+            offer.pinned_egress_ip,
+        );
+        if let Some(first) = seen.get(&seen_key) {
+            if *first != fields {
                 return Err(format!(
                     "duplicate effective route {} with conflicting definitions",
                     offer.prefix
                 ));
             }
         } else {
-            seen.insert(key, fields);
+            seen.insert(seen_key, fields);
         }
         offers.push(offer);
     }
@@ -185,8 +287,10 @@ pub fn parse_all(wire: Vec<pb::KarstRouteOffer>, self_id: &[u8]) -> Result<Vec<O
 }
 
 /// Reduce an authenticated offer set to one effective offer per
-/// `(prefix, role)`, for actually building the local routing/forwarding
-/// configuration from — never for hashing (see [`parse_all`]'s doc comment).
+/// `(prefix, role)` — or, for a zone-scoped offer, per `(dns_zone, role)`,
+/// see [`Offer::group_key`] — for actually building the local
+/// routing/forwarding configuration from — never for hashing (see
+/// [`parse_all`]'s doc comment).
 ///
 /// This is load-bearing beyond tidiness: `routing.rs`'s `AllowedIps::build`
 /// hard-rejects two peers claiming the same prefix, by design, so handing
@@ -208,11 +312,11 @@ pub fn parse_all(wire: Vec<pb::KarstRouteOffer>, self_id: &[u8]) -> Result<Vec<O
 /// discussion on GitHub issue #109.
 #[must_use]
 pub fn select_effective(offers: &[Offer]) -> Vec<Offer> {
-    let mut winners: std::collections::BTreeMap<(&str, Role), &Offer> =
+    let mut winners: std::collections::BTreeMap<(RouteKey, Role), &Offer> =
         std::collections::BTreeMap::new();
     for offer in offers {
         winners
-            .entry((offer.prefix_text.as_str(), offer.role))
+            .entry(offer.group_key())
             .and_modify(|best| {
                 if (offer.metric, &offer.gateway_id) < (best.metric, &best.gateway_id) {
                     *best = offer;
@@ -253,6 +357,8 @@ mod tests {
             masquerade: true,
             keep_route: false,
             role: role as i32,
+            dns_zone: String::new(),
+            pinned_egress_ip: String::new(),
         }
     }
 
@@ -434,5 +540,140 @@ mod tests {
         not_masqueraded.masquerade = false;
 
         assert!(parse_all(vec![masqueraded, not_masqueraded], b"client").is_err());
+    }
+
+    // ── ADR-0068: dns_zone / pinned_egress_ip ───────────────────────────────
+
+    #[test]
+    fn a_zone_scoped_offer_with_a_pinned_egress_ip_is_accepted() {
+        let mut offer = wire(
+            "10.20.0.0/16",
+            pb::KarstRouteKind::Subnet,
+            pb::KarstRouteRole::Recipient,
+        );
+        offer.dns_zone = "legacy.example".to_owned();
+        offer.pinned_egress_ip = "203.0.113.9".to_owned();
+        let parsed = Offer::from_wire(offer, b"client").unwrap();
+        assert_eq!(parsed.dns_zone.as_deref(), Some("legacy.example"));
+        assert_eq!(
+            parsed.pinned_egress_ip,
+            Some("203.0.113.9".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn a_zone_scoped_exit_offer_is_rejected() {
+        let mut offer = wire(
+            "0.0.0.0/0",
+            pb::KarstRouteKind::Exit,
+            pb::KarstRouteRole::Recipient,
+        );
+        offer.dns_zone = "legacy.example".to_owned();
+        assert!(
+            Offer::from_wire(offer, b"client").is_err(),
+            "a zone-scoped offer binds a destination to a Gateway; an exit \
+             offer has no destination for it to bind"
+        );
+    }
+
+    #[test]
+    fn a_malformed_pinned_egress_ip_is_rejected() {
+        let mut offer = wire(
+            "10.20.0.0/16",
+            pb::KarstRouteKind::Subnet,
+            pb::KarstRouteRole::Recipient,
+        );
+        offer.pinned_egress_ip = "not-an-address".to_owned();
+        assert!(Offer::from_wire(offer, b"client").is_err());
+    }
+
+    /// Two HA candidates that genuinely share one externally-visible address
+    /// (a floating IP over an active/standby pair, say) are still one HA
+    /// family and still fail over between themselves by the existing
+    /// metric/gateway-id tiebreak — `pinned_egress_ip` does not turn off HA,
+    /// it only forbids *disagreeing* about the pinned address.
+    #[test]
+    fn ha_candidates_agreeing_on_pinned_egress_ip_still_resolve() {
+        let mut low = wire(
+            "10.20.0.0/16",
+            pb::KarstRouteKind::Subnet,
+            pb::KarstRouteRole::Recipient,
+        );
+        low.gateway_id = b"gw-primary".to_vec();
+        low.metric = 100;
+        low.pinned_egress_ip = "203.0.113.9".to_owned();
+        let mut high = wire(
+            "10.20.0.0/16",
+            pb::KarstRouteKind::Subnet,
+            pb::KarstRouteRole::Recipient,
+        );
+        high.gateway_id = b"gw-standby".to_vec();
+        high.metric = 200;
+        high.pinned_egress_ip = "203.0.113.9".to_owned();
+
+        let parsed = parse_all(vec![high, low], b"client").unwrap();
+        let effective = select_effective(&parsed);
+        assert_eq!(effective.len(), 1);
+        assert_eq!(effective[0].gateway_id, b"gw-primary");
+    }
+
+    /// The failure mode ADR-0068 exists to close: two HA candidates for the
+    /// same route that declare *different* pinned addresses must never be
+    /// silently resolved by metric — a legacy firewall only allows one of
+    /// them, and a silent winner means traffic sometimes goes somewhere that
+    /// firewall was never told to trust.
+    #[test]
+    fn ha_candidates_disagreeing_on_pinned_egress_ip_are_rejected() {
+        let mut a = wire(
+            "10.20.0.0/16",
+            pb::KarstRouteKind::Subnet,
+            pb::KarstRouteRole::Recipient,
+        );
+        a.gateway_id = b"gw-a".to_vec();
+        a.pinned_egress_ip = "203.0.113.9".to_owned();
+        let mut b = wire(
+            "10.20.0.0/16",
+            pb::KarstRouteKind::Subnet,
+            pb::KarstRouteRole::Recipient,
+        );
+        b.gateway_id = b"gw-b".to_vec();
+        b.pinned_egress_ip = "203.0.113.10".to_owned();
+
+        assert!(parse_all(vec![a, b], b"client").is_err());
+    }
+
+    /// The other failure mode ADR-0068 exists to close: two *different*
+    /// zones that happen to declare the same (or an overlapping) `prefix`
+    /// bound must never be folded into one HA family by `prefix` alone —
+    /// that would silently discard one zone's Gateway entirely, which is
+    /// exactly the ambiguity letting zones share a prefix is supposed to
+    /// allow, not create.
+    #[test]
+    fn two_zones_sharing_a_prefix_both_survive_select_effective() {
+        let mut site_a = wire(
+            "10.0.0.0/8",
+            pb::KarstRouteKind::Subnet,
+            pb::KarstRouteRole::Recipient,
+        );
+        site_a.route_id = "route:site-a".to_owned();
+        site_a.gateway_id = b"gw-a".to_vec();
+        site_a.dns_zone = "site-a.legacy".to_owned();
+        let mut site_b = wire(
+            "10.0.0.0/8",
+            pb::KarstRouteKind::Subnet,
+            pb::KarstRouteRole::Recipient,
+        );
+        site_b.route_id = "route:site-b".to_owned();
+        site_b.gateway_id = b"gw-b".to_vec();
+        site_b.dns_zone = "site-b.legacy".to_owned();
+
+        let parsed = parse_all(vec![site_a, site_b], b"client").unwrap();
+        let effective = select_effective(&parsed);
+        assert_eq!(
+            effective.len(),
+            2,
+            "two different zones sharing a prefix must both survive, not \
+             collapse into one HA family"
+        );
     }
 }

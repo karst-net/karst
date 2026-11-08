@@ -3,6 +3,7 @@
 
 //! Conversion between KarstDNS policy and DNS wire messages.
 
+use std::net::IpAddr;
 use std::time::Duration;
 
 use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
@@ -119,6 +120,40 @@ fn forward(
         }
     }
     Ok(response)
+}
+
+/// Every A/AAAA answer in a wire response, each with its own record TTL —
+/// karst-net/karst ADR-0068's input for DNS-zone-scoped Gateway affinity.
+///
+/// Deliberately independent of [`cache_ttl`]: that function needs the single
+/// *lowest* TTL across the whole answer, because one cache entry must expire
+/// no later than any record it holds. A caller pinning individual addresses
+/// to a Gateway wants each record's own TTL instead — a cache's own
+/// expiry is not the right bound for a single address's affinity. Returns an
+/// empty vector for anything that is not a successful answer (a malformed
+/// response, SERVFAIL, NXDOMAIN, or an answer with no A/AAAA records), so a
+/// caller can treat the result as "nothing to pin" without a separate
+/// malformed-response check of its own.
+#[must_use]
+pub fn answered_addresses(wire: &[u8]) -> Vec<(IpAddr, Duration)> {
+    let Ok(message) = crate::message::decode(wire) else {
+        return Vec::new();
+    };
+    if message.metadata.response_code != ResponseCode::NoError {
+        return Vec::new();
+    }
+    message
+        .answers
+        .iter()
+        .filter_map(|record| {
+            let addr = match &record.data {
+                RData::A(A(addr)) => IpAddr::V4(*addr),
+                RData::AAAA(AAAA(addr)) => IpAddr::V6(*addr),
+                _ => return None,
+            };
+            Some((addr, Duration::from_secs(u64::from(record.ttl))))
+        })
+        .collect()
 }
 
 fn cache_ttl(message: &Message) -> Option<Duration> {
@@ -434,5 +469,66 @@ mod tests {
             .last()
             .expect("last failure")
             .starts_with("5.example.test:"));
+    }
+
+    // ── ADR-0068: answered_addresses ────────────────────────────────────────
+
+    fn answer_wire(records: Vec<(Ipv4Addr, u32)>, code: ResponseCode) -> Vec<u8> {
+        let req = request("host.legacy.example.", WireRecordType::A);
+        let mut out = Message::new(req.metadata.id, MessageType::Response, OpCode::Query);
+        out.metadata.response_code = code;
+        out.add_queries(req.queries.iter().cloned());
+        for (addr, ttl) in records {
+            out.add_answer(WireRecord::from_rdata(
+                Name::from_ascii("host.legacy.example.").expect("name"),
+                ttl,
+                RData::A(A(addr)),
+            ));
+        }
+        out.to_vec().expect("encode")
+    }
+
+    #[test]
+    fn extracts_every_a_record_with_its_own_ttl() {
+        let wire = answer_wire(
+            vec![
+                (Ipv4Addr::new(10, 0, 0, 1), 60),
+                (Ipv4Addr::new(10, 0, 0, 2), 120),
+            ],
+            ResponseCode::NoError,
+        );
+        assert_eq!(
+            answered_addresses(&wire),
+            vec![
+                (
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                    Duration::from_secs(60)
+                ),
+                (
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                    Duration::from_secs(120)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_non_success_response_yields_nothing() {
+        let wire = answer_wire(
+            vec![(Ipv4Addr::new(10, 0, 0, 1), 60)],
+            ResponseCode::ServFail,
+        );
+        assert!(answered_addresses(&wire).is_empty());
+    }
+
+    #[test]
+    fn an_answer_with_no_address_records_yields_nothing() {
+        let wire = answer_wire(vec![], ResponseCode::NoError);
+        assert!(answered_addresses(&wire).is_empty());
+    }
+
+    #[test]
+    fn malformed_bytes_yield_nothing_rather_than_panicking() {
+        assert!(answered_addresses(&[0xff; 4]).is_empty());
     }
 }
