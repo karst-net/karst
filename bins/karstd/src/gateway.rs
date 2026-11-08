@@ -1082,7 +1082,10 @@ print('IPv4/IPv6 local aliases denied; explicit machine ports preserved')
         let prefix = Prefix::new(IpAddr::V4(std::net::Ipv4Addr::new(10, 10, 0, 0)), 16)
             .expect("valid prefix");
         let observed = observed_egress_ip(&prefix).expect("a route should resolve on any host");
-        assert!(observed.is_ipv4(), "a v4 prefix must resolve to a v4 local address");
+        assert!(
+            observed.is_ipv4(),
+            "a v4 prefix must resolve to a v4 local address"
+        );
     }
 
     #[test]
