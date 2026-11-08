@@ -14,7 +14,7 @@ use std::sync::Arc;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
 
-use crate::netmap::Relay;
+use crate::netmap::Estavelle;
 
 /// The hybrid key exchange required by Ponor §4.1.
 const REQUIRED_GROUP: rustls::NamedGroup = rustls::NamedGroup::X25519MLKEM768;
@@ -154,7 +154,7 @@ pub fn client_config(extra_ca: Option<&std::path::Path>) -> Result<Arc<ClientCon
 /// [`client_config`] always negotiates TLS 1.3, so this is defensive.
 pub fn quic_client_config(tls: &Arc<ClientConfig>) -> Result<quinn::ClientConfig, Error> {
     let mut tls = (**tls).clone();
-    tls.alpn_protocols = vec![karst_relay_proto::consts::QUIC_ALPN.to_vec()];
+    tls.alpn_protocols = vec![karst_estavelle_proto::consts::QUIC_ALPN.to_vec()];
     let quic_tls = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
         .map_err(|_| Error::Rustls(rustls::Error::General("no TLS 1.3 initial keys".to_owned())))?;
     Ok(quinn::ClientConfig::new(Arc::new(quic_tls)))
@@ -162,12 +162,12 @@ pub fn quic_client_config(tls: &Arc<ClientConfig>) -> Result<quinn::ClientConfig
 
 /// The SNI and certificate-validation name for a pinned relay.
 ///
-/// This is intentionally not derived from [`Relay::address`], which names a
+/// This is intentionally not derived from [`Estavelle::address`], which names a
 /// reachable socket and may be an IP or load-balancer target.
 ///
 /// # Errors
 /// Returns [`Error::ServerName`] for a malformed registry value.
-pub fn server_name(relay: &Relay) -> Result<ServerName<'static>, Error> {
+pub fn server_name(relay: &Estavelle) -> Result<ServerName<'static>, Error> {
     ServerName::try_from(relay.tls_server_name.clone())
         .map_err(|_| Error::ServerName(relay.tls_server_name.clone()))
 }

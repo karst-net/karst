@@ -37,7 +37,7 @@ karst-node.workspace = true
 karst-noise.workspace = true
 karst-portmap.workspace = true
 karst-proto.workspace = true
-karst-relay-proto.workspace = true
+karst-estavelle-proto.workspace = true
 karst-transport.workspace = true
 karst-tun.workspace = true
 
@@ -118,7 +118,7 @@ windows-version = "0.1"
 # The relay, as a library, so `tests/relay_live.rs` can run a real one in
 # process. The node's Ponor client had only stub-signer unit tests before that;
 # nothing had ever put it on a socket.
-karst-relay = { path = "../karst-relay" }
+karst-estavelle = { path = "../karst-estavelle" }
 karst-noise.workspace = true
 # Already a dev-dependency of karst-relay, and used here for the same reason:
 # testing what a relay's certificate does needs a certificate.

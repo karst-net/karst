@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use base64ct::{Base64, Encoding as _};
-use karst_relay::server::{serve_on, Ctx};
+use karst_estavelle::server::{serve_on, Ctx};
 use karst_transport::UdpTransport;
 
 use super::probe_tests::{config, engine};
@@ -25,7 +25,7 @@ use super::{
     Relayed, Shutdown,
 };
 use crate::control::Identity;
-use crate::netmap::Relay;
+use crate::netmap::Estavelle;
 
 /// More than a move needs: the check is a second and a dial is milliseconds on
 /// loopback. A bound this loose still fails if the move waits for idleness,
@@ -33,7 +33,7 @@ use crate::netmap::Relay;
 const MOVE_BOUND: Duration = Duration::from_secs(6);
 
 struct LiveRelay {
-    relay: Relay,
+    relay: Estavelle,
     ctx: Arc<Ctx>,
     /// The accept loop; aborting it closes the listener, so the relay refuses
     /// every dial from then on.
@@ -69,7 +69,7 @@ fn temp_dir(tag: &str) -> Dir {
 /// Start a relay on loopback that admits `node`, using the shared certificate.
 ///
 /// Each relay has its own ML-DSA identity — that is what the registry entry
-/// pins — and they share a TLS certificate only so that one `relay_ca_file`
+/// pins — and they share a TLS certificate only so that one `estavelle_ca_file`
 /// trusts both.
 fn start_relay(
     rt: &tokio::runtime::Runtime,
@@ -92,7 +92,7 @@ fn start_relay(
     .expect("roster");
     // `{:?}`, not `"{}"`: a Windows path is full of backslashes, and `\U` in
     // `C:\Users` is a TOML unicode escape. Debug formatting escapes them.
-    let cfg = karst_relay::config::Config::parse(&format!(
+    let cfg = karst_estavelle::config::Config::parse(&format!(
         "listen = \"127.0.0.1:0\"\nidentity_key = {:?}\nroster = {:?}\n\
          tls_cert = {:?}\ntls_key = {:?}\n",
         dir.0.join(format!("relay{n}.key")),
@@ -103,9 +103,9 @@ fn start_relay(
     .expect("config");
     cfg.validate().expect("valid");
     let identity =
-        Arc::new(karst_relay::sign::Identity::load_or_create(&cfg.identity_key).expect("identity"));
-    let roster = Arc::new(karst_relay::roster::FileRoster::load(&cfg.roster).expect("roster"));
-    let tls = karst_relay::tls::server_config(&cfg.tls_cert, &cfg.tls_key).expect("tls");
+        Arc::new(karst_estavelle::sign::Identity::load_or_create(&cfg.identity_key).expect("identity"));
+    let roster = Arc::new(karst_estavelle::roster::FileRoster::load(&cfg.roster).expect("roster"));
+    let tls = karst_estavelle::tls::server_config(&cfg.tls_cert, &cfg.tls_key).expect("tls");
     let ctx = Ctx::new(&cfg, Arc::clone(&identity), roster, tls);
     let listener = rt
         .block_on(tokio::net::TcpListener::bind(cfg.listen))
@@ -117,10 +117,10 @@ fn start_relay(
     });
     let identity_key = identity.public_key().to_vec();
     LiveRelay {
-        relay: Relay {
+        relay: Estavelle {
             address: addr.to_string(),
             tls_server_name: "relay.test".to_owned(),
-            relay_id: karst_relay::sign::relay_id(&identity_key),
+            relay_id: karst_estavelle::sign::relay_id(&identity_key),
             identity_key,
             region: "test".to_owned(),
         },
@@ -196,8 +196,8 @@ fn with_two_relays<T>(tag: &str, scenario: impl FnOnce(&Rig<'_>) -> T) -> T {
         engine: &engine,
         socket: &socket,
         tun: &tun,
-        relay_ca_file: Some(cert_path),
-        prefer_quic_relay: false,
+        estavelle_ca_file: Some(cert_path),
+        prefer_quic_estavelle: false,
         relayed: &relayed,
         started: Instant::now(),
         relay_health: &health,

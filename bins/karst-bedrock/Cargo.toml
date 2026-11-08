@@ -23,7 +23,7 @@ workspace = true
 [dependencies]
 karst-bedrock = { workspace = true }
 karst-crypto = { workspace = true }
-# `getrandom` directly, following bins/karst-relay/src/sign.rs: rand_core 0.10
+# `getrandom` directly, following bins/karst-estavelle/src/sign.rs: rand_core 0.10
 # ships no OsRng, and pulling in `rand` to call getrandom would add a dependency
 # tree to a binary whose short dependency list is part of its claim.
 getrandom = "0.3"

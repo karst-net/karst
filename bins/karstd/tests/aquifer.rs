@@ -1836,7 +1836,7 @@ struct Pins {
 /// TLS material for the relays, written once and shared by all of them.
 ///
 /// **One certificate, however many relays.** A node trusts a single
-/// `relay_ca_file`, and what §4.2 pins is the relay's ML-DSA-65 identity rather
+/// `estavelle_ca_file`, and what §4.2 pins is the relay's ML-DSA-65 identity rather
 /// than its certificate — the TLS hop underneath is an ordinary validated one.
 /// Two self-signed certificates would need the node to trust two anchors, which
 /// tests the CA file rather than anything in the protocol.
@@ -1941,7 +1941,7 @@ fn spawn_relay(net: &mut Aquifer, tag: &str, port: u16, reflect: bool) -> String
 
     // Created here so the server can advertise it. The registry entry names the
     // key and the id is *derived* from it (§5.2), so the two cannot disagree.
-    let identity = karst_relay::sign::Identity::load_or_create(&relay_key).expect("relay identity");
+    let identity = karst_estavelle::sign::Identity::load_or_create(&relay_key).expect("relay identity");
     let relay_pk = hex(identity.public_key());
 
     let executable =
@@ -2138,7 +2138,7 @@ fn write_node_config(
              identity_key_file = \"{}\"\n\
              setup_key = \"fixture\"\n\
              cache_file = \"{}\"\n\
-             relay_ca_file = \"{}\"\n\
+             estavelle_ca_file = \"{}\"\n\
              {extra}",
             d.join("private.key").display(),
             // Under `net.dir`, never the host's real
@@ -2249,7 +2249,7 @@ fn wait_for(net: &Aquifer, what: &str, timeout: Duration, mut f: impl FnMut() ->
 /// clock.
 ///
 /// #516 traced a recurring "timed out waiting to reach the destination"
-/// flake to exactly this: `exit_route_active`/`gateway_forwarding` can read
+/// flake to exactly this: `exit_route_active`/`aven_forwarding` can read
 /// green while a control-plane hiccup has left the two sides transiently
 /// out of key agreement, so the gateway counts real, sustained
 /// `decrypt_failures` for a window that can outlast a flat 15-30s bound
@@ -4243,7 +4243,7 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
             "exec",
             NS_B,
             &bin("karst"),
-            "gateway",
+            "aven",
             "exit",
             "use",
             "internet",
@@ -4659,7 +4659,7 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
     // moment, and "dest-lan" is still A's until it is explicitly re-pointed
     // below — so node C necessarily glimpses itself as a plain *recipient*
     // of its own future prefix first. Attaching the destination LAN only
-    // once that has settled to `role = "gateway"` (below) means the window
+    // once that has settled to `role = "aven"` (below) means the window
     // is harmless: nothing yet claims 10.99.0.0/24 on node C's kernel for
     // the transient recipient-side tunnel route to collide with — see
     // `Routes::wanted`'s own doc comment on the collision this sidesteps.
@@ -4703,7 +4703,7 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
         &net,
         "node C's own netmap to reflect its new role as gateway",
         Duration::from_secs(30),
-        || field(&status(&net, "c", NS_C), "role").as_deref() == Some("gateway"),
+        || field(&status(&net, "c", NS_C), "role").as_deref() == Some("aven"),
     );
 
     attach_destination_lan_to(NS_C, NS_DEST_C, "ktn-c-dest", "ktn-dest-c");
@@ -5320,7 +5320,7 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
             "exec",
             NS_B,
             &bin("karst"),
-            "gateway",
+            "aven",
             "exit",
             action,
         ]);
@@ -5371,7 +5371,7 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
     net.stop_node("a", NS_A);
     let config_path = net.dir.join("a/karstd.toml");
     let mut config = std::fs::read_to_string(&config_path).expect("Gateway config");
-    config.push_str("\n[gateway]\nforwarding = false\n");
+    config.push_str("\n[aven]\nforwarding = false\n");
     std::fs::write(&config_path, config).expect("disable local forwarding");
     start_node(&mut net, "a", NS_A);
     wait_for(
@@ -5380,7 +5380,7 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
         Duration::from_secs(30),
         || {
             let report = status(&net, "a", NS_A);
-            field(&report, "gateway_forwarding").as_deref() == Some("false")
+            field(&report, "aven_forwarding").as_deref() == Some("false")
                 && field(&report, "state").as_deref() == Some("established")
         },
     );
@@ -5417,7 +5417,7 @@ fn attach_ipv6_gateway_lan() {
     ));
 }
 
-fn gateway_exit_action(net: &Aquifer, action: &str, route_id: Option<&str>) {
+fn aven_exit_action(net: &Aquifer, action: &str, route_id: Option<&str>) {
     let socket = net.dir.join("run/b.sock");
     let mut command = Command::new("ip");
     command.args([
@@ -5425,7 +5425,7 @@ fn gateway_exit_action(net: &Aquifer, action: &str, route_id: Option<&str>) {
         "exec",
         NS_B,
         &bin("karst"),
-        "gateway",
+        "aven",
         "exit",
         action,
     ]);
@@ -5488,14 +5488,14 @@ fn ipv6_gateway_forwards_specific_and_default_prefixes_with_independent_consent(
         ipv6_gateway_probe("fd99::3").is_none(),
         "specific-prefix access must not activate IPv6 default egress"
     );
-    gateway_exit_action(&net, "use", Some("exit-v6"));
+    aven_exit_action(&net, "use", Some("exit-v6"));
     wait_for(
         &net,
         "IPv6 default egress after consent",
         Duration::from_secs(20),
         || ipv6_gateway_probe("fd99::3").as_deref() == Some("fd99::1"),
     );
-    gateway_exit_action(&net, "disable", None);
+    aven_exit_action(&net, "disable", None);
     wait_for(
         &net,
         "IPv6 default withdrawal",
@@ -5622,7 +5622,7 @@ fn ipv6_gateway_dns_upstream_requires_consent_and_stops_after_withdrawal() {
         !gateway_dns_probe(false),
         "DNS must not reach the exit-only upstream before consent"
     );
-    gateway_exit_action(&net, "use", Some("dns-exit-v6"));
+    aven_exit_action(&net, "use", Some("dns-exit-v6"));
     wait_for(
         &net,
         "UDP stub query through IPv6 Gateway DNS upstream",
@@ -5633,7 +5633,7 @@ fn ipv6_gateway_dns_upstream_requires_consent_and_stops_after_withdrawal() {
         gateway_dns_probe(true),
         "TCP stub queries must use the same Gateway DNS path"
     );
-    gateway_exit_action(&net, "disable", None);
+    aven_exit_action(&net, "disable", None);
     wait_for(
         &net,
         "IPv6 DNS exit withdrawal",

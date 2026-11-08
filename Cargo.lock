@@ -2042,7 +2042,7 @@ version = "0.0.0"
 dependencies = [
  "base64ct",
  "karst-control-client",
- "karst-relay",
+ "karst-estavelle",
  "karst-tun",
  "karstd",
  "rcgen",
@@ -2056,6 +2056,39 @@ name = "karst-embed-capi"
 version = "0.0.0"
 dependencies = [
  "karst-embed",
+]
+
+[[package]]
+name = "karst-estavelle"
+version = "0.0.0"
+dependencies = [
+ "base64ct",
+ "getrandom 0.3.4",
+ "hex",
+ "karst-estavelle-proto",
+ "karst-resurgence",
+ "ml-dsa",
+ "quinn",
+ "rand_core 0.10.1",
+ "rcgen",
+ "rustix",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-rustls",
+ "toml 0.9.12+spec-1.1.0",
+ "ureq",
+]
+
+[[package]]
+name = "karst-estavelle-proto"
+version = "0.0.0"
+dependencies = [
+ "sha2",
 ]
 
 [[package]]
@@ -2111,39 +2144,6 @@ dependencies = [
  "hmac",
  "sha2",
  "subtle",
-]
-
-[[package]]
-name = "karst-relay"
-version = "0.0.0"
-dependencies = [
- "base64ct",
- "getrandom 0.3.4",
- "hex",
- "karst-relay-proto",
- "karst-resurgence",
- "ml-dsa",
- "quinn",
- "rand_core 0.10.1",
- "rcgen",
- "rustix",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tokio-rustls",
- "toml 0.9.12+spec-1.1.0",
- "ureq",
-]
-
-[[package]]
-name = "karst-relay-proto"
-version = "0.0.0"
-dependencies = [
- "sha2",
 ]
 
 [[package]]
@@ -2261,13 +2261,13 @@ dependencies = [
  "karst-control-client",
  "karst-crypto",
  "karst-dns",
+ "karst-estavelle",
+ "karst-estavelle-proto",
  "karst-ipc",
  "karst-node",
  "karst-noise",
  "karst-portmap",
  "karst-proto",
- "karst-relay",
- "karst-relay-proto",
  "karst-resurgence",
  "karst-secure-storage",
  "karst-transport",

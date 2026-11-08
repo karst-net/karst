@@ -27,18 +27,18 @@ USAGE:
     karst dns status KarstDNS listener, host integration, and routes
     karst dns query NAME  explain the resolver path for NAME
     karst dns revert restore the host's DNS configuration and exit
-    karst gateway status           subnet/exit offers, selection and forwarding readiness
-    karst gateway exit list        list exit routes and local selection
-    karst gateway exit use ROUTE_ID  persistently select an exit route
-    karst gateway exit disable     withdraw and forget exit consent
-    karst exit-node list|use|disable  compatibility alias for gateway exit
+    karst aven status           subnet/exit offers, selection and forwarding readiness
+    karst aven exit list        list exit routes and local selection
+    karst aven exit use ROUTE_ID  persistently select an exit route
+    karst aven exit disable     withdraw and forget exit consent
+    karst exit-node list|use|disable  compatibility alias for aven exit
     karst file send PEER PATH     offer PATH's bytes to PEER (GitHub issue #212)
     karst file accept PEER ID     accept a pending inbound offer (hex transfer id)
     karst file reject PEER ID [REASON]  reject it (REASON: declined, too-large, busy)
     karst file pending            inbound offers awaiting accept/reject
     karst file receipts           the local log of resolved transfers
     karst bugreport  a support bundle, safe to attach to an issue
-    karst metrics    Engine::Stats and route/gateway state as Prometheus text
+    karst metrics    Engine::Stats and route/aven state as Prometheus text
     karst down       ask the daemon to stop
     karst version    the running daemon's version (needs the daemon up)
 
@@ -63,9 +63,9 @@ itself: no PSKs, no private keys, no setup key. Attaching the config file
 instead would ship every per-pair PSK in it, and whoever pasted it would have
 no way to know.
 
-`gateway status` inspects both subnet and exit routing without changing it.
-`gateway exit use` grants local consent only to an eligible offered exit route;
-`gateway exit disable` clears that consent, not the node's Gateway forwarding
+`aven status` inspects both subnet and exit routing without changing it.
+`aven exit use` grants local consent only to an eligible offered exit route;
+`aven exit disable` clears that consent, not the node's Aven forwarding
 capability or its subnet routes. Existing `exit-node` commands remain supported.
 
 The daemon itself is started separately; `karst up` is deliberately absent
@@ -145,8 +145,8 @@ fn main() -> ExitCode {
         // Older daemons do not know this additive IPC verb. Report their
         // refusal as a failed status request rather than a successful empty
         // Gateway view. Consent aliases still use the legacy IPC verbs.
-        Ok(reply) if command == Command::GatewayStatus && reply.starts_with("error =") => {
-            eprintln!("karst: gateway status failed: {reply}");
+        Ok(reply) if command == Command::AvenStatus && reply.starts_with("error =") => {
+            eprintln!("karst: aven status failed: {reply}");
             ExitCode::FAILURE
         }
         Ok(reply) => {
@@ -166,8 +166,8 @@ fn parse_command(first: &str, rest: &[&str]) -> Option<Command> {
         ("status", _) => Some(Command::Status),
         ("dns", ["status", ..]) => Some(Command::DnsStatus),
         ("dns", ["query", name, ..]) => Some(Command::DnsQuery((*name).to_owned())),
-        ("gateway", ["status", ..]) => Some(Command::GatewayStatus),
-        ("gateway", ["exit", tail @ ..]) => parse_command("exit-node", tail),
+        ("aven", ["status", ..]) => Some(Command::AvenStatus),
+        ("aven", ["exit", tail @ ..]) => parse_command("exit-node", tail),
         ("exit-node", ["list", ..]) => Some(Command::ExitList),
         ("exit-node", ["use", id, ..]) => Some(Command::ExitUse((*id).to_owned())),
         ("exit-node", ["disable", ..]) => Some(Command::ExitDisable),
@@ -208,7 +208,7 @@ fn parse_command(first: &str, rest: &[&str]) -> Option<Command> {
 /// from.
 fn command_args<'a>(first: &str, rest: &'a [&'a str]) -> &'a [&'a str] {
     match (first, rest) {
-        ("gateway", ["exit", tail @ ..]) => command_args("exit-node", tail),
+        ("aven", ["exit", tail @ ..]) => command_args("exit-node", tail),
         ("file", ["reject", _, _, reason, tail @ ..])
             if matches!(*reason, "declined" | "too-large" | "busy") =>
         {
@@ -221,8 +221,8 @@ fn command_args<'a>(first: &str, rest: &'a [&'a str]) -> &'a [&'a str] {
         | ("dns", ["status", tail @ ..] | ["query", _, tail @ ..])
         | ("exit-node", ["list" | "disable", tail @ ..] | ["use", _, tail @ ..])
         | ("status", ["--json", tail @ ..])
-        | ("gateway", ["status", tail @ ..]) => tail,
-        ("dns" | "exit-node" | "gateway" | "file", []) => &[],
+        | ("aven", ["status", tail @ ..]) => tail,
+        ("dns" | "exit-node" | "aven" | "file", []) => &[],
         _ => rest,
     }
 }
@@ -390,43 +390,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gateway_exit_commands_preserve_legacy_consent_requests_and_socket_options() {
+    fn aven_exit_commands_preserve_legacy_consent_requests_and_socket_options() {
         for args in [vec!["list"], vec!["use", "exit-eu"], vec!["disable"]] {
             let mut tail = args.clone();
             tail.extend(["--socket", "/tmp/karst-test.sock"]);
-            let mut gateway = vec!["exit"];
-            gateway.extend(tail.iter().copied());
-            let modern = parse_command("gateway", &gateway).expect("gateway command");
+            let mut aven = vec!["exit"];
+            aven.extend(tail.iter().copied());
+            let modern = parse_command("aven", &aven).expect("aven command");
             let legacy = parse_command("exit-node", &tail).expect("legacy command");
             assert_eq!(modern, legacy);
             assert_eq!(modern.as_str(), legacy.as_str());
             assert_eq!(
-                command_args("gateway", &gateway),
+                command_args("aven", &aven),
                 command_args("exit-node", &tail)
             );
             assert_eq!(
-                socket_arg(command_args("gateway", &gateway)).expect("socket"),
+                socket_arg(command_args("aven", &aven)).expect("socket"),
                 std::path::PathBuf::from("/tmp/karst-test.sock")
             );
         }
     }
 
     #[test]
-    fn gateway_status_is_read_only_and_supports_custom_socket() {
-        let args = ["status", "-s", "/tmp/gateway.sock"];
+    fn aven_status_is_read_only_and_supports_custom_socket() {
+        let args = ["status", "-s", "/tmp/aven.sock"];
         assert_eq!(
-            parse_command("gateway", &args),
-            Some(Command::GatewayStatus)
+            parse_command("aven", &args),
+            Some(Command::AvenStatus)
         );
         assert_eq!(
-            socket_arg(command_args("gateway", &args)).expect("socket"),
-            std::path::PathBuf::from("/tmp/gateway.sock")
+            socket_arg(command_args("aven", &args)).expect("socket"),
+            std::path::PathBuf::from("/tmp/aven.sock")
         );
-        assert_eq!(Command::GatewayStatus.as_str(), "gateway-status");
+        assert_eq!(Command::AvenStatus.as_str(), "aven-status");
     }
 
     #[test]
-    fn gateway_commands_require_explicit_exit_action_and_reject_extra_arguments() {
+    fn aven_commands_require_explicit_exit_action_and_reject_extra_arguments() {
         for args in [
             vec![],
             vec!["exit"],
@@ -434,7 +434,7 @@ mod tests {
             vec!["use", "exit-eu"],
             vec!["disable"],
         ] {
-            assert!(parse_command("gateway", &args).is_none(), "{args:?}");
+            assert!(parse_command("aven", &args).is_none(), "{args:?}");
         }
         for args in [
             vec!["status", "extra"],
@@ -442,9 +442,9 @@ mod tests {
             vec!["exit", "disable", "--socket"],
             vec!["exit", "list", "--unknown"],
         ] {
-            assert!(parse_command("gateway", &args).is_some());
+            assert!(parse_command("aven", &args).is_some());
             assert!(
-                socket_arg(command_args("gateway", &args)).is_err(),
+                socket_arg(command_args("aven", &args)).is_err(),
                 "{args:?}"
             );
         }

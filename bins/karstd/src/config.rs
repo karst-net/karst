@@ -179,7 +179,7 @@ pub struct File {
     pub node: NodeSection,
     /// Local policy shared by specific-prefix and default-route forwarding.
     #[serde(default)]
-    pub gateway: GatewaySection,
+    pub aven: AvenSection,
     /// The roster. `#[serde(default)]` so a node with no peers still loads —
     /// that is a valid, if lonely, state and a clearer error comes later.
     #[serde(default, rename = "peer")]
@@ -210,7 +210,7 @@ pub struct File {
 /// Local Gateway policy. Control offers cannot override this host's choice.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct GatewaySection {
+pub struct AvenSection {
     /// Permit forwarding for authenticated Gateway offers of either kind.
     /// Defaults to true to preserve existing deployments; this grants no routes.
     pub forwarding: bool,
@@ -218,7 +218,7 @@ pub struct GatewaySection {
     pub exit_state_file: Option<PathBuf>,
 }
 
-impl Default for GatewaySection {
+impl Default for AvenSection {
     fn default() -> Self {
         Self {
             forwarding: true,
@@ -233,15 +233,15 @@ impl File {
     /// # Errors
     /// Returns an error when both the Gateway table and a legacy node key
     /// configure consent storage, even if they name the same path.
-    pub fn gateway_exit_state_path(&self, dir: &Path) -> Result<PathBuf, ConfigError> {
-        if self.gateway.exit_state_file.is_some() && self.node.exit_node_state_file.is_some() {
+    pub fn aven_exit_state_path(&self, dir: &Path) -> Result<PathBuf, ConfigError> {
+        if self.aven.exit_state_file.is_some() && self.node.exit_node_state_file.is_some() {
             return Err(ConfigError::Unusable(
-                "configure gateway.exit_state_file or the legacy node exit-state setting, not both"
+                "configure aven.exit_state_file or the legacy node exit-state setting, not both"
                     .into(),
             ));
         }
-        Ok(self.gateway.exit_state_file.as_ref().map_or_else(
-            || self.node.gateway_exit_state_path(dir),
+        Ok(self.aven.exit_state_file.as_ref().map_or_else(
+            || self.node.aven_exit_state_path(dir),
             |path| {
                 if path.is_absolute() {
                     path.clone()
@@ -489,13 +489,13 @@ pub struct NodeSection {
     /// on the same host, such as an integration test running several nodes in
     /// separate network namespaces, which would otherwise all share one root's
     /// worth of exit-route state.
-    /// Prefer `[gateway].exit_state_file`. The historical node spellings
-    /// `gateway_exit_state_file` and `exit_node_state_file` read the same file.
+    /// Prefer `[aven].exit_state_file`. The historical node spellings
+    /// `aven_exit_state_file` and `exit_node_state_file` read the same file.
     /// Serde rejects both
     /// spellings together, even with equal values, rather than choosing one.
     #[serde(
         default,
-        rename = "gateway_exit_state_file",
+        rename = "aven_exit_state_file",
         alias = "exit_node_state_file"
     )]
     pub exit_node_state_file: Option<PathBuf>,
@@ -530,7 +530,7 @@ impl NodeSection {
     /// Resolve local consent storage without moving or rewriting existing state.
     /// Relative paths remain relative to the configuration directory.
     #[must_use]
-    pub fn gateway_exit_state_path(&self, config_dir: &Path) -> PathBuf {
+    pub fn aven_exit_state_path(&self, config_dir: &Path) -> PathBuf {
         self.exit_node_state_file.as_ref().map_or_else(
             || crate::exit_node::DEFAULT_STATE_FILE.into(),
             |path| {
@@ -612,7 +612,7 @@ pub struct ControlSection {
     ///
     /// Absent means the system roots alone, which is the right default for a
     /// relay with a public certificate.
-    pub relay_ca_file: Option<PathBuf>,
+    pub estavelle_ca_file: Option<PathBuf>,
     /// Try QUIC before TCP+TLS for relay connections — ADR-0020.
     ///
     /// **Off by default**, matching the relay side's own opt-in: a relay a
@@ -621,7 +621,7 @@ pub struct ControlSection {
     /// TCP+TLS in the same attempt on failure, so a mixed fleet — some relays
     /// upgraded, some not — costs nothing more than the one failed dial.
     #[serde(default)]
-    pub prefer_quic_relay: bool,
+    pub prefer_quic_estavelle: bool,
 }
 
 fn default_interface() -> String {
@@ -922,7 +922,7 @@ pub struct Peer {
     /// publish through, and for a peer that has not chosen one. Only a
     /// registry id of the right width survives: a value of any other length
     /// names no relay in `relays` and could only be dialed by guessing.
-    pub home_relay: Option<[u8; karst_relay_proto::consts::ID_LEN]>,
+    pub home_estavelle: Option<[u8; karst_estavelle_proto::consts::ID_LEN]>,
     /// This peer's own self-reported Resurgence candidate list, redistributed by
     /// the server — `karst_control.proto`'s `KarstNetmapPeer.candidates`,
     /// parsed and filtered to what actually parses as a socket address.
@@ -994,26 +994,26 @@ pub struct Config {
     /// This node's server-assigned handle. Empty for a static TOML roster.
     pub node_id: Vec<u8>,
     /// Authenticated relay choices from the netmap.
-    pub relays: Vec<crate::netmap::Relay>,
-    /// Extra trust anchors for relay TLS, from `[control] relay_ca_file`.
+    pub relays: Vec<crate::netmap::Estavelle>,
+    /// Extra trust anchors for relay TLS, from `[control] estavelle_ca_file`.
     ///
     /// Local configuration rather than netmap content, deliberately: which
     /// certificates this host will accept is a property of this host, and a
     /// server that could add trust anchors to its nodes would be a server that
     /// could redirect the hop. The relay's *identity* comes from the netmap and
     /// is post-quantum; this is only the TLS layer beneath it.
-    pub relay_ca_file: Option<PathBuf>,
+    pub estavelle_ca_file: Option<PathBuf>,
     /// Try QUIC before TCP+TLS for relay connections — see
-    /// [`ControlSection::prefer_quic_relay`]. `false` for a static TOML
+    /// [`ControlSection::prefer_quic_estavelle`]. `false` for a static TOML
     /// roster, which has no `[control]` section to set it from.
-    pub prefer_quic_relay: bool,
+    pub prefer_quic_estavelle: bool,
     /// Authenticated route offers retained for local consent and diagnostics.
     pub route_offers: Vec<crate::route_offer::Offer>,
     /// Root-owned local state selecting one exit route. Static rosters have
     /// no server route offers; configuring storage does not grant consent.
     pub exit_node_state_file: Option<PathBuf>,
     /// Host permission shared by both Gateway forwarding behaviors.
-    pub gateway_forwarding: bool,
+    pub aven_forwarding: bool,
 
     /// The roster.
     pub peers: Vec<Peer>,
@@ -1107,7 +1107,7 @@ impl Config {
             ));
         }
         let exit_state_path =
-            file.gateway_exit_state_path(config_path.parent().unwrap_or(Path::new(".")))?;
+            file.aven_exit_state_path(config_path.parent().unwrap_or(Path::new(".")))?;
         let key_path = resolve(&file.node.private_key_file, config_path);
         check_permissions(&key_path)?;
         let seed = std::fs::read_to_string(&key_path).map_err(|source| ConfigError::Read {
@@ -1182,11 +1182,11 @@ impl Config {
             psk_epoch: file.node.psk_epoch,
             node_id: Vec::new(),
             relays: Vec::new(),
-            relay_ca_file: None,
-            prefer_quic_relay: false,
+            estavelle_ca_file: None,
+            prefer_quic_estavelle: false,
             route_offers: Vec::new(),
             exit_node_state_file: Some(exit_state_path),
-            gateway_forwarding: file.gateway.forwarding,
+            aven_forwarding: file.aven.forwarding,
             peers,
             routes,
             // A static TOML roster has no control server to project a
@@ -1412,15 +1412,15 @@ impl Config {
                     relay
                 })
                 .collect(),
-            relay_ca_file: local.relay_ca_file,
-            prefer_quic_relay: local.prefer_quic_relay,
+            estavelle_ca_file: local.estavelle_ca_file,
+            prefer_quic_estavelle: local.prefer_quic_estavelle,
             peers,
             // The effective (post-HA-selection) set, not `netmap.routes`
             // directly — `karst status` and `karst exit-node list` report one
             // row per route, not one per gateway-group candidate.
             route_offers: effective_routes,
             exit_node_state_file: local.exit_node_state_file,
-            gateway_forwarding: local.gateway_forwarding,
+            aven_forwarding: local.aven_forwarding,
             routes,
             zone_routes,
             skipped,
@@ -1495,21 +1495,21 @@ pub struct LocalSettings {
     /// SPKI pin paired with `tracing_collector` — see
     /// [`TracingSection::collector_pin_hex`].
     pub tracing_collector_pin_hex: Option<String>,
-    /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
-    pub relay_ca_file: Option<PathBuf>,
-    /// See [`ControlSection::prefer_quic_relay`].
-    pub prefer_quic_relay: bool,
+    /// Extra trust anchors for relay TLS — see [`Config::estavelle_ca_file`].
+    pub estavelle_ca_file: Option<PathBuf>,
+    /// See [`ControlSection::prefer_quic_estavelle`].
+    pub prefer_quic_estavelle: bool,
     /// Root-owned durable exit-route selection.
     pub exit_node_state_file: Option<PathBuf>,
     /// Host permission to forward both specific and default prefixes.
-    pub gateway_forwarding: bool,
+    pub aven_forwarding: bool,
     /// See [`NodeSection::datapath_workers`] — a local performance tuning
     /// knob, not something the coordination server has any business
     /// deciding.
     pub datapath_workers: usize,
     /// See [`ProbeSection::anchor_probe`] — a local opt-in, not something the
     /// coordination server has any business deciding, the same division of
-    /// labor `prefer_quic_relay` already has.
+    /// labor `prefer_quic_estavelle` already has.
     pub anchor_probe_enabled: bool,
 }
 
@@ -1527,7 +1527,7 @@ impl fmt::Debug for LocalSettings {
             .field("metrics_listen", &self.metrics_listen)
             .field("tracing_collector", &self.tracing_collector)
             .field("datapath_workers", &self.datapath_workers)
-            .field("prefer_quic_relay", &self.prefer_quic_relay)
+            .field("prefer_quic_estavelle", &self.prefer_quic_estavelle)
             .field("anchor_probe_enabled", &self.anchor_probe_enabled)
             .finish_non_exhaustive()
     }
@@ -1718,11 +1718,11 @@ impl Peer {
             // Both become `None`, which costs the on-demand path and leaves the
             // peer reachable by every other route, rather than failing the
             // whole netmap over one unusable field.
-            home_relay: entry
+            home_estavelle: entry
                 .home_relay
                 .as_slice()
-                .first_chunk::<{ karst_relay_proto::consts::ID_LEN }>()
-                .filter(|_| entry.home_relay.len() == karst_relay_proto::consts::ID_LEN)
+                .first_chunk::<{ karst_estavelle_proto::consts::ID_LEN }>()
+                .filter(|_| entry.home_relay.len() == karst_estavelle_proto::consts::ID_LEN)
                 .copied(),
             candidates,
         })
@@ -1799,7 +1799,7 @@ impl Peer {
             disco_key: None,
             // A static roster has no coordination server, so no peer publishes
             // anything — the same reason `node_id` and `disco_key` are empty.
-            home_relay: None,
+            home_estavelle: None,
             candidates: Vec::new(),
         })
     }
@@ -2124,32 +2124,32 @@ host_integration = "resolvconf"
         };
         let dir = Path::new("/tmp/karst-config");
         let config =
-            parse("[gateway]\nforwarding = false\nexit_state_file = \"state/consent\"").unwrap();
-        assert!(!config.gateway.forwarding);
+            parse("[aven]\nforwarding = false\nexit_state_file = \"state/consent\"").unwrap();
+        assert!(!config.aven.forwarding);
         assert_eq!(
-            config.gateway_exit_state_path(dir).unwrap(),
+            config.aven_exit_state_path(dir).unwrap(),
             dir.join("state/consent")
         );
-        let config = parse("[gateway]\nexit_state_file = \"/tmp/consent\"").unwrap();
+        let config = parse("[aven]\nexit_state_file = \"/tmp/consent\"").unwrap();
         assert_eq!(
-            config.gateway_exit_state_path(dir).unwrap(),
+            config.aven_exit_state_path(dir).unwrap(),
             Path::new("/tmp/consent")
         );
-        for key in ["gateway_exit_state_file", "exit_node_state_file"] {
+        for key in ["aven_exit_state_file", "exit_node_state_file"] {
             let config = parse(&format!(
-                "{key} = \"same\"\n[gateway]\nexit_state_file = \"same\""
+                "{key} = \"same\"\n[aven]\nexit_state_file = \"same\""
             ))
             .unwrap();
-            assert!(config.gateway_exit_state_path(dir).is_err());
+            assert!(config.aven_exit_state_path(dir).is_err());
         }
         let config = parse("").unwrap();
-        assert!(config.gateway.forwarding);
+        assert!(config.aven.forwarding);
         assert_eq!(
-            config.gateway_exit_state_path(dir).unwrap(),
+            config.aven_exit_state_path(dir).unwrap(),
             Path::new(crate::exit_node::DEFAULT_STATE_FILE)
         );
-        assert!(parse("[gateway]\nforwarding = \"false\"").is_err());
-        assert!(parse("[gateway]\nunknown = true").is_err());
+        assert!(parse("[aven]\nforwarding = \"false\"").is_err());
+        assert!(parse("[aven]\nunknown = true").is_err());
     }
 
     fn gateway_node(settings: &str) -> Result<NodeSection, toml::de::Error> {
@@ -2163,19 +2163,19 @@ host_integration = "resolvconf"
         let dir = Scratch::new("gateway-config");
         let node = gateway_node("").expect("default node");
         assert_eq!(
-            node.gateway_exit_state_path(dir.path()),
+            node.aven_exit_state_path(dir.path()),
             PathBuf::from(crate::exit_node::DEFAULT_STATE_FILE)
         );
-        for key in ["gateway_exit_state_file", "exit_node_state_file"] {
+        for key in ["aven_exit_state_file", "exit_node_state_file"] {
             let node = gateway_node(&format!("{key} = \"state/selected\"")).expect("alias");
             assert_eq!(
-                node.gateway_exit_state_path(dir.path()),
+                node.aven_exit_state_path(dir.path()),
                 dir.join("state/selected")
             );
             let absolute = dir.join("absolute");
             let value = toml::Value::String(absolute.to_string_lossy().into_owned());
             let node = gateway_node(&format!("{key} = {value}")).expect("absolute path");
-            assert_eq!(node.gateway_exit_state_path(dir.path()), absolute);
+            assert_eq!(node.aven_exit_state_path(dir.path()), absolute);
         }
     }
 
@@ -2183,16 +2183,16 @@ host_integration = "resolvconf"
     fn gateway_consent_config_rejects_ambiguous_aliases_and_unknown_settings() {
         for second in ["old", "new"] {
             for settings in [
-                format!("exit_node_state_file = \"old\"\ngateway_exit_state_file = \"{second}\""),
-                format!("gateway_exit_state_file = \"{second}\"\nexit_node_state_file = \"old\""),
+                format!("exit_node_state_file = \"old\"\naven_exit_state_file = \"{second}\""),
+                format!("aven_exit_state_file = \"{second}\"\nexit_node_state_file = \"old\""),
             ] {
                 let error = gateway_node(&settings).expect_err("duplicate setting");
                 assert!(error.to_string().contains("duplicate field"));
-                assert!(error.to_string().contains("gateway_exit_state_file"));
+                assert!(error.to_string().contains("aven_exit_state_file"));
             }
         }
         assert!(gateway_node("gateway_enabled = true").is_err());
-        assert!(gateway_node("gateway_exit_state_file = true").is_err());
+        assert!(gateway_node("aven_exit_state_file = true").is_err());
     }
 
     #[test]
@@ -2200,11 +2200,11 @@ host_integration = "resolvconf"
         let dir = Scratch::new("gateway-migration");
         let legacy = gateway_node("exit_node_state_file = \"state/selected\"").expect("legacy");
         let modern: File = toml::from_str(
-            "[node]\nlisten = \"0.0.0.0:51820\"\nprivate_key_file = \"key\"\n[gateway]\nexit_state_file = \"state/selected\"",
+            "[node]\nlisten = \"0.0.0.0:51820\"\nprivate_key_file = \"key\"\n[aven]\nexit_state_file = \"state/selected\"",
         ).expect("Gateway table");
-        let old_path = legacy.gateway_exit_state_path(dir.path());
+        let old_path = legacy.aven_exit_state_path(dir.path());
         let new_path = modern
-            .gateway_exit_state_path(dir.path())
+            .aven_exit_state_path(dir.path())
             .expect("unambiguous path");
         let mut selection = crate::exit_node::Selection::load(&old_path).expect("load");
         assert_eq!(selection.active(), None);
@@ -2235,7 +2235,7 @@ identity_key_file = "identity.key"
 "#;
         let file: File = toml::from_str(text).expect("parses");
         let control = file.control.expect("control section present");
-        assert!(!control.prefer_quic_relay);
+        assert!(!control.prefer_quic_estavelle);
     }
 
     #[test]
@@ -2251,11 +2251,11 @@ server = "https://karst.example.com:443"
 server_kem_pin = "aa"
 server_verify_pin = "bb"
 identity_key_file = "identity.key"
-prefer_quic_relay = true
+prefer_quic_estavelle = true
 "#;
         let file: File = toml::from_str(text).expect("parses");
         let control = file.control.expect("control section present");
-        assert!(control.prefer_quic_relay);
+        assert!(control.prefer_quic_estavelle);
     }
 
     #[test]
@@ -2768,14 +2768,14 @@ mod netmap_tests {
 
     pub(super) fn local() -> LocalSettings {
         LocalSettings {
-            relay_ca_file: None,
-            prefer_quic_relay: false,
+            estavelle_ca_file: None,
+            prefer_quic_estavelle: false,
             metrics_listen: None,
             tracing_collector: None,
             tracing_collector_server_name: None,
             tracing_collector_pin_hex: None,
             exit_node_state_file: None,
-            gateway_forwarding: true,
+            aven_forwarding: true,
             keys: Arc::new(StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
@@ -2800,7 +2800,7 @@ mod netmap_tests {
         peer.home_relay = vec![0x7C; 32];
         let map = netmap(vec!["100.64.0.1/16".to_owned()], vec![peer], vec![]);
         let cfg = Config::from_netmap(local(), &map).expect("load");
-        assert_eq!(cfg.peers[0].home_relay, Some([0x7C; 32]));
+        assert_eq!(cfg.peers[0].home_estavelle, Some([0x7C; 32]));
     }
 
     /// A peer holding no relay is the ordinary case and must not look like one
@@ -2813,7 +2813,7 @@ mod netmap_tests {
             vec![],
         );
         let cfg = Config::from_netmap(local(), &map).expect("load");
-        assert_eq!(cfg.peers[0].home_relay, None);
+        assert_eq!(cfg.peers[0].home_estavelle, None);
     }
 
     /// A relay id of the wrong width names nothing in the registry. The peer
@@ -2828,7 +2828,7 @@ mod netmap_tests {
             let map = netmap(vec!["100.64.0.1/16".to_owned()], vec![peer], vec![]);
             let cfg = Config::from_netmap(local(), &map).expect("load");
             assert_eq!(
-                cfg.peers[0].home_relay, None,
+                cfg.peers[0].home_estavelle, None,
                 "a {width}-byte relay id was accepted"
             );
         }

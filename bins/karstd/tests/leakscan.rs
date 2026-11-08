@@ -183,8 +183,8 @@ fn netmap_with_psks() -> Netmap {
 
 fn local() -> LocalSettings {
     LocalSettings {
-        relay_ca_file: None,
-        prefer_quic_relay: false,
+        estavelle_ca_file: None,
+        prefer_quic_estavelle: false,
         metrics_listen: None,
         tracing_collector: None,
         tracing_collector_server_name: None,
@@ -199,7 +199,7 @@ fn local() -> LocalSettings {
         userspace_publish: Vec::new(),
         nat64: None,
         exit_node_state_file: None,
-        gateway_forwarding: true,
+        aven_forwarding: true,
         datapath_workers: 1,
         anchor_probe_enabled: false,
     }

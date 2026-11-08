@@ -52,7 +52,7 @@ pub const TLS_SERVER_NAME_TAG_KEY: &str = "karst:tls-server-name";
 
 /// A `tls_server_name` for one new instance of `pool_id`. Unlike
 /// `karst-scaler-k8s`'s `pod_fqdn` (a real, resolvable per-pod DNS name),
-/// this is never resolved as DNS: `bins/karst-relay/src/tls.rs`'s own crate
+/// this is never resolved as DNS: `bins/karst-estavelle/src/tls.rs`'s own crate
 /// doc is explicit that a relay's certificate is never what authenticates
 /// it (that's an ML-DSA-65 signature over the registry key instead), so
 /// this only has to be a stable, unique, whitespace-free ASCII label the

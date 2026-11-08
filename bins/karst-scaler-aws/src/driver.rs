@@ -334,7 +334,7 @@ impl Driver for AwsDriver {
             // guest, which a standard Linux init system delivers to
             // `karst-relay` as SIGTERM -- the same
             // `shutdown_signal` -> `announce_restart` path
-            // `bins/karst-relay/src/server.rs` already handles. Not
+            // `bins/karst-estavelle/src/server.rs` already handles. Not
             // independently verified against a real EC2 instance in this
             // environment -- see the crate doc's own caveat.
             self.client

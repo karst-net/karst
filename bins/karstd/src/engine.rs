@@ -63,9 +63,9 @@ pub enum Via {
         /// `Some` names the peer's **published** home relay, §9.1's second
         /// rule: a relay this node did not choose and holds a connection to
         /// only for as long as there is traffic for it.
-        relay: Option<[u8; karst_relay_proto::consts::ID_LEN]>,
+        relay: Option<[u8; karst_estavelle_proto::consts::ID_LEN]>,
         /// The peer, as the relay knows it.
-        destination: [u8; karst_relay_proto::consts::ID_LEN],
+        destination: [u8; karst_estavelle_proto::consts::ID_LEN],
     },
 }
 
@@ -91,7 +91,7 @@ const COOKIE_ROTATION_MS: u64 = 120_000;
 /// `TRANSPORT_DATAGRAM_MAX` and the two live in different crates, so nothing
 /// but this would notice if either moved.
 const _: () =
-    assert!(karst_proto::consts::TRANSPORT_DATAGRAM_MAX <= karst_relay_proto::consts::PAYLOAD_MAX);
+    assert!(karst_proto::consts::TRANSPORT_DATAGRAM_MAX <= karst_estavelle_proto::consts::PAYLOAD_MAX);
 
 /// How a peer's traffic currently leaves this node, for `karst status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +99,7 @@ pub enum Transport {
     /// Straight to the peer.
     Direct,
     /// Through the relay: working, slower, and visible to a third party.
-    Relay,
+    Estavelle,
     /// Nowhere. No address is known and no relay is configured, so the peer is
     /// known about and cannot be sent to.
     Unreachable,
@@ -109,7 +109,7 @@ impl std::fmt::Display for Transport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Direct => "direct",
-            Self::Relay => "relay",
+            Self::Estavelle => "estavelle",
             Self::Unreachable => "none",
         })
     }
@@ -362,10 +362,10 @@ struct Roster {
     /// Each peer's Ponor node id, when it has one. `None` for a static TOML
     /// roster, which carries no server-assigned handles and therefore has no
     /// relay path — the peer is direct-only or it is nothing.
-    relay_ids: Vec<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
+    relay_ids: Vec<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
     /// The reverse mapping, for attributing a relay-delivered datagram to the
     /// peer the relay says sent it.
-    by_relay_id: HashMap<[u8; karst_relay_proto::consts::ID_LEN], PeerIndex>,
+    by_relay_id: HashMap<[u8; karst_estavelle_proto::consts::ID_LEN], PeerIndex>,
     /// Each peer's published home relay — §9.1 — **filtered to relays this node
     /// could actually dial**, which means present in the netmap's registry.
     ///
@@ -374,7 +374,7 @@ struct Roster {
     /// three come from the registry. Filtering here rather than at the point of
     /// use means the routing decision cannot produce a destination the
     /// transport will silently drop.
-    home_relays: Vec<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
+    home_relays: Vec<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
     /// Whether this node has a relay to send through at all. Without one a
     /// peer's node id names a destination nothing can reach.
     relay_configured: bool,
@@ -446,7 +446,7 @@ pub struct Engine {
     /// belongs to `home::Selector`, and a second place computing it is a second
     /// place that can disagree — at which point this node would route a peer
     /// onto an on-demand connection to the relay it is already sitting on.
-    home_relay: RwLock<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
+    home_relay: RwLock<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
     /// Resolved file transfers, most recent last — GitHub issue #212. Local
     /// audit trail, in the same spirit as
     /// `server/management/internals/karst/node/node.go`'s
@@ -501,7 +501,7 @@ impl Engine {
     /// Routing needs it to tell the two rules apart: a peer whose published
     /// home is the relay this node is already connected to is reached on that
     /// connection, not on a second one dialed to the same address.
-    pub fn set_home_relay(&self, relay_id: Option<[u8; karst_relay_proto::consts::ID_LEN]>) {
+    pub fn set_home_relay(&self, relay_id: Option<[u8; karst_estavelle_proto::consts::ID_LEN]>) {
         *self
             .home_relay
             .write()
@@ -516,8 +516,8 @@ impl Engine {
     #[must_use]
     pub fn relay(
         &self,
-        relay_id: [u8; karst_relay_proto::consts::ID_LEN],
-    ) -> Option<crate::netmap::Relay> {
+        relay_id: [u8; karst_estavelle_proto::consts::ID_LEN],
+    ) -> Option<crate::netmap::Estavelle> {
         self.roster()
             .config
             .relays
@@ -533,13 +533,13 @@ impl Engine {
     /// alternatives against a registry that has been withdrawn would be dialing
     /// relays its peers are no longer told about.
     #[must_use]
-    pub fn relays(&self) -> Vec<crate::netmap::Relay> {
+    pub fn relays(&self) -> Vec<crate::netmap::Estavelle> {
         self.roster().config.relays.clone()
     }
 
     /// The relay this node holds — §9.1.
     #[must_use]
-    pub fn home_relay(&self) -> Option<[u8; karst_relay_proto::consts::ID_LEN]> {
+    pub fn home_relay(&self) -> Option<[u8; karst_estavelle_proto::consts::ID_LEN]> {
         *self
             .home_relay
             .read()
@@ -560,7 +560,7 @@ impl Engine {
     ///
     /// Cheap on the datapath: a relaxed load, and a store only when a mark is
     /// actually in force.
-    pub fn seen_on_home_relay(&self, peer_id: [u8; karst_relay_proto::consts::ID_LEN]) {
+    pub fn seen_on_home_relay(&self, peer_id: [u8; karst_estavelle_proto::consts::ID_LEN]) {
         let roster = self.roster();
         let Some(&peer) = roster.by_relay_id.get(&peer_id) else {
             return;
@@ -583,7 +583,7 @@ impl Engine {
     /// that same relay when it returns.
     pub fn relay_unreachable(
         &self,
-        peer_id: [u8; karst_relay_proto::consts::ID_LEN],
+        peer_id: [u8; karst_estavelle_proto::consts::ID_LEN],
         now_ms: u64,
     ) -> bool {
         let roster = self.roster();
@@ -851,8 +851,8 @@ impl Engine {
     #[must_use]
     pub fn relay_for(
         &self,
-        peer_id: [u8; karst_relay_proto::consts::ID_LEN],
-    ) -> Option<[u8; karst_relay_proto::consts::ID_LEN]> {
+        peer_id: [u8; karst_estavelle_proto::consts::ID_LEN],
+    ) -> Option<[u8; karst_estavelle_proto::consts::ID_LEN]> {
         let roster = self.roster();
         let &peer = roster.by_relay_id.get(&peer_id)?;
         let refused = roster
@@ -1604,7 +1604,7 @@ impl Engine {
     pub fn inbound_from_relay(
         &self,
         reasm: &mut Reassembler,
-        source_id: [u8; karst_relay_proto::consts::ID_LEN],
+        source_id: [u8; karst_estavelle_proto::consts::ID_LEN],
         datagram: &[u8],
         now_ms: u64,
         rand: &ResponderRandomness,
@@ -2005,7 +2005,7 @@ impl Engine {
         // or a crashed daemon left nftables rules behind. Apply before the
         // flow table too, so an established transit flow cannot bypass it.
         if dir == Direction::In
-            && (!roster.config.gateway_forwarding || !roster.config.filter.scoped_ready())
+            && (!roster.config.aven_forwarding || !roster.config.filter.scoped_ready())
             && ip::destination(packet).is_some_and(|destination| {
                 !roster
                     .config
@@ -2229,7 +2229,7 @@ impl Engine {
                 suite: karst_crypto::SUITE_NAME.to_owned(),
                 transport: match self.via(&roster, index) {
                     Some(Via::Direct(_)) => Transport::Direct,
-                    Some(Via::Relay { .. }) => Transport::Relay,
+                    Some(Via::Relay { .. }) => Transport::Estavelle,
                     None => Transport::Unreachable,
                 },
                 tx_bytes: roster
@@ -2699,7 +2699,7 @@ pub struct Reconfigured {
 /// encoding produces means a relayed stream and a direct stream from the same
 /// peer cannot land in the same reassembly slot — which matters exactly during
 /// an upgrade, when both are briefly in flight.
-fn relay_source_key(id: &[u8; karst_relay_proto::consts::ID_LEN]) -> karst_transport::SourceKey {
+fn relay_source_key(id: &[u8; karst_estavelle_proto::consts::ID_LEN]) -> karst_transport::SourceKey {
     let mut key = [0u8; 18];
     // 0xFF cannot begin a source key: an IPv6 address starting FF00::/8 is
     // multicast, which is not a source address a datagram can arrive from.
@@ -2735,7 +2735,7 @@ fn build_roster(config: &Arc<Config>, carried: &HashMap<[u8; 32], Arc<PeerSlot>>
         // relay it has no address, TLS name or pinned key for — so it is
         // dropped here, where the peer still has every other route, rather
         // than surfacing as a destination the transport quietly discards.
-        home_relays.push(peer.home_relay.filter(|id| {
+        home_relays.push(peer.home_estavelle.filter(|id| {
             config
                 .relays
                 .iter()

@@ -27,9 +27,9 @@ struct Bundle {
     control_minimum_version: u32,
     /// PEM trust anchors for relay TLS, for a deployment whose relay has a
     /// self-signed or internal-CA certificate. Enrollment writes them to
-    /// [`RELAY_CA_FILE`] and names that as `[control] relay_ca_file`, so the
+    /// [`RELAY_CA_FILE`] and names that as `[control] estavelle_ca_file`, so the
     /// node trusts them for the relay hop only, never system-wide. Carried
-    /// here rather than in the netmap for `Config::relay_ca_file`'s reason:
+    /// here rather than in the netmap for `Config::estavelle_ca_file`'s reason:
     /// the administrator's invitation already is this host's trust anchor
     /// for the control plane, and the control plane itself must not be able
     /// to add TLS roots. The relay's identity is still its pinned ML-DSA key.
@@ -385,7 +385,7 @@ fn enroll_bundle(bundle: Bundle, config_path: &Path, state_dir: &Path) -> Result
     let relay_ca_path = state_dir.join(RELAY_CA_FILE);
     if bundle.relay_ca.is_some() {
         control.insert(
-            "relay_ca_file".into(),
+            "estavelle_ca_file".into(),
             relay_ca_path.to_string_lossy().as_ref().into(),
         );
     }

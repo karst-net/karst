@@ -103,7 +103,7 @@ impl RelaySetup {
 
         let relay_key_path = dir.join("relay.key");
         let relay_identity =
-            karst_relay::sign::Identity::load_or_create(&relay_key_path).expect("relay identity");
+            karst_estavelle::sign::Identity::load_or_create(&relay_key_path).expect("relay identity");
         let public_key_hex = hex(relay_identity.public_key());
 
         let address = format!("127.0.0.1:{port}");
@@ -141,7 +141,7 @@ impl RelaySetup {
     }
 
     /// Write the roster admitting `identity_pks` (each this test's own
-    /// node's ML-DSA control-plane identity — `bins/karst-relay/src/roster.rs`'s
+    /// node's ML-DSA control-plane identity — `bins/karst-estavelle/src/roster.rs`'s
     /// `identity_pk`, not a Noise session key) into one aquifer, `"t1"`,
     /// matching `bins/karstd/tests/aquifer.rs`'s own convention — then spawn
     /// the real `karst-relay` binary against it.

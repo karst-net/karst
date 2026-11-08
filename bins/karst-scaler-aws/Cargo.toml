@@ -94,6 +94,6 @@ sha2 = { version = "0.10", default-features = false }
 # (confirmed by reading aws-sdk-ec2's own generated code, not assumed from
 # its doc comment alone) is a plain `String` the caller must already have
 # base64-encoded -- `aws-sdk-ec2` does not do this for you. Same crate
-# `bins/karst-relay/src/main.rs` already uses for the registry's identity
+# `bins/karst-estavelle/src/main.rs` already uses for the registry's identity
 # key, not a new encoding dependency for this workspace.
 base64ct = { version = "1", features = ["alloc"] }

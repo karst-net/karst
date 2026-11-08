@@ -4,7 +4,7 @@
 //! The node's relay client against a **real relay, on a real socket.**
 //!
 //! Everything below this had tests and none of them opened a socket. The Ponor
-//! codec is exercised by `karst-relay-proto`; the node-side session by unit
+//! codec is exercised by `karst-estavelle-proto`; the node-side session by unit
 //! tests with a stub signature scheme; the relay's own listener by
 //! `karst-relay/tests/listener.rs` with a hand-rolled client. What nothing
 //! covered is the pair — `karstd`'s client talking to `karst-relay`'s server —
@@ -26,13 +26,13 @@
 use std::sync::Arc;
 
 use base64ct::{Base64, Encoding as _};
-use karst_relay::config::Config as RelayConfig;
-use karst_relay::roster::FileRoster;
-use karst_relay::server::{serve_on, Ctx};
-use karst_relay::sign::Identity as RelayIdentity;
-use karst_relay::tls as relay_tls;
+use karst_estavelle::config::Config as RelayConfig;
+use karst_estavelle::roster::FileRoster;
+use karst_estavelle::server::{serve_on, Ctx};
+use karst_estavelle::sign::Identity as RelayIdentity;
+use karst_estavelle::tls as relay_tls;
 use karstd::control::{Identity, RelayVerifier};
-use karstd::netmap::Relay;
+use karstd::netmap::Estavelle;
 use tokio::net::TcpListener;
 
 /// A temporary directory that removes itself.
@@ -62,12 +62,12 @@ fn public_of(id: &Identity) -> Vec<u8> {
 }
 
 struct Running {
-    relay: Relay,
+    relay: Estavelle,
     /// The same relay, addressed for a QUIC dial — `Some` only when
-    /// [`start_relay_quic`] started it. A separate `Relay` because the two
+    /// [`start_relay_quic`] started it. A separate `Estavelle` because the two
     /// transports bind independent ephemeral ports in this harness; a real
     /// deployment configures one `listen` for both (ADR-0020).
-    relay_quic: Option<Relay>,
+    relay_quic: Option<Estavelle>,
     ca_path: std::path::PathBuf,
     /// The relay's shared state, so a test can drain it as a shutdown would.
     ctx: Arc<Ctx>,
@@ -89,7 +89,7 @@ async fn start_relay_with(tag: &str, nodes: &[&Identity], quic: bool) -> Running
     let dir = temp_dir(tag);
 
     // Self-signed, which §4.2 makes fine and finding 16 made *possible*: the
-    // node trusts it through `relay_ca_file`, and the relay's actual identity
+    // node trusts it through `estavelle_ca_file`, and the relay's actual identity
     // is the ML-DSA-87 key pinned below.
     let cert = rcgen::generate_simple_self_signed(vec!["relay.test".to_owned()])
         .expect("self-signed certificate");
@@ -133,10 +133,10 @@ async fn start_relay_with(tag: &str, nodes: &[&Identity], quic: bool) -> Running
     let ctx = Ctx::new(&cfg, Arc::clone(&identity), roster, Arc::clone(&tls_config));
 
     let quic_addr = if quic {
-        let quic_server_cfg = karst_relay::quic::server_config(&tls_config).expect("quic tls");
-        let endpoint = karst_relay::quic::bind(cfg.listen, quic_server_cfg).expect("bind quic");
+        let quic_server_cfg = karst_estavelle::quic::server_config(&tls_config).expect("quic tls");
+        let endpoint = karst_estavelle::quic::bind(cfg.listen, quic_server_cfg).expect("bind quic");
         let quic_addr = endpoint.local_addr().expect("quic addr");
-        tokio::spawn(karst_relay::quic::serve_on(endpoint, Arc::clone(&ctx)));
+        tokio::spawn(karst_estavelle::quic::serve_on(endpoint, Arc::clone(&ctx)));
         Some(quic_addr)
     } else {
         None
@@ -148,20 +148,20 @@ async fn start_relay_with(tag: &str, nodes: &[&Identity], quic: bool) -> Running
     });
 
     // The registry entry a netmap would carry. `relay_id` is derived from the
-    // key rather than stored beside it (§5.1, §5.2), and `netmap::Relay`
+    // key rather than stored beside it (§5.1, §5.2), and `netmap::Estavelle`
     // re-derives and checks it when a real netmap is decoded.
     let identity_key = identity.public_key().to_vec();
-    let relay = Relay {
+    let relay = Estavelle {
         address: addr.to_string(),
         tls_server_name: "relay.test".to_owned(),
-        relay_id: karst_relay::sign::relay_id(&identity_key),
+        relay_id: karst_estavelle::sign::relay_id(&identity_key),
         identity_key: identity_key.clone(),
         region: "test".to_owned(),
     };
-    let relay_quic = quic_addr.map(|addr| Relay {
+    let relay_quic = quic_addr.map(|addr| Estavelle {
         address: addr.to_string(),
         tls_server_name: "relay.test".to_owned(),
-        relay_id: karst_relay::sign::relay_id(&identity_key),
+        relay_id: karst_estavelle::sign::relay_id(&identity_key),
         identity_key,
         region: "test".to_owned(),
     });
@@ -216,7 +216,7 @@ async fn connect_quic(
 fn a_control_handle_and_a_relay_node_id_are_the_same_value() {
     let id = node(0x11);
     let from_handle = karst_control_client::handle_bytes(&id.handle()).expect("handle decodes");
-    let from_key = karst_relay::sign::node_id(&public_of(&id));
+    let from_key = karst_estavelle::sign::node_id(&public_of(&id));
     assert_eq!(
         from_handle, from_key,
         "the control plane and the relay derive different ids from one key"
@@ -232,7 +232,7 @@ async fn a_node_completes_a_ponor_handshake_with_a_real_relay() {
 
     // `connect` loops until the session is established or the stream fails, so
     // **the `Ok` is the assertion**: it means the relay's ML-DSA-87 signature
-    // over the transcript verified against the key pinned in `Relay`.
+    // over the transcript verified against the key pinned in `Estavelle`.
     //
     // An earlier version of this comment credited `split`'s established check
     // instead. That check is defensive and unreachable through `connect` —
@@ -280,7 +280,7 @@ async fn a_substituted_relay_registry_entry_is_refused() {
     // somebody else's. `relay_id` is re-derived so the entry stays internally
     // consistent, which is what a substituted registry row would look like.
     let impostor = vec![0x7E; 2592];
-    running.relay.relay_id = karst_relay::sign::relay_id(&impostor);
+    running.relay.relay_id = karst_estavelle::sign::relay_id(&impostor);
     running.relay.identity_key = impostor;
 
     assert!(
@@ -407,7 +407,7 @@ async fn an_unlisted_node_is_refused() {
 
 /// **The certificate is validated even though it does not authenticate the
 /// relay** (§4.2). Without the CA the connection must fail at TLS, before any
-/// Ponor frame — which is also the check that `relay_ca_file` is what makes the
+/// Ponor frame — which is also the check that `estavelle_ca_file` is what makes the
 /// other tests here pass, rather than something else being permissive.
 #[tokio::test]
 async fn without_the_configured_ca_the_tls_hop_is_refused() {

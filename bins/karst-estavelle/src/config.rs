@@ -1,0 +1,853 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright the Karst contributors.
+
+//! `karst-relay` configuration.
+//!
+//! Every default here is chosen so that a *missing* setting is the safe one.
+//! Where that is impossible — a TLS certificate has no safe default — the
+//! field is required and [`Config::validate`] says so by name rather than
+//! letting the relay start and fail on the first connection.
+
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+
+use crate::hub;
+use crate::limits::Budget;
+
+/// Errors reading a configuration.
+#[derive(Debug)]
+pub enum Error {
+    /// The file could not be read.
+    Io(std::io::Error),
+    /// The file is not valid TOML, or a field has the wrong type.
+    Syntax(String),
+    /// A setting is missing, or cannot be satisfied.
+    Invalid(String),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "config: {e}"),
+            Self::Syntax(m) | Self::Invalid(m) => f.write_str(m),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// A relay's settings.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    /// Where to listen. Port 443 by default so the relay survives networks
+    /// that permit only HTTPS, and so it can share a listener with the
+    /// coordination server (spec §4.1).
+    #[serde(default = "default_listen")]
+    pub listen: SocketAddr,
+
+    /// The relay's ML-DSA-65 identity seed. Created on first run.
+    ///
+    /// Its own path, never a node's: §5.2 forbids sharing a key between the
+    /// two roles even when the processes share a host.
+    #[serde(default = "default_identity")]
+    pub identity_key: PathBuf,
+
+    /// The signed roster of admitted nodes and configured mesh peers.
+    ///
+    /// **Required.** There is no default, because every default is wrong: an
+    /// empty path would start a relay that admits nobody and looks broken, and
+    /// any built-in path would be a guess about somebody's deployment.
+    pub roster: PathBuf,
+
+    /// PEM certificate chain.
+    pub tls_cert: PathBuf,
+    /// PEM private key.
+    pub tls_key: PathBuf,
+
+    /// Rate limits and queueing.
+    #[serde(default)]
+    pub limits: Limits,
+
+    /// The Resurgence reflector — `resurgence-v1.md` §7.6, `ponor-v1.md` §7.7.
+    ///
+    /// **Off unless configured**, which is the safe default here in the
+    /// ordinary sense: a reflector is a UDP service that answers datagrams, and
+    /// an operator who did not ask for one should not be running one.
+    #[serde(default)]
+    pub reflect: Option<Reflect>,
+
+    /// Where to serve Prometheus metrics, if anywhere.
+    ///
+    /// **Its own listener, and off by default.** Sharing the client port would
+    /// put an unauthenticated `GET` on the socket that carries the tailnet's
+    /// traffic, and §5.3's admission is structural precisely so that port
+    /// answers nothing it cannot verify. Off by default because a metrics
+    /// endpoint is a disclosure surface — bounded, since it carries no
+    /// per-node dimension, but one an operator should choose rather than
+    /// inherit. Bind it to a management address.
+    #[serde(default)]
+    pub metrics: Option<Metrics>,
+
+    /// Outbound mesh dialing — §8. Absent means this relay only accepts mesh
+    /// connections and never opens one.
+    #[serde(default)]
+    pub mesh: Option<Mesh>,
+
+    /// Whether to also accept Ponor connections over QUIC — ADR-0020.
+    ///
+    /// **Off by default, and additive.** The QUIC listener binds `listen`'s
+    /// address as UDP rather than TCP, so turning this on never changes what
+    /// the TCP/TLS listener does or requires a second address to configure.
+    /// A relay a node has not been told supports QUIC is unaffected either
+    /// way: nothing today probes for it.
+    #[serde(default)]
+    pub quic: bool,
+
+    /// Self-reported health/throughput telemetry to the control plane —
+    /// ADR-0021.
+    ///
+    /// **Off unless configured**, the same posture as [`Reflect`] and
+    /// [`Metrics`]: an operator who has not pointed a relay at a control
+    /// plane should not have it phoning one.
+    #[serde(default)]
+    pub telemetry: Option<Telemetry>,
+
+    /// Managed relay usage spool. Absent means no accounting task, disk access,
+    /// or network reporting is started.
+    #[serde(default)]
+    pub usage: Option<Usage>,
+
+    /// Which region this relay serves — §8, §9.
+    ///
+    /// **Mesh is within a region**, and §8 gives the reason: cross-region
+    /// relay-to-relay forwarding would make every relay's bandwidth spendable
+    /// by every other region's operator. A relay refuses to mesh with a peer
+    /// whose region differs, so a peer from the wrong region in the mesh list
+    /// is a startup-visible mistake rather than a slow bandwidth transfer.
+    ///
+    /// The default is deliberately a name rather than empty: a single-region
+    /// deployment then works untouched, and two relays that both left it alone
+    /// mesh with each other, which is what an operator who has never heard of
+    /// regions expects.
+    #[serde(default = "default_region")]
+    pub region: String,
+}
+
+fn default_region() -> String {
+    "default".to_owned()
+}
+
+pub(crate) fn parse_https_origin(value: &str) -> Option<(&str, u16)> {
+    let authority = value.strip_prefix("https://")?;
+    if authority.is_empty()
+        || authority
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || matches!(b, b'/' | b'?' | b'#' | b'@'))
+    {
+        return None;
+    }
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        let (host, suffix) = bracketed.split_once(']')?;
+        if host.is_empty() {
+            return None;
+        }
+        let port = if suffix.is_empty() {
+            443
+        } else {
+            suffix.strip_prefix(':')?.parse().ok()?
+        };
+        return (port > 0).then_some((host, port));
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, text)) => (host, text.parse().ok()?),
+        None => (authority, 443),
+    };
+    if host.is_empty() || host.contains(':') || port == 0 {
+        return None;
+    }
+    Some((host, port))
+}
+
+/// How this relay dials its mesh peers — §8.
+///
+/// *Which* peers, and their addresses, come from the roster: they are admission
+/// facts and belong with the identity keys they are checked against. This is
+/// only what dialing needs that admission does not.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mesh {
+    /// The certificate to trust when dialing a mesh peer.
+    ///
+    /// Required, with no fallback to system roots. §4.2 declines to trust
+    /// certificates for relay identity, and a mesh that fell back to public
+    /// roots would quietly accept anything a public CA had issued for the
+    /// name — which is the trust §4.2 declines to place. For a self-signed
+    /// peer, point this at that certificate.
+    pub ca: PathBuf,
+}
+
+/// Where the metrics endpoint listens.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Metrics {
+    /// Address to serve `GET /metrics` on.
+    pub listen: SocketAddr,
+}
+
+/// Explicit operator opt-in to local managed relay usage collection.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Usage {
+    /// Private persistent spool directory, shared by no other relay process.
+    pub spool_dir: PathBuf,
+
+    /// Optional HTTPS control-plane origin for durable batch upload. Absent
+    /// keeps accounting local to the spool and starts no network worker.
+    #[serde(default)]
+    pub upload_url: Option<String>,
+
+    /// Explicitly opt managed-relay destination writes into account-wide
+    /// byte-credit enforcement. Defaults off; a missing setting preserves the
+    /// existing forwarding behavior.
+    #[serde(default)]
+    pub enforce_spending_caps: bool,
+
+    /// Bytes requested per account-mapping grant. Required when cap
+    /// enforcement is enabled so operators consciously choose the maximum
+    /// amount one relay may reserve at once.
+    #[serde(default)]
+    pub cap_grant_bytes: Option<u64>,
+}
+
+/// Where, and how often, to push self-reported telemetry — ADR-0021.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Telemetry {
+    /// The control plane's base URL, e.g. `https://control.example.com`.
+    ///
+    /// Always `https://host[:port]` with no path: the path this relay posts
+    /// to is fixed by ADR-0021, not configurable, so there is nothing a path
+    /// component here would mean.
+    pub control_url: String,
+
+    /// How often to push a report.
+    #[serde(default = "default_telemetry_interval_secs")]
+    pub interval_secs: u64,
+
+    /// Probe cloud instance metadata (AWS `IMDSv2` today) once at startup for
+    /// a self-reported location to include in each report — ADR-0048.
+    ///
+    /// Defaults to **off**. Turning this on makes the relay reach a new
+    /// network target (`169.254.169.254`) it would not otherwise contact;
+    /// an operator running on AWS opts in with this one line rather than
+    /// every relay probing a link-local address on upgrade with no notice.
+    #[serde(default)]
+    pub detect_location: bool,
+}
+
+fn default_telemetry_interval_secs() -> u64 {
+    60
+}
+
+/// Where the reflector listens, and where clients are told to reach it.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Reflect {
+    /// The UDP address to bind. Its own socket, never the Ponor listener's:
+    /// Resurgence needs a **UDP** mapping and Ponor's is TCP, which a NAT maps
+    /// separately.
+    pub listen: SocketAddr,
+
+    /// What to advertise in `ReflectOffer`, if not `listen`.
+    ///
+    /// Needed whenever `listen` is not reachable as written — an unspecified
+    /// address, a container's internal address, a host behind a NAT of its own.
+    /// A relay that advertised `0.0.0.0:3478` would send every client's
+    /// `Reflect` into the void with nothing in any log to explain the silence,
+    /// so [`Config::validate`] refuses that rather than shipping it.
+    #[serde(default)]
+    pub advertise: Option<SocketAddr>,
+}
+
+impl Reflect {
+    /// The address to put in `ReflectOffer`.
+    #[must_use]
+    pub fn advertised(&self) -> SocketAddr {
+        self.advertise.unwrap_or(self.listen)
+    }
+}
+
+/// §7.3 and §7.4.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    /// Sustained bytes per second, per node.
+    #[serde(default = "default_bytes_per_sec")]
+    pub bytes_per_sec: u64,
+    /// Bytes a node may burst.
+    #[serde(default = "default_byte_burst")]
+    pub byte_burst: u64,
+    /// Sustained frames per second, per node.
+    #[serde(default = "default_frames_per_sec")]
+    pub frames_per_sec: u64,
+    /// Frames a node may burst.
+    #[serde(default = "default_frame_burst")]
+    pub frame_burst: u64,
+    /// Per-destination write queue depth.
+    #[serde(default = "default_queue_depth")]
+    pub queue_depth: usize,
+    /// Aggregate allowance shared by every node in one aquifer — ADR-0038 /
+    /// `ponor-v1.md` §13 #9.
+    ///
+    /// **Off unless configured.** With no `[limits.aquifer]` table, an
+    /// aquifer's total share of this relay is bounded only by its node
+    /// count times the per-node budget above — exactly today's behavior.
+    /// Configuring this caps that aggregate regardless of how many nodes the
+    /// aquifer has, which is the gap #9 names: a multi-tenant relay with no
+    /// such cap lets one large aquifer consume the whole thing within each
+    /// of its nodes' own limits.
+    #[serde(default)]
+    pub aquifer: Option<AquiferLimits>,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        let b = Budget::default();
+        Self {
+            bytes_per_sec: b.bytes_per_sec,
+            byte_burst: b.byte_burst,
+            frames_per_sec: b.frames_per_sec,
+            frame_burst: b.frame_burst,
+            queue_depth: default_queue_depth(),
+            aquifer: None,
+        }
+    }
+}
+
+/// One aquifer's aggregate rate allowance — ADR-0038.
+///
+/// Every field is required when this table is present: unlike the top-level
+/// per-node limits, there is no sensible built-in aggregate for "however
+/// many nodes a tenant happens to have," so a partially-specified table would
+/// be guessing at a number that matters.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AquiferLimits {
+    /// Sustained bytes per second, summed across every node in the aquifer.
+    pub bytes_per_sec: u64,
+    /// Bytes the aquifer may burst above the sustained rate.
+    pub byte_burst: u64,
+    /// Sustained frames per second, summed across every node in the aquifer.
+    pub frames_per_sec: u64,
+    /// Frames the aquifer may burst above the sustained rate.
+    pub frame_burst: u64,
+}
+
+fn default_listen() -> SocketAddr {
+    // Unspecified address, port 443 — spec §4.1.
+    SocketAddr::from(([0, 0, 0, 0], 443))
+}
+fn default_identity() -> PathBuf {
+    PathBuf::from("/etc/karst/relay.key")
+}
+fn default_bytes_per_sec() -> u64 {
+    Budget::default().bytes_per_sec
+}
+fn default_byte_burst() -> u64 {
+    Budget::default().byte_burst
+}
+fn default_frames_per_sec() -> u64 {
+    Budget::default().frames_per_sec
+}
+fn default_frame_burst() -> u64 {
+    Budget::default().frame_burst
+}
+fn default_queue_depth() -> usize {
+    karst_estavelle_proto::consts::WRITE_QUEUE_DEPTH
+}
+
+impl Config {
+    /// Parse a configuration from TOML.
+    ///
+    /// # Errors
+    /// [`Error::Syntax`] for malformed TOML, a missing required field, or an
+    /// unrecognized one.
+    pub fn parse(text: &str) -> Result<Self, Error> {
+        // `deny_unknown_fields`, so a mistyped key is an error rather than a
+        // setting that silently does nothing. A relay whose rate limit is
+        // spelled `byte_per_sec` should not start.
+        toml::from_str(text).map_err(|e| Error::Syntax(format!("config: {e}")))
+    }
+
+    /// Read a configuration from disk.
+    ///
+    /// # Errors
+    /// [`Error::Io`] if the file cannot be read, plus everything
+    /// [`Self::parse`] returns.
+    pub fn load(path: &Path) -> Result<Self, Error> {
+        let text = std::fs::read_to_string(path).map_err(Error::Io)?;
+        Self::parse(&text)
+    }
+
+    /// Check the things that can be checked without listening.
+    ///
+    /// # Errors
+    /// [`Error::Invalid`] naming the setting at fault.
+    #[allow(clippy::too_many_lines)]
+    pub fn validate(&self) -> Result<(), Error> {
+        if self
+            .usage
+            .as_ref()
+            .is_some_and(|usage| usage.spool_dir.as_os_str().is_empty())
+        {
+            return Err(Error::Invalid(
+                "config: usage.spool_dir must not be empty".to_owned(),
+            ));
+        }
+        if let Some(Some(url)) = self.usage.as_ref().map(|usage| usage.upload_url.as_ref()) {
+            if parse_https_origin(url).is_none() {
+                return Err(Error::Invalid("config: usage.upload_url must be an https:// origin without a path, query, fragment, or credentials".to_owned()));
+            }
+        }
+        if let Some(usage) = &self.usage {
+            if usage.enforce_spending_caps {
+                if usage.upload_url.is_none() {
+                    return Err(Error::Invalid(
+                        "config: usage.enforce_spending_caps requires usage.upload_url".to_owned(),
+                    ));
+                }
+                let Some(grant_bytes) = usage.cap_grant_bytes else {
+                    return Err(Error::Invalid(
+                        "config: usage.enforce_spending_caps requires usage.cap_grant_bytes"
+                            .to_owned(),
+                    ));
+                };
+                if grant_bytes < karst_estavelle_proto::consts::FRAME_PAYLOAD_MAX as u64
+                    || grant_bytes > 1_000_000_000
+                {
+                    return Err(Error::Invalid(format!(
+                        "config: usage.cap_grant_bytes must be between {} and 1000000000",
+                        karst_estavelle_proto::consts::FRAME_PAYLOAD_MAX
+                    )));
+                }
+            } else if usage.cap_grant_bytes.is_some() {
+                return Err(Error::Invalid(
+                    "config: usage.cap_grant_bytes requires usage.enforce_spending_caps = true"
+                        .to_owned(),
+                ));
+            }
+        }
+        if let Some(metrics) = self.metrics {
+            // **Refuse a metrics listener that shares the client port.** It
+            // would put an unauthenticated `GET` on the socket carrying the
+            // tailnet's traffic, and §5.3's admission is structural precisely
+            // so that port answers nothing it cannot verify. A misconfiguration
+            // that only shows up as a strange response to a scraper is one
+            // worth refusing at startup.
+            if metrics.listen == self.listen {
+                return Err(Error::Invalid(
+                    "config: metrics.listen must not be the Ponor listener's \
+                     address; give it a management address of its own"
+                        .to_owned(),
+                ));
+            }
+            if let Some(reflect) = self.reflect {
+                if metrics.listen == reflect.listen {
+                    return Err(Error::Invalid(
+                        "config: metrics.listen collides with reflect.listen".to_owned(),
+                    ));
+                }
+            }
+        }
+        if self.limits.queue_depth == 0 {
+            // Not merely useless: a zero-depth queue silently discards every
+            // frame, which is a relay that accepts connections and forwards
+            // nothing. Better to refuse to start.
+            return Err(Error::Invalid(
+                "config: limits.queue_depth must be at least 1".to_owned(),
+            ));
+        }
+        if self.limits.bytes_per_sec == 0 || self.limits.frames_per_sec == 0 {
+            return Err(Error::Invalid(
+                "config: a zero rate admits nothing; omit the field for the \
+                 default, or set it high for no practical limit"
+                    .to_owned(),
+            ));
+        }
+        if let Some(a) = &self.limits.aquifer {
+            if a.bytes_per_sec == 0 || a.frames_per_sec == 0 {
+                return Err(Error::Invalid(
+                    "config: a zero limits.aquifer rate admits nothing from the \
+                     whole aquifer; omit the [limits.aquifer] table for no \
+                     aggregate cap, or set it high for no practical limit"
+                        .to_owned(),
+                ));
+            }
+        }
+        if let Some(t) = &self.telemetry {
+            if !t.control_url.starts_with("https://") {
+                // Telemetry carries a signature, not a secret, but the
+                // control plane's identity still has to be TLS-verified — a
+                // plaintext control_url would send every report to whoever
+                // happens to be on the path, unauthenticated on either side.
+                return Err(Error::Invalid(format!(
+                    "config: telemetry.control_url = {:?} must start with https://",
+                    t.control_url
+                )));
+            }
+            if t.interval_secs == 0 {
+                return Err(Error::Invalid(
+                    "config: telemetry.interval_secs must be at least 1".to_owned(),
+                ));
+            }
+        }
+        if let Some(r) = &self.reflect {
+            let a = r.advertised();
+            if a.ip().is_unspecified() || a.port() == 0 {
+                // A client told to send `Reflect` to 0.0.0.0 sends it nowhere,
+                // and the symptom is a node that never gets a direct path with
+                // nothing in any log to explain why. Binding the unspecified
+                // address is fine and usual; advertising it is not.
+                return Err(Error::Invalid(format!(
+                    "config: reflect.advertise = {a} is not an address a client \
+                     can reach; set reflect.advertise to this relay's public \
+                     UDP address"
+                )));
+            }
+        }
+        for (name, path) in [
+            ("roster", &self.roster),
+            ("tls_cert", &self.tls_cert),
+            ("tls_key", &self.tls_key),
+        ] {
+            if !path.exists() {
+                return Err(Error::Invalid(format!(
+                    "config: {name} = {} does not exist",
+                    path.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// The hub configuration these settings imply.
+    #[must_use]
+    pub fn hub(&self) -> hub::Config {
+        hub::Config {
+            client_budget: Budget {
+                bytes_per_sec: self.limits.bytes_per_sec,
+                byte_burst: self.limits.byte_burst,
+                frames_per_sec: self.limits.frames_per_sec,
+                frame_burst: self.limits.frame_burst,
+            },
+            // A meshed relay carries many nodes' traffic and cannot share a
+            // node's allowance. It is configured infrastructure rather than an
+            // admitted stranger, so the operator's own limits apply upstream.
+            mesh_budget: Budget::unlimited(),
+            aquifer_budget: self.limits.aquifer.map(|a| Budget {
+                bytes_per_sec: a.bytes_per_sec,
+                byte_burst: a.byte_burst,
+                frames_per_sec: a.frames_per_sec,
+                frame_burst: a.frame_burst,
+            }),
+            queue_depth: self.limits.queue_depth,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
+
+    use super::*;
+
+    const MINIMAL: &str = r#"
+roster = "/etc/karst/roster.toml"
+tls_cert = "/etc/karst/relay.crt"
+tls_key = "/etc/karst/relay.key"
+"#;
+
+    #[test]
+    fn a_minimal_config_takes_the_documented_defaults() {
+        let c = Config::parse(MINIMAL).expect("parses");
+        assert_eq!(c.listen, SocketAddr::from(([0, 0, 0, 0], 443)));
+        assert_eq!(c.identity_key, PathBuf::from("/etc/karst/relay.key"));
+        assert_eq!(c.limits.queue_depth, 32);
+        assert_eq!(c.limits.bytes_per_sec, 25 * 1_000_000 / 8);
+    }
+
+    #[test]
+    fn usage_upload_is_optional_and_requires_an_https_origin() {
+        let text = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example:8443\"\n"
+        );
+        let c = Config::parse(&text).expect("parses upload configuration");
+        let usage = c.usage.expect("usage configured");
+        assert_eq!(
+            usage.upload_url.as_deref(),
+            Some("https://control.example:8443")
+        );
+        assert!(!usage.enforce_spending_caps);
+        assert_eq!(usage.cap_grant_bytes, None);
+
+        let text = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example/api\"\n"
+        );
+        let c = Config::parse(&text).expect("parses invalid URL for validation");
+        assert!(
+            format!("{}", c.validate().expect_err("path is not an origin"))
+                .contains("usage.upload_url")
+        );
+    }
+
+    #[test]
+    fn spending_cap_enforcement_requires_explicit_control_and_grant_settings() {
+        let missing_url = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nenforce_spending_caps = true\ncap_grant_bytes = 65536\n"
+        );
+        let config = Config::parse(&missing_url).expect("parses");
+        assert!(
+            format!("{}", config.validate().expect_err("missing URL")).contains("usage.upload_url")
+        );
+
+        let missing_grant = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example\"\nenforce_spending_caps = true\n"
+        );
+        let config = Config::parse(&missing_grant).expect("parses");
+        assert!(
+            format!("{}", config.validate().expect_err("missing grant size"))
+                .contains("usage.cap_grant_bytes")
+        );
+
+        let too_small = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example\"\nenforce_spending_caps = true\ncap_grant_bytes = 1\n"
+        );
+        let config = Config::parse(&too_small).expect("parses");
+        assert!(format!(
+            "{}",
+            config.validate().expect_err("grant smaller than a packet")
+        )
+        .contains("usage.cap_grant_bytes"));
+
+        let inactive_grant = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\ncap_grant_bytes = 65536\n"
+        );
+        let config = Config::parse(&inactive_grant).expect("parses");
+        assert!(
+            format!("{}", config.validate().expect_err("grant requires opt-in"))
+                .contains("usage.enforce_spending_caps")
+        );
+    }
+
+    #[test]
+    fn the_roster_path_is_required() {
+        // No default is right: an empty path admits nobody and looks broken,
+        // and a built-in path is a guess about somebody's deployment.
+        let err = Config::parse("tls_cert = \"a\"\ntls_key = \"b\"\n").expect_err("no roster");
+        assert!(matches!(err, Error::Syntax(_)), "{err:?}");
+        assert!(format!("{err}").contains("roster"), "{err}");
+    }
+
+    #[test]
+    fn a_mistyped_key_is_an_error() {
+        // Otherwise a relay whose rate limit is spelled `byte_per_sec` starts
+        // happily with the default and nobody finds out until it matters.
+        let text = format!("{MINIMAL}\n[limits]\nbyte_per_sec = 100\n");
+        let err = Config::parse(&text).expect_err("unknown field");
+        assert!(format!("{err}").contains("byte_per_sec"), "{err}");
+    }
+
+    #[test]
+    fn a_zero_queue_depth_is_refused() {
+        // A zero-depth queue accepts connections and forwards nothing.
+        let text = format!("{MINIMAL}\n[limits]\nqueue_depth = 0\n");
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("zero depth");
+        assert!(format!("{err}").contains("queue_depth"), "{err}");
+    }
+
+    #[test]
+    fn a_zero_rate_is_refused_rather_than_read_as_unlimited() {
+        // The recurring rule: an absent or zeroed value must never read as
+        // permissive — but here it reads as *prohibitive*, which is equally
+        // surprising, so the operator is told instead of guessed at.
+        let text = format!("{MINIMAL}\n[limits]\nbytes_per_sec = 0\n");
+        let c = Config::parse(&text).expect("parses");
+        assert!(c.validate().is_err());
+
+        let text = format!("{MINIMAL}\n[limits]\nframes_per_sec = 0\n");
+        let c = Config::parse(&text).expect("parses");
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_names_the_file_that_is_missing() {
+        let c = Config::parse(MINIMAL).expect("parses");
+        let err = c.validate().expect_err("nothing exists");
+        let text = format!("{err}");
+        assert!(text.contains("roster"), "{text}");
+        assert!(text.contains("/etc/karst/roster.toml"), "{text}");
+    }
+
+    #[test]
+    fn limits_reach_the_hub() {
+        let text = format!("{MINIMAL}\n[limits]\nbytes_per_sec = 1234\nqueue_depth = 7\n");
+        let c = Config::parse(&text).expect("parses");
+        let h = c.hub();
+        assert_eq!(h.client_budget.bytes_per_sec, 1234);
+        assert_eq!(h.queue_depth, 7);
+        // The mesh allowance is deliberately not the client's.
+        assert_eq!(h.mesh_budget, Budget::unlimited());
+    }
+
+    #[test]
+    fn the_aquifer_budget_is_off_unless_configured() {
+        // ADR-0038's default: no `[limits.aquifer]` table means no aggregate
+        // cap, exactly as before this setting existed.
+        let c = Config::parse(MINIMAL).expect("parses");
+        assert!(c.limits.aquifer.is_none());
+        assert!(c.hub().aquifer_budget.is_none());
+    }
+
+    #[test]
+    fn the_aquifer_budget_reaches_the_hub() {
+        let text = format!(
+            "{MINIMAL}\n[limits.aquifer]\nbytes_per_sec = 1000\nbyte_burst = 2000\n\
+             frames_per_sec = 10\nframe_burst = 20\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        let budget = c.hub().aquifer_budget.expect("configured");
+        assert_eq!(budget.bytes_per_sec, 1000);
+        assert_eq!(budget.byte_burst, 2000);
+        assert_eq!(budget.frames_per_sec, 10);
+        assert_eq!(budget.frame_burst, 20);
+    }
+
+    #[test]
+    fn a_partial_aquifer_table_is_an_error() {
+        // Unlike the top-level per-node limits, there is no sensible built-in
+        // aggregate for "however many nodes a tenant happens to have" — a
+        // partially-specified table would be guessing at a number that
+        // matters, so every field is required once the table appears at all.
+        let text = format!("{MINIMAL}\n[limits.aquifer]\nbytes_per_sec = 1000\n");
+        let err = Config::parse(&text).expect_err("missing fields");
+        assert!(matches!(err, Error::Syntax(_)), "{err:?}");
+    }
+
+    #[test]
+    fn a_zero_aquifer_rate_is_refused_rather_than_read_as_unlimited() {
+        let text = format!(
+            "{MINIMAL}\n[limits.aquifer]\nbytes_per_sec = 0\nbyte_burst = 0\n\
+             frames_per_sec = 10\nframe_burst = 10\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("zero aquifer rate");
+        assert!(format!("{err}").contains("aquifer"), "{err}");
+    }
+
+    #[test]
+    fn the_reflector_is_off_unless_configured() {
+        // A reflector answers UDP datagrams. An operator who did not ask for
+        // one should not be running one.
+        let c = Config::parse(MINIMAL).expect("parses");
+        assert!(c.reflect.is_none());
+    }
+
+    #[test]
+    fn telemetry_is_off_unless_configured() {
+        let c = Config::parse(MINIMAL).expect("parses");
+        assert!(c.telemetry.is_none());
+    }
+
+    #[test]
+    fn telemetry_defaults_to_a_sixty_second_interval() {
+        let text = format!("{MINIMAL}\n[telemetry]\ncontrol_url = \"https://control.example\"\n");
+        let c = Config::parse(&text).expect("parses");
+        assert_eq!(c.telemetry.expect("configured").interval_secs, 60);
+    }
+
+    #[test]
+    fn detect_location_defaults_off() {
+        // ADR-0048: a relay must not start probing cloud instance metadata
+        // just because telemetry is on, with no operator action.
+        let text = format!("{MINIMAL}\n[telemetry]\ncontrol_url = \"https://control.example\"\n");
+        let c = Config::parse(&text).expect("parses");
+        assert!(!c.telemetry.expect("configured").detect_location);
+    }
+
+    #[test]
+    fn detect_location_can_be_turned_on() {
+        let text = format!(
+            "{MINIMAL}\n[telemetry]\ncontrol_url = \"https://control.example\"\ndetect_location = true\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        assert!(c.telemetry.expect("configured").detect_location);
+    }
+
+    #[test]
+    fn a_non_https_control_url_is_refused() {
+        let text = format!("{MINIMAL}\n[telemetry]\ncontrol_url = \"http://control.example\"\n");
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("plaintext control_url");
+        assert!(format!("{err}").contains("control_url"), "{err}");
+    }
+
+    #[test]
+    fn a_zero_telemetry_interval_is_refused() {
+        let text = format!(
+            "{MINIMAL}\n[telemetry]\ncontrol_url = \"https://control.example\"\ninterval_secs = 0\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("zero interval");
+        assert!(format!("{err}").contains("interval_secs"), "{err}");
+    }
+
+    #[test]
+    fn quic_is_off_unless_configured() {
+        let c = Config::parse(MINIMAL).expect("parses");
+        assert!(!c.quic);
+
+        let text = format!("{MINIMAL}\nquic = true\n");
+        let c = Config::parse(&text).expect("parses");
+        assert!(c.quic);
+    }
+
+    #[test]
+    fn an_unreachable_advertised_reflector_address_is_refused() {
+        // Binding the unspecified address is usual; advertising it sends every
+        // client's `Reflect` into the void, and the symptom is a node that
+        // never gets a direct path with nothing in any log to say why.
+        let text = format!("{MINIMAL}\n[reflect]\nlisten = \"0.0.0.0:3478\"\n");
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("unspecified advertise");
+        assert!(format!("{err}").contains("reflect.advertise"), "{err}");
+
+        // With an explicit advertise address it gets past this check and on to
+        // the file checks, which is what should stop it next.
+        let text = format!(
+            "{MINIMAL}\n[reflect]\nlisten = \"0.0.0.0:3478\"\n\
+             advertise = \"203.0.113.7:3478\"\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("files are missing");
+        assert!(format!("{err}").contains("roster"), "{err}");
+    }
+
+    #[test]
+    fn a_reflector_advertises_its_listen_address_by_default() {
+        let text = format!("{MINIMAL}\n[reflect]\nlisten = \"203.0.113.7:3478\"\n");
+        let c = Config::parse(&text).expect("parses");
+        let r = c.reflect.expect("configured");
+        assert_eq!(r.advertised(), r.listen);
+    }
+
+    #[test]
+    fn a_listen_address_can_be_overridden() {
+        let text = format!("{MINIMAL}\nlisten = \"127.0.0.1:8443\"\n");
+        let c = Config::parse(&text).expect("parses");
+        assert_eq!(c.listen, "127.0.0.1:8443".parse().expect("addr"));
+    }
+}

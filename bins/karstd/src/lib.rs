@@ -35,7 +35,7 @@ pub mod exit_policy;
 pub mod filetransfer;
 pub mod filter;
 pub mod flow;
-pub mod gateway;
+pub mod aven;
 pub mod home;
 pub mod ipc;
 mod metrics_http;
