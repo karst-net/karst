@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0067: One provisioning workflow, with the cloud mechanism hidden behind a driver
 
-- **Status:** Accepted and implemented — the `infraprovision.Driver` abstraction (AWS, Nomad; #550) and the collapsed console "Add relay" workflow below are both shipped
+- **Status:** Accepted and implemented — the `infraprovision.Driver` abstraction (AWS, Nomad; #550), the collapsed console "Add relay" workflow (#551), and the Kubernetes driver added in a follow-up are all shipped
 - **Date:** 2026-11-07
 - **Deciders:** Project owner
 - **Related:** ADR-0045, ADR-0058, ADR-0059, ADR-0062, ADR-0063, ADR-0065, ADR-0066
@@ -155,7 +155,7 @@ func (s *Store) ActuationDriver(ctx context.Context, id string) (infraprovision.
 
 It looks up the connection, checks a small registry keyed by
 `Account.Type`, and returns a typed `ErrUnsupportedType` for any type with
-no registered driver — today that is `azure`, `gcp`, `kubernetes`, `lxd`.
+no registered driver — today that is `azure`, `gcp`, `lxd`.
 `relayalloc/awsdrive_loop.go` is generalized to call through this interface
 instead of the EC2 SDK by name; its control flow (provision → grant → ready,
 revoke → deprovision, crash-safe retry by re-describing before creating)
@@ -169,37 +169,45 @@ API call) and rejects a connection with no driver before persisting
 `requested`, with a message naming the connection type. The console's
 connection picker in the provisioning form filters to connections whose
 type the API reports as actuatable (a `supports_allocation` field on the
-infrastructure-connections list response), so an Azure or LXD connection is
-still visible for registration/discovery purposes everywhere else, but is
+infrastructure-connections list response), so an Azure, GCP, or LXD
+connection is still visible for registration/discovery purposes everywhere
+else, but is
 not offered where it cannot actually be used yet. This closes the exact gap
 §"Context" describes: today a non-AWS connection is selectable, accepted,
 and only fails generically after the fact.
 
-### v1 driver scope: AWS and Nomad
+### v1 driver scope: AWS, Nomad, and Kubernetes
 
-Two drivers ship behind `infraprovision.Driver`: **AWS** (the existing code,
-re-homed, behavior unchanged) and **Nomad** (new). Azure, GCP, Kubernetes,
-and LXD connections remain registration-and-discovery-only — present in
-every picker that lists connections generally, absent from
-`supports_allocation` — until a later driver is written for them. Adding one
-is, from this point on, "implement `infraprovision.Driver` and register it
-against that `Account.Type`" — no console change, no new state machine, no
-new admin-facing field, because the one workflow and the one interface
-already exist.
+Three drivers ship behind `infraprovision.Driver`: **AWS** (the existing
+code, re-homed, behavior unchanged), **Nomad** (new), and **Kubernetes**
+(new). Azure, GCP, and LXD connections remain
+registration-and-discovery-only — present in every picker that lists
+connections generally, absent from `supports_allocation` — until a later
+driver is written for them. Adding one is, from this point on, "implement
+`infraprovision.Driver`, register it against that `Account.Type`, and add
+that provider's own small launch-defaults form" (as Nomad's job ID/
+datacenter and Kubernetes's image/cpu/memory each needed) — no new
+allocation workflow, console entry point, or state machine, because the
+one workflow and the one interface already exist; only the provider-
+specific launch shape, which was always going to differ per provider, is
+new per driver.
 
-Kubernetes deserves a narrower callout than Azure/GCP/LXD, which have no
-actuation code anywhere in this repository. `bins/karst-scaler-k8s`'s own
-`K8sDriver` already proves real Kubernetes actuation — it is the pool
-autoscaler's second working driver, alongside AWS's. It is not reused here
-for the same reason the Rust pool `Driver` trait isn't: it is Rust, and
-this loop is Go, in-process (ADR-0063's 2026-11-04 addendum). But unlike
-Azure/GCP/LXD, a Kubernetes `infraprovision.Driver` has a concrete,
-working reference implementation to port from rather than one to invent
-from scratch — the same relationship AWS's own port to `awsdriver` already
-had to `bins/karst-scaler-aws`'s `AwsDriver`. That makes Kubernetes the
-most likely next driver this interface gains, not a third slot that
-happens to be unimplemented for the same reason as the other two. This ADR
-does not implement it: v1 ships AWS and Nomad only.
+Kubernetes was initially scoped out of v1 (see "Alternatives rejected"
+below) and shipped in a follow-up once requested, precisely because that
+cost held: `infraprovision/kubernetesdriver` is new code, not a port.
+`bins/karst-scaler-k8s`'s own `K8sDriver` proves real Kubernetes
+actuation for the *pool* autoscaler's separate use case
+(`StatefulSet`/ordinal pods, ADR-0045 §7 Phase 2) — the same relationship
+the pool `Driver` trait has to this ADR's own interface, and rejected for
+the same reason (Rust, a different process, a pool shape `relayalloc`
+does not have). `kubernetesdriver` instead creates one bare `Pod` per
+allocation directly from the connection's own launch defaults (image,
+cpu/memory, optional service account) — the same relationship AWS's
+`RunInstances` call has to its own launch defaults, not Nomad's
+dispatch-a-pre-registered-job shape. A Kubernetes Pod's name is
+caller-chosen, so unlike AWS/Nomad it needs no tag/meta lookup to survive
+a crash between create and record: the driver just recomputes the
+deterministic name (`karst-relay-<allocation ID>`) and `Get`s it.
 
 ### Alternatives rejected
 
@@ -224,12 +232,18 @@ does not implement it: v1 ships AWS and Nomad only.
   time.
 - **Build real actuation for all six connection types in v1.** Rejected:
   Azure/GCP/Kubernetes/LXD actuation each need new provider-SDK integration,
-  a new enrollment-bundle shape, and testing infrastructure this repo has
+  a new enrollment-bundle shape, and testing infrastructure this repo had
   none of yet for those providers. ADR-0063 already set the precedent of
   narrowing v1 scope explicitly in the ADR rather than guessing at every
-  provider a feature request could imply; Nomad is the requested addition
-  and already has the most plumbing of the remaining four (a client, a
-  discovery call) to build the second driver against.
+  provider a feature request could imply; Nomad was the requested addition
+  and already had the most plumbing of the remaining four (a client, a
+  discovery call) to build the second driver against. Kubernetes followed
+  once requested, specifically *because* `bins/karst-scaler-k8s`'s
+  `K8sDriver` gave it a concrete reference to build the third driver's own
+  enrollment convention against, the same way AWS's own port had one — see
+  "v1 driver scope" above. Azure, GCP, and LXD still have neither a
+  requester nor a reference implementation to build from, so they remain
+  out of scope.
 - **Leave the connection picker unfiltered and rely on the clearer
   request-time error alone.** Rejected: a clear rejection *after* filling
   in a whole form is still worse than not offering the dead end in the
@@ -255,9 +269,12 @@ does not implement it: v1 ships AWS and Nomad only.
   not a silent dead end discovered only after a `requested` allocation never
   moves.
 - Adding a new provider's actuation later is "implement one interface,
-  register it against one `Account.Type`" — no new console form, state
-  machine, or admin-facing field — directly answering the duplication both
-  ADR-0063 and ADR-0066 already flagged.
+  register it against one `Account.Type`, add that provider's own small
+  launch-defaults form" — no new allocation workflow, console entry point,
+  or state machine — directly answering the duplication both ADR-0063 and
+  ADR-0066 already flagged. Nomad and Kubernetes both bore this out: each
+  needed its own launch-defaults fields (job ID/datacenter; image/cpu/
+  memory), nothing else.
 
 ### Negative
 
@@ -267,24 +284,28 @@ does not implement it: v1 ships AWS and Nomad only.
   `relayalloc` keeps its own hand-rolled GORM store and state machine,
   unchanged, same as billing's and rollout's. That remains separate, later
   work.
-- Nomad actuation is new, unverified-in-production code, carrying the same
-  caveat the AWS port's own comments already admit ("not independently
-  verified against a real EC2 instance in this environment") — it should
-  ship with the same honest `requested`/`provisioning`/`failed` states as
-  AWS, not an implied parity with AWS's maturity it has not yet earned.
+- Nomad and Kubernetes actuation are both new, unverified-in-production
+  code, carrying the same caveat the AWS port's own comments already admit
+  ("not independently verified against a real EC2 instance in this
+  environment") — each should ship with the same honest
+  `requested`/`provisioning`/`failed` states as AWS, not an implied parity
+  with AWS's maturity neither has yet earned. Kubernetes additionally
+  invents its own enrollment convention (three `KARST_*` environment
+  variables on the container, read by that image's own entrypoint) rather
+  than reusing AWS's or Nomad's, since there is no existing single-instance
+  Kubernetes actuator to stay wire-compatible with — a prebuilt
+  `karst-relay` container image implementing that convention does not yet
+  exist in this repository.
 - Collapsing three console entry points into one multi-step flow is a real
   navigation change for anyone with existing muscle memory, screenshots, or
   doc links pointing at "Allocate a relay" or "Install a local relay" as
   distinct pages — the records and scripts they produce are unchanged, only
   how an admin reaches them moves.
-- Azure, GCP, Kubernetes, and LXD connections remain
-  registration-and-discovery-only after this ADR ships. The "mechanism
-  abstracted from the admin" promise is only real for the two provider
-  types this ADR implements; connecting an Azure account today still cannot
-  provision a relay through this workflow. Kubernetes sits in this same
-  bucket today only because this ADR chose not to implement it yet, not
-  because it is architecturally harder than Nomad — see "v1 driver scope"
-  above.
+- Azure, GCP, and LXD connections remain registration-and-discovery-only
+  after this ADR ships. The "mechanism abstracted from the admin" promise
+  is only real for the three provider types this ADR implements;
+  connecting an Azure account today still cannot provision a relay through
+  this workflow.
 
 ### Reconsider if
 

@@ -451,6 +451,33 @@ func TestActuationDriverRequiresCompleteNomadLaunchDefaults(t *testing.T) {
 	}
 }
 
+func TestActuationDriverRequiresCompleteKubernetesLaunchDefaults(t *testing.T) {
+	s := newTestStore(t, newTestEncryptor(t))
+	ctx := WithAccount(context.Background(), "acct-a")
+	secret, _ := json.Marshal(kubernetesSecret{Kubeconfig: validTestKubeconfig})
+	rw, err := s.Create(ctx, CreateRequest{Type: TypeKubernetes, Mode: ModeReadWrite, Secret: secret})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, err := s.ActuationDriver(ctx, rw.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("got %v, want ErrInvalid before launch defaults are configured", err)
+	}
+
+	if _, err := s.UpdateKubernetesLaunchDefaults(ctx, rw.ID, UpdateKubernetesLaunchDefaultsRequest{
+		Namespace: "default", Image: "ghcr.io/karst-net/karst-relay:dev", CPU: "250m", Memory: "256Mi",
+	}); err != nil {
+		t.Fatalf("update kubernetes launch defaults: %v", err)
+	}
+	driver, err := s.ActuationDriver(ctx, rw.ID)
+	if err != nil {
+		t.Fatalf("actuation driver: %v", err)
+	}
+	if driver == nil {
+		t.Fatal("got a nil driver once launch defaults are complete")
+	}
+}
+
 func TestActuationDriverRejectsAConnectionTypeWithNoDriver(t *testing.T) {
 	s := newTestStore(t, newTestEncryptor(t))
 	ctx := WithAccount(context.Background(), "acct-a")

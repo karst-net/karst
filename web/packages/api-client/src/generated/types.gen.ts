@@ -1012,7 +1012,15 @@ export type InfrastructureConnection = {
     launch_nomad_job_id?: string;
     launch_nomad_datacenter?: string;
     /**
-     * True if this connection's type has a registered relay-allocation driver (ADR-0067) -- aws and nomad today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.
+     * ADR-0067. The Kubernetes launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Kubernetes connection, set via PUT .../kubernetes-launch-defaults.
+     */
+    launch_kubernetes_namespace?: string;
+    launch_kubernetes_image?: string;
+    launch_kubernetes_cpu?: string;
+    launch_kubernetes_memory?: string;
+    launch_kubernetes_service_account?: string;
+    /**
+     * True if this connection's type has a registered relay-allocation driver (ADR-0067) -- aws, nomad and kubernetes today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.
      */
     supports_allocation: boolean;
 };
@@ -1034,6 +1042,17 @@ export type InfrastructureConnectionLaunchDefaults = {
 export type InfrastructureConnectionNomadLaunchDefaults = {
     job_id?: string;
     datacenter?: string;
+};
+
+/**
+ * ADR-0067. The Kubernetes analog of InfrastructureConnectionLaunchDefaults -- every field replaces the stored value, including to empty. Only meaningful for a read-write Kubernetes connection; refused otherwise. Unlike Nomad, there is no pre-registered job: this connection's own driver builds the Pod itself from these fields. cpu/memory use Kubernetes's own resource.Quantity syntax (e.g. "250m", "256Mi") and are used as both the container's request and its limit.
+ */
+export type InfrastructureConnectionKubernetesLaunchDefaults = {
+    namespace?: string;
+    image?: string;
+    cpu?: string;
+    memory?: string;
+    service_account?: string;
 };
 
 export type DiscoveredResource = {
@@ -1351,7 +1370,15 @@ export type InfrastructureConnectionWritable = {
     launch_nomad_job_id?: string;
     launch_nomad_datacenter?: string;
     /**
-     * True if this connection's type has a registered relay-allocation driver (ADR-0067) -- aws and nomad today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.
+     * ADR-0067. The Kubernetes launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Kubernetes connection, set via PUT .../kubernetes-launch-defaults.
+     */
+    launch_kubernetes_namespace?: string;
+    launch_kubernetes_image?: string;
+    launch_kubernetes_cpu?: string;
+    launch_kubernetes_memory?: string;
+    launch_kubernetes_service_account?: string;
+    /**
+     * True if this connection's type has a registered relay-allocation driver (ADR-0067) -- aws, nomad and kubernetes today. The Allocate-a-relay connection picker should offer only connections where this is true; every other connection stays visible for registration/discovery but cannot be allocated against yet.
      */
     supports_allocation: boolean;
 };
@@ -4673,6 +4700,37 @@ export type UpdateInfrastructureConnectionNomadLaunchDefaultsResponses = {
 };
 
 export type UpdateInfrastructureConnectionNomadLaunchDefaultsResponse = UpdateInfrastructureConnectionNomadLaunchDefaultsResponses[keyof UpdateInfrastructureConnectionNomadLaunchDefaultsResponses];
+
+export type UpdateInfrastructureConnectionKubernetesLaunchDefaultsData = {
+    body: InfrastructureConnectionKubernetesLaunchDefaults;
+    path: {
+        connectionId: string;
+    };
+    query?: never;
+    url: '/infrastructure-connections/{connectionId}/kubernetes-launch-defaults';
+};
+
+export type UpdateInfrastructureConnectionKubernetesLaunchDefaultsErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type UpdateInfrastructureConnectionKubernetesLaunchDefaultsError = UpdateInfrastructureConnectionKubernetesLaunchDefaultsErrors[keyof UpdateInfrastructureConnectionKubernetesLaunchDefaultsErrors];
+
+export type UpdateInfrastructureConnectionKubernetesLaunchDefaultsResponses = {
+    /**
+     * Updated connection
+     */
+    200: InfrastructureConnection;
+};
+
+export type UpdateInfrastructureConnectionKubernetesLaunchDefaultsResponse = UpdateInfrastructureConnectionKubernetesLaunchDefaultsResponses[keyof UpdateInfrastructureConnectionKubernetesLaunchDefaultsResponses];
 
 export type GetBedrockData = {
     body?: never;

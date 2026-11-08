@@ -133,12 +133,13 @@ func TestCreateAcceptsAClusterConnectionsDeclaredLocationWhenAuthorized(t *testi
 	e := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
 	lat, lon := 51.5072, -0.1276
-	// TypeNomad, not TypeKubernetes: both fall into requireAuthorizedLocation's
-	// same "cluster connection, declared Lat/Lon" default branch, but only
-	// Nomad has a registered infraprovision.Driver (ADR-0067) -- Create now
-	// rejects a Kubernetes connection before ever reaching that check (see
-	// TestCreateRejectsAnUnsupportedConnectionType), so this test picks the
-	// cluster type that still exercises the location logic end to end.
+	// TypeNomad, picked arbitrarily among the cluster types with a
+	// registered infraprovision.Driver (ADR-0067: Nomad and Kubernetes
+	// both do) -- any of them exercises requireAuthorizedLocation's same
+	// "cluster connection, declared Lat/Lon" default branch identically.
+	// A cluster type with no driver (Azure has none, and is not even a
+	// "cluster connection" for this branch's purposes) is rejected before
+	// ever reaching this logic -- see TestCreateRejectsAnUnsupportedConnectionType.
 	cluster := infraconnections.Account{ID: "conn-nomad", AccountID: "a", Type: infraconnections.TypeNomad, Mode: infraconnections.ModeReadOnly, Label: "nomad", Lat: &lat, Lon: &lon}
 	require.NoError(t, e.db.Create(&cluster).Error)
 	require.NoError(t, e.db.Create(&locationreg.StoredLocation{AccountID: "a", ID: "loc-london", Lat: lat, Lon: lon, Label: "London cluster"}).Error)
@@ -165,18 +166,22 @@ func TestCreateRejectsAClusterConnectionWithNoDeclaredLocation(t *testing.T) {
 func TestCreateRejectsAnUnsupportedConnectionType(t *testing.T) {
 	e := fixture(t)
 	ctx := WithAccount(context.Background(), "a")
-	lat, lon := 51.5072, -0.1276
-	cluster := infraconnections.Account{ID: "conn-k8s", AccountID: "a", Type: infraconnections.TypeKubernetes, Mode: infraconnections.ModeReadOnly, Label: "k8s", Lat: &lat, Lon: &lon}
-	require.NoError(t, e.db.Create(&cluster).Error)
-	require.NoError(t, e.db.Create(&locationreg.StoredLocation{AccountID: "a", ID: "loc-london", Lat: lat, Lon: lon, Label: "London cluster"}).Error)
+	// Azure, not Kubernetes: ADR-0067 added a Kubernetes driver, so it no
+	// longer belongs in this test -- Azure has no infraprovision.Driver
+	// and (unlike a cluster type) needs no declared-location fixture at
+	// all, since requireAuthorizedLocation's "cluster connection" branch
+	// doesn't apply to it; this check must fail before reaching that
+	// logic regardless.
+	connection := infraconnections.Account{ID: "conn-azure", AccountID: "a", Type: infraconnections.TypeAzure, Mode: infraconnections.ModeReadOnly, Label: "azure"}
+	require.NoError(t, e.db.Create(&connection).Error)
 	draft := e.draft()
-	draft.InfraConnectionID = cluster.ID
+	draft.InfraConnectionID = connection.ID
 	draft.Location = "default"
 
 	_, err := e.store.Create(ctx, draft)
 
 	require.ErrorIs(t, err, ErrInvalid)
-	require.ErrorContains(t, err, `"kubernetes"`)
+	require.ErrorContains(t, err, `"azure"`)
 	var count int64
 	require.NoError(t, e.db.Model(&Allocation{}).Count(&count).Error)
 	require.Zero(t, count, "a connection type with no driver must never reach StateRequested")

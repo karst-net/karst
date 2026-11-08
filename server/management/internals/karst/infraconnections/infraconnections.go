@@ -122,12 +122,11 @@ func (t Type) Valid() bool {
 // infraprovision.Driver implementation at all -- a static, credential-
 // free fact, never an API call, so relayalloc.Store.Create can check it
 // inside its own transaction without violating ADR-0058's "no provider
-// call inside a transaction" rule (ADR-0067). TypeAzure/TypeGCP/
-// TypeKubernetes/TypeLXD have no driver yet; see ActuationDriver and
-// ADR-0067's "v1 driver scope" for why, and for Kubernetes specifically as
-// the most likely next one.
+// call inside a transaction" rule (ADR-0067). TypeAzure/TypeGCP/TypeLXD
+// have no driver yet; see ActuationDriver and ADR-0067's "v1 driver scope"
+// for why.
 func (t Type) SupportsActuation() bool {
-	return t == TypeAWS || t == TypeNomad
+	return t == TypeAWS || t == TypeNomad || t == TypeKubernetes
 }
 
 // IsLegacy reports whether t is one of the three types the /cloud-accounts
@@ -206,27 +205,40 @@ func accountFromContext(ctx context.Context) (string, error) {
 // instance from, plus an optional datacenter passed through as dispatch
 // Meta. Meaningful only for Type TypeNomad, Mode ModeReadWrite, the same
 // gating the AWS fields already follow.
+//
+// LaunchKubernetesNamespace/LaunchKubernetesImage/LaunchKubernetesCPU/
+// LaunchKubernetesMemory/LaunchKubernetesServiceAccount (ADR-0067) are the
+// Kubernetes analog: unlike Nomad, there is no pre-registered job to
+// dispatch -- this driver builds the Pod itself, so its shape (image,
+// a single CPU/memory figure used as both request and limit, an optional
+// service account) is launch-defaults data the same way AMI/instance-type
+// is for AWS. Meaningful only for Type TypeKubernetes, Mode ModeReadWrite.
 type Account struct {
-	ID                     string `gorm:"primaryKey"`
-	AccountID              string `gorm:"index"`
-	Type                   Type   `gorm:"column:provider"`
-	Mode                   Mode
-	Label                  string
-	Secret                 string
-	CreatedAt              time.Time
-	Lat                    *float64
-	Lon                    *float64
-	LocationLabel          string
-	Status                 Status
-	LastValidatedAt        *time.Time
-	LastError              string
-	LaunchRegion           string   `gorm:"column:launch_region"`
-	LaunchAMIID            string   `gorm:"column:launch_ami_id"`
-	LaunchInstanceType     string   `gorm:"column:launch_instance_type"`
-	LaunchSubnetID         string   `gorm:"column:launch_subnet_id"`
-	LaunchSecurityGroupIDs []string `gorm:"column:launch_security_group_ids;serializer:json"`
-	LaunchNomadJobID       string   `gorm:"column:launch_nomad_job_id"`
-	LaunchNomadDatacenter  string   `gorm:"column:launch_nomad_datacenter"`
+	ID                             string `gorm:"primaryKey"`
+	AccountID                      string `gorm:"index"`
+	Type                           Type   `gorm:"column:provider"`
+	Mode                           Mode
+	Label                          string
+	Secret                         string
+	CreatedAt                      time.Time
+	Lat                            *float64
+	Lon                            *float64
+	LocationLabel                  string
+	Status                         Status
+	LastValidatedAt                *time.Time
+	LastError                      string
+	LaunchRegion                   string   `gorm:"column:launch_region"`
+	LaunchAMIID                    string   `gorm:"column:launch_ami_id"`
+	LaunchInstanceType             string   `gorm:"column:launch_instance_type"`
+	LaunchSubnetID                 string   `gorm:"column:launch_subnet_id"`
+	LaunchSecurityGroupIDs         []string `gorm:"column:launch_security_group_ids;serializer:json"`
+	LaunchNomadJobID               string   `gorm:"column:launch_nomad_job_id"`
+	LaunchNomadDatacenter          string   `gorm:"column:launch_nomad_datacenter"`
+	LaunchKubernetesNamespace      string   `gorm:"column:launch_kubernetes_namespace"`
+	LaunchKubernetesImage          string   `gorm:"column:launch_kubernetes_image"`
+	LaunchKubernetesCPU            string   `gorm:"column:launch_kubernetes_cpu"`
+	LaunchKubernetesMemory         string   `gorm:"column:launch_kubernetes_memory"`
+	LaunchKubernetesServiceAccount string   `gorm:"column:launch_kubernetes_service_account"`
 }
 
 func (Account) TableName() string { return "karst_cloud_accounts" }
@@ -265,24 +277,29 @@ func (a *Account) ToLegacyResponse() LegacyResponse {
 
 // Response is the generalized /infrastructure-connections wire shape.
 type Response struct {
-	ID                     string     `json:"id"`
-	Type                   Type       `json:"type"`
-	Mode                   Mode       `json:"mode"`
-	Label                  string     `json:"label,omitempty"`
-	CreatedAt              time.Time  `json:"created_at"`
-	Lat                    *float64   `json:"lat,omitempty"`
-	Lon                    *float64   `json:"lon,omitempty"`
-	LocationLabel          string     `json:"location_label,omitempty"`
-	Status                 Status     `json:"status,omitempty"`
-	LastValidatedAt        *time.Time `json:"last_validated_at,omitempty"`
-	LastError              string     `json:"last_error,omitempty"`
-	LaunchRegion           string     `json:"launch_region,omitempty"`
-	LaunchAMIID            string     `json:"launch_ami_id,omitempty"`
-	LaunchInstanceType     string     `json:"launch_instance_type,omitempty"`
-	LaunchSubnetID         string     `json:"launch_subnet_id,omitempty"`
-	LaunchSecurityGroupIDs []string   `json:"launch_security_group_ids,omitempty"`
-	LaunchNomadJobID       string     `json:"launch_nomad_job_id,omitempty"`
-	LaunchNomadDatacenter  string     `json:"launch_nomad_datacenter,omitempty"`
+	ID                             string     `json:"id"`
+	Type                           Type       `json:"type"`
+	Mode                           Mode       `json:"mode"`
+	Label                          string     `json:"label,omitempty"`
+	CreatedAt                      time.Time  `json:"created_at"`
+	Lat                            *float64   `json:"lat,omitempty"`
+	Lon                            *float64   `json:"lon,omitempty"`
+	LocationLabel                  string     `json:"location_label,omitempty"`
+	Status                         Status     `json:"status,omitempty"`
+	LastValidatedAt                *time.Time `json:"last_validated_at,omitempty"`
+	LastError                      string     `json:"last_error,omitempty"`
+	LaunchRegion                   string     `json:"launch_region,omitempty"`
+	LaunchAMIID                    string     `json:"launch_ami_id,omitempty"`
+	LaunchInstanceType             string     `json:"launch_instance_type,omitempty"`
+	LaunchSubnetID                 string     `json:"launch_subnet_id,omitempty"`
+	LaunchSecurityGroupIDs         []string   `json:"launch_security_group_ids,omitempty"`
+	LaunchNomadJobID               string     `json:"launch_nomad_job_id,omitempty"`
+	LaunchNomadDatacenter          string     `json:"launch_nomad_datacenter,omitempty"`
+	LaunchKubernetesNamespace      string     `json:"launch_kubernetes_namespace,omitempty"`
+	LaunchKubernetesImage          string     `json:"launch_kubernetes_image,omitempty"`
+	LaunchKubernetesCPU            string     `json:"launch_kubernetes_cpu,omitempty"`
+	LaunchKubernetesMemory         string     `json:"launch_kubernetes_memory,omitempty"`
+	LaunchKubernetesServiceAccount string     `json:"launch_kubernetes_service_account,omitempty"`
 	// SupportsAllocation mirrors Type.SupportsActuation() -- a derived,
 	// read-only convenience so a console caller never has to duplicate
 	// that type-list itself (ADR-0067).
@@ -297,7 +314,10 @@ func (a *Account) ToResponse() Response {
 		LaunchRegion: a.LaunchRegion, LaunchAMIID: a.LaunchAMIID, LaunchInstanceType: a.LaunchInstanceType,
 		LaunchSubnetID: a.LaunchSubnetID, LaunchSecurityGroupIDs: a.LaunchSecurityGroupIDs,
 		LaunchNomadJobID: a.LaunchNomadJobID, LaunchNomadDatacenter: a.LaunchNomadDatacenter,
-		SupportsAllocation: a.Type.SupportsActuation(),
+		LaunchKubernetesNamespace: a.LaunchKubernetesNamespace, LaunchKubernetesImage: a.LaunchKubernetesImage,
+		LaunchKubernetesCPU: a.LaunchKubernetesCPU, LaunchKubernetesMemory: a.LaunchKubernetesMemory,
+		LaunchKubernetesServiceAccount: a.LaunchKubernetesServiceAccount,
+		SupportsAllocation:             a.Type.SupportsActuation(),
 	}
 }
 
@@ -570,6 +590,57 @@ func (s *Store) UpdateNomadLaunchDefaults(ctx context.Context, id string, req Up
 		return nil, fmt.Errorf("cloud accounts: update nomad launch defaults: %w", err)
 	}
 	record.LaunchNomadJobID, record.LaunchNomadDatacenter = update.LaunchNomadJobID, update.LaunchNomadDatacenter
+	return &record, nil
+}
+
+// UpdateKubernetesLaunchDefaultsRequest is Settings' own way to set or
+// change the Kubernetes launch shape (ADR-0067) a named relay allocation
+// actuates against -- the Kubernetes analog of UpdateLaunchDefaultsRequest,
+// same full-replace semantics. CPU/Memory are parsed with Kubernetes's own
+// resource.Quantity syntax (e.g. "250m", "256Mi") by
+// kubernetesdriver.New's caller, not here; this just stores the strings.
+type UpdateKubernetesLaunchDefaultsRequest struct {
+	Namespace      string `json:"namespace,omitempty"`
+	Image          string `json:"image,omitempty"`
+	CPU            string `json:"cpu,omitempty"`
+	Memory         string `json:"memory,omitempty"`
+	ServiceAccount string `json:"service_account,omitempty"`
+}
+
+// UpdateKubernetesLaunchDefaults sets this connection's Kubernetes launch
+// shape. Refused for any connection that is not currently a read-write
+// Kubernetes connection -- see UpdateLaunchDefaults's own doc comment for
+// why this is a clearer error at write time rather than the only check;
+// ActuationDriver re-validates both anyway.
+func (s *Store) UpdateKubernetesLaunchDefaults(ctx context.Context, id string, req UpdateKubernetesLaunchDefaultsRequest) (*Account, error) {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var record Account
+	if err := s.db.WithContext(ctx).Where("account_id = ? AND id = ?", accountID, id).First(&record).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("cloud accounts: get: %w", err)
+	}
+	if record.Type != TypeKubernetes || record.Mode != ModeReadWrite {
+		return nil, fmt.Errorf("%w: launch defaults only apply to a read-write Kubernetes connection", ErrInvalid)
+	}
+	update := Account{
+		LaunchKubernetesNamespace: req.Namespace, LaunchKubernetesImage: req.Image,
+		LaunchKubernetesCPU: req.CPU, LaunchKubernetesMemory: req.Memory,
+		LaunchKubernetesServiceAccount: req.ServiceAccount,
+	}
+	err = s.db.WithContext(ctx).Model(&record).
+		Select("LaunchKubernetesNamespace", "LaunchKubernetesImage", "LaunchKubernetesCPU", "LaunchKubernetesMemory", "LaunchKubernetesServiceAccount").
+		Updates(update).Error
+	if err != nil {
+		return nil, fmt.Errorf("cloud accounts: update kubernetes launch defaults: %w", err)
+	}
+	record.LaunchKubernetesNamespace, record.LaunchKubernetesImage = update.LaunchKubernetesNamespace, update.LaunchKubernetesImage
+	record.LaunchKubernetesCPU, record.LaunchKubernetesMemory = update.LaunchKubernetesCPU, update.LaunchKubernetesMemory
+	record.LaunchKubernetesServiceAccount = update.LaunchKubernetesServiceAccount
 	return &record, nil
 }
 

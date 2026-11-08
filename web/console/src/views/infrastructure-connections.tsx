@@ -36,6 +36,20 @@ function blankNomadLaunchDefaultsDraft(connection: InfrastructureConnection): No
   return { jobId: connection.launch_nomad_job_id ?? "", datacenter: connection.launch_nomad_datacenter ?? "" };
 }
 
+/** Draft for the "Launch defaults" dialog's Kubernetes analog (ADR-0067).
+ *  Unlike Nomad, there is no pre-registered job to dispatch -- this
+ *  connection's own driver builds the Pod itself from these fields, so
+ *  they describe the Pod's shape directly (image, plus a single cpu/
+ *  memory figure used as both request and limit). */
+type KubernetesLaunchDefaultsDraft = { namespace: string; image: string; cpu: string; memory: string; serviceAccount: string };
+function blankKubernetesLaunchDefaultsDraft(connection: InfrastructureConnection): KubernetesLaunchDefaultsDraft {
+  return {
+    namespace: connection.launch_kubernetes_namespace ?? "", image: connection.launch_kubernetes_image ?? "",
+    cpu: connection.launch_kubernetes_cpu ?? "", memory: connection.launch_kubernetes_memory ?? "",
+    serviceAccount: connection.launch_kubernetes_service_account ?? "",
+  };
+}
+
 type ConnectionDraft = {
   type: ConnectionType;
   mode: ConnectionMode;
@@ -105,6 +119,8 @@ export function InfrastructureConnections() {
   const [launchDefaultsDraft, setLaunchDefaultsDraft] = useState<LaunchDefaultsDraft>();
   const [nomadLaunchDefaultsFor, setNomadLaunchDefaultsFor] = useState<InfrastructureConnection>();
   const [nomadLaunchDefaultsDraft, setNomadLaunchDefaultsDraft] = useState<NomadLaunchDefaultsDraft>();
+  const [kubernetesLaunchDefaultsFor, setKubernetesLaunchDefaultsFor] = useState<InfrastructureConnection>();
+  const [kubernetesLaunchDefaultsDraft, setKubernetesLaunchDefaultsDraft] = useState<KubernetesLaunchDefaultsDraft>();
 
   const addConnection = async () => {
     if (!connectionDraft) return;
@@ -148,6 +164,18 @@ export function InfrastructureConnections() {
     }
   };
 
+  const saveKubernetesLaunchDefaults = async () => {
+    if (!kubernetesLaunchDefaultsFor || !kubernetesLaunchDefaultsDraft) return;
+    const defaults = {
+      namespace: kubernetesLaunchDefaultsDraft.namespace.trim(), image: kubernetesLaunchDefaultsDraft.image.trim(),
+      cpu: kubernetesLaunchDefaultsDraft.cpu.trim(), memory: kubernetesLaunchDefaultsDraft.memory.trim(),
+      service_account: kubernetesLaunchDefaultsDraft.serviceAccount.trim() || undefined,
+    };
+    if (await run(() => api.updateInfrastructureConnectionKubernetesLaunchDefaults(kubernetesLaunchDefaultsFor.id, defaults), `Launch defaults for ${kubernetesLaunchDefaultsFor.label || kubernetesLaunchDefaultsFor.type} were saved.`)) {
+      setKubernetesLaunchDefaultsFor(undefined);
+    }
+  };
+
   return <section>
     <h2>Infrastructure connections</h2>
     <TutorialHint>Lets Authorized Locations offer real regions, local zones, Kubernetes namespaces, Nomad datacenters, and LXD cluster members instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces/datacenters/cluster-members) — they cannot place an order or create a workload. "Read-write" connections may make live changes and incur costs: enabling an AWS Local Zone that exists but isn't opted into use yet, and — once its own launch defaults below are set — actuating a relay allocated against it on the Relay allocations page. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</TutorialHint>
@@ -169,6 +197,8 @@ export function InfrastructureConnections() {
                 <button onClick={() => { setLaunchDefaultsFor(connection); setLaunchDefaultsDraft(blankLaunchDefaultsDraft(connection)); }}>Launch defaults</button>}
               {connection.type === "nomad" && connection.mode === "read_write" &&
                 <button onClick={() => { setNomadLaunchDefaultsFor(connection); setNomadLaunchDefaultsDraft(blankNomadLaunchDefaultsDraft(connection)); }}>Launch defaults</button>}
+              {connection.type === "kubernetes" && connection.mode === "read_write" &&
+                <button onClick={() => { setKubernetesLaunchDefaultsFor(connection); setKubernetesLaunchDefaultsDraft(blankKubernetesLaunchDefaultsDraft(connection)); }}>Launch defaults</button>}
               {" "}<button className="danger" onClick={() => removeConnection(connection)}>Remove</button>
             </td>
           </tr>)}
@@ -264,6 +294,19 @@ export function InfrastructureConnections() {
         <p className="lede">A parameterized job already registered against this connection's Nomad cluster. This dialog does not register or validate it.</p>
         <label>Datacenter<input aria-label="Launch Nomad datacenter" placeholder="dc1" required value={nomadLaunchDefaultsDraft.datacenter} onChange={(event) => setNomadLaunchDefaultsDraft((current) => current && { ...current, datacenter: event.target.value })} /></label>
         <div className="actions"><button type="button" onClick={() => setNomadLaunchDefaultsFor(undefined)}>Cancel</button><button className="primary" type="submit">Save launch defaults</button></div>
+      </form>}
+    </Dialog>
+
+    <Dialog open={Boolean(kubernetesLaunchDefaultsFor)} title="Launch defaults" onClose={() => setKubernetesLaunchDefaultsFor(undefined)}>
+      <p>The Pod a relay allocated against {kubernetesLaunchDefaultsFor?.label || kubernetesLaunchDefaultsFor?.type} on the Relay allocations page actually creates — set once here, not on the allocation itself.</p>
+      {kubernetesLaunchDefaultsDraft && <form onSubmit={(event) => { event.preventDefault(); void saveKubernetesLaunchDefaults(); }}>
+        <label>Namespace<input aria-label="Launch Kubernetes namespace" placeholder="default" required value={kubernetesLaunchDefaultsDraft.namespace} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, namespace: event.target.value })} /></label>
+        <label>Image<input aria-label="Launch Kubernetes image" placeholder="ghcr.io/karst-net/karst-relay:dev" required value={kubernetesLaunchDefaultsDraft.image} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, image: event.target.value })} /></label>
+        <label>CPU<input aria-label="Launch Kubernetes CPU" placeholder="250m" required value={kubernetesLaunchDefaultsDraft.cpu} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, cpu: event.target.value })} /></label>
+        <label>Memory<input aria-label="Launch Kubernetes memory" placeholder="256Mi" required value={kubernetesLaunchDefaultsDraft.memory} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, memory: event.target.value })} /></label>
+        <p className="lede">CPU and memory use Kubernetes's own quantity syntax, and are used as both the Pod's request and its limit.</p>
+        <label>Service account (optional)<input aria-label="Launch Kubernetes service account" value={kubernetesLaunchDefaultsDraft.serviceAccount} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, serviceAccount: event.target.value })} /></label>
+        <div className="actions"><button type="button" onClick={() => setKubernetesLaunchDefaultsFor(undefined)}>Cancel</button><button className="primary" type="submit">Save launch defaults</button></div>
       </form>}
     </Dialog>
   </section>;

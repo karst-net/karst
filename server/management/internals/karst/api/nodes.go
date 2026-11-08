@@ -310,6 +310,10 @@ type infraConnectionReadWriter interface {
 	// (ADR-0067): the pre-registered parameterized job ID/datacenter a
 	// named relay allocation against a Nomad connection actuates.
 	UpdateNomadLaunchDefaults(ctx context.Context, id string, req infraconnections.UpdateNomadLaunchDefaultsRequest) (*infraconnections.Account, error)
+	// UpdateKubernetesLaunchDefaults is UpdateLaunchDefaults's Kubernetes
+	// analog (ADR-0067): the Pod shape (image/cpu/memory/service account)
+	// a named relay allocation against a Kubernetes connection actuates.
+	UpdateKubernetesLaunchDefaults(ctx context.Context, id string, req infraconnections.UpdateKubernetesLaunchDefaultsRequest) (*infraconnections.Account, error)
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -704,6 +708,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/resources", h.infraConnectionResources).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/launch-defaults", h.infraConnectionUpdateLaunchDefaults).Methods(http.MethodPut, http.MethodOptions)
 	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/nomad-launch-defaults", h.infraConnectionUpdateNomadLaunchDefaults).Methods(http.MethodPut, http.MethodOptions)
+	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/kubernetes-launch-defaults", h.infraConnectionUpdateKubernetesLaunchDefaults).Methods(http.MethodPut, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/regions/{provider}/{region}", h.regionsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -3511,6 +3516,39 @@ func (h *handler) infraConnectionUpdateNomadLaunchDefaults(w http.ResponseWriter
 		return
 	}
 	connection, err := h.infraConnections.UpdateNomadLaunchDefaults(r.Context(), mux.Vars(r)["connectionId"], req)
+	if errors.Is(err, infraconnections.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "infrastructure connection not found"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, connection.ToResponse())
+}
+
+// infraConnectionUpdateKubernetesLaunchDefaults is
+// infraConnectionUpdateLaunchDefaults's Kubernetes analog (ADR-0067) --
+// same gate, same shape, a different provider's launch fields.
+func (h *handler) infraConnectionUpdateKubernetesLaunchDefaults(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.infraConnections == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "infrastructure connections are not configured"), w)
+		return
+	}
+	if err := requireInfraConnectionAdminRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var req infraconnections.UpdateKubernetesLaunchDefaultsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	connection, err := h.infraConnections.UpdateKubernetesLaunchDefaults(r.Context(), mux.Vars(r)["connectionId"], req)
 	if errors.Is(err, infraconnections.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "infrastructure connection not found"), w)
 		return

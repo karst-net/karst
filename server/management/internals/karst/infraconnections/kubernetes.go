@@ -50,14 +50,11 @@ func validateKubernetesSecret(raw []byte) error {
 	return nil
 }
 
-// discoverKubernetes proves the stored kubeconfig is reachable
-// (Discovery().ServerVersion()) and lists the namespaces the credential's
-// RBAC grant can see -- the "permissions" surfaced to the operator. This is
-// discovery-only: no workload, secret, configmap, or pod access, and no
-// watch/reconcile loop. ModeReadWrite carries no different behavior than
-// ModeReadOnly here, the same unbuilt-Phase-2 posture as the AWS/Azure/GCP
-// credentials (see the package doc comment's ADR-0045 §6 addenda).
-func discoverKubernetes(ctx context.Context, rawSecret string) ([]DiscoveredResource, error) {
+// kubernetesClient builds a real client from this connection's own stored
+// kubeconfig -- shared by discoverKubernetes (read-only) and
+// kubernetesActuationDriver (actuation.go, ADR-0067), so there is exactly
+// one place that turns the pasted kubeconfig text into a *kubernetes.Clientset.
+func kubernetesClient(rawSecret string) (*kubernetes.Clientset, error) {
 	var s kubernetesSecret
 	if err := json.Unmarshal([]byte(rawSecret), &s); err != nil {
 		return nil, fmt.Errorf("kubernetes secret: %w", err)
@@ -69,6 +66,21 @@ func discoverKubernetes(ctx context.Context, rawSecret string) ([]DiscoveredReso
 	clientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes: build client: %w", err)
+	}
+	return clientset, nil
+}
+
+// discoverKubernetes proves the stored kubeconfig is reachable
+// (Discovery().ServerVersion()) and lists the namespaces the credential's
+// RBAC grant can see -- the "permissions" surfaced to the operator. This is
+// discovery-only: no workload, secret, configmap, or pod access, and no
+// watch/reconcile loop. ModeReadWrite carries no different behavior than
+// ModeReadOnly here, the same unbuilt-Phase-2 posture as the AWS/Azure/GCP
+// credentials (see the package doc comment's ADR-0045 §6 addenda).
+func discoverKubernetes(ctx context.Context, rawSecret string) ([]DiscoveredResource, error) {
+	clientset, err := kubernetesClient(rawSecret)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := clientset.Discovery().ServerVersion(); err != nil {
 		return nil, fmt.Errorf("kubernetes: server version (reachability check): %w", err)
