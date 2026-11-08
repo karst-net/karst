@@ -113,6 +113,15 @@ type Route struct {
 	AccessControlGroups []string `gorm:"serializer:json"`
 	// SkipAutoApply indicates if this exit node route (0.0.0.0/0) should skip auto-application for client routing
 	SkipAutoApply bool
+	// DnsZone binds this route's effective routing to a DNS zone instead of
+	// to Network by longest-prefix match alone — ADR-0068. Requires a
+	// Subnet-kind route (Network.Bits() != 0); empty for an ordinary route.
+	DnsZone string
+	// PinnedEgressIP declares the stable address a legacy network's own
+	// firewall is expected to allowlist for this route's gateway candidate —
+	// ADR-0068. HA-family members (see GetHAUniqueID, or shared DnsZone) must
+	// agree on this value or the route is rejected at save time.
+	PinnedEgressIP string
 }
 
 // EventMeta returns activity event meta related to the route
@@ -145,6 +154,8 @@ func (r *Route) Copy() *Route {
 		Groups:              slices.Clone(r.Groups),
 		AccessControlGroups: slices.Clone(r.AccessControlGroups),
 		SkipAutoApply:       r.SkipAutoApply,
+		DnsZone:             r.DnsZone,
+		PinnedEgressIP:      r.PinnedEgressIP,
 	}
 	return route
 }
@@ -172,7 +183,9 @@ func (r *Route) Equal(other *Route) bool {
 		slices.Equal(r.Groups, other.Groups) &&
 		slices.Equal(r.PeerGroups, other.PeerGroups) &&
 		slices.Equal(r.AccessControlGroups, other.AccessControlGroups) &&
-		other.SkipAutoApply == r.SkipAutoApply
+		other.SkipAutoApply == r.SkipAutoApply &&
+		other.DnsZone == r.DnsZone &&
+		other.PinnedEgressIP == r.PinnedEgressIP
 }
 
 // IsDynamic returns if the route is dynamic, i.e. has domains

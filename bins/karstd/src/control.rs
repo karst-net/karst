@@ -1324,6 +1324,10 @@ impl Client {
             route_observations: self.route_observations.clone(),
             relay_lifecycle_schema: 1,
             gateway_ingress_schema: 1,
+            // This node understands `KarstRouteOffer`'s `dns_zone`/
+            // `pinned_egress_ip` — ADR-0068, same declaration pattern as
+            // `gateway_ingress_schema` just above.
+            dns_zone_affinity_schema: 1,
             software: Some(pb::KarstSoftwareIdentity {
                 version: crate::VERSION.to_owned(),
                 revision: crate::REVISION.to_owned(),

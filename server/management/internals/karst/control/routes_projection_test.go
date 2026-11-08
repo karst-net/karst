@@ -94,6 +94,25 @@ func TestProjectRouteOffersRejectsUnsupportedOrAmbiguousRows(t *testing.T) {
 	}
 }
 
+func TestProjectRouteOffersPropagatesDnsZoneAffinity(t *testing.T) {
+	route := effectiveRoute("route-zone", "10.60.0.0/16", "gateway-zone")
+	route.DnsZone = "legacy.example.internal"
+	route.PinnedEgressIP = "203.0.113.10"
+	offers, err := projectRouteOffers(&types.NetworkMap{Routes: []*nbroute.Route{route}}, "client-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(offers) != 1 {
+		t.Fatalf("got %d offers, want 1", len(offers))
+	}
+	if got := offers[0].GetDnsZone(); got != "legacy.example.internal" {
+		t.Fatalf("dns_zone = %q", got)
+	}
+	if got := offers[0].GetPinnedEgressIp(); got != "203.0.113.10" {
+		t.Fatalf("pinned_egress_ip = %q", got)
+	}
+}
+
 func TestProjectRouteOffersOmitsDisabledRows(t *testing.T) {
 	route := effectiveRoute("disabled", "10.0.0.0/8", "gateway")
 	route.Enabled = false

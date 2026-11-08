@@ -221,7 +221,14 @@ pub enum Error {
 }
 
 /// Canonical DNS comparison form: ASCII lower-case, no trailing root dot.
-pub(crate) fn canonical_name(raw: &str) -> Result<String, Error> {
+///
+/// Public because a caller outside this crate comparing a queried name
+/// against its own policy — ADR-0068's DNS-zone-scoped Gateway affinity,
+/// comparing a resolved query's name against a `dns_zone` binding — needs to
+/// normalize the same way this crate's own `Resolver`/`RoutingTable`
+/// comparisons already do, or the two would silently never match a name that
+/// only differs by a trailing root dot.
+pub fn canonical_name(raw: &str) -> Result<String, Error> {
     let name = raw.trim_end_matches('.');
     if name.is_empty() {
         return Ok(String::new());

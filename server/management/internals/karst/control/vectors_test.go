@@ -170,14 +170,16 @@ type versionRelay struct {
 }
 
 type versionRoute struct {
-	RouteID    string `json:"route_id"`
-	Prefix     string `json:"prefix"`
-	GatewayID  string `json:"gateway_id"`
-	Metric     uint32 `json:"metric"`
-	Kind       uint32 `json:"kind"`
-	Masquerade bool   `json:"masquerade"`
-	KeepRoute  bool   `json:"keep_route"`
-	Role       uint32 `json:"role"`
+	RouteID        string `json:"route_id"`
+	Prefix         string `json:"prefix"`
+	GatewayID      string `json:"gateway_id"`
+	Metric         uint32 `json:"metric"`
+	Kind           uint32 `json:"kind"`
+	Masquerade     bool   `json:"masquerade"`
+	KeepRoute      bool   `json:"keep_route"`
+	Role           uint32 `json:"role"`
+	DnsZone        string `json:"dns_zone,omitempty"`
+	PinnedEgressIP string `json:"pinned_egress_ip,omitempty"`
 }
 
 type versionPeer struct {
@@ -997,6 +999,7 @@ func TestVectors(t *testing.T) {
 				GatewayID: hex.EncodeToString(route.GetGatewayId()), Metric: route.GetMetric(),
 				Kind: uint32(route.GetKind()), Masquerade: route.GetMasquerade(),
 				KeepRoute: route.GetKeepRoute(), Role: uint32(route.GetRole()),
+				DnsZone: route.GetDnsZone(), PinnedEgressIP: route.GetPinnedEgressIp(),
 			})
 		}
 		for _, route := range tc.resp.GetDnsConfig().GetRoutes() {

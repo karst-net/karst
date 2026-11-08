@@ -5,9 +5,11 @@ package control_test
 
 import (
 	"context"
+	"net/netip"
 	"testing"
 
 	"github.com/netbirdio/netbird/management/internals/karst/control"
+	nbroute "github.com/netbirdio/netbird/route"
 	"github.com/netbirdio/netbird/shared/management/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -17,6 +19,16 @@ import (
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/stretchr/testify/require"
 )
+
+// fakeRoutes is a Routes source whose NetworkMap is fixed at construction,
+// so a test controls exactly which route offers a netmap request sees
+// without a database -- the real NetmapHandler.Handle build/gate/hash path
+// still runs on top of it.
+type fakeRoutes struct{ routes []*nbroute.Route }
+
+func (f fakeRoutes) GetNetworkMap(context.Context, string) (*types.NetworkMap, error) {
+	return &types.NetworkMap{Routes: f.routes}, nil
+}
 
 type grantAccount struct{ account *types.Account }
 
@@ -133,4 +145,86 @@ func TestGatewayIngressSchemaPersistsUnconditionally(t *testing.T) {
 	recorded, err = f.handler.Nodes.Get(f.selfH)
 	require.NoError(t, err)
 	require.Zero(t, recorded.GatewayIngressSchema)
+}
+
+// TestScopedDnsZoneAffinityRequiresVersionedAgentAndHashesScope is
+// TestScopedGatewayIngressRequiresVersionedAgentAndHashesScope's
+// dns_zone_affinity_schema counterpart (ADR-0068) -- issue #553's
+// end-to-end acceptance test, exercising the real netmap build/gate/hash
+// path in NetmapHandler.Handle, not just route_offer.rs/zone_route.rs's own
+// client-side unit tests.
+func TestScopedDnsZoneAffinityRequiresVersionedAgentAndHashesScope(t *testing.T) {
+	f := newNetmapFixture(t, 1)
+	f.handler.Routes = fakeRoutes{routes: []*nbroute.Route{{
+		ID: "legacy", Network: netip.MustParsePrefix("10.70.0.0/16"), NetworkType: nbroute.IPv4Network,
+		Peer: f.selfH, Metric: 100, Enabled: true, Masquerade: true,
+		DnsZone: "legacy.example.internal", PinnedEgressIP: "203.0.113.10",
+	}}}
+	request := func(schema uint32, known uint64) (*proto.KarstNetmapResponse, error) {
+		payload, err := pb.Marshal(&proto.KarstNetmapRequest{DnsZoneAffinitySchema: schema, KnownVersion: known})
+		require.NoError(t, err)
+		raw, err := f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
+		if err != nil {
+			return nil, err
+		}
+		response := &proto.KarstNetmapResponse{}
+		require.NoError(t, pb.Unmarshal(raw, response))
+		return response, nil
+	}
+	for _, schema := range []uint32{0, 2} {
+		_, err := request(schema, 0)
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		recorded, readErr := f.handler.Nodes.Get(f.selfH)
+		require.NoError(t, readErr)
+		require.Equal(t, "incompatible", recorded.ControlCheck.Status)
+		require.Equal(t, "dns_zone_affinity_schema", recorded.ControlCheck.Capability)
+		require.Equal(t, uint32(1), recorded.ControlCheck.RequiredSchema)
+		require.Equal(t, schema, recorded.ControlCheck.ReportedSchema)
+		require.NotNil(t, recorded.ControlCheck.ObservedAt)
+	}
+	response, err := request(1, 0)
+	require.NoError(t, err)
+	require.Equal(t, uint32(1), response.DnsZoneAffinitySchema)
+	require.Len(t, response.Routes, 1)
+	require.Equal(t, "legacy.example.internal", response.Routes[0].GetDnsZone())
+	require.Equal(t, "203.0.113.10", response.Routes[0].GetPinnedEgressIp())
+	// An old decoder ignores dns_zone/pinned_egress_ip, and therefore
+	// computes a different hash.
+	legacy, ok := pb.Clone(response).(*proto.KarstNetmapResponse)
+	require.True(t, ok)
+	legacy.Routes[0].DnsZone = ""
+	legacy.Routes[0].PinnedEgressIp = ""
+	require.NotEqual(t, control.NetmapVersion(response), control.NetmapVersion(legacy))
+	unchanged, err := request(1, response.Version)
+	require.NoError(t, err)
+	require.True(t, unchanged.Unchanged)
+	// known version must not bypass the schema gate.
+	_, err = request(0, response.Version)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+}
+
+// TestDnsZoneAffinitySchemaPersistsUnconditionally is
+// TestGatewayIngressSchemaPersistsUnconditionally's dns_zone_affinity_schema
+// counterpart: recorded on node.Identity for every netmap request, not only
+// one whose routes happen to trip the gated FailedPrecondition check above.
+func TestDnsZoneAffinitySchemaPersistsUnconditionally(t *testing.T) {
+	f := newNetmapFixture(t, 1)
+	// No Routes source configured at all, so the gated check in netmap.go
+	// never runs.
+	payload, err := pb.Marshal(&proto.KarstNetmapRequest{DnsZoneAffinitySchema: 1})
+	require.NoError(t, err)
+	_, err = f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
+	require.NoError(t, err)
+	recorded, err := f.handler.Nodes.Get(f.selfH)
+	require.NoError(t, err)
+	require.Equal(t, uint32(1), recorded.DnsZoneAffinitySchema)
+
+	// A later legacy declaration replaces the earlier one.
+	payload, err = pb.Marshal(&proto.KarstNetmapRequest{DnsZoneAffinitySchema: 0})
+	require.NoError(t, err)
+	_, err = f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
+	require.NoError(t, err)
+	recorded, err = f.handler.Nodes.Get(f.selfH)
+	require.NoError(t, err)
+	require.Zero(t, recorded.DnsZoneAffinitySchema)
 }

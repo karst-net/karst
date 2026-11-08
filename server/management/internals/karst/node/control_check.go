@@ -33,7 +33,7 @@ func (s *Store) RecordControlCheck(ctx context.Context, handle string, check Con
 			return fmt.Errorf("node: accepted control check contains a rejection")
 		}
 	case "incompatible":
-		if (check.Capability != "relay_lifecycle_schema" && check.Capability != "gateway_ingress_schema") || check.RequiredSchema == 0 || check.ReportedSchema == check.RequiredSchema {
+		if (check.Capability != "relay_lifecycle_schema" && check.Capability != "gateway_ingress_schema" && check.Capability != "dns_zone_affinity_schema") || check.RequiredSchema == 0 || check.ReportedSchema == check.RequiredSchema {
 			return fmt.Errorf("node: invalid control capability rejection")
 		}
 	default:

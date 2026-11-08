@@ -55,6 +55,15 @@ func checkRoutePrefixOrDomainsExistForPeers(ctx context.Context, transaction sto
 			continue
 		}
 
+		// ADR-0068: two DnsZone-scoped routes may declare the same or an
+		// overlapping prefix without being a Conflict, even for the same
+		// peer — their prefix is an authorization bound, never inserted
+		// into AllowedIps the way an ordinary route's is, so the collision
+		// this check otherwise exists to prevent cannot occur between them.
+		if checkRoute.DnsZone != "" && prefixRoute.DnsZone != "" {
+			continue
+		}
+
 		if prefixRoute.Peer != "" {
 			seenPeers[string(prefixRoute.ID)] = true
 		}
@@ -134,7 +143,7 @@ func getRouteDescriptor(prefix netip.Prefix, domains domain.List) string {
 }
 
 // CreateRoute creates and saves a new route
-func (am *DefaultAccountManager) CreateRoute(ctx context.Context, accountID string, prefix netip.Prefix, networkType route.NetworkType, domains domain.List, peerID string, peerGroupIDs []string, description string, netID route.NetID, masquerade bool, metric int, groups, accessControlGroupIDs []string, enabled bool, userID string, keepRoute bool, skipAutoApply bool) (*route.Route, error) {
+func (am *DefaultAccountManager) CreateRoute(ctx context.Context, accountID string, prefix netip.Prefix, networkType route.NetworkType, domains domain.List, peerID string, peerGroupIDs []string, description string, netID route.NetID, masquerade bool, metric int, groups, accessControlGroupIDs []string, enabled bool, userID string, keepRoute bool, skipAutoApply bool, dnsZone string, pinnedEgressIP string) (*route.Route, error) {
 	allowed, ctx, err := am.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.Routes, operations.Create)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
@@ -169,6 +178,8 @@ func (am *DefaultAccountManager) CreateRoute(ctx context.Context, accountID stri
 			Groups:              groups,
 			AccessControlGroups: accessControlGroupIDs,
 			SkipAutoApply:       skipAutoApply,
+			DnsZone:             dnsZone,
+			PinnedEgressIP:      pinnedEgressIP,
 		}
 
 		if err = validateRoute(ctx, transaction, accountID, newRoute); err != nil {
@@ -333,12 +344,94 @@ func validateRoute(ctx context.Context, transaction store.Store, accountID strin
 		return status.Errorf(status.InvalidArgument, "peer with ID and peer groups should not be provided at the same time")
 	}
 
+	if err := validateDnsZoneAffinity(routeToSave); err != nil {
+		return err
+	}
+
 	groupsMap, err := validateRouteGroups(ctx, transaction, accountID, routeToSave)
 	if err != nil {
 		return err
 	}
 
-	return checkRoutePrefixOrDomainsExistForPeers(ctx, transaction, accountID, routeToSave, groupsMap)
+	if err := checkRoutePrefixOrDomainsExistForPeers(ctx, transaction, accountID, routeToSave, groupsMap); err != nil {
+		return err
+	}
+
+	return checkRouteFamilyAgreement(ctx, transaction, accountID, routeToSave)
+}
+
+// validateDnsZoneAffinity validates the two ADR-0068 fields in isolation,
+// before any other route in the account is consulted: PinnedEgressIP must
+// parse as an address (mirroring the client's own IpAddr parse in
+// route_offer.rs), and DnsZone requires a Subnet-kind CIDR route — a
+// zone-scoped Exit or domain route has no meaning, the same rule
+// route_offer::Offer::from_wire enforces client-side.
+func validateDnsZoneAffinity(routeToSave *route.Route) error {
+	if routeToSave.PinnedEgressIP != "" {
+		if _, err := netip.ParseAddr(routeToSave.PinnedEgressIP); err != nil {
+			return status.Errorf(status.InvalidArgument, "invalid pinned egress IP %q", routeToSave.PinnedEgressIP)
+		}
+	}
+	if routeToSave.DnsZone != "" {
+		if len(routeToSave.Domains) > 0 {
+			return status.Errorf(status.InvalidArgument, "dns_zone cannot be combined with a domain route")
+		}
+		if routeToSave.Network.Bits() == 0 {
+			return status.Errorf(status.InvalidArgument, "dns_zone requires a subnet route, not a default route")
+		}
+	}
+	return nil
+}
+
+// checkRouteFamilyAgreement rejects a save whose PinnedEgressIP disagrees
+// with another member of its HA family — route_offer.rs's parse_all treats
+// this disagreement as a hard conflict, not a silently-resolved one
+// (AgreedFields), and ADR-0068 asks the Go control plane to mirror that
+// check as a faster, save-time failure. The family is grouped by DnsZone
+// when the route being saved declares one (group_key's own rule: two zones
+// sharing a prefix are never one family), otherwise by the same
+// prefix/domains grouping checkRoutePrefixOrDomainsExistForPeers already
+// uses.
+func checkRouteFamilyAgreement(ctx context.Context, transaction store.Store, accountID string, checkRoute *route.Route) error {
+	var family []*route.Route
+	var err error
+	if checkRoute.DnsZone != "" {
+		family, err = getRoutesByDnsZone(ctx, transaction, accountID, checkRoute.DnsZone)
+	} else {
+		family, err = getRoutesByPrefixOrDomains(ctx, transaction, accountID, checkRoute.Network, checkRoute.Domains)
+	}
+	if err != nil {
+		return err
+	}
+	for _, member := range family {
+		if member.ID == checkRoute.ID {
+			continue
+		}
+		if member.PinnedEgressIP != checkRoute.PinnedEgressIP {
+			return status.Errorf(status.InvalidArgument,
+				"pinned egress IP %q disagrees with route %s's %q; HA candidates for the same route must agree",
+				checkRoute.PinnedEgressIP, member.ID, member.PinnedEgressIP)
+		}
+	}
+	return nil
+}
+
+// getRoutesByDnsZone mirrors getRoutesByPrefixOrDomains, grouping by DnsZone
+// instead of by prefix/domains — ADR-0068's zone-scoped HA family.
+func getRoutesByDnsZone(ctx context.Context, transaction store.Store, accountID, dnsZone string) ([]*route.Route, error) {
+	accountRoutes, err := transaction.GetAccountRoutes(ctx, store.LockingStrengthNone, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	routes := make([]*route.Route, 0)
+	for _, r := range accountRoutes {
+		if r.DnsZone == dnsZone {
+			routes = append(routes, r)
+		}
+	}
+
+	return routes, nil
 }
 
 // validateRouteGroups validates the route groups and returns the validated groups map.

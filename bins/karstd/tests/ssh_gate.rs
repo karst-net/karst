@@ -147,6 +147,7 @@ fn server_config(filter: PacketFilter, ssh_filter: SshFilter) -> Arc<Config> {
             candidates: Vec::new(),
         }],
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
+        zone_routes: karstd::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
         skipped: Vec::new(),
         filter,
         ssh_filter,

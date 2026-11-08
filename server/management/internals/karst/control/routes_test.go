@@ -44,14 +44,16 @@ func TestNetmapVersionCoversEveryRouteOfferField(t *testing.T) {
 		Routes: []*proto.KarstRouteOffer{base},
 	})
 	cases := map[string]func(*proto.KarstRouteOffer){
-		"route id":   func(r *proto.KarstRouteOffer) { r.RouteId = "other" },
-		"prefix":     func(r *proto.KarstRouteOffer) { r.Prefix = "10.30.0.0/16" },
-		"gateway":    func(r *proto.KarstRouteOffer) { r.GatewayId = []byte("gateway-b") },
-		"metric":     func(r *proto.KarstRouteOffer) { r.Metric++ },
-		"kind":       func(r *proto.KarstRouteOffer) { r.Kind = proto.KarstRouteKind_KARST_ROUTE_KIND_EXIT },
-		"masquerade": func(r *proto.KarstRouteOffer) { r.Masquerade = false },
-		"keep route": func(r *proto.KarstRouteOffer) { r.KeepRoute = true },
-		"role":       func(r *proto.KarstRouteOffer) { r.Role = proto.KarstRouteRole_KARST_ROUTE_ROLE_GATEWAY },
+		"route id":         func(r *proto.KarstRouteOffer) { r.RouteId = "other" },
+		"prefix":           func(r *proto.KarstRouteOffer) { r.Prefix = "10.30.0.0/16" },
+		"gateway":          func(r *proto.KarstRouteOffer) { r.GatewayId = []byte("gateway-b") },
+		"metric":           func(r *proto.KarstRouteOffer) { r.Metric++ },
+		"kind":             func(r *proto.KarstRouteOffer) { r.Kind = proto.KarstRouteKind_KARST_ROUTE_KIND_EXIT },
+		"masquerade":       func(r *proto.KarstRouteOffer) { r.Masquerade = false },
+		"keep route":       func(r *proto.KarstRouteOffer) { r.KeepRoute = true },
+		"role":             func(r *proto.KarstRouteOffer) { r.Role = proto.KarstRouteRole_KARST_ROUTE_ROLE_GATEWAY },
+		"dns zone":         func(r *proto.KarstRouteOffer) { r.DnsZone = "legacy.example.internal" },
+		"pinned egress ip": func(r *proto.KarstRouteOffer) { r.PinnedEgressIp = "203.0.113.10" },
 	}
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {

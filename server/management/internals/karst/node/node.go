@@ -93,6 +93,13 @@ type Identity struct {
 	// control/netmap.go's unconditional SetGatewayIngressSchema call.
 	GatewayIngressSchema uint32 `gorm:"not null;default:0"`
 
+	// DnsZoneAffinitySchema mirrors GatewayIngressSchema exactly — ADR-0068's
+	// netmap-time capability declaration for KarstRouteOffer.dns_zone/
+	// pinned_egress_ip, persisted for the same fleet-compatibility-preview
+	// reason. See control/netmap.go's unconditional
+	// SetDnsZoneAffinitySchema call.
+	DnsZoneAffinitySchema uint32 `gorm:"not null;default:0"`
+
 	// Candidates is this node's own self-reported AVEN candidate list
 	// (`karst_control.proto`'s `KarstNetmapRequest.candidates`), order
 	// preserved, redistributed to this node's peers as

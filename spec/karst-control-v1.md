@@ -423,6 +423,7 @@ LP("karst-routes") ||
 each route's LP(route_id, prefix, gateway_id) || BE32(metric) ||
              BE32(kind) || BE32(masquerade ? 1 : 0) ||
              BE32(keep_route ? 1 : 0) || BE32(role) ||
+             LP(dns_zone) || LP(pinned_egress_ip) ||
 LP("karst-dns") ||
 LP(dns_config.zone) || BE32(dns_config.magic_dns ? 1 : 0) ||
 LP(dns_config.nameservers[0]) || ... ||
@@ -493,6 +494,20 @@ field must still be recognized as changed, or it is silently never delivered.
 A peer reporting no candidates hashes identically to before this field
 existed in both functions; pre-change version/digest values for one reporting
 any are intentionally incompatible. Both implementations and the shared
+vectors moved together.
+
+**Compatibility note (2026-11-08).** Each route's `LP(dns_zone) ||
+LP(pinned_egress_ip)` was added after `role`, for `KarstRouteOffer.dns_zone`/
+`pinned_egress_ip` — ADR-0068's DNS-zone-scoped Gateway affinity. Both fields
+are always length-prefixed, the empty string's `LP` encoding when a route
+declares neither — the same unconditional treatment `kind`/`masquerade`/
+`keep_route`/`role` on the same line already get, not a presence flag. Any
+response carrying at least one route therefore moves, whether or not that
+route declares either new field; a response with no routes is unaffected.
+The `dns_zone_affinity_schema` capability flags on the request and response
+are themselves excluded from the hash, the same way `gateway_ingress_schema`
+already is — only the content they gate moves the version. Pre-change version
+values are intentionally incompatible. Both implementations and the shared
 vectors moved together.
 
 ---

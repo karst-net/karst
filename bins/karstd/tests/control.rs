@@ -1267,8 +1267,20 @@ async fn root_rename_propagates_to_live_dns_and_offline_reconnect() {
         "{}.{}.{}.{}.in-addr.arpa.",
         octets[3], octets[2], octets[1], octets[0]
     );
-    karstd::dns::reconcile(&mut online_dns.0, &before, None).expect("online listeners");
-    karstd::dns::reconcile(&mut offline_dns.0, &old, None).expect("offline listeners");
+    karstd::dns::reconcile(
+        &mut online_dns.0,
+        &before,
+        None,
+        Arc::new(|_: &str, _: &[_]| {}),
+    )
+    .expect("online listeners");
+    karstd::dns::reconcile(
+        &mut offline_dns.0,
+        &old,
+        None,
+        Arc::new(|_: &str, _: &[_]| {}),
+    )
+    .expect("offline listeners");
     assert!(
         query(
             online_address,
@@ -1311,7 +1323,13 @@ async fn root_rename_propagates_to_live_dns_and_offline_reconnect() {
         && peer.node_id == stable_handle
         && peer.identity_addresses == stable_addresses
         && peer.public.psk == stable_psk));
-    karstd::dns::reconcile(&mut online_dns.0, &updated, None).expect("replace online DNS");
+    karstd::dns::reconcile(
+        &mut online_dns.0,
+        &updated,
+        None,
+        Arc::new(|_: &str, _: &[_]| {}),
+    )
+    .expect("replace online DNS");
     assert_eq!(
         online_dns
             .0
@@ -1373,7 +1391,13 @@ async fn root_rename_propagates_to_live_dns_and_offline_reconnect() {
     let reconnected = offline
         .to_config(settings(0x62, offline_address))
         .expect("reconnected config");
-    karstd::dns::reconcile(&mut offline_dns.0, &reconnected, None).expect("replace offline DNS");
+    karstd::dns::reconcile(
+        &mut offline_dns.0,
+        &reconnected,
+        None,
+        Arc::new(|_: &str, _: &[_]| {}),
+    )
+    .expect("replace offline DNS");
     assert!(
         query(
             offline_address,
@@ -1393,7 +1417,13 @@ async fn root_rename_propagates_to_live_dns_and_offline_reconnect() {
         .to_config(settings(0x61, online_address))
         .expect("rollback config");
     unchanged_access(&rolled_back, &label);
-    karstd::dns::reconcile(&mut online_dns.0, &rolled_back, None).expect("rollback DNS");
+    karstd::dns::reconcile(
+        &mut online_dns.0,
+        &rolled_back,
+        None,
+        Arc::new(|_: &str, _: &[_]| {}),
+    )
+    .expect("rollback DNS");
     assert!(
         query(
             online_address,

@@ -22,6 +22,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use karst_crypto::hash;
 use karst_crypto::kem::KemPublicKey;
@@ -454,6 +455,13 @@ pub struct Engine {
     /// ADR). Bounded so a peer that offers and is refused in a loop cannot
     /// grow this without limit.
     file_transfer_receipts: Mutex<VecDeque<filetransfer::Receipt>>,
+    /// DNS-zone affinity pins learned from answers to a `ZoneRoutes`-bound
+    /// query — ADR-0068. Held outside `roster` deliberately: unlike the
+    /// authenticated `zone_routes` table itself, a learned pin is this
+    /// node's own runtime state and must survive a netmap refresh that
+    /// leaves the binding unchanged, rather than being wiped by every
+    /// `reconfigure` the way `roster`'s wholesale swap otherwise would.
+    dns_affinity: crate::zone_route::DnsAffinityCache,
 }
 
 /// How many resolved transfers [`Engine::file_transfer_receipts`] remembers
@@ -484,6 +492,7 @@ impl Engine {
             stats: Counters::default(),
             home_relay: RwLock::new(None),
             file_transfer_receipts: Mutex::new(VecDeque::new()),
+            dns_affinity: crate::zone_route::DnsAffinityCache::default(),
         }
     }
 
@@ -1007,6 +1016,14 @@ impl Engine {
     /// A packet nobody owns is dropped and counted: silently discarding it is
     /// correct — the kernel routed it here, and there is no peer to ask — but
     /// silently *not counting* it turns a configuration mistake into a mystery.
+    ///
+    /// ADR-0068: a destination this node has learned a DNS-zone affinity pin
+    /// for ([`Self::note_dns_answer`]) routes to that pinned Gateway first,
+    /// ahead of the ordinary `AllowedIps` longest-prefix match — never as a
+    /// fallback from it. A pin exists only for a destination `zone_route`'s
+    /// module doc explains `AllowedIps` could never hold unambiguously in
+    /// the first place, so there is no ordering question between the two:
+    /// each destination is governed by at most one of them.
     pub fn outbound(&self, packet: &[u8], now_ms: u64) -> Output {
         let mut out = Output::default();
         let roster = self.roster();
@@ -1014,7 +1031,8 @@ impl Engine {
             self.stats.unroutable.fetch_add(1, Ordering::Relaxed);
             return out;
         };
-        let Some(peer) = roster.config.routes.route(dst) else {
+        let pinned = self.dns_affinity.lookup(dst);
+        let Some(peer) = pinned.or_else(|| roster.config.routes.route(dst)) else {
             self.stats.unroutable.fetch_add(1, Ordering::Relaxed);
             return out;
         };
@@ -1034,6 +1052,33 @@ impl Engine {
         };
         self.send_sealed(&roster, peer, via, packet, now_ms, &mut out);
         out
+    }
+
+    /// Record that `name` — which matched a `zone_routes` binding — resolved
+    /// to `resolved`, each with its own answer TTL — ADR-0068. Called from
+    /// `karst-dns`'s wire-answer path (`dns.rs`), never from the datapath
+    /// itself.
+    ///
+    /// Looks up the current roster's `zone_routes` for `name` itself here,
+    /// rather than have the caller do it and pass a bare peer index: the
+    /// authorization check — does `name`'s zone resolve to a Gateway at all,
+    /// and does each address in `resolved` actually fall inside that
+    /// Gateway's authorized bound — belongs with the table that holds the
+    /// authenticated binding, not with `karst-dns`, which has no notion of
+    /// `AllowedIps`/`ZoneRoutes` or any reason to be trusted with one. An
+    /// address outside the bound is silently not pinned; see `zone_route`'s
+    /// module doc for why that is the safe default rather than a fallback to
+    /// ordinary routing.
+    pub fn note_dns_answer(&self, name: &str, resolved: &[(IpAddr, Duration)]) {
+        let roster = self.roster();
+        if roster.config.zone_routes.is_empty() {
+            return;
+        }
+        for &(addr, ttl) in resolved {
+            if let Some(peer) = roster.config.zone_routes.resolve(name, addr) {
+                self.dns_affinity.pin(addr, peer, ttl);
+            }
+        }
     }
 
     /// Seal a payload to a peer and fragment it onto the wire.

@@ -10,9 +10,7 @@
 )]
 
 use std::fmt;
-#[cfg(not(windows))]
-use std::net::IpAddr;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -549,6 +547,17 @@ pub enum Error {
     Config(#[from] karst_dns::Error),
 }
 
+/// Reports a successfully forwarded DNS answer — ADR-0068's input for
+/// DNS-zone-scoped Gateway affinity. Called with the canonical queried name
+/// (lower-case, no trailing root dot — [`karst_dns::canonical_name`]'s form,
+/// matching how a `dns_zone` binding is itself stored) and every A/AAAA
+/// record the answer carried, each with its own TTL.
+///
+/// A node with no `dns_zone` binding configured pays for this only as one
+/// extra closure call per answer; [`crate::zone_route::ZoneRoutes::is_empty`]
+/// is the real short-circuit, on the consuming side in `run.rs`.
+pub type AnswerHook = dyn Fn(&str, &[(IpAddr, Duration)]) + Send + Sync;
+
 /// UDP and TCP listeners owned together so a netmap replacement can stop the
 /// old authoritative zone before installing the new one.
 pub struct Runtime {
@@ -615,7 +624,14 @@ fn bind_retrying<T>(bind: impl Fn() -> std::io::Result<T>) -> std::io::Result<T>
 impl Runtime {
     /// Bind both DNS transports. The caller supplies an unprivileged address in
     /// tests/userspace mode or the socket-unit/TUN address in kernel mode.
-    pub fn start(address: SocketAddr, resolver: Resolver) -> std::io::Result<Self> {
+    ///
+    /// `on_answered` is [`AnswerHook`] — pass `Arc::new(|_, _| {})` for a
+    /// caller with no Gateway affinity to learn.
+    pub fn start(
+        address: SocketAddr,
+        resolver: Resolver,
+        on_answered: Arc<AnswerHook>,
+    ) -> std::io::Result<Self> {
         let udp = bind_retrying(|| UdpSocket::bind(address))?;
         let tcp = bind_retrying(|| TcpListener::bind(address))?;
         udp.set_read_timeout(Some(Duration::from_millis(100)))?;
@@ -623,17 +639,24 @@ impl Runtime {
         let stopping = Arc::new(AtomicBool::new(false));
         let tcp_resolver = resolver.clone();
         let runtime_resolver = resolver.clone();
+        let tcp_hook = Arc::clone(&on_answered);
 
         let udp_stop = Arc::clone(&stopping);
         let udp_worker = thread::spawn(move || {
             while !udp_stop.load(Ordering::Relaxed) {
-                let _ = karst_dns::listener::serve_udp_once(&udp, &resolver);
+                let _ = karst_dns::listener::serve_udp_once_with(&udp, &resolver, |name, addrs| {
+                    on_answered(name, addrs);
+                });
             }
         });
         let tcp_stop = Arc::clone(&stopping);
         let tcp_worker = thread::spawn(move || {
             while !tcp_stop.load(Ordering::Relaxed) {
-                match karst_dns::listener::serve_tcp_once(&tcp, &tcp_resolver) {
+                match karst_dns::listener::serve_tcp_once_with(
+                    &tcp,
+                    &tcp_resolver,
+                    |name, addrs| tcp_hook(name, addrs),
+                ) {
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(10));
                     }
@@ -651,10 +674,13 @@ impl Runtime {
     /// Serve DNS inside the userspace overlay stack. Unlike [`Self::start`],
     /// this opens no host socket and therefore needs neither an interface
     /// address nor `CAP_NET_BIND_SERVICE`.
+    ///
+    /// `on_answered` is [`AnswerHook`], as [`Self::start`].
     pub fn start_userspace(
         stack: karst_tun::Userspace,
         port: u16,
         resolver: Resolver,
+        on_answered: Arc<AnswerHook>,
     ) -> std::io::Result<Self> {
         let listener = stack
             .listen_udp(port)
@@ -680,6 +706,7 @@ impl Runtime {
                             })
                         });
                     if let Ok(response) = response {
+                        report_answer(on_answered.as_ref(), &request, &response);
                         let _ = stack.udp_send(listener, &response, from);
                     }
                 }
@@ -704,6 +731,7 @@ impl Runtime {
                             })
                         });
                     if let Ok(response) = response {
+                        report_answer(on_answered.as_ref(), request, &response);
                         if let Ok(length) = u16::try_from(response.len()) {
                             let mut framed = length.to_be_bytes().to_vec();
                             framed.extend_from_slice(&response);
@@ -770,6 +798,30 @@ fn userspace_handle_wire(
     }
 }
 
+/// As `karst_dns::listener`'s own (private) `report_answer` — duplicated
+/// rather than shared across the crate boundary, since the userspace
+/// overlay path (unlike the host-socket path `listener::serve_udp_once_with`
+/// already covers) has no other reason to depend on that module. Decodes
+/// `request` only far enough to canonicalize the queried name, extracts
+/// `response`'s answered addresses, and calls `hook` — skipped entirely when
+/// there is nothing to report, so a hook never sees an empty address list.
+fn report_answer(hook: &AnswerHook, request: &[u8], response: &[u8]) {
+    let addresses = karst_dns::service::answered_addresses(response);
+    if addresses.is_empty() {
+        return;
+    }
+    let Ok(decoded) = karst_dns::message::decode(request) else {
+        return;
+    };
+    let Some(query) = decoded.queries.first() else {
+        return;
+    };
+    let Ok(name) = karst_dns::canonical_name(&query.name().to_ascii()) else {
+        return;
+    };
+    hook(&name, &addresses);
+}
+
 fn userspace_forward(
     stack: &karst_tun::Userspace,
     socket: karst_tun::UdpHandle,
@@ -825,6 +877,7 @@ pub fn reconcile(
     runtime: &mut Option<Runtime>,
     config: &crate::config::Config,
     userspace: Option<karst_tun::Userspace>,
+    on_answered: Arc<AnswerHook>,
 ) -> Result<(), String> {
     let resolver = from_config(config).map_err(|error| error.to_string())?;
     if let Some(old) = runtime.take() {
@@ -832,10 +885,13 @@ pub fn reconcile(
     }
     if let Some(resolver) = resolver {
         let next = match userspace {
-            Some(stack) => {
-                Runtime::start_userspace(stack, config.dns.stub_address.port(), resolver)
-            }
-            None => Runtime::start(config.dns.stub_address, resolver),
+            Some(stack) => Runtime::start_userspace(
+                stack,
+                config.dns.stub_address.port(),
+                resolver,
+                on_answered,
+            ),
+            None => Runtime::start(config.dns.stub_address, resolver, on_answered),
         }
         .map_err(|error| error.to_string())?;
         *runtime = Some(next);
@@ -1216,7 +1272,7 @@ mod tests {
             let probe = std::net::TcpListener::bind("127.0.0.1:0")?;
             let address = probe.local_addr()?;
             drop(probe);
-            match Runtime::start(address, resolver.clone()) {
+            match Runtime::start(address, resolver.clone(), Arc::new(|_: &str, _: &[_]| {})) {
                 Ok(runtime) => return Ok((runtime, address)),
                 Err(e)
                     if (e.kind() == std::io::ErrorKind::AddrInUse
@@ -1645,7 +1701,13 @@ mod tests {
             Config::new(vec![], vec![], vec![], "aquifer.karst", true).expect("config"),
             [MeshPeer::new("atlas", [Ipv4Addr::new(100, 64, 0, 9)], [])],
         );
-        let runtime = Runtime::start_userspace(server.clone(), 53, resolver).expect("runtime");
+        let runtime = Runtime::start_userspace(
+            server.clone(),
+            53,
+            resolver,
+            Arc::new(|_: &str, _: &[_]| {}),
+        )
+        .expect("runtime");
         let socket = client.listen_udp(49_153).expect("client UDP");
         let mut request = Message::new(41, MessageType::Query, OpCode::Query);
         request.metadata.recursion_desired = true;
@@ -1690,7 +1752,13 @@ mod tests {
             Config::new(vec![], vec![], vec![], "aquifer.karst", true).expect("config"),
             [MeshPeer::new("atlas", [Ipv4Addr::new(100, 64, 0, 9)], [])],
         );
-        let runtime = Runtime::start_userspace(server.clone(), 53, resolver).expect("runtime");
+        let runtime = Runtime::start_userspace(
+            server.clone(),
+            53,
+            resolver,
+            Arc::new(|_: &str, _: &[_]| {}),
+        )
+        .expect("runtime");
         let connection = client
             .connect_tcp("100.64.0.1".parse().expect("server address"), 53)
             .expect("connect");
@@ -1771,7 +1839,9 @@ mod tests {
             .expect("config"),
             [],
         );
-        let runtime = Runtime::start_userspace(dns.clone(), 53, resolver).expect("DNS runtime");
+        let runtime =
+            Runtime::start_userspace(dns.clone(), 53, resolver, Arc::new(|_: &str, _: &[_]| {}))
+                .expect("DNS runtime");
         let upstream_socket = upstream.listen_udp(53).expect("upstream listener");
         let client_socket = client.listen_udp(49_153).expect("client socket");
         let mut request = Message::new(72, MessageType::Query, OpCode::Query);

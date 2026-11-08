@@ -10,9 +10,10 @@ import { ClientVersionObservation } from "./client-version";
 
 const blank: NetworkRouteDraft = {
   network_id: "", description: "", enabled: true, network: "", peer_groups: [], groups: [], access_control_groups: [],
-  metric: 9999, masquerade: true, keep_route: false, skip_auto_apply: false,
+  metric: 9999, masquerade: true, keep_route: false, skip_auto_apply: false, dns_zone: "", pinned_egress_ip: "",
 };
 const cidr = /^(?:\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}|[0-9a-fA-F:]+\/\d{1,3})$/;
+const ipAddress = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]+)$/;
 const isExit = (network: string) => network === "0.0.0.0/0" || network === "::/0";
 const fresh = (network = ""): NetworkRouteDraft => ({ ...blank, network, skip_auto_apply: isExit(network) });
 
@@ -47,7 +48,10 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
     if (value.peer_groups.length === 0) { setMessage("Select at least one routing group: the devices that forward this traffic."); return; }
     if (value.groups.length === 0) { setMessage("Select at least one distribution group, or no device is offered the route."); return; }
     if (value.access_control_groups.length === 0) { setMessage("Select at least one access-control group. Distribution alone is not authorization."); return; }
+    if (value.dns_zone && isExit(value.network)) { setMessage("A DNS zone requires a subnet route, not a default route."); return; }
+    if (value.pinned_egress_ip && !ipAddress.test(value.pinned_egress_ip)) { setMessage("The pinned egress IP must be a valid IPv4 or IPv6 address."); return; }
     value.skip_auto_apply = isExit(value.network);
+    if (isExit(value.network)) value.dns_zone = "";
     const done = draft.id
       ? await run(() => api.updateRoute(draft.id!, value), `Route ${value.network_id} was updated.`)
       : await run(() => api.createRoute(value), `Route ${value.network_id} was created.`);
@@ -130,6 +134,9 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
         <label>Network (CIDR)<input aria-label="Route network (CIDR)" placeholder="10.10.0.0/16" value={draft?.value.network ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value, skip_auto_apply: isExit(event.target.value) } })} /></label>
         {isExit(draft?.value.network ?? "") && <p className="lede">The server only offers this default route. Each client must run <code>karst gateway exit use &lt;route-id&gt;</code> locally before it becomes active. IPv4 and IPv6 consent are independent.</p>}
         <label>Description<input aria-label="Route description" value={draft?.value.description ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, description: event.target.value } })} /></label>
+        {!isExit(draft?.value.network ?? "") && <label>DNS zone (optional)<input aria-label="Route DNS zone" placeholder="legacy.example.internal" value={draft?.value.dns_zone ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, dns_zone: event.target.value } })} /></label>}
+        <label>Pinned egress IP (optional)<input aria-label="Route pinned egress IP" placeholder="203.0.113.10" value={draft?.value.pinned_egress_ip ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, pinned_egress_ip: event.target.value } })} /></label>
+        {Boolean(draft?.value.dns_zone || draft?.value.pinned_egress_ip) && <p className="lede">For a legacy network reachable only through an allowlisted gateway address. Gateway candidates sharing this route must agree on the pinned egress IP, or the save is rejected.</p>}
         <GroupSelect label="Routing groups" groups={groups} value={draft?.value.peer_groups ?? []} onChange={(peer_groups) => setDraft((current) => current && { ...current, value: { ...current.value, peer_groups } })} />
         <p className="lede">These devices must have Linux forwarding and nftables available. Multiple members form a failover set; the selected route metric determines preference.</p>
         <GroupSelect label="Distribution groups" groups={groups} value={draft?.value.groups ?? []} onChange={(selected) => setDraft((current) => current && { ...current, value: { ...current.value, groups: selected } })} />

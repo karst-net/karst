@@ -236,7 +236,7 @@ func TestCollectGroupChange_RouteLinked(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
@@ -273,7 +273,7 @@ func TestCollectGroupChange_RouteWithDirectPeer(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
@@ -414,7 +414,7 @@ func TestCollectGroupChange_MultipleEntities(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
@@ -537,7 +537,7 @@ func TestResolveAffectedPeers_RoutePeerGroups(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
@@ -571,7 +571,7 @@ func TestResolveAffectedPeers_RouteWithDirectPeer(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
@@ -598,7 +598,7 @@ func TestResolveAffectedPeers_RouteWithAccessControlGroups(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
@@ -780,7 +780,7 @@ func TestResolveAffectedPeers_SharedGroupAcrossPolicyAndRoute(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
@@ -939,7 +939,7 @@ func TestAffectedPeers_IsolatedRouteAndPolicy(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
@@ -1153,7 +1153,7 @@ func TestAffectedPeers_RouteChange_UnrelatedPeerNoUpdate(t *testing.T) {
 			true,
 			userID,
 			false,
-			false,
+			false, "", "",
 		)
 		assert.NoError(t, err)
 
@@ -1470,7 +1470,7 @@ func TestAffectedPeers_IsolatedEntitiesOnlyAffectTheirPeers(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
@@ -1548,7 +1548,7 @@ func TestAffectedPeers_DeleteRoute_UnrelatedPeerNoUpdate(t *testing.T) {
 		true,
 		userID,
 		false,
-		false,
+		false, "", "",
 	)
 	require.NoError(t, err)
 
