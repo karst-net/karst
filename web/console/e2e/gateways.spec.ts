@@ -129,3 +129,33 @@ test("default behavior keeps explicit client consent and existing route writes",
     peer_groups: ["group-gateways"], groups: ["group-all"], access_control_groups: ["group-sre"],
   });
 });
+
+test("DNS zone affinity is offered for a subnet route, hidden for a default route, and submits correctly", async ({ page }) => {
+  let submitted: Record<string, unknown> | undefined;
+  await page.route("**/api/routes", async (route) => {
+    if (route.request().method() !== "POST") { await route.continue(); return; }
+    submitted = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ status: 201, json: { ...submitted, id: "new-legacy" } });
+  });
+  await page.goto("/#/gateways");
+  await page.getByRole("button", { name: "Add subnet route", exact: true }).click();
+  await expect(page.getByLabel("Route DNS zone", { exact: true })).toBeVisible();
+
+  await page.getByLabel("Gateway behavior", { exact: true }).selectOption("0.0.0.0/0");
+  await expect(page.getByLabel("Route DNS zone", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Route pinned egress IP", { exact: true })).toBeVisible();
+  await page.getByLabel("Gateway behavior", { exact: true }).selectOption("subnet");
+
+  await page.getByLabel("Route identifier", { exact: true }).fill("legacy-net");
+  await page.getByLabel("Route network (CIDR)", { exact: true }).fill("10.40.0.0/16");
+  await page.getByLabel("Route DNS zone", { exact: true }).fill("legacy.example.internal");
+  await page.getByLabel("Route pinned egress IP", { exact: true }).fill("203.0.113.10");
+  await page.getByLabel("Routing groups", { exact: true }).selectOption(["group-gateways"]);
+  await page.getByLabel("Distribution groups", { exact: true }).selectOption(["group-all"]);
+  await page.getByLabel("Access-control groups", { exact: true }).selectOption(["group-sre"]);
+  await page.getByRole("button", { name: "Add route", exact: true }).click();
+  await expect.poll(() => submitted).toMatchObject({
+    network: "10.40.0.0/16", network_id: "legacy-net",
+    dns_zone: "legacy.example.internal", pinned_egress_ip: "203.0.113.10",
+  });
+});

@@ -213,18 +213,18 @@ func (mr *MockManagerMockRecorder) CreatePeerJob(ctx, accountID, peerID, userID,
 }
 
 // CreateRoute mocks base method.
-func (m *MockManager) CreateRoute(ctx context.Context, accountID string, prefix netip.Prefix, networkType route.NetworkType, domains domain.List, peerID string, peerGroupIDs []string, description string, netID route.NetID, masquerade bool, metric int, groups, accessControlGroupIDs []string, enabled bool, userID string, keepRoute, skipAutoApply bool) (*route.Route, error) {
+func (m *MockManager) CreateRoute(ctx context.Context, accountID string, prefix netip.Prefix, networkType route.NetworkType, domains domain.List, peerID string, peerGroupIDs []string, description string, netID route.NetID, masquerade bool, metric int, groups, accessControlGroupIDs []string, enabled bool, userID string, keepRoute, skipAutoApply bool, dnsZone, pinnedEgressIP string) (*route.Route, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateRoute", ctx, accountID, prefix, networkType, domains, peerID, peerGroupIDs, description, netID, masquerade, metric, groups, accessControlGroupIDs, enabled, userID, keepRoute, skipAutoApply)
+	ret := m.ctrl.Call(m, "CreateRoute", ctx, accountID, prefix, networkType, domains, peerID, peerGroupIDs, description, netID, masquerade, metric, groups, accessControlGroupIDs, enabled, userID, keepRoute, skipAutoApply, dnsZone, pinnedEgressIP)
 	ret0, _ := ret[0].(*route.Route)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CreateRoute indicates an expected call of CreateRoute.
-func (mr *MockManagerMockRecorder) CreateRoute(ctx, accountID, prefix, networkType, domains, peerID, peerGroupIDs, description, netID, masquerade, metric, groups, accessControlGroupIDs, enabled, userID, keepRoute, skipAutoApply interface{}) *gomock.Call {
+func (mr *MockManagerMockRecorder) CreateRoute(ctx, accountID, prefix, networkType, domains, peerID, peerGroupIDs, description, netID, masquerade, metric, groups, accessControlGroupIDs, enabled, userID, keepRoute, skipAutoApply, dnsZone, pinnedEgressIP interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateRoute", reflect.TypeOf((*MockManager)(nil).CreateRoute), ctx, accountID, prefix, networkType, domains, peerID, peerGroupIDs, description, netID, masquerade, metric, groups, accessControlGroupIDs, enabled, userID, keepRoute, skipAutoApply)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateRoute", reflect.TypeOf((*MockManager)(nil).CreateRoute), ctx, accountID, prefix, networkType, domains, peerID, peerGroupIDs, description, netID, masquerade, metric, groups, accessControlGroupIDs, enabled, userID, keepRoute, skipAutoApply, dnsZone, pinnedEgressIP)
 }
 
 // CreateSetupKey mocks base method.

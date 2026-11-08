@@ -71,6 +71,28 @@ func (s *Store) CountGatewayIngressBelow(ctx context.Context, account string, re
 	return s.countCapabilityBelow(ctx, account, "gateway_ingress_schema", required, transaction)
 }
 
+// SetDnsZoneAffinitySchema records a declaration for an identity
+// authenticated by the control channel, mirroring SetGatewayIngressSchema
+// above exactly: a later legacy declaration replaces an earlier one, so
+// upgrading once must not permanently claim support after a downgrade.
+func (s *Store) SetDnsZoneAffinitySchema(ctx context.Context, handle string, schema uint32) error {
+	result := s.db.WithContext(ctx).Model(&Identity{}).Where("handle = ?", handle).Update("dns_zone_affinity_schema", schema)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		_, err := s.Get(handle)
+		return err
+	}
+	return nil
+}
+
+// CountDnsZoneAffinityBelow is CountRelayLifecycleBelow's dns_zone_affinity_schema
+// counterpart.
+func (s *Store) CountDnsZoneAffinityBelow(ctx context.Context, account string, required uint32, transaction *gorm.DB) (int64, error) {
+	return s.countCapabilityBelow(ctx, account, "dns_zone_affinity_schema", required, transaction)
+}
+
 func (s *Store) countCapabilityBelow(ctx context.Context, account, column string, required uint32, transaction *gorm.DB) (int64, error) {
 	db := s.db
 	if transaction != nil {

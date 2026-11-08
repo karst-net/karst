@@ -25,6 +25,12 @@ func TestControlCheckPersistsRejectionAndClearsItOnlyOnAcceptance(t *testing.T) 
 	require.Equal(t, check.Capability, stored.ControlCheck.Capability)
 	require.True(t, stored.ControlCheck.ObservedAt.Equal(observed))
 
+	zoneCheck := node.ControlCheck{Status: "incompatible", Capability: "dns_zone_affinity_schema", RequiredSchema: 1, ObservedAt: &observed}
+	require.NoError(t, s.RecordControlCheck(context.Background(), handle, zoneCheck))
+	stored, err = s.Get(handle)
+	require.NoError(t, err)
+	require.Equal(t, zoneCheck.Capability, stored.ControlCheck.Capability)
+
 	for _, invalid := range []node.ControlCheck{
 		{Status: "accepted"},
 		{Status: "unknown", ObservedAt: &observed},

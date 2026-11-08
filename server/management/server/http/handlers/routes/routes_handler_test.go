@@ -78,7 +78,7 @@ func initRoutesTestData() *handler {
 					return nil, status.Errorf(status.NotFound, "route with ID %s not found", routeID)
 				}
 			},
-			CreateRouteFunc: func(_ context.Context, accountID string, prefix netip.Prefix, networkType route.NetworkType, domains domain.List, peerID string, peerGroups []string, description string, netID route.NetID, masquerade bool, metric int, groups, accessControlGroups []string, enabled bool, _ string, keepRoute bool, skipAutoApply bool) (*route.Route, error) {
+			CreateRouteFunc: func(_ context.Context, accountID string, prefix netip.Prefix, networkType route.NetworkType, domains domain.List, peerID string, peerGroups []string, description string, netID route.NetID, masquerade bool, metric int, groups, accessControlGroups []string, enabled bool, _ string, keepRoute bool, skipAutoApply bool, dnsZone string, pinnedEgressIP string) (*route.Route, error) {
 				if peerID == notFoundPeerID {
 					return nil, status.Errorf(status.InvalidArgument, "peer with ID %s not found", peerID)
 				}
@@ -106,6 +106,8 @@ func initRoutesTestData() *handler {
 					KeepRoute:           keepRoute,
 					AccessControlGroups: accessControlGroups,
 					SkipAutoApply:       skipAutoApply,
+					DnsZone:             dnsZone,
+					PinnedEgressIP:      pinnedEgressIP,
 				}, nil
 			},
 			SaveRouteFunc: func(_ context.Context, _, _ string, r *route.Route) error {
@@ -255,6 +257,29 @@ func TestRoutesHandlers(t *testing.T) {
 			},
 		},
 		{
+			name:        "POST OK With DNS Zone Affinity",
+			requestType: http.MethodPost,
+			requestPath: "/api/routes",
+			requestBody: bytes.NewBuffer(
+				[]byte(fmt.Sprintf(`{"Description":"Post","Network":"192.168.0.0/16","network_id":"awesomeNet","Peer":"%s","groups":["%s"],"dns_zone":"legacy.example.internal","pinned_egress_ip":"203.0.113.10","skip_auto_apply":false}`, existingPeerID, existingGroupID))),
+			expectedStatus: http.StatusOK,
+			expectedBody:   true,
+			expectedRoute: &api.Route{
+				Id:             existingRouteID,
+				Description:    "Post",
+				NetworkId:      "awesomeNet",
+				Network:        util.ToPtr("192.168.0.0/16"),
+				Peer:           &existingPeerID,
+				NetworkType:    route.IPv4NetworkString,
+				Masquerade:     false,
+				Enabled:        false,
+				Groups:         []string{existingGroupID},
+				SkipAutoApply:  util.ToPtr(false),
+				DnsZone:        util.ToPtr("legacy.example.internal"),
+				PinnedEgressIp: util.ToPtr("203.0.113.10"),
+			},
+		},
+		{
 			name:           "POST Non Linux Peer",
 			requestType:    http.MethodPost,
 			requestPath:    "/api/routes",
@@ -378,6 +403,28 @@ func TestRoutesHandlers(t *testing.T) {
 				Groups:        []string{existingGroupID},
 				KeepRoute:     true,
 				SkipAutoApply: util.ToPtr(false),
+			},
+		},
+		{
+			name:           "PUT OK With DNS Zone Affinity",
+			requestType:    http.MethodPut,
+			requestPath:    "/api/routes/" + existingRouteID,
+			requestBody:    bytes.NewBufferString(fmt.Sprintf(`{"Description":"Post","Network":"192.168.0.0/16","network_id":"awesomeNet","Peer":"%s","groups":["%s"],"dns_zone":"legacy.example.internal","pinned_egress_ip":"203.0.113.10","skip_auto_apply":false}`, existingPeerID, existingGroupID)),
+			expectedStatus: http.StatusOK,
+			expectedBody:   true,
+			expectedRoute: &api.Route{
+				Id:             existingRouteID,
+				Description:    "Post",
+				NetworkId:      "awesomeNet",
+				Network:        util.ToPtr("192.168.0.0/16"),
+				Peer:           &existingPeerID,
+				NetworkType:    route.IPv4NetworkString,
+				Masquerade:     false,
+				Enabled:        false,
+				Groups:         []string{existingGroupID},
+				SkipAutoApply:  util.ToPtr(false),
+				DnsZone:        util.ToPtr("legacy.example.internal"),
+				PinnedEgressIp: util.ToPtr("203.0.113.10"),
 			},
 		},
 		{

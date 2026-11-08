@@ -96,6 +96,7 @@ func projectRouteOffers(networkMap *types.NetworkMap, self string) ([]*proto.Kar
 			RouteId: string(route.GetResourceID()), Prefix: prefix.String(),
 			GatewayId: []byte(route.Peer), Metric: uint32(route.Metric), Kind: kind,
 			Masquerade: route.Masquerade, KeepRoute: route.KeepRoute, Role: role,
+			DnsZone: route.DnsZone, PinnedEgressIp: route.PinnedEgressIP,
 		})
 	}
 	sort.Slice(offers, func(i, j int) bool {

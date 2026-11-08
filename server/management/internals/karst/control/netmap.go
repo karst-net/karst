@@ -330,6 +330,11 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if err := h.Nodes.SetGatewayIngressSchema(ctx, self, req.GetGatewayIngressSchema()); err != nil {
 		return nil, fmt.Errorf("record Gateway ingress capability: %w", err)
 	}
+	// Recorded unconditionally, mirroring SetGatewayIngressSchema just
+	// above, for the same ADR-0066 fleet-compatibility-preview reason.
+	if err := h.Nodes.SetDnsZoneAffinitySchema(ctx, self, req.GetDnsZoneAffinitySchema()); err != nil {
+		return nil, fmt.Errorf("record DNS zone affinity capability: %w", err)
+	}
 	if h.RelayServices != nil {
 		publication, err := h.RelayServices.Publication(relayservice.WithAccount(ctx, accountID))
 		if err != nil {
@@ -511,6 +516,20 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		resp.Routes, routeErr = projectRouteOffers(networkMap, self)
 		if routeErr != nil {
 			return nil, routeErr
+		}
+		// ADR-0068, the same discipline as the gateway_ingress_schema gate
+		// below: a node that never declared dns_zone_affinity_schema >= 1
+		// must never be sent a zone-scoped or pinned offer, which it would
+		// otherwise silently misinterpret as an ordinary one.
+		for _, offer := range resp.Routes {
+			if offer.GetDnsZone() != "" || offer.GetPinnedEgressIp() != "" {
+				if req.GetDnsZoneAffinitySchema() != 1 {
+					h.recordControlCheck(ctx, self, node.ControlCheck{Status: "incompatible", Capability: "dns_zone_affinity_schema", RequiredSchema: 1, ReportedSchema: req.GetDnsZoneAffinitySchema()})
+					return nil, status.Error(codes.FailedPrecondition, "DNS-zone Gateway affinity requires dns_zone_affinity_schema 1; upgrade the agent")
+				}
+				resp.DnsZoneAffinitySchema = 1
+				break
+			}
 		}
 	}
 
@@ -1289,6 +1308,8 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 		h.Write(buf[:4])
 		binary.BigEndian.PutUint32(buf[:4], uint32(route.GetRole()))
 		h.Write(buf[:4])
+		writeField(h, []byte(route.GetDnsZone()))
+		writeField(h, []byte(route.GetPinnedEgressIp()))
 	}
 	writeField(h, []byte("karst-dns"))
 	dns := resp.GetDnsConfig()

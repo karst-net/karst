@@ -74,6 +74,8 @@ func TestCreateRoute(t *testing.T) {
 		groups              []string
 		accessControlGroups []string
 		skipAutoApply       bool
+		dnsZone             string
+		pinnedEgressIP      string
 	}
 
 	testCases := []struct {
@@ -173,6 +175,75 @@ func TestCreateRoute(t *testing.T) {
 				Groups:              []string{routeGroup1, routeGroup2},
 				AccessControlGroups: []string{routeGroup1, routeGroup2},
 			},
+		},
+		{
+			name: "Happy Path DNS Zone Affinity",
+			inputArgs: input{
+				network:             netip.MustParsePrefix("172.16.0.0/16"),
+				networkType:         route.IPv4Network,
+				netID:               "legacy",
+				peerKey:             peer1ID,
+				description:         "legacy network behind a firewall allowlist",
+				masquerade:          false,
+				metric:              9999,
+				enabled:             true,
+				groups:              []string{routeGroup1},
+				accessControlGroups: []string{routeGroup1},
+				dnsZone:             "legacy.example.internal",
+				pinnedEgressIP:      "203.0.113.10",
+			},
+			errFunc:      require.NoError,
+			shouldCreate: true,
+			expectedRoute: &route.Route{
+				Network:             netip.MustParsePrefix("172.16.0.0/16"),
+				NetworkType:         route.IPv4Network,
+				NetID:               "legacy",
+				Peer:                peer1ID,
+				Description:         "legacy network behind a firewall allowlist",
+				Masquerade:          false,
+				Metric:              9999,
+				Enabled:             true,
+				Groups:              []string{routeGroup1},
+				AccessControlGroups: []string{routeGroup1},
+				DnsZone:             "legacy.example.internal",
+				PinnedEgressIP:      "203.0.113.10",
+			},
+		},
+		{
+			name: "Default route with DNS Zone Should Fail",
+			inputArgs: input{
+				network:             netip.MustParsePrefix("0.0.0.0/0"),
+				networkType:         route.IPv4Network,
+				netID:               "exitzone",
+				peerKey:             peer1ID,
+				description:         "exit",
+				masquerade:          false,
+				metric:              9999,
+				enabled:             true,
+				groups:              []string{routeGroup1},
+				accessControlGroups: []string{routeGroup1},
+				dnsZone:             "legacy.example.internal",
+			},
+			errFunc:      require.Error,
+			shouldCreate: false,
+		},
+		{
+			name: "Malformed Pinned Egress IP Should Fail",
+			inputArgs: input{
+				network:             netip.MustParsePrefix("172.17.0.0/16"),
+				networkType:         route.IPv4Network,
+				netID:               "legacy2",
+				peerKey:             peer1ID,
+				description:         "super",
+				masquerade:          false,
+				metric:              9999,
+				enabled:             true,
+				groups:              []string{routeGroup1},
+				accessControlGroups: []string{routeGroup1},
+				pinnedEgressIP:      "not-an-ip",
+			},
+			errFunc:      require.Error,
+			shouldCreate: false,
 		},
 		{
 			name: "Both network and domains provided should fail",
@@ -449,13 +520,13 @@ func TestCreateRoute(t *testing.T) {
 			if testCase.createInitRoute {
 				groupAll, errInit := account.GetGroupAll()
 				require.NoError(t, errInit)
-				_, errInit = am.CreateRoute(context.Background(), account.Id, existingNetwork, 1, nil, "", []string{routeGroup3, routeGroup4}, "", existingRouteID, false, 1000, []string{groupAll.ID}, []string{}, true, userID, false, true)
+				_, errInit = am.CreateRoute(context.Background(), account.Id, existingNetwork, 1, nil, "", []string{routeGroup3, routeGroup4}, "", existingRouteID, false, 1000, []string{groupAll.ID}, []string{}, true, userID, false, true, "", "")
 				require.NoError(t, errInit)
-				_, errInit = am.CreateRoute(context.Background(), account.Id, netip.Prefix{}, 3, existingDomains, "", []string{routeGroup3, routeGroup4}, "", existingRouteID, false, 1000, []string{groupAll.ID}, []string{groupAll.ID}, true, userID, false, true)
+				_, errInit = am.CreateRoute(context.Background(), account.Id, netip.Prefix{}, 3, existingDomains, "", []string{routeGroup3, routeGroup4}, "", existingRouteID, false, 1000, []string{groupAll.ID}, []string{groupAll.ID}, true, userID, false, true, "", "")
 				require.NoError(t, errInit)
 			}
 
-			outRoute, err := am.CreateRoute(context.Background(), account.Id, testCase.inputArgs.network, testCase.inputArgs.networkType, testCase.inputArgs.domains, testCase.inputArgs.peerKey, testCase.inputArgs.peerGroupIDs, testCase.inputArgs.description, testCase.inputArgs.netID, testCase.inputArgs.masquerade, testCase.inputArgs.metric, testCase.inputArgs.groups, testCase.inputArgs.accessControlGroups, testCase.inputArgs.enabled, userID, testCase.inputArgs.keepRoute, testCase.inputArgs.skipAutoApply)
+			outRoute, err := am.CreateRoute(context.Background(), account.Id, testCase.inputArgs.network, testCase.inputArgs.networkType, testCase.inputArgs.domains, testCase.inputArgs.peerKey, testCase.inputArgs.peerGroupIDs, testCase.inputArgs.description, testCase.inputArgs.netID, testCase.inputArgs.masquerade, testCase.inputArgs.metric, testCase.inputArgs.groups, testCase.inputArgs.accessControlGroups, testCase.inputArgs.enabled, userID, testCase.inputArgs.keepRoute, testCase.inputArgs.skipAutoApply, testCase.inputArgs.dnsZone, testCase.inputArgs.pinnedEgressIP)
 
 			testCase.errFunc(t, err)
 
@@ -1014,6 +1085,68 @@ func TestSaveRoute(t *testing.T) {
 	}
 }
 
+// TestCreateRoute_PinnedEgressIPAgreement covers ADR-0068's HA-family
+// agreement rule (route_offer.rs's AgreedFields, mirrored server-side):
+// candidates sharing a prefix must agree on PinnedEgressIP, but sharing one
+// address across HA candidates (a floating-IP active/standby pair) is fine.
+func TestCreateRoute_PinnedEgressIPAgreement(t *testing.T) {
+	am, _, err := createRouterManager(t)
+	require.NoError(t, err)
+	account, err := initTestRouteAccount(t, am)
+	require.NoError(t, err)
+
+	prefix := netip.MustParsePrefix("172.20.0.0/16")
+	_, err = am.CreateRoute(context.Background(), account.Id, prefix, route.IPv4Network, nil, peer1ID, nil,
+		"primary", "legacy", false, 100, []string{routeGroup1}, []string{routeGroup1}, true, userID, false, false,
+		"", "203.0.113.10")
+	require.NoError(t, err)
+
+	// A second HA candidate for the same prefix declaring a different pinned
+	// egress IP must be rejected.
+	_, err = am.CreateRoute(context.Background(), account.Id, prefix, route.IPv4Network, nil, peer2ID, nil,
+		"standby", "legacy", false, 200, []string{routeGroup1}, []string{routeGroup1}, true, userID, false, false,
+		"", "203.0.113.99")
+	require.Error(t, err)
+
+	// Agreeing on the same address is fine.
+	_, err = am.CreateRoute(context.Background(), account.Id, prefix, route.IPv4Network, nil, peer2ID, nil,
+		"standby", "legacy", false, 200, []string{routeGroup1}, []string{routeGroup1}, true, userID, false, false,
+		"", "203.0.113.10")
+	require.NoError(t, err)
+}
+
+// TestCreateRoute_DnsZoneFamilyAgreementIgnoresPrefixOverlap covers
+// ADR-0068's two DNS-zone-specific exemptions: two zone-scoped routes may
+// share a prefix (even through the same gateway peer) without tripping the
+// ordinary peer/prefix collision check, and the pinned-IP agreement family
+// is grouped by dns_zone rather than by the (here, shared) prefix.
+func TestCreateRoute_DnsZoneFamilyAgreementIgnoresPrefixOverlap(t *testing.T) {
+	am, _, err := createRouterManager(t)
+	require.NoError(t, err)
+	account, err := initTestRouteAccount(t, am)
+	require.NoError(t, err)
+
+	prefix := netip.MustParsePrefix("10.50.0.0/16")
+	_, err = am.CreateRoute(context.Background(), account.Id, prefix, route.IPv4Network, nil, peer1ID, nil,
+		"siteA", "zoneA", false, 100, []string{routeGroup1}, []string{routeGroup1}, true, userID, false, false,
+		"a.legacy.internal", "203.0.113.10")
+	require.NoError(t, err)
+
+	// Same prefix, same peer, different zone: must not conflict.
+	_, err = am.CreateRoute(context.Background(), account.Id, prefix, route.IPv4Network, nil, peer1ID, nil,
+		"siteB", "zoneB", false, 100, []string{routeGroup1}, []string{routeGroup1}, true, userID, false, false,
+		"b.legacy.internal", "203.0.113.20")
+	require.NoError(t, err)
+
+	// A third candidate for zoneA disagreeing on the pinned IP must still be
+	// rejected -- the prefix overlap exemption does not also exempt the
+	// pinned-IP agreement check within one zone's own family.
+	_, err = am.CreateRoute(context.Background(), account.Id, prefix, route.IPv4Network, nil, peer2ID, nil,
+		"siteA-backup", "zoneA", false, 200, []string{routeGroup1}, []string{routeGroup1}, true, userID, false, false,
+		"a.legacy.internal", "203.0.113.99")
+	require.Error(t, err)
+}
+
 func TestDeleteRoute(t *testing.T) {
 	testingRoute := &route.Route{
 		ID:          "testingRoute",
@@ -1089,7 +1222,7 @@ func TestGetNetworkMap_RouteSyncPeerGroups(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, newAccountRoutes.Routes, 0, "new accounts should have no routes")
 
-	newRoute, err := am.CreateRoute(context.Background(), account.Id, baseRoute.Network, baseRoute.NetworkType, baseRoute.Domains, baseRoute.Peer, baseRoute.PeerGroups, baseRoute.Description, baseRoute.NetID, baseRoute.Masquerade, baseRoute.Metric, baseRoute.Groups, baseRoute.AccessControlGroups, baseRoute.Enabled, userID, baseRoute.KeepRoute, baseRoute.SkipAutoApply)
+	newRoute, err := am.CreateRoute(context.Background(), account.Id, baseRoute.Network, baseRoute.NetworkType, baseRoute.Domains, baseRoute.Peer, baseRoute.PeerGroups, baseRoute.Description, baseRoute.NetID, baseRoute.Masquerade, baseRoute.Metric, baseRoute.Groups, baseRoute.AccessControlGroups, baseRoute.Enabled, userID, baseRoute.KeepRoute, baseRoute.SkipAutoApply, baseRoute.DnsZone, baseRoute.PinnedEgressIP)
 	require.NoError(t, err)
 	require.Equal(t, newRoute.Enabled, true)
 
@@ -1181,7 +1314,7 @@ func TestGetNetworkMap_RouteSync(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, newAccountRoutes.Routes, 0, "new accounts should have no routes")
 
-	createdRoute, err := am.CreateRoute(context.Background(), account.Id, baseRoute.Network, baseRoute.NetworkType, baseRoute.Domains, peer1ID, []string{}, baseRoute.Description, baseRoute.NetID, baseRoute.Masquerade, baseRoute.Metric, baseRoute.Groups, baseRoute.AccessControlGroups, false, userID, baseRoute.KeepRoute, baseRoute.SkipAutoApply)
+	createdRoute, err := am.CreateRoute(context.Background(), account.Id, baseRoute.Network, baseRoute.NetworkType, baseRoute.Domains, peer1ID, []string{}, baseRoute.Description, baseRoute.NetID, baseRoute.Masquerade, baseRoute.Metric, baseRoute.Groups, baseRoute.AccessControlGroups, false, userID, baseRoute.KeepRoute, baseRoute.SkipAutoApply, baseRoute.DnsZone, baseRoute.PinnedEgressIP)
 	require.NoError(t, err)
 
 	noDisabledRoutes, err := am.GetNetworkMap(context.Background(), peer1ID)
@@ -1950,7 +2083,7 @@ func TestRouteAccountPeersUpdate(t *testing.T) {
 		_, err := manager.CreateRoute(
 			context.Background(), account.Id, route.Network, route.NetworkType, route.Domains, route.Peer,
 			route.PeerGroups, route.Description, route.NetID, route.Masquerade, route.Metric,
-			route.Groups, []string{}, true, userID, route.KeepRoute, route.SkipAutoApply,
+			route.Groups, []string{}, true, userID, route.KeepRoute, route.SkipAutoApply, route.DnsZone, route.PinnedEgressIP,
 		)
 		require.NoError(t, err)
 
@@ -1988,7 +2121,7 @@ func TestRouteAccountPeersUpdate(t *testing.T) {
 		_, err := manager.CreateRoute(
 			context.Background(), account.Id, route.Network, route.NetworkType, route.Domains, route.Peer,
 			route.PeerGroups, route.Description, route.NetID, route.Masquerade, route.Metric,
-			route.Groups, []string{}, true, userID, route.KeepRoute, route.SkipAutoApply,
+			route.Groups, []string{}, true, userID, route.KeepRoute, route.SkipAutoApply, route.DnsZone, route.PinnedEgressIP,
 		)
 		require.NoError(t, err)
 
@@ -2024,7 +2157,7 @@ func TestRouteAccountPeersUpdate(t *testing.T) {
 		newRoute, err := manager.CreateRoute(
 			context.Background(), account.Id, baseRoute.Network, baseRoute.NetworkType, baseRoute.Domains, baseRoute.Peer,
 			baseRoute.PeerGroups, baseRoute.Description, baseRoute.NetID, baseRoute.Masquerade, baseRoute.Metric,
-			baseRoute.Groups, []string{}, true, userID, baseRoute.KeepRoute, !baseRoute.SkipAutoApply,
+			baseRoute.Groups, []string{}, true, userID, baseRoute.KeepRoute, !baseRoute.SkipAutoApply, baseRoute.DnsZone, baseRoute.PinnedEgressIP,
 		)
 		require.NoError(t, err)
 		baseRoute = *newRoute
@@ -2090,7 +2223,7 @@ func TestRouteAccountPeersUpdate(t *testing.T) {
 		_, err := manager.CreateRoute(
 			context.Background(), account.Id, newRoute.Network, newRoute.NetworkType, newRoute.Domains, newRoute.Peer,
 			newRoute.PeerGroups, newRoute.Description, newRoute.NetID, newRoute.Masquerade, newRoute.Metric,
-			newRoute.Groups, []string{}, true, userID, newRoute.KeepRoute, !newRoute.SkipAutoApply,
+			newRoute.Groups, []string{}, true, userID, newRoute.KeepRoute, !newRoute.SkipAutoApply, newRoute.DnsZone, newRoute.PinnedEgressIP,
 		)
 		require.NoError(t, err)
 
@@ -2130,7 +2263,7 @@ func TestRouteAccountPeersUpdate(t *testing.T) {
 		_, err := manager.CreateRoute(
 			context.Background(), account.Id, newRoute.Network, newRoute.NetworkType, newRoute.Domains, newRoute.Peer,
 			newRoute.PeerGroups, newRoute.Description, newRoute.NetID, newRoute.Masquerade, newRoute.Metric,
-			newRoute.Groups, []string{}, true, userID, newRoute.KeepRoute, !newRoute.SkipAutoApply,
+			newRoute.Groups, []string{}, true, userID, newRoute.KeepRoute, !newRoute.SkipAutoApply, newRoute.DnsZone, newRoute.PinnedEgressIP,
 		)
 		require.NoError(t, err)
 

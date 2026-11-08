@@ -4862,6 +4862,9 @@ type Route struct {
 	// Description Route description
 	Description string `json:"description"`
 
+	// DnsZone Binds this route's effective routing to a DNS zone instead of to `network` by longest-prefix match alone. Requires a subnet route (conflicts with a 0.0.0.0/0 or ::/0 default route) and a non-domain network.
+	DnsZone *string `json:"dns_zone,omitempty"`
+
 	// Domains Domain list to be dynamically resolved. Max of 32 domains can be added per route configuration. Conflicts with network
 	Domains *[]string `json:"domains,omitempty"`
 
@@ -4898,6 +4901,9 @@ type Route struct {
 	// PeerGroups Peers Group Identifier associated with route. This property can not be set together with `peer`
 	PeerGroups *[]string `json:"peer_groups,omitempty"`
 
+	// PinnedEgressIp Declares the stable address a legacy network's firewall is expected to allowlist for this route's gateway. Candidates sharing the same HA family (same network_id/network, or the same dns_zone) must agree on this value.
+	PinnedEgressIp *string `json:"pinned_egress_ip,omitempty"`
+
 	// SkipAutoApply Indicate if this exit node route (0.0.0.0/0) should skip auto-application for client routing
 	SkipAutoApply *bool `json:"skip_auto_apply,omitempty"`
 }
@@ -4909,6 +4915,9 @@ type RouteRequest struct {
 
 	// Description Route description
 	Description string `json:"description"`
+
+	// DnsZone Binds this route's effective routing to a DNS zone instead of to `network` by longest-prefix match alone. Requires a subnet route (conflicts with a 0.0.0.0/0 or ::/0 default route) and a non-domain network.
+	DnsZone *string `json:"dns_zone,omitempty"`
 
 	// Domains Domain list to be dynamically resolved. Max of 32 domains can be added per route configuration. Conflicts with network
 	Domains *[]string `json:"domains,omitempty"`
@@ -4939,6 +4948,9 @@ type RouteRequest struct {
 
 	// PeerGroups Peers Group Identifier associated with route. This property can not be set together with `peer`
 	PeerGroups *[]string `json:"peer_groups,omitempty"`
+
+	// PinnedEgressIp Declares the stable address a legacy network's firewall is expected to allowlist for this route's gateway. Candidates sharing the same HA family (same network_id/network, or the same dns_zone) must agree on this value.
+	PinnedEgressIp *string `json:"pinned_egress_ip,omitempty"`
 
 	// SkipAutoApply Indicate if this exit node route (0.0.0.0/0) should skip auto-application for client routing
 	SkipAutoApply *bool `json:"skip_auto_apply,omitempty"`

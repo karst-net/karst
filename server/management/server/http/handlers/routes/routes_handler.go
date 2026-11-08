@@ -131,8 +131,17 @@ func (h *handler) createRoute(w http.ResponseWriter, r *http.Request) {
 
 	skipAutoApply := defaultSkipAutoApply(req.Network, req.SkipAutoApply)
 
+	var dnsZone string
+	if req.DnsZone != nil {
+		dnsZone = *req.DnsZone
+	}
+	var pinnedEgressIP string
+	if req.PinnedEgressIp != nil {
+		pinnedEgressIP = *req.PinnedEgressIp
+	}
+
 	newRoute, err := h.accountManager.CreateRoute(r.Context(), accountID, newPrefix, networkType, domains, peerId, peerGroupIds,
-		req.Description, route.NetID(req.NetworkId), req.Masquerade, req.Metric, req.Groups, accessControlGroupIds, req.Enabled, userID, req.KeepRoute, skipAutoApply)
+		req.Description, route.NetID(req.NetworkId), req.Masquerade, req.Metric, req.Groups, accessControlGroupIds, req.Enabled, userID, req.KeepRoute, skipAutoApply, dnsZone, pinnedEgressIP)
 
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
@@ -236,6 +245,13 @@ func (h *handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		Groups:        req.Groups,
 		KeepRoute:     req.KeepRoute,
 		SkipAutoApply: skipAutoApply,
+	}
+
+	if req.DnsZone != nil {
+		newRoute.DnsZone = *req.DnsZone
+	}
+	if req.PinnedEgressIp != nil {
+		newRoute.PinnedEgressIP = *req.PinnedEgressIp
 	}
 
 	if req.Domains != nil {
@@ -373,6 +389,13 @@ func toRouteResponse(serverRoute *route.Route) (*api.Route, error) {
 		Groups:        serverRoute.Groups,
 		KeepRoute:     serverRoute.KeepRoute,
 		SkipAutoApply: &serverRoute.SkipAutoApply,
+	}
+
+	if serverRoute.DnsZone != "" {
+		route.DnsZone = &serverRoute.DnsZone
+	}
+	if serverRoute.PinnedEgressIP != "" {
+		route.PinnedEgressIp = &serverRoute.PinnedEgressIP
 	}
 
 	if len(serverRoute.PeerGroups) > 0 {
