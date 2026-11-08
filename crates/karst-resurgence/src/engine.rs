@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! Probe scheduling — `spec/aven-v1.md` §7.3 and §7.5.
+//! Probe scheduling — `spec/resurgence-v1.md` §7.3 and §7.5.
 //!
 //! What to send and when. [`path::PathSet`] remembers what is known about a
 //! peer; this decides what to do about it.

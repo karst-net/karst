@@ -87,14 +87,14 @@ pub mod consts {
     /// `Restarting`: two 32-bit millisecond fields.
     pub const RESTARTING_LEN: usize = 8;
 
-    /// An AVEN reflect key — §7.7, `aven-v1.md` §5.3.
+    /// An Resurgence reflect key — §7.7, `resurgence-v1.md` §5.3.
     pub const REFLECT_KEY_LEN: usize = 32;
 
-    /// An endpoint in `aven-v1.md` §6.2's encoding: family, address, port.
+    /// An endpoint in `resurgence-v1.md` §6.2's encoding: family, address, port.
     ///
-    /// Ponor carries this shape only here, and it is AVEN's rather than
+    /// Ponor carries this shape only here, and it is Resurgence's rather than
     /// Ponor's — repeated as a constant instead of imported so that this crate
-    /// keeps no dependency on `karst-disco`, which depends on nothing and is
+    /// keeps no dependency on `karst-resurgence`, which depends on nothing and is
     /// the layer below. `karst-relay`'s reflector tests hold the two in step.
     pub const ENDPOINT_LEN: usize = 1 + 16 + 2;
 

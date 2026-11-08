@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! AVEN wire format — `spec/aven-v1.md` §6.
+//! Resurgence wire format — `spec/resurgence-v1.md` §6.
 //!
 //! This decoder runs on an unfiltered UDP port, before any MAC is checked, on
 //! bytes chosen by whoever can reach the socket. It is written accordingly:
@@ -30,7 +30,7 @@ impl Endpoint {
     /// The nineteen bytes §6.2 defines.
     ///
     /// Public because `ponor-v1.md` §7.7's `ReflectOffer` carries an endpoint
-    /// in this encoding — the one place AVEN's wire shape appears inside
+    /// in this encoding — the one place Resurgence's wire shape appears inside
     /// another protocol. Both ends of that frame must agree on it, and the
     /// agreement is better held by one function than by two hand-written
     /// layouts.
@@ -114,7 +114,7 @@ impl Endpoint {
     }
 }
 
-/// A decoded, **not yet authenticated** AVEN message.
+/// A decoded, **not yet authenticated** Resurgence message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     /// `0x01` — probes one candidate.
@@ -150,7 +150,7 @@ pub enum Message {
     /// `0x05` — a reflector's answer: the source address the `Reflect` came
     /// from.
     ///
-    /// This is the one message in AVEN where the source address *is* the
+    /// This is the one message in Resurgence where the source address *is* the
     /// content, which is why §7.6 has the reflector answer to it — the inverse
     /// of §7.1's rule for `Pong`, and not a contradiction of it: a `Pong`
     /// answers a question about the peer's address, a `Reflection` answers a
@@ -289,7 +289,7 @@ impl Message {
     }
 }
 
-/// Read the header of a datagram that looks like AVEN, without authenticating.
+/// Read the header of a datagram that looks like Resurgence, without authenticating.
 ///
 /// This is the first half of a two-step receive: the caller uses
 /// [`Header::tag`] to find the peer and its key, then calls [`open`] with that
@@ -297,7 +297,7 @@ impl Message {
 /// instead of one MAC per peer (§5.2).
 ///
 /// # Errors
-/// [`Error::NotAven`] if the magic is absent or the datagram is too short to
+/// [`Error::NotResurgence`] if the magic is absent or the datagram is too short to
 /// hold a header and a MAC — which is the caller's signal to try PHREATIC
 /// instead. [`Error::TooLong`] before anything else is examined.
 pub fn peek(datagram: &[u8]) -> Result<Header, Error> {
@@ -305,31 +305,31 @@ pub fn peek(datagram: &[u8]) -> Result<Header, Error> {
     //
     // `MTU_PROBE_DATAGRAM_MAX` bounds this rather than `DATAGRAM_MAX`: it is
     // the larger of the two, since `MtuProbe` (§7.9) is the one deliberate
-    // exception to "every AVEN message stays small" — its entire purpose is
+    // exception to "every Resurgence message stays small" — its entire purpose is
     // to be as large as the transport datagram it tests. Every other type's
     // own length is still enforced exactly, below.
     if datagram.len() > MTU_PROBE_DATAGRAM_MAX {
         return Err(Error::TooLong(datagram.len()));
     }
     if datagram.len() < HEADER + MAC_LEN {
-        return Err(Error::NotAven);
+        return Err(Error::NotResurgence);
     }
-    let magic = datagram.first_chunk::<4>().ok_or(Error::NotAven)?;
+    let magic = datagram.first_chunk::<4>().ok_or(Error::NotResurgence)?;
     if *magic != MAGIC {
-        return Err(Error::NotAven);
+        return Err(Error::NotResurgence);
     }
-    let version = *datagram.get(4).ok_or(Error::NotAven)?;
+    let version = *datagram.get(4).ok_or(Error::NotResurgence)?;
     if version != VERSION {
         return Err(Error::BadVersion(version));
     }
-    let msg_type = *datagram.get(5).ok_or(Error::NotAven)?;
-    let tag_bytes = datagram.get(6..6 + TAG_LEN).ok_or(Error::NotAven)?;
-    let tag = *tag_bytes.first_chunk::<TAG_LEN>().ok_or(Error::NotAven)?;
+    let msg_type = *datagram.get(5).ok_or(Error::NotResurgence)?;
+    let tag_bytes = datagram.get(6..6 + TAG_LEN).ok_or(Error::NotResurgence)?;
+    let tag = *tag_bytes.first_chunk::<TAG_LEN>().ok_or(Error::NotResurgence)?;
     let epoch_bytes = datagram
         .get(6 + TAG_LEN..HEADER)
-        .ok_or(Error::NotAven)?
+        .ok_or(Error::NotResurgence)?
         .first_chunk::<4>()
-        .ok_or(Error::NotAven)?;
+        .ok_or(Error::NotResurgence)?;
 
     Ok(Header {
         tag,
@@ -349,15 +349,15 @@ pub fn peek(datagram: &[u8]) -> Result<Header, Error> {
 pub fn open(datagram: &[u8], key: &DiscoKey) -> Result<Message, Error> {
     let header = peek(datagram)?;
 
-    let split = datagram.len().checked_sub(MAC_LEN).ok_or(Error::NotAven)?;
-    let (signed, mac) = datagram.split_at_checked(split).ok_or(Error::NotAven)?;
+    let split = datagram.len().checked_sub(MAC_LEN).ok_or(Error::NotResurgence)?;
+    let (signed, mac) = datagram.split_at_checked(split).ok_or(Error::NotResurgence)?;
     // Authenticated before the body is looked at, so a malformed body is only
     // ever something a key holder sent.
     if !key.verify(signed, mac) {
         return Err(Error::BadMac);
     }
 
-    let body = signed.get(HEADER..).ok_or(Error::NotAven)?;
+    let body = signed.get(HEADER..).ok_or(Error::NotResurgence)?;
     decode_body(&header, body, datagram.len())
 }
 
@@ -754,13 +754,13 @@ mod tests {
         // The signal to try PHREATIC instead.
         let mut bytes = Message::Ping { tx: TxId([1; 12]) }.encode(&key(1), &tag(), 0);
         bytes[0] ^= 0xff;
-        assert_eq!(peek(&bytes), Err(Error::NotAven));
+        assert_eq!(peek(&bytes), Err(Error::NotResurgence));
     }
 
     #[test]
     fn a_phreatic_datagram_that_collides_with_the_magic_fails_the_mac() {
         // §4: reassembly_id is CSPRNG-drawn, so one PHREATIC datagram in 2^32
-        // starts with KAVN. What stops it being accepted is the MAC, not the
+        // starts with the magic. What stops it being accepted is the MAC, not the
         // magic — and the receiver must fall through rather than drop it.
         let mut fake = Vec::new();
         fake.extend_from_slice(&MAGIC);
@@ -806,7 +806,7 @@ mod tests {
     fn a_runt_is_not_aven() {
         for n in 0..HEADER + MAC_LEN {
             let junk = vec![0u8; n];
-            assert!(matches!(peek(&junk), Err(Error::NotAven)), "{n} bytes");
+            assert!(matches!(peek(&junk), Err(Error::NotResurgence)), "{n} bytes");
         }
     }
 

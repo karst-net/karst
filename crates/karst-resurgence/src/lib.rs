@@ -2,9 +2,9 @@
 // Copyright the Karst contributors.
 
 #![forbid(unsafe_code)]
-//! AVEN v1 — NAT traversal: probing, reflexive discovery, path selection.
+//! Resurgence v1 — NAT traversal: probing, reflexive discovery, path selection.
 //!
-//! Implements `spec/aven-v1.md`. **Sans-io**: this crate turns bytes into typed
+//! Implements `spec/resurgence-v1.md`. **Sans-io**: this crate turns bytes into typed
 //! values and back, and decides which of several known paths to use. It opens
 //! no socket, reads no clock and enumerates no interface. Time arrives as a
 //! millisecond stamp, addresses arrive from the caller.
@@ -24,16 +24,20 @@ pub use msg::{Endpoint, Message, TxId};
 pub use path::{margin, PathKind, PathSet, Selection};
 
 pub mod consts {
-    //! Normative constants — `spec/aven-v1.md` §6, §7.5 and §7.9.
+    //! Normative constants — `spec/resurgence-v1.md` §6, §7.5 and §7.9.
 
-    /// Discriminates AVEN from PHREATIC on a shared socket — §4.
+    /// Discriminates Resurgence from PHREATIC on a shared socket — §4.
     ///
     /// A **hint, not a decision.** `phreatic-v1.md` §5 begins every datagram
     /// with a CSPRNG-drawn `reassembly_id`, so one PHREATIC datagram in 2³²
     /// starts with these bytes by chance. What actually separates the two
     /// protocols is that both are authenticated; the magic only makes the
     /// common case cost one MAC instead of two.
-    pub const MAGIC: [u8; 4] = *b"KAVN";
+    /// Bumped from the pre-ADR-0069 value `b"KAVN"` as part of the clean-break
+    /// AVEN→Resurgence rename (ADR-0069): this is a genuine wire-protocol
+    /// version change, not a cosmetic one. A pre-ADR-0069 node and a
+    /// post-ADR-0069 node will not discover each other over this protocol.
+    pub const MAGIC: [u8; 4] = *b"KRSG";
 
     /// Protocol version.
     pub const VERSION: u8 = 1;
@@ -153,7 +157,7 @@ pub mod consts {
     };
 
     // Asserted at compile time. Discovery has to be cheap relative to what it
-    // is discovering a path for, and it must never need fragmenting — AVEN has
+    // is discovering a path for, and it must never need fragmenting — Resurgence has
     // no reassembly layer and is not getting one. `MtuProbe` is the one
     // deliberate exception (§7.9): its entire job is to be exactly as large as
     // the transport datagram it tests, so it is bounded separately by
@@ -240,7 +244,7 @@ pub mod consts {
 
 /// Why a datagram was not accepted.
 ///
-/// `spec/aven-v1.md` §10: every one of these is a **silent drop**. AVEN has no
+/// `spec/resurgence-v1.md` §10: every one of these is a **silent drop**. Resurgence has no
 /// error messages, because emitting one would make a node an oracle for which
 /// peers it holds keys for — and because a log line per dropped datagram is a
 /// disk-filling primitive available to anyone who can reach an unfiltered UDP
@@ -248,13 +252,13 @@ pub mod consts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
-    /// Not AVEN: wrong magic, or shorter than a header and MAC.
-    NotAven,
+    /// Not Resurgence: wrong magic, or shorter than a header and MAC.
+    NotResurgence,
     /// Longer than [`consts::DATAGRAM_MAX`]. Rejected before anything else.
     TooLong(usize),
     /// A version this implementation does not speak.
     BadVersion(u8),
-    /// Not a type AVEN v1 defines.
+    /// Not a type Resurgence v1 defines.
     UnknownType(u8),
     /// The length is wrong for the type.
     BadLength {
@@ -276,14 +280,14 @@ pub enum Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::NotAven => f.write_str("not an AVEN datagram"),
+            Self::NotResurgence => f.write_str("not a Resurgence datagram"),
             Self::TooLong(n) => write!(f, "datagram of {n} bytes exceeds the cap"),
-            Self::BadVersion(v) => write!(f, "unsupported AVEN version {v}"),
-            Self::UnknownType(t) => write!(f, "unknown AVEN message type {t:#04x}"),
+            Self::BadVersion(v) => write!(f, "unsupported Resurgence version {v}"),
+            Self::UnknownType(t) => write!(f, "unknown Resurgence message type {t:#04x}"),
             Self::BadLength { msg_type, got } => {
                 write!(f, "type {msg_type:#04x} cannot have length {got}")
             }
-            Self::Malformed => f.write_str("malformed AVEN body"),
+            Self::Malformed => f.write_str("malformed Resurgence body"),
             Self::UnknownTag => f.write_str("no disco key for this tag"),
             Self::BadMac => f.write_str("MAC did not verify"),
         }
@@ -298,7 +302,7 @@ mod tests {
 
     #[test]
     fn wire_sizes_match_the_spec() {
-        // spec/aven-v1.md §6.1. A change should show up as a diff against the
+        // spec/resurgence-v1.md §6.1. A change should show up as a diff against the
         // specification rather than as drift.
         assert_eq!(HEADER, 18);
         assert_eq!(PING_LEN, 46);
@@ -313,7 +317,7 @@ mod tests {
 
     #[test]
     fn mtu_bounds_match_phreatic_v1s_datagram_budget() {
-        // spec/aven-v1.md §7.9.3, spec/phreatic-v1.md §13.6. Two specs naming
+        // spec/resurgence-v1.md §7.9.3, spec/phreatic-v1.md §13.6. Two specs naming
         // the same numbers is a claim; this is what keeps the claim honest —
         // a change to either spec's constants shows up here as a diff rather
         // than as silent drift.

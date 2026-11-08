@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use karst_control_client::transport::pb;
-use karst_disco::TxId;
+use karst_resurgence::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
 use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
@@ -733,7 +733,7 @@ fn run_engine(
     let engine = Arc::new(Engine::new(config));
     let _ = dns_engine.set(Arc::clone(&engine));
 
-    // AVEN state, shared between the receive loop and the timer that drives
+    // Resurgence state, shared between the receive loop and the timer that drives
     // probing. A static roster has no server-issued handles or disco keys, so
     // reconciliation leaves it empty; a netmap roster immediately seeds its
     // direct endpoints as unconfirmed candidates.
@@ -970,7 +970,7 @@ fn run_engine(
         }
 
         // ── the relay ─────────────────────────────────────────────────────
-        // Both protocols and both directions. AVEN's rendezvous made this
+        // Both protocols and both directions. Resurgence's rendezvous made this
         // connection necessary; PHREATIC's fallback is what makes a peer with
         // no direct path reachable rather than merely known about.
         if let (Some(common), Some(mut relay_in), Some(on_demand_in)) =
@@ -1644,9 +1644,9 @@ fn run_engine(
     Ok(())
 }
 
-/// Advance AVEN's timers and turn its intents into I/O.
+/// Advance Resurgence's timers and turn its intents into I/O.
 ///
-/// AVEN owns reachability discovery, while the run loop owns the shared socket;
+/// Resurgence owns reachability discovery, while the run loop owns the shared socket;
 /// keeping the conversion here prevents the sans-io discovery crate from
 /// acquiring an I/O dependency.
 ///
@@ -1931,7 +1931,7 @@ fn hex_short(id: &[u8]) -> String {
     })
 }
 
-/// The addresses this node offers as candidates — `spec/aven-v1.md` §7.3.
+/// The addresses this node offers as candidates — `spec/resurgence-v1.md` §7.3.
 ///
 /// `karst_tun::local_addresses` has already dropped what a peer could not
 /// reach at all — loopback, link-local, tentative, deprecated. What is left is
@@ -1971,12 +1971,12 @@ fn gather_interfaces(config: &Config) -> Vec<std::net::IpAddr> {
 
 /// One datagram waiting for the relay worker to put it on the wire.
 ///
-/// Carries both AVEN advertisements and PHREATIC data, because to the relay
+/// Carries both Resurgence advertisements and PHREATIC data, because to the relay
 /// they are the same thing: opaque bytes for a named node. Ponor reads the
 /// destination id and nothing else.
 #[derive(Debug)]
 enum Relayed {
-    /// A PHREATIC or AVEN datagram for a peer.
+    /// A PHREATIC or Resurgence datagram for a peer.
     Packet {
         destination: [u8; karst_relay_proto::consts::ID_LEN],
         payload: Vec<u8>,
@@ -2532,7 +2532,7 @@ async fn connect_preferring_quic(
     .await
 }
 
-/// Carry relayed traffic — AVEN rendezvous and PHREATIC data — over one
+/// Carry relayed traffic — Resurgence rendezvous and PHREATIC data — over one
 /// authenticated Ponor connection.
 ///
 /// A dedicated current-thread runtime, because relay TCP reads must not occupy
@@ -2938,11 +2938,11 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
         return;
     }
     // §7.7: this relay runs a reflector, and here is the key. Handed
-    // straight to discovery — the address inside is AVEN's encoding,
-    // and `karst-disco` owns that.
+    // straight to discovery — the address inside is Resurgence's encoding,
+    // and `karst-resurgence` owns that.
     //
     // **Only from the home connection.** A reflector is a vantage point
-    // AVEN probes over minutes; taking one from a connection that
+    // Resurgence probes over minutes; taking one from a connection that
     // closes as soon as its traffic stops would leave discovery
     // advertising a mapping nothing is keeping alive, which is the
     // failure `clear_reflector` exists to prevent.
@@ -2950,7 +2950,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
         if !context.is_home() {
             return;
         }
-        let Ok(endpoint) = karst_disco::Endpoint::from_wire(&endpoint) else {
+        let Ok(endpoint) = karst_resurgence::Endpoint::from_wire(&endpoint) else {
             // A relay this node authenticated sent an endpoint it
             // cannot parse. Nothing to do but ignore the offer; the
             // connection is still good for carrying traffic, which is
@@ -3026,7 +3026,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
         context.common.engine.seen_on_home_relay(source_id);
     }
     let now = now_ms(context.common.started);
-    // **AVEN is asked first, exactly as on the UDP socket**, and for the
+    // **Resurgence is asked first, exactly as on the UDP socket**, and for the
     // same reason: the two protocols share this transport too, and only
     // one of them can authenticate any given datagram. `Disco` reports
     // whether the payload was its own; anything else is PHREATIC's.
@@ -3243,7 +3243,7 @@ fn sync_relay_latency(
     }
 }
 
-/// Apply only AVEN-confirmed paths to the PHREATIC roster. Candidates never
+/// Apply only Resurgence-confirmed paths to the PHREATIC roster. Candidates never
 /// reach this boundary, so an unauthenticated endpoint cannot redirect data.
 fn apply_disco_paths(disco: &Mutex<disco::Disco>, engine: &Engine) -> bool {
     let changes = disco
@@ -5179,7 +5179,7 @@ fn dns_query_report(config: &Config, name: &str) -> String {
 /// Perform the I/O an engine asked for.
 /// Decide which protocol an arriving datagram belongs to, and handle it.
 ///
-/// AVEN shares the datapath socket with PHREATIC — `aven-v1.md` §4, and it must,
+/// Resurgence shares the datapath socket with PHREATIC — `resurgence-v1.md` §4, and it must,
 /// because a path is only useful if it is the one PHREATIC will take and a NAT
 /// binding proven on one port says nothing about another.
 ///
@@ -5187,7 +5187,7 @@ fn dns_query_report(config: &Config, name: &str) -> String {
 /// authenticate**, not merely on a missing magic. That distinction is the whole
 /// of the demultiplexer's correctness: `phreatic-v1.md` §5 begins every datagram
 /// with a CSPRNG-drawn `reassembly_id`, so roughly one in 2^32 starts with
-/// AVEN's four bytes by chance, and a decision made on the magic alone would
+/// Resurgence's four bytes by chance, and a decision made on the magic alone would
 /// discard a real fragment about once a day on a busy node with nothing in any
 /// log to explain it.
 fn demultiplex(
@@ -5216,7 +5216,7 @@ fn demultiplex(
             packets: Vec::new(),
             files_received: Vec::new(),
         },
-        disco::Verdict::NotAven => {
+        disco::Verdict::NotResurgence => {
             engine.inbound(reasm, datagram, from, now_ms, &responder_randomness())
         }
     }
@@ -5822,7 +5822,7 @@ fn refresh_netmap(
             }
         };
         client.set_route_observations(route_observations);
-        // This node's own current AVEN candidate list — read back fresh
+        // This node's own current Resurgence candidate list — read back fresh
         // every tick, same as `sessions` above: it is a live snapshot of
         // interfaces/reflexive state, not a buffer anything queues into
         // between ticks. See `karst_control.proto`'s
@@ -7900,7 +7900,7 @@ mod probe_tests {
             "took {took} ms; the slow cycle alone needs ten minutes per candidate"
         );
         assert!(
-            rounds >= karst_disco::consts::HYSTERESIS_SAMPLES,
+            rounds >= karst_resurgence::consts::HYSTERESIS_SAMPLES,
             "adopted on fewer wins than §9.2 requires"
         );
     }
@@ -7987,7 +7987,7 @@ mod probe_tests {
             }
             assert!(
                 runs.iter()
-                    .all(|(_, n)| *n >= karst_disco::consts::HYSTERESIS_SAMPLES as usize),
+                    .all(|(_, n)| *n >= karst_resurgence::consts::HYSTERESIS_SAMPLES as usize),
                 "a candidate was measured for too few consecutive rounds to sustain a \
                  margin: {runs:?}"
             );

@@ -5,7 +5,7 @@
 //!
 //! This is deliberately sans-I/O: TCP/TLS/HTTP upgrade belongs to the daemon
 //! transport, while this type makes it impossible to forward a PHREATIC or
-//! AVEN datagram before the relay's pinned ML-DSA identity has authenticated.
+//! Resurgence datagram before the relay's pinned ML-DSA identity has authenticated.
 
 use karst_relay_proto::consts::{
     ENDPOINT_LEN, FRAME_HEADER, FRAME_PAYLOAD_MAX, ID_LEN, REFLECT_KEY_LEN,
@@ -59,7 +59,7 @@ pub enum Event {
     Packet {
         /// The Ponor node id the relay authenticated as the source.
         source_id: [u8; ID_LEN],
-        /// The opaque PHREATIC or AVEN datagram.
+        /// The opaque PHREATIC or Resurgence datagram.
         payload: Vec<u8>,
     },
     /// A `Pong` answering a `Ping` this node sent — §9.1.
@@ -104,7 +104,7 @@ pub enum Event {
         /// Keep retrying for this long.
         try_for_ms: u32,
     },
-    /// This relay runs an AVEN reflector — `ponor-v1.md` §7.7.
+    /// This relay runs a Resurgence reflector — `ponor-v1.md` §7.7.
     ///
     /// Only ever produced **after** the relay's ML-DSA-87 signature has
     /// verified, which is the whole security argument for the key it carries:
@@ -113,8 +113,8 @@ pub enum Event {
     Reflector {
         /// The §5.3 reflect key, live for this connection only.
         key: [u8; REFLECT_KEY_LEN],
-        /// Where to send `Reflect`. Undecoded here — `karst-disco` owns
-        /// `aven-v1.md` §6.2 and this module owns Ponor framing.
+        /// Where to send `Reflect`. Undecoded here — `karst-resurgence` owns
+        /// `resurgence-v1.md` §6.2 and this module owns Ponor framing.
         endpoint: [u8; ENDPOINT_LEN],
     },
 }
@@ -448,7 +448,7 @@ impl Connection {
         self.read_events(signer, verifier).await
     }
 
-    /// Forward one opaque PHREATIC or AVEN datagram through this relay.
+    /// Forward one opaque PHREATIC or Resurgence datagram through this relay.
     ///
     /// # Errors
     /// Returns I/O failure if the established TLS stream cannot accept bytes.
@@ -537,7 +537,7 @@ impl std::fmt::Debug for Sender {
 }
 
 impl Sender {
-    /// Forward one opaque PHREATIC or AVEN datagram through this relay.
+    /// Forward one opaque PHREATIC or Resurgence datagram through this relay.
     ///
     /// # Errors
     /// Returns I/O failure if the TLS stream cannot accept bytes, and

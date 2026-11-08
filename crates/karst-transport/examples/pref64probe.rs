@@ -4,7 +4,7 @@
 //! Solicit routers on one interface and print the NAT64 prefix they advertise.
 //!
 //! The helper `tests/pref64.rs` runs inside a network namespace, in the same
-//! way `karst-disco`'s `natprobe` does: the test process cannot enter a
+//! way `karst-resurgence`'s `natprobe` does: the test process cannot enter a
 //! namespace without `setns`, so the thing under test is a small program that
 //! `ip netns exec` can launch there.
 //!

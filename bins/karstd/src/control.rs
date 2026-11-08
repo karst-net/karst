@@ -439,7 +439,7 @@ pub struct Client {
     /// gateway for anything, which produces a request byte-identical to one
     /// from before this field existed.
     route_observations: Vec<pb::KarstRouteObservation>,
-    /// This node's own current AVEN candidate list — `karst_control.proto`'s
+    /// This node's own current Resurgence candidate list — `karst_control.proto`'s
     /// `KarstNetmapRequest.candidates`, set fresh on every refresh tick the
     /// same way `sessions` is (never a queued delta: the current list is
     /// what matters, not what changed since the last report), by
@@ -1290,7 +1290,7 @@ impl Client {
         self.route_observations = observations;
     }
 
-    /// Replace this node's own current AVEN candidate list — `karst_control.proto`'s
+    /// Replace this node's own current Resurgence candidate list — `karst_control.proto`'s
     /// `KarstNetmapRequest.candidates`. Set fresh from
     /// [`disco::Disco::candidates_wire`](crate::disco::Disco::candidates_wire)
     /// on every refresh tick, the same as `sessions` and unlike the queued

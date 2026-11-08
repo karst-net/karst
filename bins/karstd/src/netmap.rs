@@ -562,12 +562,12 @@ impl fmt::Debug for Psk {
     }
 }
 
-/// A per-pair AVEN key. It is separate from the PHREATIC PSK and must not
+/// A per-pair Resurgence key. It is separate from the PHREATIC PSK and must not
 /// render or remain in memory after its peer is dropped.
 pub struct DiscoKey([u8; PSK_LEN]);
 
 impl DiscoKey {
-    /// The bytes for the AVEN authenticator.
+    /// The bytes for the Resurgence authenticator.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8; PSK_LEN] {
         &self.0
@@ -612,9 +612,9 @@ pub struct Peer {
     /// PSK for the previous epoch, so a rotation is answerable in both
     /// directions (§7.3). Absent when the epoch is 0.
     pub psk_previous: Option<Psk>,
-    /// AVEN path-discovery key. Absent means keep the relay path.
+    /// Resurgence path-discovery key. Absent means keep the relay path.
     pub disco_key: Option<DiscoKey>,
-    /// This peer's own self-reported AVEN candidate list, redistributed by
+    /// This peer's own self-reported Resurgence candidate list, redistributed by
     /// the server from that peer's `KarstNetmapRequest.candidates` — see
     /// `karst_control.proto`'s doc comment on `KarstNetmapPeer.candidates`.
     /// As given on the wire, unparsed; `config::Peer::from_netmap` parses

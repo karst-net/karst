@@ -25,7 +25,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-karst-disco.workspace = true
+karst-resurgence.workspace = true
 karst-relay-proto.workspace = true
 
 base64ct = { version = "1", features = ["alloc"] }

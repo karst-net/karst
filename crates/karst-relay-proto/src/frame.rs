@@ -185,18 +185,18 @@ pub enum Frame<'a> {
         /// Opaque PHREATIC datagram.
         payload: &'a [u8],
     },
-    /// `0x0d` relay → client. The key and address of this relay's AVEN
-    /// reflector — §7.7, `aven-v1.md` §7.6.
+    /// `0x0d` relay → client. The key and address of this relay's Resurgence
+    /// reflector — §7.7, `resurgence-v1.md` §7.6.
     ///
     /// **Optional in both directions.** A relay without a reflector never sends
-    /// one; a client that never receives one degrades to `aven-v1.md` §7.2 and
+    /// one; a client that never receives one degrades to `resurgence-v1.md` §7.2 and
     /// stays on the relay when that is not enough.
     ReflectOffer {
         /// 32 bytes from a CSPRNG, minted for this connection and forgotten
         /// when it closes. Sent only after `RelayAuth`, so a client that
         /// follows §7.1 has already authenticated whoever minted it.
         reflect_key: [u8; REFLECT_KEY_LEN],
-        /// Where to send `Reflect`, in `aven-v1.md` §6.2's encoding.
+        /// Where to send `Reflect`, in `resurgence-v1.md` §6.2's encoding.
         ///
         /// Carried rather than inferred from the Ponor connection: the
         /// reflector is a different socket, on a different port and possibly a

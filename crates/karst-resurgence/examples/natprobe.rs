@@ -14,7 +14,7 @@
 //! means nothing, and the mistake is invisible once the thing under test is a
 //! VPN rather than a two-line probe.
 //!
-//! It is deliberately not `karst-disco`: this measures the *network*, so it
+//! It is deliberately not `karst-resurgence`: this measures the *network*, so it
 //! must not share code with the thing whose behavior on that network is in
 //! question.
 
@@ -59,7 +59,7 @@ fn main() -> ExitCode {
 
 /// Answer every datagram with the source address it appeared to come from.
 ///
-/// This is `spec/aven-v1.md` §7.2's reflexive function reduced to its smallest
+/// This is `spec/resurgence-v1.md` §7.2's reflexive function reduced to its smallest
 /// form: whatever the NAT rewrote the source to is what comes back.
 fn reflect(bind: &str) -> io::Result<()> {
     let sock = UdpSocket::bind(bind)?;

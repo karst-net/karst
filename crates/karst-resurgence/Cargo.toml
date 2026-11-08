@@ -1,5 +1,5 @@
 [package]
-name = "karst-disco"
+name = "karst-resurgence"
 description = "NAT traversal: STUN-like probing, path selection"
 version.workspace = true
 edition.workspace = true

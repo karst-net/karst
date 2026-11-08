@@ -11,11 +11,11 @@
 //! **Sans-io and sans-clock**, like everything else that decides: round-trip
 //! times arrive from the caller, and this says which relay to hold.
 //!
-//! # The hysteresis is AVEN's, deliberately
+//! # The hysteresis is Resurgence's, deliberately
 //!
 //! §9.2 requires hysteresis and recommends 20 ms or 20%, sustained. That is
-//! word for word `aven-v1.md` §8.2's rule for path selection, so this uses
-//! `karst_disco`'s constants rather than restating them. Two copies of one
+//! word for word `resurgence-v1.md` §8.2's rule for path selection, so this uses
+//! `karst_resurgence`'s constants rather than restating them. Two copies of one
 //! number are free to drift, and a reader who found them disagreeing would have
 //! no way to tell which was intended.
 //!
@@ -27,7 +27,7 @@
 
 use std::collections::HashMap;
 
-use karst_disco::consts::HYSTERESIS_SAMPLES;
+use karst_resurgence::consts::HYSTERESIS_SAMPLES;
 
 use crate::relay::PING_TOKEN_LEN;
 
@@ -88,7 +88,7 @@ impl Selector {
     /// The held relay's most recent measured round trip, if it has answered
     /// at least one round since being chosen.
     ///
-    /// Feeds `karst_disco`'s per-peer §8.4 comparison (`Disco::
+    /// Feeds `karst_resurgence`'s per-peer §8.4 comparison (`Disco::
     /// set_relay_latency`, GitHub issue #121): that mechanism needs *a*
     /// number to rank against a confirmed black-hole direct path, not a
     /// precise one, since `group()` alone already decides the comparison —
@@ -125,11 +125,11 @@ impl Selector {
     /// switches on jitter, which is precisely what §9.2 exists to stop. The
     /// first version of this function made that mistake and a test caught it.
     ///
-    /// `karst_disco::margin` is the one implementation; AVEN §8.2 states the
+    /// `karst_resurgence::margin` is the one implementation; Resurgence §8.2 states the
     /// same rule for path selection and had it right already.
     #[must_use]
     pub fn beats(challenger: u64, incumbent: u64) -> bool {
-        incumbent.saturating_sub(challenger) >= karst_disco::margin(incumbent)
+        incumbent.saturating_sub(challenger) >= karst_resurgence::margin(incumbent)
     }
 
     /// Decide, given everything measured this round.
@@ -446,7 +446,7 @@ impl RttProbes {
     /// The round trip a `Pong` reports, if it answers a probe this node sent.
     ///
     /// `None` for a token that was never sent or has already been answered —
-    /// §7.4's rule for AVEN, applied here for the same reason: a relay that
+    /// §7.4's rule for Resurgence, applied here for the same reason: a relay that
     /// replayed a `Pong` could otherwise report an arbitrarily good latency and
     /// win an election it should not.
     pub fn resolve(&mut self, token: [u8; PING_TOKEN_LEN], now_ms: u64) -> Option<u64> {
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn a_token_that_was_never_sent_measures_nothing() {
-        // §7.4's rule for AVEN, here for the same reason: a relay that
+        // §7.4's rule for Resurgence, here for the same reason: a relay that
         // volunteered or replayed a `Pong` could otherwise report an
         // arbitrarily good latency and win an election it should not.
         let mut p = RttProbes::default();

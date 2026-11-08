@@ -1,9 +1,9 @@
 (* SPDX-License-Identifier: CC-BY-4.0
  *
- * AVEN v1 — ProVerif model
- * Models spec/aven-v1.md §5 and §7. Run: proverif aven.pv
+ * Resurgence v1 — ProVerif model
+ * Models spec/resurgence-v1.md §5 and §7. Run: proverif aven.pv
  *
- * AVEN is the smallest of the four Karst protocols. It carries no user data,
+ * Resurgence is the smallest of the four Karst protocols. It carries no user data,
  * derives no keys, and its whole job is to decide *where to send*. That makes
  * the property to check narrow and unusually concrete:
  *

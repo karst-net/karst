@@ -18,7 +18,7 @@
 //! that a direct path displaces it without dropping the session.
 //!
 //! Nothing here calls `set_endpoint` to fake a path except where a test says it
-//! is standing in for AVEN, which has its own end-to-end test in
+//! is standing in for Resurgence, which has its own end-to-end test in
 //! `rendezvous.rs`.
 
 #![allow(
@@ -110,8 +110,8 @@ struct PeerSpec {
     endpoint: Option<SocketAddr>,
     /// The range this peer owns.
     range: &'static str,
-    /// The AVEN pair key, when the netmap supplies one. `None` means no
-    /// discovery for this peer, ever (`aven-v1.md` §5.1).
+    /// The Resurgence pair key, when the netmap supplies one. `None` means no
+    /// discovery for this peer, ever (`resurgence-v1.md` §5.1).
     disco_key: Option<[u8; 32]>,
     /// The relay this peer published as its home — `ponor-v1.md` §9.1. `None`
     /// is a peer that has published none, which is every peer here except
@@ -345,7 +345,7 @@ fn a_peer_with_no_endpoint_and_no_relay_is_still_undeliverable() {
 
 /// **The upgrade, and the part that has to be seamless: the session survives
 /// it.** A relay→direct transition that rehandshaked would be a visible stall
-/// on every path change, and path changes are exactly what AVEN produces.
+/// on every path change, and path changes are exactly what Resurgence produces.
 #[test]
 fn a_direct_path_displaces_the_relay_without_disturbing_the_session() {
     let a = pair(0x01, 0x02, "100.64.0.2/32", "100.64.0.1/24", true);
@@ -360,7 +360,7 @@ fn a_direct_path_displaces_the_relay_without_disturbing_the_session() {
         .iter()
         .all(|(_, via)| matches!(via, Via::Relay { .. })));
 
-    // Standing in for AVEN confirming a path — `rendezvous.rs` covers how one
+    // Standing in for Resurgence confirming a path — `rendezvous.rs` covers how one
     // is actually found.
     let direct: SocketAddr = "203.0.113.2:51820".parse().expect("endpoint");
     assert!(a.engine.set_endpoint(0, direct));
@@ -518,7 +518,7 @@ fn status_reports_how_each_peer_is_reached() {
 /// caught.
 #[test]
 fn a_published_endpoint_that_has_gone_stale_falls_back_to_the_relay() {
-    use karst_disco::msg::TxId;
+    use karst_resurgence::msg::TxId;
     use karstd::disco::{Disco, PathChange};
 
     let stale: SocketAddr = "203.0.113.9:51820".parse().expect("endpoint");
@@ -648,7 +648,7 @@ fn a_peer_that_published_another_relay_is_still_tried_here_first() {
     assert_eq!(
         a.engine.relay_for(id_of(0x02)),
         None,
-        "AVEN's rendezvous took a different route from the data"
+        "Resurgence's rendezvous took a different route from the data"
     );
 }
 

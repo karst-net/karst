@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! Probe bookkeeping and path selection — `spec/aven-v1.md` §7 and §8.
+//! Probe bookkeeping and path selection — `spec/resurgence-v1.md` §7 and §8.
 //!
 //! Sans-io and sans-clock: every method that cares about time takes a
 //! millisecond stamp. That is what makes flapping, staleness and expiry

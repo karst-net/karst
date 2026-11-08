@@ -128,9 +128,9 @@ pub struct PeerEntry<'a> {
     /// other node would keep dialing a relay it had left.
     pub home_relay: &'a [u8],
     pub allowed_ips: &'a [String],
-    /// This peer's own self-reported AVEN candidate list —
+    /// This peer's own self-reported Resurgence candidate list —
     /// `karst_control.proto`'s `KarstNetmapPeer.candidates`, added
-    /// 2026-10-31 (`spec/aven-v1.md` §7.3.1). Routable content, covered by
+    /// 2026-10-31 (`spec/resurgence-v1.md` §7.3.1). Routable content, covered by
     /// both hashes below for the same reason `home_relay` is: a peer whose
     /// only change is this field must still be recognized as changed. A
     /// peer reporting none contributes nothing here, so a pre-existing

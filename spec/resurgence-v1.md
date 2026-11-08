@@ -1,9 +1,15 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# AVEN v1 — Path Discovery Protocol
+# Resurgence v1 — Path Discovery Protocol
+
+> **Naming:** this protocol was named AVEN through 2026-11-08; renamed to
+> Resurgence by [ADR-0069](../docs/adr/0069-resurgence-estavelle-aven-renaming.md),
+> which also bumped the wire magic from `KAVN` to `KRSG` — a genuine
+> wire-protocol version change, not a cosmetic one. "Aven" was freed for the
+> unrelated Gateway→Aven rename in that same ADR; do not conflate the two.
 
 > **Component model:** [ADR-0056](../docs/adr/0056-four-component-families.md)
 > defines node agent, transport infrastructure, control services and trust
-> tooling. Gateway unifies subnet/exit behavior; Relay unifies Ponor/TURN modes
+> tooling. Aven unifies subnet/exit behavior; Estavelle unifies Ponor/TURN modes
 > through a managed backend adapter. #404 tracks implementation consolidation.
 > This architecture does not rename this protocol or change its wire fields,
 > signed encodings, cryptography, or current configuration interfaces.
@@ -14,7 +20,7 @@
   in software under any license. Independent implementations are wanted.
 
 > **Implementable.** §4–§8 are stable enough to build against and match
-> `crates/karst-disco/`. §12 lists what remains open, and the list is long:
+> `crates/karst-resurgence/`. §12 lists what remains open, and the list is long:
 > this is the first draft of the hardest unglamorous part of a mesh VPN.
 >
 > All four ProVerif queries verify (§11), against an attacker that holds **a
@@ -29,15 +35,17 @@
 
 ## 1. Introduction
 
-AVEN finds and maintains a **direct path** between two Karst nodes that begin
-by talking through a relay, and chooses which of several working paths to use.
-It is the protocol behind `karst-disco` (PLAN.md §6).
+Resurgence finds and maintains a **direct path** between two Karst nodes that
+begin by talking through a relay, and chooses which of several working paths
+to use. It is the protocol behind `karst-resurgence` (PLAN.md §6).
 
-An *aven* is a shaft connecting a cave system upward to the surface; cavers
-look for them to find a way out. The naming follows ADR-0010's rule that
-invented proper nouns get themed names and standard technical terms do not.
+A *resurgence* is where a stream that vanished underground at a *ponor*
+re-emerges at the surface, often well away from where it went under — fitting
+a protocol that finds a direct path for traffic that started out relayed. The
+naming follows ADR-0010's rule that invented proper nouns get themed names and
+standard technical terms do not.
 
-### 1.1 What AVEN does
+### 1.1 What Resurgence does
 
 | | |
 |---|---|
@@ -48,17 +56,17 @@ invented proper nouns get themed names and standard technical terms do not.
 | **MTU discovery** | Bisected `MtuProbe`/`MtuProbeAck` pairs find the largest transport datagram a direct path delivers, with no dependence on ICMP |
 | **Path selection** | Continuous measurement with hysteresis, preferring direct over relay and IPv6 over IPv4, and demoting a direct path confirmed to black-hole full-size traffic |
 
-### 1.2 What AVEN does not do
+### 1.2 What Resurgence does not do
 
 - **It carries no user data.** Only probes and candidate lists. A working path
-  is handed to PHREATIC; AVEN never sees a tunneled packet.
+  is handed to PHREATIC; Resurgence never sees a tunneled packet.
 - **It derives no keys.** Its authentication key comes from the netmap (§5).
 - **It does not decide whether two nodes may talk.** That is the ACL's job,
   enforced by the packet filter at both ends (PLAN.md §4.3).
 - **It is not confidential.** Probes are authenticated, not encrypted. §9
   states exactly what an observer learns, which is more than nothing.
 - **It does not do port mapping.** UPnP-IGD, NAT-PMP and PCP are gateway
-  protocols, not this one; they gather candidates that AVEN then probes.
+  protocols, not this one; they gather candidates that Resurgence then probes.
 
 ---
 
@@ -72,7 +80,7 @@ in bytes.
 
 ## 3. Cryptographic suite
 
-Suite `0x0002` (`KARST_2`), as `phreatic-v1.md` §3. AVEN uses only the hash
+Suite `0x0002` (`KARST_2`), as `phreatic-v1.md` §3. Resurgence uses only the hash
 half, which that registry's renumbering (`phreatic-v1.md` §3.1) did not change:
 
 | Role | Algorithm | Size |
@@ -89,7 +97,7 @@ traffic it exists to find a path for.
 
 ## 4. Sharing a socket with PHREATIC
 
-AVEN datagrams travel on **the same UDP socket** as PHREATIC, to and from the
+Resurgence datagrams travel on **the same UDP socket** as PHREATIC, to and from the
 same ports. This is not an optimization and MUST NOT be changed to a separate
 port: a path is only useful if it is the path PHREATIC will actually use, and a
 NAT binding proven on one port says nothing about another.
@@ -97,11 +105,11 @@ NAT binding proven on one port says nothing about another.
 That makes demultiplexing a real problem, and it has no free answer.
 
 **A magic prefix is a hint, not a decision.** A datagram whose first four bytes
-are `0x4B 0x41 0x56 0x4E` (`KAVN`) SHOULD be tried as AVEN first. But
+are `0x4B 0x52 0x53 0x47` (`KRSG`) SHOULD be tried as Resurgence first. But
 `phreatic-v1.md` §5 begins every datagram with `reassembly_id`, which is drawn
 from a CSPRNG, so roughly one PHREATIC datagram in 2³² begins with the magic by
-chance. A receiver MUST therefore fall through to PHREATIC when AVEN parsing or
-authentication fails, and MUST fall through to AVEN when PHREATIC's `frag_mac`
+chance. A receiver MUST therefore fall through to PHREATIC when Resurgence parsing or
+authentication fails, and MUST fall through to Resurgence when PHREATIC's `frag_mac`
 fails.
 
 Reserved bits are not an alternative. `phreatic-v1.md` §2 makes reserved fields
@@ -110,7 +118,7 @@ suite later is not a flag day — which means no reserved-bit pattern makes a
 datagram invalid PHREATIC, and none can be borrowed as a discriminator.
 
 **What actually separates the two protocols is that both are authenticated.** A
-PHREATIC datagram offered to AVEN fails AVEN's MAC; an AVEN datagram offered to
+PHREATIC datagram offered to Resurgence fails Resurgence's MAC; a Resurgence datagram offered to
 PHREATIC fails `frag_mac`. Each is a 16-byte tag, so a cross-protocol
 acceptance requires a forgery rather than a coincidence. The magic exists only
 so that the common case costs one MAC rather than two.
@@ -127,7 +135,7 @@ receiver was already doing, not a new amplification class.
 
 ```
 disco_key(A, B, epoch) = HKDF-SHA-512(
-        master, "karst-disco-v1" ‖ min(A,B) ‖ max(A,B), epoch, 32)
+        master, "karst-resurgence-v1" ‖ min(A,B) ‖ max(A,B), epoch, 32)
 ```
 
 Derived by the coordination server and shipped in the netmap, exactly as the
@@ -157,7 +165,7 @@ A datagram names its sender by an 8-byte **tag**, never by a node ID:
 
 ```
 peer_tag(sender, epoch) = HMAC-SHA-512(
-        disco_key, "aven-tag-v1" ‖ epoch ‖ sender_id)[0..8]
+        disco_key, "resurgence-tag-v1" ‖ epoch ‖ sender_id)[0..8]
 ```
 
 A receiver precomputes the tag for each peer it holds a disco key for and looks
@@ -185,7 +193,7 @@ mints it:
 
 ```
 reflect_key  — 32 bytes from a CSPRNG, per Ponor connection
-reflect_tag  = HMAC-SHA-512(reflect_key, "aven-reflect-v1")[0..8]
+reflect_tag  = HMAC-SHA-512(reflect_key, "resurgence-reflect-v1")[0..8]
 ```
 
 The relay generates `reflect_key` and sends it in `ReflectOffer`
@@ -227,7 +235,7 @@ unstated.
 
 ```mermaid
 packet-beta
-    title AVEN datagram header
+    title Resurgence datagram header
     0-31: "magic (4 B)"
     32-39: "version (1 B)"
     40-47: "type (1 B)"
@@ -285,7 +293,7 @@ Nineteen bytes, fixed:
 
 ```mermaid
 packet-beta
-    title AVEN endpoint encoding
+    title Resurgence endpoint encoding
     0-7: "family (1 B)"
     8-135: "address (16 B)"
     136-151: "port (2 B)"
@@ -420,7 +428,7 @@ redistributes to that node's peers as `KarstNetmapPeer.candidates`. A peer
 receiving one adopts it exactly as it would a configured `peer.endpoint`:
 queued for probing, never treated as confirmed until a `Pong` answers it.
 
-**This does not change AVEN's trust model.** A candidate arriving this way is
+**This does not change Resurgence's trust model.** A candidate arriving this way is
 no better authenticated than one arriving in `CallMeMaybe` or as a `Pong`'s
 `observed` value (§1.1's malicious peer already covers both) — §7.1's rule
 that only an authenticated `Pong` confirms a path is what actually bounds the
@@ -547,7 +555,7 @@ networks, which is the ordinary deployment and not an exotic one.
 The relay cannot fill the gap as it stands. Ponor has no frame for an observed
 address, and — the part that is easy to miss — **it speaks TCP, and a NAT maps
 TCP and UDP separately**. The address a relay observes on its Ponor connection
-is not the address AVEN needs, and an implementation that reported it would
+is not the address Resurgence needs, and an implementation that reported it would
 supply a confidently wrong candidate.
 
 **A reflector is a UDP service that answers `Reflect` with the source address it
@@ -565,7 +573,7 @@ sequenceDiagram
     Relay->>Node: Reflection (tx_id, observed)
 ```
 
-**The node MUST send `Reflect` from the socket PHREATIC and AVEN already
+**The node MUST send `Reflect` from the socket PHREATIC and Resurgence already
 share.** This is §4's rule reaching one hop further: a NAT binding proven on one
 socket says nothing about another, so a reflection gathered from a fresh socket
 would report a mapping no peer can use. It is the single most important
@@ -634,7 +642,7 @@ leaves the pairing that is both common and hard: one node behind a **symmetric**
 NAT, the other behind a **port-restricted cone**. A CGNAT subscriber talking to
 somebody on an ordinary home router is exactly this.
 
-**AVEN does not attempt it.** This pairing falls back to the relay, as
+**Resurgence does not attempt it.** This pairing falls back to the relay, as
 symmetric-to-symmetric does (§12.4). The section is kept rather than deleted
 because the reasoning cost a great deal to acquire and the next person to
 propose the technique deserves it.
@@ -679,7 +687,7 @@ four rounds ago holds a mapping three timeouts dead.
 those create mappings that accept a reply solely from the random port they were
 aimed at. Half its external ports are dead targets.
 
-*A node does not know which side it is.* Nothing in AVEN tells a node whether
+*A node does not know which side it is.* Nothing in Resurgence tells a node whether
 its own NAT has endpoint-dependent mapping — §7.6's two-reflector test would,
 and most nodes have one relay. So it must fund both roles from one budget,
 halving *N* and *M* together and quartering the per-round chance.
@@ -750,7 +758,7 @@ supplies connectivity).
 §7.1's `Ping`/`Pong` exchange is what installs an endpoint via
 `Engine::set_endpoint`, and a TURN-relayed address answers it exactly like a
 direct one once reachable — RFC 8656 relaying is transparent to whatever rides
-inside it, including AVEN's own datagrams. No new confirmation machinery is
+inside it, including Resurgence's own datagrams. No new confirmation machinery is
 needed, which is also why this section adds nothing to §11's model: the
 authentication property being verified there does not change when the
 underlying transport does.
@@ -1072,7 +1080,7 @@ matters.
 
 An on-path observer without the disco key sees:
 
-- That two addresses are exchanging small UDP datagrams with the AVEN magic,
+- That two addresses are exchanging small UDP datagrams with the Resurgence magic,
   and how often.
 - An 8-byte tag per direction, constant within an epoch and unlinkable across
   epochs. **Not** a node ID, and not resolvable to one without the key.
@@ -1108,14 +1116,14 @@ which costs it direct paths and nothing else.
 
 ## 10. Error handling
 
-Every failure is a **silent drop**. There are no error messages in AVEN:
+Every failure is a **silent drop**. There are no error messages in Resurgence:
 
 - Unknown tag → drop. Emitting anything would make a node an oracle for which
   peers it holds keys for.
 - MAC failure → drop, without distinguishing it from an unknown tag.
 - Malformed, over-long, wrong length for its type → drop.
 - Unknown type or version → drop. Unlike `ponor-v1.md` §6, this does not close
-  anything, because there is nothing to close: AVEN is stateless UDP.
+  anything, because there is nothing to close: Resurgence is stateless UDP.
 
 A node MUST NOT log a per-datagram message on any of these paths at default
 verbosity. The protocol runs on an unfiltered UDP port; a log line per dropped
@@ -1125,7 +1133,7 @@ datagram is a disk-filling primitive available to anyone who can reach it.
 
 ## 11. Formal verification
 
-`spec/models/aven.pv`, ProVerif 2.05, seconds:
+`spec/models/resurgence.pv`, ProVerif 2.05, seconds:
 
 | Query | Result |
 |---|---|
@@ -1158,7 +1166,7 @@ otherwise would be claiming something no run of the model establishes.
 
 ### 11.2 The broken variant
 
-`spec/models/aven-headeronly.pv` authenticates only the header, leaving `tx_id`
+`spec/models/resurgence-headeronly.pv` authenticates only the header, leaving `tx_id`
 and `observed` outside the MAC. Both agreement queries become **false**, with a
 trace: an attacker rewrites `tx_id` on a captured `Pong` and confirms a path the
 peer never answered from.
@@ -1166,7 +1174,7 @@ peer never answered from.
 This one is not hypothetical. `phreatic-v1.md` §13.8 made exactly that trade on
 the data path — deliberately, after profiling showed the fragment MAC costing
 five times the AEAD it gated — and the variant exists to record that the saving
-must not be carried across to AVEN, where the MAC's job is different.
+must not be carried across to Resurgence, where the MAC's job is different.
 
 ---
 
@@ -1196,7 +1204,7 @@ must not be carried across to AVEN, where the MAC's job is different.
 
    This narrowing is a reason to specify port prediction carefully rather than
    quickly. It buys one row, against a technique that is loud by construction,
-   and §7.5 exists precisely so that AVEN cannot be turned into a packet
+   and §7.5 exists precisely so that Resurgence cannot be turned into a packet
    source. A design that spends the rate budget on the common case to reach an
    uncommon one is a bad trade, and the specification should say which budget
    it spends.
@@ -1287,7 +1295,7 @@ must not be carried across to AVEN, where the MAC's job is different.
     between the two messages, which is the opposite of §7.6's — a large
     request, a small reply — and a symbolic model proves authentication, not
     that an implementation actually produces a datagram of the size the spec
-    claims. §12's confidence here rests on `crates/karst-disco`'s unit tests
+    claims. §12's confidence here rests on `crates/karst-resurgence`'s unit tests
     (`consts::MTU_CEILING`/`MTU_FLOOR` asserted against `karst-proto`'s wire
     constants, and the bisection's convergence exercised without any ICMP in
     the loop) rather than a proof, and it should be modeled before this draft

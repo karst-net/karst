@@ -466,7 +466,7 @@ fn build_double_nat() {
 /// the NAT's external address.
 ///
 /// The shape matters to Karst directly. Two nodes on one home network both
-/// learn a reflexive address from the relay (`aven-v1.md` §7.6), advertise it,
+/// learn a reflexive address from the relay (`resurgence-v1.md` §7.6), advertise it,
 /// and then probe each other *at the NAT's own outer address*. Whether that
 /// works is the hairpinning question, and it is not a property Karst can
 /// choose — so the matrix has to establish which way this fixture goes before
@@ -919,7 +919,7 @@ fn natprobe() -> String {
     let p = dir.join("examples").join("natprobe");
     assert!(
         p.exists(),
-        "{} is missing — build it with `cargo build -p karst-disco --example natprobe`",
+        "{} is missing — build it with `cargo build -p karst-resurgence --example natprobe`",
         p.display()
     );
     p.to_string_lossy().into_owned()
@@ -1471,7 +1471,7 @@ fn hairpin_attempt(probe: &str, hairpin: bool) -> Option<String> {
 /// delivered locally rather than translated, and the NAT has no listener.
 ///
 /// The consequence for Karst is specific and load-bearing: **the interface-
-/// address tier of `aven-v1.md` §7.2 is what carries the same-LAN case.** If a
+/// address tier of `resurgence-v1.md` §7.2 is what carries the same-LAN case.** If a
 /// node advertised only reflexive addresses — which is the tempting
 /// simplification once §7.6 exists, because they are the ones that work
 /// everywhere else — two machines on the same desk would be relayed through the
@@ -1509,7 +1509,7 @@ fn a_masquerading_nat_does_not_hairpin() {
 /// hairpinned datagram to arrive from the NAT's **external** address, and a
 /// `dnat` without the matching `snat` delivers it from the sender's *private*
 /// address instead. A node that accepted that would learn a candidate its peer
-/// can never be reached at from anywhere else, and — worse for AVEN — would
+/// can never be reached at from anywhere else, and — worse for Resurgence — would
 /// have `Pong.observed` report a private address as the peer's reflexive one.
 #[test]
 #[ignore = "needs root and network namespaces"]
@@ -1546,7 +1546,7 @@ fn observed_from6(probe: &str, bind_port: u16, target6: &str, target_port: u16) 
 
 /// **An IPv6-only node reaches IPv4, and the path behaves like a cone.**
 ///
-/// Two things are established and the second is the one that matters to AVEN.
+/// Two things are established and the second is the one that matters to Resurgence.
 ///
 /// The client has no IPv4 address at all, so reaching an IPv4-only host proves
 /// the translation happened; the reflector sees the NAT's outer v4 address,
@@ -1555,7 +1555,7 @@ fn observed_from6(probe: &str, bind_port: u16, target6: &str, target_port: u16) 
 ///
 /// Then the same socket addresses two *different* IPv4 hosts and is seen at the
 /// **same external port**. That is endpoint-independent mapping, so a NAT64
-/// client's reflexive address (`aven-v1.md` §7.6) is the same address every
+/// client's reflexive address (`resurgence-v1.md` §7.6) is the same address every
 /// peer sees and discovery works on it unchanged. Had it come out
 /// endpoint-*dependent*, an IPv6-only node would have been in §7.7's hard
 /// class, and the row would be saying something very different about what

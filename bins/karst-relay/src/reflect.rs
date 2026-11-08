@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! The AVEN reflector — `spec/aven-v1.md` §7.6, `spec/ponor-v1.md` §7.7.
+//! The Resurgence reflector — `spec/resurgence-v1.md` §7.6, `spec/ponor-v1.md` §7.7.
 //!
 //! A UDP service that answers `Reflect` with the source address it saw. That
 //! is the piece a pair of NAT-bound nodes needs before either can be probed at
@@ -22,8 +22,8 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use karst_disco::consts::{REFLECT_KEY_LEN, TAG_LEN};
-use karst_disco::{msg, DiscoKey, Endpoint, Message};
+use karst_resurgence::consts::{REFLECT_KEY_LEN, TAG_LEN};
+use karst_resurgence::{msg, DiscoKey, Endpoint, Message};
 use karst_relay_proto::consts::ID_LEN;
 
 use crate::limits::{Budget, Meter};
@@ -78,11 +78,11 @@ impl std::fmt::Debug for Reflector {
 /// Why a datagram produced no answer.
 ///
 /// Distinguished for the operator's metrics, **never** for the sender: §10
-/// makes every AVEN failure a silent drop, and telling the two apart on the
+/// makes every Resurgence failure a silent drop, and telling the two apart on the
 /// wire would make the reflector an oracle for which keys it holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refused {
-    /// Not AVEN, malformed, or the wrong length for its type.
+    /// Not Resurgence, malformed, or the wrong length for its type.
     NotForUs,
     /// The tag names no live key — so, by §5.3, no live Ponor connection.
     UnknownTag,
@@ -112,9 +112,9 @@ impl Reflector {
         self.endpoint
     }
 
-    /// The endpoint as `ReflectOffer` carries it — `aven-v1.md` §6.2.
+    /// The endpoint as `ReflectOffer` carries it — `resurgence-v1.md` §6.2.
     #[must_use]
-    pub fn wire_endpoint(&self) -> [u8; karst_disco::consts::ENDPOINT_LEN] {
+    pub fn wire_endpoint(&self) -> [u8; karst_resurgence::consts::ENDPOINT_LEN] {
         Endpoint(self.endpoint).to_wire()
     }
 
@@ -246,7 +246,7 @@ mod tests {
     )]
 
     use super::*;
-    use karst_disco::TxId;
+    use karst_resurgence::TxId;
 
     fn node(b: u8) -> [u8; ID_LEN] {
         [b; ID_LEN]

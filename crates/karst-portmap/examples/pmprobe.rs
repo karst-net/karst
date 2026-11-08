@@ -6,12 +6,12 @@
 //! `tests/gateway.rs` drives a real `miniupnpd` and needs the socket to be
 //! **created** in the client namespace — a socket bound in one namespace and
 //! used from another is on the wrong stack, which is the same mistake
-//! `aven-v1.md` §7.6 warns about for reflections. Rust has no `setns` without
+//! `resurgence-v1.md` §7.6 warns about for reflections. Rust has no `setns` without
 //! a libc dependency this crate does not otherwise need, so the I/O happens
 //! here, under `ip netns exec`, and the codec stays in the test process where
 //! a failure produces a useful assertion rather than a hex dump.
 //!
-//! This is the same split `karst-disco`'s `natprobe` example uses.
+//! This is the same split `karst-resurgence`'s `natprobe` example uses.
 //!
 //! ```text
 //! pmprobe <bind-ip> <gateway-ip:port> <hex-request>

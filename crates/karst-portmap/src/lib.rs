@@ -5,8 +5,8 @@
 //! Explicit NAT port mapping — **NAT-PMP** (RFC 6886) and **PCP** (RFC 6887).
 //!
 //! A NAT that will *tell* you your external port, or better, reserve one for
-//! you, removes the guessing that `karst-disco` otherwise has to do. The
-//! mapping it hands back is a candidate like any other — `aven-v1.md` §7.2's
+//! you, removes the guessing that `karst-resurgence` otherwise has to do. The
+//! mapping it hands back is a candidate like any other — `resurgence-v1.md` §7.2's
 //! tiers still apply — with one distinction worth stating: it is the only
 //! candidate a node holds that the NAT is keeping open **on purpose**, rather
 //! than as a side effect of traffic the node happened to send.
@@ -32,9 +32,9 @@
 //! crate depending on an XML parser to serve the two protocols that do not need
 //! one.
 //!
-//! # The security posture is not the same as AVEN's
+//! # The security posture is not the same as Resurgence's
 //!
-//! AVEN authenticates every datagram with a per-pair key. **Nothing here is
+//! Resurgence authenticates every datagram with a per-pair key. **Nothing here is
 //! authenticated at all** — NAT-PMP has no security whatever, and PCP's
 //! optional authentication (RFC 7652) is not deployed and not implemented here.
 //! Anything on the local link can forge a response.
@@ -42,7 +42,7 @@
 //! That is survivable only because of what a mapping is *used for*. A forged
 //! response makes a node advertise an external address that does not work,
 //! which costs its peers a few probes and nothing else — the same bound
-//! `aven-v1.md` §7.2 already places on a lying peer, and the reason that
+//! `resurgence-v1.md` §7.2 already places on a lying peer, and the reason that
 //! section forbids treating any reported address as a path. A node MUST NOT
 //! draw any other conclusion from a mapping response: not that it is behind a
 //! NAT of a particular kind, not that a port is safe to bind, and above all not
@@ -128,7 +128,7 @@ impl Transport {
 /// explicit that the client renews against what it was granted. An
 /// implementation that renews on its own requested interval loses the mapping
 /// on any gateway that trims it — which is the same class of mistake as
-/// `aven-v1.md` §7.5's reflect interval, one layer up.
+/// `resurgence-v1.md` §7.5's reflect interval, one layer up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mapping {
     /// The protocol that produced it.
@@ -297,7 +297,7 @@ impl fmt::Display for ResultCode {
 /// Read a big-endian `u16` without indexing.
 ///
 /// The whole crate is on the pre-authentication path — these are unauthenticated
-/// bytes from the local link — so it is written the way `karst-disco`'s decoder
+/// bytes from the local link — so it is written the way `karst-resurgence`'s decoder
 /// is: no indexing, no slicing by a length the wire supplied, no `unwrap`.
 pub(crate) fn be16(b: &[u8], at: usize) -> Option<u16> {
     let hi = *b.get(at)?;

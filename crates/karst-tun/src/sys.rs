@@ -680,8 +680,8 @@ pub(crate) fn interface_index(sock: BorrowedFd<'_>, name: [u8; IF_NAME_SIZE]) ->
 
 // ── enumerating the host's own addresses ───────────────────────────────────
 //
-// AVEN needs the set of addresses a peer might reach this node on
-// (`spec/aven-v1.md` §7.3). That is a question about the *host*, not about the
+// Resurgence needs the set of addresses a peer might reach this node on
+// (`spec/resurgence-v1.md` §7.3). That is a question about the *host*, not about the
 // tunnel, but it needs `AF_NETLINK` and therefore `unsafe`, and ADR-0003 keeps
 // every such call in this file.
 
@@ -758,7 +758,7 @@ pub(crate) struct AddrBatch {
 /// Addresses the kernel reports but a peer cannot use are dropped here rather
 /// than by the caller — scope, tentative and deprecated are facts about the
 /// address, not policy about what to do with it. Which of the remaining ones
-/// are *worth advertising* is AVEN's decision and is made in `karstd`.
+/// are *worth advertising* is Resurgence's decision and is made in `karstd`.
 pub(crate) fn parse_addr_dump(buf: &[u8]) -> AddrBatch {
     let mut addrs = Vec::new();
     let mut done = false;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! Per-pair disco keys and sender tags — `spec/aven-v1.md` §5.
+//! Per-pair disco keys and sender tags — `spec/resurgence-v1.md` §5.
 //!
 //! The key arrives from the netmap; this module does not derive it from a
 //! master, because nodes do not hold the master. What it does derive is the
@@ -16,15 +16,15 @@ use crate::consts::{KEY_LEN, MAC_LEN, TAG_LEN};
 
 type HmacSha512 = Hmac<Sha512>;
 
-const TAG_LABEL: &[u8] = b"aven-tag-v1";
-const REFLECT_TAG_LABEL: &[u8] = b"aven-reflect-v1";
+const TAG_LABEL: &[u8] = b"resurgence-tag-v1";
+const REFLECT_TAG_LABEL: &[u8] = b"resurgence-reflect-v1";
 
 /// A per-pair disco key from the netmap.
 ///
 /// The key bytes are held and the HMAC schedule is built per call, rather than
 /// pre-keyed the way `karst-proto`'s `FragMacKey` is. That optimization was
 /// worth 6% of CPU on a datapath running 50,000 packets a second (PLAN.md
-/// §3.4); AVEN sends a handful of probes a second, and holding only the array
+/// §3.4); Resurgence sends a handful of probes a second, and holding only the array
 /// is what keeps the zeroize-on-drop honest — a pre-keyed `Hmac` retains
 /// key-derived `ipad`/`opad` state that the crate gives no way to clear.
 ///

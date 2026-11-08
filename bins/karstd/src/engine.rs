@@ -42,7 +42,7 @@ use crate::routing::PeerIndex;
 /// How a datagram reaches its peer.
 ///
 /// **The engine names a destination rather than an address**, because a peer
-/// with no working direct path is not unreachable — `aven-v1.md` §8.3 makes the
+/// with no working direct path is not unreachable — `resurgence-v1.md` §8.3 makes the
 /// relay a path like any other, and the last resort rather than a failure
 /// state. The two arms are the two transports a node has, and which one a peer
 /// gets is decided in exactly one place ([`Engine::via`]).
@@ -781,7 +781,7 @@ impl Engine {
     /// **This is the whole of the relay→direct upgrade, and it is a two-line
     /// rule on purpose.** A direct endpoint wins whenever there is one; the
     /// relay carries the traffic whenever there is not. Nothing else has to
-    /// coordinate, because AVEN owns whether a direct endpoint exists at all:
+    /// coordinate, because Resurgence owns whether a direct endpoint exists at all:
     /// it installs one on a confirmed path and withdraws it once it has given
     /// up on every path ([`Self::set_endpoint`], [`Self::release_endpoint`]).
     /// The upgrade and the fallback are the same decision read at different
@@ -792,7 +792,7 @@ impl Engine {
     /// address that has gone stale from pre-empting the relay forever — it did,
     /// and it was GitHub issue [#20](https://github.com/karst-net/karst/issues/20). A peer with no disco key is untouched
     /// by any of this and keeps its configured endpoint, which is correct: no
-    /// key means no discovery, ever (`aven-v1.md` §5.1), so there is nothing to
+    /// key means no discovery, ever (`resurgence-v1.md` §5.1), so there is nothing to
     /// learn from and nothing that could responsibly take it away.
     ///
     /// Deciding it here rather than at each call site is what keeps that true.
@@ -844,10 +844,10 @@ impl Engine {
     /// Which relay carries traffic for the peer the relay knows as `peer_id`.
     ///
     /// The same decision [`Self::via`] makes, for the callers that hold a node
-    /// id rather than a roster index — AVEN's rendezvous, whose advertisements
+    /// id rather than a roster index — Resurgence's rendezvous, whose advertisements
     /// must reach the peer by the same route its data does. A peer with a
     /// direct path still answers here: an advertisement is what *creates* the
-    /// direct path, so it goes over the relay regardless (`aven-v1.md` §7.3).
+    /// direct path, so it goes over the relay regardless (`resurgence-v1.md` §7.3).
     #[must_use]
     pub fn relay_for(
         &self,
@@ -870,7 +870,7 @@ impl Engine {
             .filter(|&home| Some(home) != self.home_relay())
     }
 
-    /// Install an authenticated AVEN-selected endpoint for a roster peer.
+    /// Install an authenticated Resurgence-selected endpoint for a roster peer.
     ///
     /// Unconditional: a probed and confirmed direct path is better evidence
     /// than an address learned from a handshake, and displacing the second with
@@ -2809,7 +2809,7 @@ pub struct PeerStatus {
     ///
     /// **Not decoration, and not a bool.** A relayed peer works, and works more
     /// slowly, by more hops, and through a third party that sees the timing and
-    /// volume of the traffic (`aven-v1.md` §9) — an operator asking "why is
+    /// volume of the traffic (`resurgence-v1.md` §9) — an operator asking "why is
     /// this slow" cannot tell that from the outside. Neither can they tell it
     /// from a peer with *no* path at all, which is a different problem with a
     /// different fix, and which a `relayed: false` would have quietly merged

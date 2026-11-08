@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! AVEN on the datapath socket — `spec/aven-v1.md` §4.
+//! Resurgence on the datapath socket — `spec/resurgence-v1.md` §4.
 //!
 //! Path discovery shares the node's UDP socket with PHREATIC, and must: a path
 //! is only useful if it is the one PHREATIC will actually take, and a NAT
@@ -16,7 +16,7 @@
 //! # Why the magic is only a hint
 //!
 //! `phreatic-v1.md` §5 begins every datagram with `reassembly_id`, drawn from a
-//! CSPRNG. So roughly one PHREATIC datagram in 2³² starts with AVEN's magic by
+//! CSPRNG. So roughly one PHREATIC datagram in 2³² starts with Resurgence's magic by
 //! chance, and a demultiplexer that trusted the magic would drop one datagram a
 //! day on a busy node — a lost fragment, a retried handshake, and nothing in
 //! any log to explain it.
@@ -26,18 +26,18 @@
 //! datagram invalid PHREATIC.
 //!
 //! What actually separates the two protocols is that both are authenticated.
-//! [`Verdict::NotAven`] is returned whenever AVEN cannot *authenticate* the
+//! [`Verdict::NotResurgence`] is returned whenever Resurgence cannot *authenticate* the
 //! datagram, not merely when the magic is absent, and the caller then offers it
 //! to PHREATIC where a genuine one will pass its own MAC.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use karst_disco::consts::{MAGIC, TAG_LEN};
-use karst_disco::key::PeerIndex;
-use karst_disco::msg::{self, Endpoint, Message, TxId};
-use karst_disco::path::{PathKind, PongOutcome};
-use karst_disco::{DiscoKey, Engine, TagTable};
+use karst_resurgence::consts::{MAGIC, TAG_LEN};
+use karst_resurgence::key::PeerIndex;
+use karst_resurgence::msg::{self, Endpoint, Message, TxId};
+use karst_resurgence::path::{PathKind, PongOutcome};
+use karst_resurgence::{DiscoKey, Engine, TagTable};
 
 /// The address `PathSet::set_relay` is called with for every peer.
 ///
@@ -56,16 +56,16 @@ const RELAY_PATH_ADDR: SocketAddr =
 /// What to do with an arriving datagram.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
-    /// AVEN authenticated it and handled it. Any reply is here.
+    /// Resurgence authenticated it and handled it. Any reply is here.
     Handled(Vec<(Vec<u8>, SocketAddr)>),
     /// Not ours. Offer it to PHREATIC.
     ///
     /// Covers a datagram without the magic, one that fails to parse, one whose
     /// tag names no peer we hold a key for, and one whose MAC does not verify.
-    /// The last two are deliberately not distinguished: `spec/aven-v1.md` §10
+    /// The last two are deliberately not distinguished: `spec/resurgence-v1.md` §10
     /// makes every failure a silent drop, because saying which would make a
     /// node an oracle for the peers it holds keys for.
-    NotAven,
+    NotResurgence,
 }
 
 /// Most reflexive addresses this node will advertise at once.
@@ -86,7 +86,7 @@ const REFLEXIVE_MAX: usize = 4;
 /// discover at runtime.
 const REFLECTORS_MAX: usize = 4;
 
-/// A relay's AVEN reflector, as offered over Ponor — §7.6, `ponor-v1.md` §7.7.
+/// A relay's Resurgence reflector, as offered over Ponor — §7.6, `ponor-v1.md` §7.7.
 struct Reflector {
     /// The §5.3 reflect key, minted by the relay for this connection.
     key: DiscoKey,
@@ -95,7 +95,7 @@ struct Reflector {
     tag: [u8; TAG_LEN],
     /// Where to send `Reflect`. A **UDP** address, and not the Ponor
     /// connection's: a NAT maps TCP and UDP separately, so the address a relay
-    /// sees on its TCP connection is not the one AVEN needs.
+    /// sees on its TCP connection is not the one Resurgence needs.
     endpoint: SocketAddr,
     /// Transaction ids sent and not yet answered, with when each went out.
     ///
@@ -157,14 +157,14 @@ struct Peer {
 
 /// What one poll of discovery wants put on the wire.
 ///
-/// Two transports, because AVEN uses two. Probes go on the shared UDP socket,
+/// Two transports, because Resurgence uses two. Probes go on the shared UDP socket,
 /// which is the whole point — a NAT binding proven on one port says nothing
 /// about another. Candidate advertisements go over the relay (§7.3), which is
 /// what makes simultaneous open possible: both ends learn each other's
 /// candidates at nearly the same moment.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Outbound {
-    /// AVEN datagrams for the shared UDP socket.
+    /// Resurgence datagrams for the shared UDP socket.
     pub datagrams: Vec<(Vec<u8>, SocketAddr)>,
     /// Encoded `CallMeMaybe` messages, each addressed by Ponor node id.
     pub relayed: Vec<([u8; 32], Vec<u8>)>,
@@ -195,7 +195,7 @@ pub enum PathChange {
     /// [`crate::engine::Engine::release_endpoint`].
     ///
     /// **There is no revert target, and that is the rule.** An earlier version
-    /// reverted an AVEN-confirmed path to the netmap-configured endpoint, which
+    /// reverted a Resurgence-confirmed path to the netmap-configured endpoint, which
     /// only made sense while that endpoint was exempt from discovery. It is not:
     /// it is a candidate like any other, so by the time this fires it has been
     /// probed and given up on too. Reverting to it would hand the datapath an
@@ -211,15 +211,15 @@ pub enum PathChange {
 /// Path discovery for every peer this node holds a disco key for.
 ///
 /// Peers without one are absent from here entirely, which is
-/// `spec/aven-v1.md` §5.1: no disco key means no discovery, ever, and the pair
+/// `spec/resurgence-v1.md` §5.1: no disco key means no discovery, ever, and the pair
 /// stays on the relay. There is deliberately no unauthenticated mode — probing
 /// without a key would let an attacker tell this node where to send its
 /// traffic, which is the whole of what the protocol decides.
 pub struct Disco {
     peers: Vec<Peer>,
     tags: TagTable,
-    /// Raw Ponor node ids, resolved only for relay-delivered AVEN messages.
-    /// The AVEN tag finds a key cheaply; this second binding makes sure the
+    /// Raw Ponor node ids, resolved only for relay-delivered Resurgence messages.
+    /// The Resurgence tag finds a key cheaply; this second binding makes sure the
     /// relay-stamped source names the very same peer.
     relay_peers: HashMap<[u8; 32], PeerIndex>,
     epoch: u32,
@@ -379,7 +379,7 @@ impl Disco {
             return false;
         }
         // Registered here rather than by the caller, so a peer is never half
-        // added: every peer that can be found by its AVEN tag can also be found
+        // added: every peer that can be found by its Resurgence tag can also be found
         // by the node id a relay stamps on its frames, and the two always name
         // the same slot.
         self.relay_peers.insert(id, index);
@@ -487,12 +487,12 @@ impl Disco {
 
         ordered
             .into_iter()
-            .take(karst_disco::consts::MAX_CANDIDATES)
+            .take(karst_resurgence::consts::MAX_CANDIDATES)
             .map(Endpoint)
             .collect()
     }
 
-    /// This node's own current AVEN candidate list, as `karst_control.proto`'s
+    /// This node's own current Resurgence candidate list, as `karst_control.proto`'s
     /// `KarstNetmapRequest.candidates` wants it — plain `ip:port` strings, in
     /// the exact ranked order [`Disco::candidates`] already computes for a
     /// relayed `CallMeMaybe`. A second, relay-independent transport for the
@@ -645,7 +645,7 @@ impl Disco {
                 .and_then(karst_control_client::handle_bytes)
             else {
                 tracing::warn!(
-                    "karstd: AVEN peer {} has an invalid control handle; discovery disabled",
+                    "karstd: Resurgence peer {} has an invalid control handle; discovery disabled",
                     peer.name
                 );
                 continue;
@@ -653,7 +653,7 @@ impl Disco {
             let key = DiscoKey::new(raw_key);
             if !self.add_peer_at(key, &our_id, &their_id, route_index, peer.endpoint) {
                 tracing::warn!(
-                    "karstd: AVEN tag collision for peer {}; discovery disabled",
+                    "karstd: Resurgence tag collision for peer {}; discovery disabled",
                     peer.name
                 );
                 continue;
@@ -697,14 +697,14 @@ impl Disco {
         self.peers.get_mut(peer.0).map(|p| &mut p.engine)
     }
 
-    /// Encode an AVEN message to a peer, ready for the socket.
+    /// Encode a Resurgence message to a peer, ready for the socket.
     #[must_use]
     pub fn encode(&self, peer: PeerIndex, msg: &Message) -> Option<Vec<u8>> {
         let p = self.peers.get(peer.0)?;
         Some(msg.encode(&p.key, &p.our_tag, self.epoch))
     }
 
-    /// Decide whether a datagram is AVEN's, and handle it if so.
+    /// Decide whether a datagram is Resurgence's, and handle it if so.
     ///
     /// The two-step receive of §5.2: [`msg::peek`] reads the tag without
     /// authenticating, one map lookup finds the peer, and then exactly one MAC
@@ -714,10 +714,10 @@ impl Disco {
         // Cheap reject first, so a PHREATIC datagram costs a four-byte compare
         // and not a parse.
         if datagram.first_chunk::<4>() != Some(&MAGIC) {
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         }
         let Ok(header) = msg::peek(datagram) else {
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         };
         // §5.3: the reflect tag is tested **before** the peer table. The two
         // key spaces are disjoint by construction — different labels, different
@@ -730,19 +730,19 @@ impl Disco {
         // rotation overlap unwritten, and until it is written a mismatched
         // epoch is simply not ours.
         if header.epoch != self.epoch {
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         }
         let Some(index) = self.tags.get(&header.tag) else {
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         };
         let Some(peer) = self.peers.get_mut(index.0) else {
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         };
         let Ok(message) = msg::open(datagram, &peer.key) else {
             // Includes a MAC failure, which is where a PHREATIC datagram that
             // collided with the magic ends up. Falling through is what stops
             // that collision from being a dropped packet.
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         };
 
         let mut out = Vec::new();
@@ -848,25 +848,25 @@ impl Disco {
     fn inbound_reflection(&mut self, datagram: &[u8], tag: [u8; TAG_LEN]) -> Verdict {
         // Linear over at most `REFLECTORS_MAX`. A map keyed by tag would be
         // faster and would have to be rebuilt on every offer; four comparisons
-        // on a datagram that already carries the AVEN magic is not a rate
+        // on a datagram that already carries the Resurgence magic is not a rate
         // anything can pull on.
         let Some(r) = self.reflectors.values_mut().find(|r| r.tag == tag) else {
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         };
         let Ok(message) = msg::open(datagram, &r.key) else {
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         };
         let Message::Reflection { tx, observed } = message else {
             // A `Reflect` arriving at a node is our own request replayed back
             // at us. A node is not a reflector and must not answer it.
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         };
         // §7.1, unchanged: an answer counts only against a request this node
         // actually sent, and each transaction id at most once. Without it a
         // captured `Reflection` replayed later would overwrite a current
         // mapping with a stale one.
         if r.outstanding.remove(&tx).is_none() {
-            return Verdict::NotAven;
+            return Verdict::NotResurgence;
         }
         if r.observed == Some(observed.0) {
             return Verdict::Handled(Vec::new());
@@ -896,12 +896,12 @@ impl Disco {
             .is_some_and(|engine| engine.on_call_me_maybe(candidates, now_ms))
     }
 
-    /// Accept an AVEN `CallMeMaybe` forwarded by the authenticated relay.
+    /// Accept a Resurgence `CallMeMaybe` forwarded by the authenticated relay.
     ///
-    /// A relay stamps the source node ID in its `RecvPacket` frame. AVEN's
+    /// A relay stamps the source node ID in its `RecvPacket` frame. Resurgence's
     /// rotating tag independently selects the pair key. Both must resolve to
     /// the same peer before candidates are accepted; otherwise one admitted
-    /// peer could replay another's authentic AVEN datagram under its own
+    /// peer could replay another's authentic Resurgence datagram under its own
     /// relay identity.
     pub fn inbound_from_relay(
         &mut self,
@@ -975,13 +975,13 @@ impl Disco {
             // Expire first, so a reflector that has stopped answering does not
             // accumulate one entry per interval for the life of the process.
             r.outstanding.retain(|_, sent| {
-                now_ms.saturating_sub(*sent) < karst_disco::consts::TX_TIMEOUT_MS
+                now_ms.saturating_sub(*sent) < karst_resurgence::consts::TX_TIMEOUT_MS
             });
 
             let due = r.last_ms.is_none_or(|t| {
-                now_ms.saturating_sub(t) >= karst_disco::consts::REFLECT_INTERVAL_MS
+                now_ms.saturating_sub(t) >= karst_resurgence::consts::REFLECT_INTERVAL_MS
             });
-            if !due || r.outstanding.len() >= karst_disco::consts::MAX_OUTSTANDING {
+            if !due || r.outstanding.len() >= karst_resurgence::consts::MAX_OUTSTANDING {
                 continue;
             }
             let tx = mint();
@@ -1008,7 +1008,7 @@ impl Disco {
             let _ = peer.engine.paths_mut().select(now_ms);
             for action in peer.engine.poll(now_ms, &mut mint) {
                 match action {
-                    karst_disco::Action::Probe { addr, tx } => {
+                    karst_resurgence::Action::Probe { addr, tx } => {
                         let bytes =
                             Message::Ping { tx }.encode(&peer.key, &peer.our_tag, self.epoch);
                         out.datagrams.push((bytes, addr));
@@ -1016,10 +1016,10 @@ impl Disco {
                     // Over the relay, not the datapath socket (§7.3). It is
                     // encoded here, where the pair key lives, and handed to the
                     // caller addressed by Ponor node id — the relay knows
-                    // nothing about AVEN and must not have to.
+                    // nothing about Resurgence and must not have to.
                     // Same arm shape as `Probe`; kept separate because the
                     // destination is a node id rather than an address.
-                    karst_disco::Action::Advertise { candidates } => {
+                    karst_resurgence::Action::Advertise { candidates } => {
                         if candidates.is_empty() {
                             continue;
                         }
@@ -1037,9 +1037,9 @@ impl Disco {
                     }
                     // §7.9: on the datapath socket, like `Probe` — an MTU
                     // probe tests the same path liveness rides over, and a
-                    // relay knows nothing about AVEN either way.
-                    karst_disco::Action::ProbeMtu { addr, tx, size } => {
-                        let padding = size.saturating_sub(karst_disco::consts::MTU_PROBE_OVERHEAD);
+                    // relay knows nothing about Resurgence either way.
+                    karst_resurgence::Action::ProbeMtu { addr, tx, size } => {
+                        let padding = size.saturating_sub(karst_resurgence::consts::MTU_PROBE_OVERHEAD);
                         let bytes = Message::MtuProbe { tx, padding }.encode(
                             &peer.key,
                             &peer.our_tag,
@@ -1123,7 +1123,7 @@ mod tests {
     )]
 
     use super::*;
-    use karst_disco::consts::KEY_LEN;
+    use karst_resurgence::consts::KEY_LEN;
 
     const OUR_ID: &[u8] = b"our-node-id-32-bytes-long-xxxxxx";
     const THEIR_ID: &[u8] = b"their-node-id-32-bytes-long-xxxx";
@@ -1194,7 +1194,7 @@ mod tests {
     fn a_datagram_without_the_magic_goes_to_phreatic() {
         let (mut d, _) = with_peer();
         let phreatic = [0x9a; 200];
-        assert_eq!(d.inbound(&phreatic, addr(9), 0), Verdict::NotAven);
+        assert_eq!(d.inbound(&phreatic, addr(9), 0), Verdict::NotResurgence);
     }
 
     #[test]
@@ -1205,7 +1205,7 @@ mod tests {
         let (mut d, _) = with_peer();
         let mut collided = vec![0u8; 200];
         collided[..4].copy_from_slice(&MAGIC);
-        assert_eq!(d.inbound(&collided, addr(9), 0), Verdict::NotAven);
+        assert_eq!(d.inbound(&collided, addr(9), 0), Verdict::NotResurgence);
     }
 
     #[test]
@@ -1215,7 +1215,7 @@ mod tests {
         let mut d = Disco::new(7);
         let stranger = DiscoKey::new([0x99; KEY_LEN]);
         let ping = from_peer(&stranger, &Message::Ping { tx: TxId([1; 12]) }, 7);
-        assert_eq!(d.inbound(&ping, addr(9), 0), Verdict::NotAven);
+        assert_eq!(d.inbound(&ping, addr(9), 0), Verdict::NotResurgence);
     }
 
     #[test]
@@ -1225,7 +1225,7 @@ mod tests {
         let wrong = DiscoKey::new([0x22; KEY_LEN]);
         let their_tag = key.tag(THEIR_ID, 7);
         let ping = Message::Ping { tx: TxId([1; 12]) }.encode(&wrong, &their_tag, 7);
-        assert_eq!(d.inbound(&ping, addr(9), 0), Verdict::NotAven);
+        assert_eq!(d.inbound(&ping, addr(9), 0), Verdict::NotResurgence);
     }
 
     #[test]
@@ -1236,14 +1236,14 @@ mod tests {
         assert_eq!(d.peer_count(), 0);
         let key = DiscoKey::new([0x11; KEY_LEN]);
         let ping = from_peer(&key, &Message::Ping { tx: TxId([1; 12]) }, 7);
-        assert_eq!(d.inbound(&ping, addr(9), 0), Verdict::NotAven);
+        assert_eq!(d.inbound(&ping, addr(9), 0), Verdict::NotResurgence);
     }
 
     #[test]
     fn a_datagram_from_another_epoch_falls_through() {
         let (mut d, key) = with_peer();
         let ping = from_peer(&key, &Message::Ping { tx: TxId([1; 12]) }, 6);
-        assert_eq!(d.inbound(&ping, addr(9), 0), Verdict::NotAven);
+        assert_eq!(d.inbound(&ping, addr(9), 0), Verdict::NotResurgence);
     }
 
     #[test]
@@ -1504,8 +1504,8 @@ mod tests {
         assert!(
             matches!(
                 mtu,
-                karst_disco::path::Mtu::Confirmed { size, .. }
-                    if size == karst_disco::consts::MTU_CEILING
+                karst_resurgence::path::Mtu::Confirmed { size, .. }
+                    if size == karst_resurgence::consts::MTU_CEILING
             ),
             "{mtu:?}"
         );
@@ -1542,7 +1542,7 @@ mod tests {
     /// address as if it were a socket to send to.
     #[test]
     fn a_confirmed_black_hole_is_withdrawn_once_a_relay_is_known() {
-        use karst_disco::consts::TX_TIMEOUT_MS;
+        use karst_resurgence::consts::TX_TIMEOUT_MS;
 
         let (mut d, key) = with_confirmed_path(None);
         assert_eq!(
@@ -1594,7 +1594,7 @@ mod tests {
                 .find(|p| p.addr == addr(9))
                 .expect("path")
                 .mtu;
-            if matches!(mtu, karst_disco::path::Mtu::Confirmed { .. }) {
+            if matches!(mtu, karst_resurgence::path::Mtu::Confirmed { .. }) {
                 break;
             }
             t += TX_TIMEOUT_MS + 1;
@@ -1823,7 +1823,7 @@ mod tests {
         );
 
         let candidates = d.candidates();
-        assert_eq!(candidates.len(), karst_disco::consts::MAX_CANDIDATES);
+        assert_eq!(candidates.len(), karst_resurgence::consts::MAX_CANDIDATES);
         assert!(
             candidates.iter().all(|c| interfaces.contains(&c.0.ip())),
             "a peer's claim displaced an address this node observed itself"
@@ -1930,7 +1930,7 @@ mod tests {
         d.set_interfaces(&interfaces, 51820);
 
         let candidates = d.candidates();
-        assert_eq!(candidates.len(), karst_disco::consts::MAX_CANDIDATES);
+        assert_eq!(candidates.len(), karst_resurgence::consts::MAX_CANDIDATES);
         assert_eq!(candidates.last(), Some(&Endpoint(truth)));
         assert!(!candidates.contains(&Endpoint(lie)));
     }
@@ -2117,7 +2117,7 @@ mod tests {
         assert_eq!(out.datagrams[0].1, reflector_addr());
         assert_eq!(
             out.datagrams[0].0.len(),
-            karst_disco::consts::REFLECT_LEN,
+            karst_resurgence::consts::REFLECT_LEN,
             "not a Reflect"
         );
     }
@@ -2137,7 +2137,7 @@ mod tests {
         .encode(&key, &key.reflect_tag(), 0);
         assert_eq!(
             d.inbound(&unsolicited, reflector_addr(), 0),
-            Verdict::NotAven
+            Verdict::NotResurgence
         );
         assert!(
             d.candidates().is_empty(),
@@ -2170,7 +2170,7 @@ mod tests {
         ));
         assert_eq!(
             d.inbound(&reply, reflector_addr(), 2),
-            Verdict::NotAven,
+            Verdict::NotResurgence,
             "the same transaction id was accepted twice"
         );
     }
@@ -2185,7 +2185,7 @@ mod tests {
             observed: Endpoint(mapped()),
         }
         .encode(&stranger, &stranger.reflect_tag(), 0);
-        assert_eq!(d.inbound(&forged, reflector_addr(), 0), Verdict::NotAven);
+        assert_eq!(d.inbound(&forged, reflector_addr(), 0), Verdict::NotResurgence);
     }
 
     #[test]
@@ -2198,7 +2198,7 @@ mod tests {
         assert!(d.set_reflector(RELAY_ID, REFLECT_KEY, reflector_addr()));
         let out = d.poll(0, || TxId([0x42; 12]));
         let ours = out.datagrams[0].0.clone();
-        assert_eq!(d.inbound(&ours, reflector_addr(), 1), Verdict::NotAven);
+        assert_eq!(d.inbound(&ours, reflector_addr(), 1), Verdict::NotResurgence);
     }
 
     #[test]
@@ -2347,7 +2347,7 @@ mod tests {
         };
         assert_eq!(sent_at(&mut d, 0), 1, "nothing was asked at all");
         assert_eq!(sent_at(&mut d, 1_000), 0, "asked again a second later");
-        let interval = karst_disco::consts::REFLECT_INTERVAL_MS;
+        let interval = karst_resurgence::consts::REFLECT_INTERVAL_MS;
         assert_eq!(sent_at(&mut d, interval), 1, "never asked again");
     }
 
@@ -2357,7 +2357,7 @@ mod tests {
         // otherwise add one of per interval for the life of the process.
         let (mut d, _) = with_peer();
         assert!(d.set_reflector(RELAY_ID, REFLECT_KEY, reflector_addr()));
-        let interval = karst_disco::consts::REFLECT_INTERVAL_MS;
+        let interval = karst_resurgence::consts::REFLECT_INTERVAL_MS;
         let mut tx = 0u8;
         for n in 0..50 {
             tx = tx.wrapping_add(1);

@@ -16,7 +16,7 @@
 //! is one the NAT64 node really can reach, so its own paths keep working; what
 //! breaks is what it *tells other people*, and telling requires a third node.
 //!
-//! `aven-v1.md` §7.2: a node answering a `Ping` reports the source it arrived
+//! `resurgence-v1.md` §7.2: a node answering a `Ping` reports the source it arrived
 //! from as `Pong.observed`, and the peer takes that as its own reflexive
 //! candidate and advertises it to everybody. So a NAT64 node that skipped the
 //! translation would hand an IPv4 peer an address inside its own translator's
@@ -50,8 +50,8 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
-use karst_disco::msg::{self, Message};
-use karst_disco::DiscoKey;
+use karst_resurgence::msg::{self, Message};
+use karst_resurgence::DiscoKey;
 use karst_transport::{Nat64Prefix, UdpTransport, MAX_DATAGRAM};
 use karstd::disco::Disco;
 
@@ -119,13 +119,13 @@ fn a_nat64_node_reports_an_ipv4_peer_at_an_address_other_nodes_can_use() {
     let verdict = disco.inbound(&buf[..n], from, 1_000);
     let out = match verdict {
         karstd::disco::Verdict::Handled(out) => out,
-        other @ karstd::disco::Verdict::NotAven => {
+        other @ karstd::disco::Verdict::NotResurgence => {
             panic!("the Ping was not handled: {other:?}")
         }
     };
     let (bytes, to) = out
         .first()
-        .expect("a Ping is answered with a Pong — aven-v1.md §7.4");
+        .expect("a Ping is answered with a Pong — resurgence-v1.md §7.4");
 
     let Message::Pong { observed, .. } = msg::open(bytes, &key).expect("our own Pong") else {
         panic!("what was sent back was not a Pong");
@@ -136,7 +136,7 @@ fn a_nat64_node_reports_an_ipv4_peer_at_an_address_other_nodes_can_use() {
         observed.0, want,
         "the NAT64 node told its peer it was seen at {}, which is this \
          network's private spelling of an address. The peer will publish that \
-         as its own reflexive candidate (aven-v1.md §7.2) and every IPv4-only \
+         as its own reflexive candidate (resurgence-v1.md §7.2) and every IPv4-only \
          node in the mesh will be handed an endpoint it cannot send to.",
         observed.0
     );

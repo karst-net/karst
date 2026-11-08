@@ -18,7 +18,7 @@ authors = ["The Karst contributors"]
 karst-bedrock = { path = "crates/karst-bedrock", version = "0.0.0" }
 karst-control-client = { path = "crates/karst-control-client", version = "0.0.0" }
 karst-crypto = { path = "crates/karst-crypto", version = "0.0.0" }
-karst-disco = { path = "crates/karst-disco", version = "0.0.0" }
+karst-resurgence = { path = "crates/karst-resurgence", version = "0.0.0" }
 karst-dns = { path = "crates/karst-dns", version = "0.0.0" }
 karst-embed = { path = "crates/karst-embed", version = "0.0.0" }
 karst-embed-capi = { path = "crates/karst-embed-capi", version = "0.0.0" }

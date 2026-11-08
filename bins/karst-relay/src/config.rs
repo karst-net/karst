@@ -71,7 +71,7 @@ pub struct Config {
     #[serde(default)]
     pub limits: Limits,
 
-    /// The AVEN reflector — `aven-v1.md` §7.6, `ponor-v1.md` §7.7.
+    /// The Resurgence reflector — `resurgence-v1.md` §7.6, `ponor-v1.md` §7.7.
     ///
     /// **Off unless configured**, which is the safe default here in the
     /// ordinary sense: a reflector is a UDP service that answers datagrams, and
@@ -257,7 +257,7 @@ fn default_telemetry_interval_secs() -> u64 {
 #[serde(deny_unknown_fields)]
 pub struct Reflect {
     /// The UDP address to bind. Its own socket, never the Ponor listener's:
-    /// AVEN needs a **UDP** mapping and Ponor's is TCP, which a NAT maps
+    /// Resurgence needs a **UDP** mapping and Ponor's is TCP, which a NAT maps
     /// separately.
     pub listen: SocketAddr,
 

@@ -318,8 +318,8 @@ pub fn decode_name(raw: &[u8; 16]) -> String {
 
 /// Every global-scope unicast address this host currently holds.
 ///
-/// **Not a tunnel operation, and here anyway.** AVEN needs the addresses a
-/// peer might reach this node on (`spec/aven-v1.md` §7.3), which needs
+/// **Not a tunnel operation, and here anyway.** Resurgence needs the addresses a
+/// peer might reach this node on (`spec/resurgence-v1.md` §7.3), which needs
 /// `AF_NETLINK` and therefore `unsafe` — and ADR-0003 keeps every such call in
 /// this crate. Putting it anywhere else would mean a second file with an
 /// `unsafe` allow in it, which is the property that decision buys.

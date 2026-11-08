@@ -110,7 +110,7 @@ pub struct Ctx {
     /// `None` unless the operator configured one — `config::Reflect`.
     ///
     /// Its own lock rather than a field in [`Shared`]: the reflector is driven
-    /// by a UDP task that runs at AVEN's rate on every client at once, and the
+    /// by a UDP task that runs at Resurgence's rate on every client at once, and the
     /// hub's lock is on the forwarding path. Sharing one would make a reflect
     /// datagram contend with every packet the relay carries, to protect two
     /// structures that never refer to each other.
@@ -548,14 +548,14 @@ async fn roster_loop_with_timing(
     }
 }
 
-/// Answer `Reflect` datagrams — `aven-v1.md` §7.6.
+/// Answer `Reflect` datagrams — `resurgence-v1.md` §7.6.
 ///
 /// Every decision is [`Reflector::handle`]'s; this is the socket around it.
-/// The buffer is one AVEN datagram wide, so an over-long datagram is truncated
+/// The buffer is one Resurgence datagram wide, so an over-long datagram is truncated
 /// by the kernel and fails to parse rather than being read into memory this
 /// task sized from an attacker's send.
 pub async fn reflect_loop(socket: UdpSocket, ctx: Arc<Ctx>) {
-    let mut buf = [0u8; karst_disco::consts::DATAGRAM_MAX];
+    let mut buf = [0u8; karst_resurgence::consts::DATAGRAM_MAX];
     loop {
         let Ok((n, from)) = socket.recv_from(&mut buf).await else {
             // A UDP receive error is per-datagram — ICMP unreachable from an

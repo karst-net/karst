@@ -2020,17 +2020,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "karst-disco"
-version = "0.0.0"
-dependencies = [
- "hmac",
- "karst-proto",
- "sha2",
- "subtle",
- "zeroize",
-]
-
-[[package]]
 name = "karst-dns"
 version = "0.0.0"
 dependencies = [
@@ -2131,8 +2120,8 @@ dependencies = [
  "base64ct",
  "getrandom 0.3.4",
  "hex",
- "karst-disco",
  "karst-relay-proto",
+ "karst-resurgence",
  "ml-dsa",
  "quinn",
  "rand_core 0.10.1",
@@ -2155,6 +2144,17 @@ name = "karst-relay-proto"
 version = "0.0.0"
 dependencies = [
  "sha2",
+]
+
+[[package]]
+name = "karst-resurgence"
+version = "0.0.0"
+dependencies = [
+ "hmac",
+ "karst-proto",
+ "sha2",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -2260,7 +2260,6 @@ dependencies = [
  "karst-bedrock",
  "karst-control-client",
  "karst-crypto",
- "karst-disco",
  "karst-dns",
  "karst-ipc",
  "karst-node",
@@ -2269,6 +2268,7 @@ dependencies = [
  "karst-proto",
  "karst-relay",
  "karst-relay-proto",
+ "karst-resurgence",
  "karst-secure-storage",
  "karst-transport",
  "karst-tun",

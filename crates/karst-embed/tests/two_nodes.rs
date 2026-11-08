@@ -113,7 +113,7 @@ impl RelaySetup {
         // own docker bridges rewrite the apparent source address of a
         // "local" UDP send (confirmed directly: a socket bound to
         // 172.17.0.1 was observed by its peer as 192.168.68.121) — the same
-        // shape a real NAT presents. Disco's hole-punching needs AVEN's own
+        // shape a real NAT presents. Disco's hole-punching needs Resurgence's own
         // reflector (`ponor-v1.md` §7.7) to learn that real, reachable
         // address; without it, candidates are exchanged but no pair of them
         // actually reaches the other side, and the handshake never

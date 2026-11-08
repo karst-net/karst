@@ -868,7 +868,7 @@ impl fmt::Debug for PeerSection {
 pub struct Peer {
     /// Name, for logs.
     pub name: String,
-    /// Server-assigned node handle, used to bind AVEN tags to this peer.
+    /// Server-assigned node handle, used to bind Resurgence tags to this peer.
     pub node_id: Vec<u8>,
     /// `node_id` decoded once as text rather than on every packet -- the
     /// same reasoning `engine.rs`'s own `relay_id` precomputation documents
@@ -914,7 +914,7 @@ pub struct Peer {
     /// only ever use `public.psk` — a session dials at its own current
     /// epoch, never a previous one.
     pub psk_previous: Option<[u8; 32]>,
-    /// AVEN key for this pair. Static TOML peers have none and stay direct-only.
+    /// Resurgence key for this pair. Static TOML peers have none and stay direct-only.
     pub disco_key: Option<[u8; 32]>,
     /// The relay this peer published as its home — `ponor-v1.md` §9.1.
     ///
@@ -923,7 +923,7 @@ pub struct Peer {
     /// registry id of the right width survives: a value of any other length
     /// names no relay in `relays` and could only be dialed by guessing.
     pub home_relay: Option<[u8; karst_relay_proto::consts::ID_LEN]>,
-    /// This peer's own self-reported AVEN candidate list, redistributed by
+    /// This peer's own self-reported Resurgence candidate list, redistributed by
     /// the server — `karst_control.proto`'s `KarstNetmapPeer.candidates`,
     /// parsed and filtered to what actually parses as a socket address.
     /// Empty for a static TOML roster peer, which has no coordination
