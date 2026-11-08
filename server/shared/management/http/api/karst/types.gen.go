@@ -2187,17 +2187,25 @@ type GatewayNodeForwardingReadiness string
 
 // GatewayOffer defines model for GatewayOffer.
 type GatewayOffer struct {
-	Enabled bool `json:"enabled"`
+	// EgressDrift True only on a confident, comparable mismatch between pinned_egress_ip and observed_egress_ip. False covers both "confirmed matching" and "not enough information yet" -- it is never a confirmation by itself.
+	EgressDrift bool `json:"egress_drift"`
+	Enabled     bool `json:"enabled"`
 
 	// ForwardingReadiness Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
-	ForwardingReadiness   GatewayOfferForwardingReadiness `json:"forwarding_readiness"`
-	Id                    string                          `json:"id"`
-	Kind                  GatewayOfferKind                `json:"kind"`
-	Masquerade            bool                            `json:"masquerade"`
-	Metric                int                             `json:"metric"`
-	NetworkId             string                          `json:"network_id"`
-	Prefix                string                          `json:"prefix"`
-	RequiresClientConsent bool                            `json:"requires_client_consent"`
+	ForwardingReadiness GatewayOfferForwardingReadiness `json:"forwarding_readiness"`
+	Id                  string                          `json:"id"`
+	Kind                GatewayOfferKind                `json:"kind"`
+	Masquerade          bool                            `json:"masquerade"`
+	Metric              int                             `json:"metric"`
+	NetworkId           string                          `json:"network_id"`
+
+	// ObservedEgressIp Issue #554: this candidate's own self-reported outbound address toward the route. Absent when the route has no pinned_egress_ip or no report has arrived yet.
+	ObservedEgressIp *string `json:"observed_egress_ip,omitempty"`
+
+	// PinnedEgressIp ADR-0068's operator-declared address for this candidate, if any. Absent for an ordinary, unpinned offer.
+	PinnedEgressIp        *string `json:"pinned_egress_ip,omitempty"`
+	Prefix                string  `json:"prefix"`
+	RequiresClientConsent bool    `json:"requires_client_consent"`
 }
 
 // GatewayOfferForwardingReadiness Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.

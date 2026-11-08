@@ -5783,25 +5783,40 @@ fn refresh_netmap(
                     };
                 gateway_offers
                     .into_iter()
-                    .map(|offer| match live.get(&offer.route_id) {
-                        Some(route) => pb::KarstRouteObservation {
-                            route_id: offer.route_id.clone(),
-                            bytes: route.egress_bytes,
-                            packets: route.egress_packets,
-                            ingress_bytes: route.ingress_bytes,
-                            ingress_packets: route.ingress_packets,
-                            forwarding_active: true,
-                            forwarding_readiness_reported: true,
-                        },
-                        None => pb::KarstRouteObservation {
-                            route_id: offer.route_id.clone(),
-                            bytes: 0,
-                            packets: 0,
-                            ingress_bytes: 0,
-                            ingress_packets: 0,
-                            forwarding_active: false,
-                            forwarding_readiness_reported: true,
-                        },
+                    .map(|offer| {
+                        // Issue #554: only worth probing when there is
+                        // something to compare against — an unpinned route
+                        // has no drift to detect, and probing it would just
+                        // be a syscall nobody reads back.
+                        let observed_egress_ip = offer
+                            .pinned_egress_ip
+                            .is_some()
+                            .then(|| crate::gateway::observed_egress_ip(&offer.prefix))
+                            .flatten()
+                            .map(|ip| ip.to_string())
+                            .unwrap_or_default();
+                        match live.get(&offer.route_id) {
+                            Some(route) => pb::KarstRouteObservation {
+                                route_id: offer.route_id.clone(),
+                                bytes: route.egress_bytes,
+                                packets: route.egress_packets,
+                                ingress_bytes: route.ingress_bytes,
+                                ingress_packets: route.ingress_packets,
+                                forwarding_active: true,
+                                forwarding_readiness_reported: true,
+                                observed_egress_ip,
+                            },
+                            None => pb::KarstRouteObservation {
+                                route_id: offer.route_id.clone(),
+                                bytes: 0,
+                                packets: 0,
+                                ingress_bytes: 0,
+                                ingress_packets: 0,
+                                forwarding_active: false,
+                                forwarding_readiness_reported: true,
+                                observed_egress_ip,
+                            },
+                        }
                     })
                     .collect()
             }

@@ -495,6 +495,53 @@ impl Manager {
     }
 }
 
+/// Issue #554: a fixed, well-known unicast target per address family, used
+/// only as the connect-trick destination for an exit route (`prefix.len() ==
+/// 0`), whose own base address (`0.0.0.0`/`::`) cannot be used for a route
+/// lookup. Chosen for being globally anycast and always present in a default
+/// route's own table, not for being specially trustworthy — no packet is
+/// ever sent to it.
+const EXIT_PROBE_TARGET_V4: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1));
+const EXIT_PROBE_TARGET_V6: IpAddr = IpAddr::V6(std::net::Ipv6Addr::new(
+    0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111,
+));
+
+/// Issue #554: this node's own observed outbound address toward `prefix`,
+/// read back from the kernel's own routing table via the standard
+/// zero-traffic "UDP connect trick" — `connect()` on a `SOCK_DGRAM` socket
+/// only resolves a route and binds a local address; it sends no packet
+/// until `send` is called, which never happens here. This is the client
+/// half of ADR-0068's `pinned_egress_ip` verification: an observation the
+/// server records and compares, never a value this node asserts is correct.
+///
+/// For a subnet offer, the destination is the prefix's own base address —
+/// any address inside it resolves the same route. For an exit offer
+/// (`prefix.len() == 0`), the base address (`0.0.0.0`/`::`) cannot be used
+/// for a lookup, so a fixed public target of the same family
+/// ([`EXIT_PROBE_TARGET_V4`]/[`EXIT_PROBE_TARGET_V6`]) stands in for "the
+/// default route."
+///
+/// `None` on any I/O failure (no route, no usable interface) — advisory,
+/// the same posture a failed anchor-RTT probe takes.
+#[must_use]
+pub fn observed_egress_ip(prefix: &Prefix) -> Option<IpAddr> {
+    let destination = if prefix.len() == 0 {
+        match prefix.base() {
+            IpAddr::V4(_) => EXIT_PROBE_TARGET_V4,
+            IpAddr::V6(_) => EXIT_PROBE_TARGET_V6,
+        }
+    } else {
+        prefix.base()
+    };
+    let bind_any = match destination {
+        IpAddr::V4(_) => std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+        IpAddr::V6(_) => std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 0)),
+    };
+    let socket = std::net::UdpSocket::bind(bind_any).ok()?;
+    socket.connect((destination, 443)).ok()?;
+    socket.local_addr().ok().map(|addr| addr.ip())
+}
+
 /// One route's egress and ingress byte/packet counts, read back from its
 /// forward-accept rules' own nftables counters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1028,6 +1075,35 @@ print('IPv4/IPv6 local aliases denied; explicit machine ports preserved')
                 ingress_packets: 5,
             }]
         );
+    }
+
+    #[test]
+    fn observed_egress_ip_resolves_a_subnet_prefix_to_a_local_address() {
+        let prefix = Prefix::new(IpAddr::V4(std::net::Ipv4Addr::new(10, 10, 0, 0)), 16)
+            .expect("valid prefix");
+        let observed = observed_egress_ip(&prefix).expect("a route should resolve on any host");
+        assert!(
+            observed.is_ipv4(),
+            "a v4 prefix must resolve to a v4 local address"
+        );
+    }
+
+    #[test]
+    fn observed_egress_ip_falls_back_to_the_fixed_target_for_an_exit_route() {
+        let v4_exit = Prefix::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
+            .expect("valid default route");
+        let observed = observed_egress_ip(&v4_exit).expect("a default route should resolve");
+        assert!(observed.is_ipv4());
+
+        let v6_exit = Prefix::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0)
+            .expect("valid default route");
+        // Not every CI host has IPv6 egress; a probe failure here is
+        // advisory, the same as a failed anchor-RTT probe, so only check
+        // that a successful result is the right family rather than
+        // requiring one.
+        if let Some(observed) = observed_egress_ip(&v6_exit) {
+            assert!(observed.is_ipv6());
+        }
     }
 
     #[test]

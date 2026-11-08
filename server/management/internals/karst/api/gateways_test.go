@@ -214,3 +214,31 @@ func TestDisabledGatewayOffersDoNotDegradeTheNode(t *testing.T) {
 		"legacy": {ForwardingActive: false},
 	}, "legacy"))
 }
+
+// Issue #554: drift must be reported only on a confident, comparable
+// mismatch -- never merely because one side is missing, which is a weaker
+// claim ("not enough information yet") than "confirmed matching."
+func TestOfferEgressDriftOnlyFiresOnAConfidentMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		telemetry      map[string]routetelemetry.StoredGatewayHealth
+		pinnedEgressIP string
+		wantObserved   string
+		wantDrift      bool
+	}{
+		{"no report yet", nil, "203.0.113.9", "", false},
+		{"route not pinned", map[string]routetelemetry.StoredGatewayHealth{"route-a": {ObservedEgressIP: "203.0.113.99"}}, "", "203.0.113.99", false},
+		{"no report, pinned", map[string]routetelemetry.StoredGatewayHealth{}, "203.0.113.9", "", false},
+		{"matching", map[string]routetelemetry.StoredGatewayHealth{"route-a": {ObservedEgressIP: "203.0.113.9"}}, "203.0.113.9", "203.0.113.9", false},
+		{"textually different, same address", map[string]routetelemetry.StoredGatewayHealth{"route-a": {ObservedEgressIP: "2001:db8::1"}}, "2001:0db8:0000:0000:0000:0000:0000:0001", "2001:db8::1", false},
+		{"drifted", map[string]routetelemetry.StoredGatewayHealth{"route-a": {ObservedEgressIP: "203.0.113.99"}}, "203.0.113.9", "203.0.113.99", true},
+		{"pinned value unparseable", map[string]routetelemetry.StoredGatewayHealth{"route-a": {ObservedEgressIP: "203.0.113.9"}}, "not-an-address", "203.0.113.9", false},
+		{"observed value unparseable", map[string]routetelemetry.StoredGatewayHealth{"route-a": {ObservedEgressIP: "not-an-address"}}, "203.0.113.9", "not-an-address", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			observed, drift := offerEgressDrift(tc.telemetry, "route-a", tc.pinnedEgressIP)
+			require.Equal(t, tc.wantObserved, observed)
+			require.Equal(t, tc.wantDrift, drift)
+		})
+	}
+}

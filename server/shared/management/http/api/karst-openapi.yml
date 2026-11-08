@@ -1599,7 +1599,7 @@ components:
   schemas:
     GatewayOffer:
       type: object
-      required: [id, network_id, prefix, kind, enabled, masquerade, metric, requires_client_consent, forwarding_readiness]
+      required: [id, network_id, prefix, kind, enabled, masquerade, metric, requires_client_consent, forwarding_readiness, egress_drift]
       properties:
         id: { type: string }
         network_id: { type: string }
@@ -1610,6 +1610,9 @@ components:
         metric: { type: integer }
         requires_client_consent: { type: boolean }
         forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone. }
+        pinned_egress_ip: { type: string, description: "ADR-0068's operator-declared address for this candidate, if any. Absent for an ordinary, unpinned offer." }
+        observed_egress_ip: { type: string, description: "Issue #554: this candidate's own self-reported outbound address toward the route. Absent when the route has no pinned_egress_ip or no report has arrived yet." }
+        egress_drift: { type: boolean, description: "True only on a confident, comparable mismatch between pinned_egress_ip and observed_egress_ip. False covers both \"confirmed matching\" and \"not enough information yet\" -- it is never a confirmation by itself." }
     GatewayNode:
       type: object
       required: [node_id, name, control_connected, forwarding_readiness, offers]

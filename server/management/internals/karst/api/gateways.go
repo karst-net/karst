@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 	"sort"
 
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
@@ -44,6 +45,22 @@ type gatewayOffer struct {
 	// holds this offer but its last report said the rule was not live
 	// (e.g. an nftables apply failure).
 	ForwardingReadiness string `json:"forwarding_readiness"`
+	// PinnedEgressIP is ADR-0068's operator declaration (route.Route's own
+	// field, #553), carried here unchanged so the console can show it
+	// alongside what this candidate actually observes.
+	PinnedEgressIP string `json:"pinned_egress_ip,omitempty"`
+	// ObservedEgressIP is issue #554's verification half: this candidate's
+	// own self-reported outbound address toward the route, joined by
+	// resource ID the same way ForwardingReadiness is. Empty when the
+	// route has no PinnedEgressIP (nothing to probe for) or no report has
+	// been received yet.
+	ObservedEgressIP string `json:"observed_egress_ip,omitempty"`
+	// EgressDrift is true only on a confident, comparable mismatch between
+	// PinnedEgressIP and ObservedEgressIP -- never when either side is
+	// absent or fails to parse as an address. An operator seeing this
+	// false must not read it as "confirmed matching," only as "no drift
+	// detected yet."
+	EgressDrift bool `json:"egress_drift"`
 }
 
 type gatewayNode struct {
@@ -139,7 +156,7 @@ func (h *handler) gateways(w http.ResponseWriter, r *http.Request) {
 				kind = "default_ipv6"
 			}
 		}
-		view := gatewayOffer{ID: string(offer.ID), NetworkID: string(offer.NetID), Prefix: offer.Network.Masked().String(), Kind: kind, Enabled: offer.Enabled, Masquerade: offer.Masquerade, Metric: offer.Metric, RequiresClientConsent: offer.Network.Bits() == 0, ForwardingReadiness: "unreported"}
+		view := gatewayOffer{ID: string(offer.ID), NetworkID: string(offer.NetID), Prefix: offer.Network.Masked().String(), Kind: kind, Enabled: offer.Enabled, Masquerade: offer.Masquerade, Metric: offer.Metric, RequiresClientConsent: offer.Network.Bits() == 0, ForwardingReadiness: "unreported", PinnedEgressIP: offer.PinnedEgressIP}
 		candidates := map[string]bool{}
 		if offer.Peer != "" {
 			candidates[offer.Peer] = true
@@ -154,6 +171,7 @@ func (h *handler) gateways(w http.ResponseWriter, r *http.Request) {
 			if current, ok := nodes[id]; ok {
 				candidateView := view
 				candidateView.ForwardingReadiness = offerForwardingReadiness(telemetry[id], string(offer.GetResourceID()))
+				candidateView.ObservedEgressIP, candidateView.EgressDrift = offerEgressDrift(telemetry[id], string(offer.GetResourceID()), offer.PinnedEgressIP)
 				current.Offers = append(current.Offers, candidateView)
 				nodes[id] = current
 				resolved = true
@@ -203,6 +221,38 @@ func offerForwardingReadiness(telemetry map[string]routetelemetry.StoredGatewayH
 		return "ready"
 	}
 	return "degraded"
+}
+
+// offerEgressDrift is issue #554's verification half of ADR-0068's
+// pinned_egress_ip: compares this candidate's latest self-reported
+// observed_egress_ip against the route's own declared PinnedEgressIP,
+// joined by resource ID the same way offerForwardingReadiness is.
+//
+// Drift is reported true only for a confident, comparable mismatch --
+// never merely because one side is absent. An unpinned route, a pinned
+// route no report has arrived for yet, or either value failing to parse
+// as an address all return "no drift detected," which is a true but
+// weaker claim than "confirmed matching." Comparing parsed addresses
+// rather than raw strings tolerates textual differences (leading zeros,
+// IPv6 compression) that do not represent an actual mismatch.
+func offerEgressDrift(telemetry map[string]routetelemetry.StoredGatewayHealth, resourceID, pinnedEgressIP string) (observed string, drift bool) {
+	report, ok := telemetry[resourceID]
+	if !ok {
+		return "", false
+	}
+	observed = report.ObservedEgressIP
+	if pinnedEgressIP == "" || observed == "" {
+		return observed, false
+	}
+	pinned, err := netip.ParseAddr(pinnedEgressIP)
+	if err != nil {
+		return observed, false
+	}
+	seen, err := netip.ParseAddr(observed)
+	if err != nil {
+		return observed, false
+	}
+	return observed, pinned != seen
 }
 
 // aggregateForwardingReadiness rolls one node's offers into a single
