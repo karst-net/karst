@@ -3,9 +3,9 @@
 
 import { useState } from "react";
 import { Dialog } from "@karst-net/ui";
-import type { Relay } from "@karst-net/api-client";
+import type { Estavelle } from "@karst-net/api-client";
 import { api } from "../api";
-import { parseInstallationReceipt, type InstallationReceipt } from "../relay-installation";
+import { parseInstallationReceipt, type InstallationReceipt } from "../estavelle-installation";
 import { Failure, useResource } from "../common";
 
 type Draft = { address: string; tls_server_name: string; identity_key: string; region: string; locationId: string };
@@ -18,7 +18,7 @@ const blank: Draft = { address: "", tls_server_name: "", identity_key: "", regio
 // match. Catching it in the form is worth more than any error message can be.
 const address = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]):\d{1,5}$/;
 
-export function RelayRegistration({ onClose, onAdded }: { onClose: () => void; onAdded: (relay: Relay) => void }) {
+export function EstavelleRegistration({ onClose, onAdded }: { onClose: () => void; onAdded: (relay: Estavelle) => void }) {
   const locationsResource = useResource(api.locations);
   const [draft, setDraft] = useState<Draft>(blank);
   const [message, setMessage] = useState<string>();
@@ -37,13 +37,13 @@ export function RelayRegistration({ onClose, onAdded }: { onClose: () => void; o
     try {
       if (receipt) {
         // Match the public key itself; the file cannot choose an existing identity by ID.
-        const existing = (await api.relays()).find(relay => relay.identity_key === entry.identity_key);
+        const existing = (await api.estavelles()).find(relay => relay.identity_key === entry.identity_key);
         if (existing) {
           if (existing.address !== entry.address || existing.tls_server_name !== entry.tls_server_name || existing.region !== entry.region) throw new Error("This relay identity is already registered with different endpoint settings. Review its existing registration.");
           onAdded(existing); return;
         }
       }
-      onAdded(await api.addRelay({ ...entry, location }));
+      onAdded(await api.addEstavelle({ ...entry, location }));
     }
     catch (error) { setMessage((error as Error).message); }
     finally { setBusy(false); }
@@ -66,13 +66,13 @@ export function RelayRegistration({ onClose, onAdded }: { onClose: () => void; o
       <p>A host-generated receipt fills in the public identity and endpoint. Review it before registering. Importing it does not create access grants or prove readiness.</p>
       {receipt && <div role="status"><p>Installation receipt loaded for <strong>{receipt.entry.address}</strong>. Region: {receipt.entry.region}. TLS name: {receipt.entry.tls_server_name}. Location: {receipt.entry.location?.label || "Not named"}.</p><p>Confirm this file came from your control host. Runtime startup is separate from access configuration.</p><button onClick={() => { setReceipt(undefined); setDraft(blank); }}>Use manual registration</button></div>}
       <form onSubmit={(event) => { event.preventDefault(); void add(); }}>
-        <div hidden={Boolean(receipt)}><label>Address<input aria-label="Relay address" placeholder="203.0.113.7:443" value={draft.address ?? ""} onChange={(event) => setDraft((current) => ({ ...current, address: event.target.value }))} /></label>
+        <div hidden={Boolean(receipt)}><label>Address<input aria-label="Estavelle address" placeholder="203.0.113.7:443" value={draft.address ?? ""} onChange={(event) => setDraft((current) => ({ ...current, address: event.target.value }))} /></label>
         <p className="lede">An IP address and port — not a DNS name. Nodes do not resolve this field.</p>
         <label>TLS server name<input aria-label="TLS server name" placeholder="relay.example.com" value={draft.tls_server_name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, tls_server_name: event.target.value }))} /></label>
-        <label>Identity key<input aria-label="Relay identity key" placeholder="base64, from `karst-relay pubkey`" value={draft.identity_key ?? ""} onChange={(event) => setDraft((current) => ({ ...current, identity_key: event.target.value }))} /></label>
+        <label>Identity key<input aria-label="Estavelle identity key" placeholder="base64, from `karst-relay pubkey`" value={draft.identity_key ?? ""} onChange={(event) => setDraft((current) => ({ ...current, identity_key: event.target.value }))} /></label>
         <p className="lede">The ML-DSA-87 public key the relay prints as <code>identity_pk</code>. This — not the certificate — is what proves which relay a node is talking to.</p>
-        <label>Region<input aria-label="Relay region" value={draft.region ?? ""} onChange={(event) => setDraft((current) => ({ ...current, region: event.target.value }))} /></label>
-        <label>Location<select aria-label="Relay location" value={draft.locationId ?? ""} onChange={(event) => setDraft((current) => ({ ...current, locationId: event.target.value }))}>
+        <label>Region<input aria-label="Estavelle region" value={draft.region ?? ""} onChange={(event) => setDraft((current) => ({ ...current, region: event.target.value }))} /></label>
+        <label>Location<select aria-label="Estavelle location" value={draft.locationId ?? ""} onChange={(event) => setDraft((current) => ({ ...current, locationId: event.target.value }))}>
           <option value="">No location</option>
           {locations.map((location) => <option key={location.id} value={location.id}>{location.label || `${location.lat}, ${location.lon}`}</option>)}
         </select></label>

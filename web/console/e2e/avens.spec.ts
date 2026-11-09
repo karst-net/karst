@@ -6,39 +6,39 @@ import { AxeBuilder } from "@axe-core/playwright";
 
 const inventory = {
   schema_version: 1,
-  gateways: [{ node_id: "combined-node", name: "Combined Gateway", control_connected: true, forwarding_readiness: "unreported", offers: [
+  avens: [{ node_id: "combined-node", name: "Combined Aven", control_connected: true, forwarding_readiness: "unreported", offers: [
     { id: "office", network_id: "office", prefix: "10.20.0.0/16", kind: "subnet", enabled: true, masquerade: true, metric: 100, requires_client_consent: false, forwarding_readiness: "unreported" },
     { id: "internet", network_id: "internet", prefix: "0.0.0.0/0", kind: "default_ipv4", enabled: true, masquerade: true, metric: 100, requires_client_consent: true, forwarding_readiness: "unreported" },
     { id: "internet-v6", network_id: "internet-v6", prefix: "::/0", kind: "default_ipv6", enabled: false, masquerade: true, metric: 100, requires_client_consent: true, forwarding_readiness: "unreported" },
   ] }], unresolved_routes: [], unsupported_routes: [],
 };
 
-test("one Gateway shows both behaviors without claiming forwarding readiness", async ({ page }) => {
-  await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: inventory }));
-  await page.goto("/#/gateways/metrics");
-  const section = page.getByRole("region", { name: "Configured Gateway nodes" });
+test("one Aven shows both behaviors without claiming forwarding readiness", async ({ page }) => {
+  await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: inventory }));
+  await page.goto("/#/avens/metrics");
+  const section = page.getByRole("region", { name: "Configured Aven nodes" });
   await expect(section.locator("tbody tr")).toHaveCount(1);
   await expect(section).toContainText("10.20.0.0/16 · Subnet · enabled");
   await expect(section).toContainText("IPv4 default · enabled · client consent required");
   await expect(section).toContainText("IPv6 default · disabled · client consent required");
   await expect(section).toContainText("Connected");
   await expect(section).toContainText("Unreported");
-  await expect(section).toContainText("karst gateway status");
+  await expect(section).toContainText("karst aven status");
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
-test("legacy route links and canonical Gateway navigation remain usable", async ({ page }) => {
+test("legacy route links and canonical Aven navigation remain usable", async ({ page }) => {
   await page.goto("/#/routes");
-  await expect(page.getByRole("heading", { name: "Gateways", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Avens", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Add subnet route" })).toBeVisible();
-  await page.getByRole("link", { name: "Gateways", exact: true }).click();
+  await page.getByRole("link", { name: "Avens", exact: true }).click();
   await expect(page).toHaveURL(/#\/gateways$/);
-  await expect(page.getByRole("link", { name: "Gateways", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("link", { name: "Avens", exact: true })).toHaveAttribute("aria-current", "page");
 });
 
 test("older control inventory errors do not remove route administration", async ({ page }) => {
-  await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ status: 404, json: { message: "not supported" } }));
-  await page.goto("/#/gateways/metrics");
+  await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ status: 404, json: { message: "not supported" } }));
+  await page.goto("/#/avens/metrics");
   await expect(page.getByText(/Gateway inventory unavailable:/)).toBeVisible();
   await page.getByRole("button", { name: "Manage", exact: true }).click();
   await page.getByRole("button", { name: "Add IPv4 exit route" }).click();
@@ -48,17 +48,17 @@ test("older control inventory errors do not remove route administration", async 
 });
 
 test("unresolved and unsupported declarations remain visible", async ({ page }) => {
-  await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: { ...inventory, gateways: [], unresolved_routes: ["empty-routing-group"], unsupported_routes: ["legacy-domain-route"] } }));
-  await page.goto("/#/gateways/metrics");
+  await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: { ...inventory, avens: [], unresolved_routes: ["empty-routing-group"], unsupported_routes: ["legacy-domain-route"] } }));
+  await page.goto("/#/avens/metrics");
   await expect(page.getByText(/Routes without a visible eligible node: empty-routing-group/)).toBeVisible();
   await expect(page.getByText(/Routes outside the CIDR Gateway model: legacy-domain-route/)).toBeVisible();
 });
 
 test("refresh preserves independent control connectivity and readiness", async ({ page }) => {
   let connected = true;
-  await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: { ...inventory, gateways: inventory.gateways.map((node) => ({ ...node, control_connected: connected })) } }));
-  await page.goto("/#/gateways/metrics");
-  const section = page.getByRole("region", { name: "Configured Gateway nodes" });
+  await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: { ...inventory, avens: inventory.gateways.map((node) => ({ ...node, control_connected: connected })) } }));
+  await page.goto("/#/avens/metrics");
+  const section = page.getByRole("region", { name: "Configured Aven nodes" });
   await expect(section).toContainText("Connected");
   connected = false;
   await page.getByRole("button", { name: "Refresh Gateway inventory" }).click();
@@ -68,7 +68,7 @@ test("refresh preserves independent control connectivity and readiness", async (
 
 
 test("real forwarding readiness is shown per offer and aggregated per node", async ({ page }) => {
-  await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: { ...inventory, gateways: [{
+  await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: { ...inventory, avens: [{
     ...inventory.gateways[0],
     forwarding_readiness: "degraded",
     offers: [
@@ -77,8 +77,8 @@ test("real forwarding readiness is shown per offer and aggregated per node", asy
       inventory.gateways[0].offers[2],
     ],
   }] } }));
-  await page.goto("/#/gateways/metrics");
-  const section = page.getByRole("region", { name: "Configured Gateway nodes" });
+  await page.goto("/#/avens/metrics");
+  const section = page.getByRole("region", { name: "Configured Aven nodes" });
   await expect(section).toContainText("10.20.0.0/16 · Subnet · enabled · ready");
   await expect(section).toContainText("IPv4 default · enabled · client consent required · degraded");
   await expect(section).toContainText("IPv6 default · disabled · client consent required · unreported");
@@ -87,15 +87,15 @@ test("real forwarding readiness is shown per offer and aggregated per node", asy
 });
 
 test("an unknown inventory schema fails explicitly while routes remain available", async ({ page }) => {
-  await page.route("**/api/karst/v1/gateways", (route) => route.fulfill({ json: { ...inventory, schema_version: 2 } }));
-  await page.goto("/#/gateways/metrics");
+  await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: { ...inventory, schema_version: 2 } }));
+  await page.goto("/#/avens/metrics");
   await expect(page.getByText(/Unsupported Gateway inventory schema/)).toBeVisible();
   await page.getByRole("button", { name: "Manage", exact: true }).click();
   await expect(page.getByRole("button", { name: "Add subnet route" })).toBeVisible();
 });
 
 test("one Gateway behavior editor switches prefix and default-route behaviors", async ({ page }) => {
-  await page.goto("/#/gateways");
+  await page.goto("/#/avens");
   await page.getByRole("button", { name: "Add Gateway behavior", exact: true }).click();
   const behavior = page.getByLabel("Gateway behavior", { exact: true });
   await expect(behavior).toHaveValue("subnet");
@@ -116,7 +116,7 @@ test("default behavior keeps explicit client consent and existing route writes",
     submitted = route.request().postDataJSON() as Record<string, unknown>;
     await route.fulfill({ status: 201, json: { ...submitted, id: "new-default" } });
   });
-  await page.goto("/#/gateways");
+  await page.goto("/#/avens");
   await page.getByRole("button", { name: "Add Gateway behavior", exact: true }).click();
   await page.getByLabel("Gateway behavior", { exact: true }).selectOption("::/0");
   await page.getByLabel("Route identifier", { exact: true }).fill("ipv6-egress");
@@ -137,7 +137,7 @@ test("DNS zone affinity is offered for a subnet route, hidden for a default rout
     submitted = route.request().postDataJSON() as Record<string, unknown>;
     await route.fulfill({ status: 201, json: { ...submitted, id: "new-legacy" } });
   });
-  await page.goto("/#/gateways");
+  await page.goto("/#/avens");
   await page.getByRole("button", { name: "Add subnet route", exact: true }).click();
   await expect(page.getByLabel("Route DNS zone", { exact: true })).toBeVisible();
 

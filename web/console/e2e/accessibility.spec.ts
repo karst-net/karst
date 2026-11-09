@@ -383,7 +383,7 @@ test("groups can be created and renamed, and provider groups cannot", async ({ p
 });
 
 test("a relay with a DNS name for an address is refused before it is sent", async ({ page }) => {
-  await page.goto("/#/relays");
+  await page.goto("/#/estavelles");
   await expect(page.getByRole("button", { name: "Add relay", exact: true })).toBeVisible();
   const rowsBefore = await page.locator("tbody tr").count();
   await page.getByRole("button", { name: "Add relay" }).click();
@@ -399,7 +399,7 @@ test("a relay with a DNS name for an address is refused before it is sent", asyn
 });
 
 test("a relay can be added and removed", async ({ page }) => {
-  await page.goto("/#/relays");
+  await page.goto("/#/estavelles");
   await page.getByRole("button", { name: "Add relay" }).click();
   await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Relay address").fill("203.0.113.9:443");

@@ -5,9 +5,9 @@ import { useState } from "react";
 import { Dialog } from "@karst-net/ui";
 import { api } from "../api";
 import { Failure, useResource } from "../common";
-import { downloadInstaller, type InstallationSettings } from "../relay-installation";
+import { downloadInstaller, type InstallationSettings } from "../estavelle-installation";
 
-export function RelayInstallation({ onClose, onContinue }: { onClose: () => void; onContinue?: () => void }) {
+export function EstavelleInstallation({ onClose, onContinue }: { onClose: () => void; onContinue?: () => void }) {
   const locations = useResource(api.locations);
   const [settings, setSettings] = useState<InstallationSettings>({ schema_version: 1, address: "", tls_server_name: "", region: "default", image: "ghcr.io/karst-net/karst-relay:dev", control_image: "ghcr.io/karst-net/karst-control:dev", location: null });
   const [acknowledged, setAcknowledged] = useState(false);

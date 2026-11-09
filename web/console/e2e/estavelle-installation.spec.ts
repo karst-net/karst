@@ -14,13 +14,13 @@ async function fixture(page: import("@playwright/test").Page, existing = false) 
   let requests = 0;
   await page.route("**/api/karst/v1/locations", route => route.fulfill({ json: [] }));
   await page.route("**/api/groups**", route => route.fulfill({ json: [{ id: "engineering", name: "Engineering" }] }));
-  await page.route("**/api/karst/v1/relay-services**", route => {
+  await page.route("**/api/karst/v1/estavelle-services**", route => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/publication")) return route.fulfill({ json: { mode: "services" } });
     if (path.endsWith("/admission-targets")) return route.fulfill({ json: [{ relay_id: "installed", refreshed_at: new Date().toISOString() }] });
     return route.fulfill({ json: [] });
   });
-  await page.route("**/api/karst/v1/relays", async route => {
+  await page.route("**/api/karst/v1/estavelles", async route => {
     if (route.request().method() === "POST") { requests++; expect(route.request().postDataJSON()).toEqual(entry); created = true; return route.fulfill({ status: 201, json: { ...entry, id: "installed", health: { admission_state: "unknown" } } }); }
     await route.fulfill({ json: existing || created ? [{ ...entry, id: "installed", health: { admission_state: "unknown" } }] : [] });
   });
@@ -29,8 +29,8 @@ async function fixture(page: import("@playwright/test").Page, existing = false) 
 
 test("downloaded installation handoff contains settings without reporting deployment success", async ({ page }) => {
   const requests = await fixture(page);
-  await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Add relay", exact: true }).click();
+  await page.goto("/#/estavelles");
+  await page.getByRole("button", { name: "Add estavelle", exact: true }).click();
   await page.getByRole("button", { name: "I have a host, but nothing is running on it yet" }).click();
   await expect(page.getByRole("button", { name: "Download installation handoff" })).toBeDisabled();
   await page.getByLabel("Installation relay address").fill(entry.address);
@@ -53,8 +53,8 @@ test("downloaded installation handoff contains settings without reporting deploy
 
 test("receipt registration leads to named group configuration without key entry", async ({ page }) => {
   const requests = await fixture(page);
-  await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Add relay", exact: true }).click();
+  await page.goto("/#/estavelles");
+  await page.getByRole("button", { name: "Add estavelle", exact: true }).click();
   await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "receipt.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(receipt)) });
   await expect(page.getByText("Installation receipt loaded for", { exact: false })).toBeVisible();
@@ -70,8 +70,8 @@ test("receipt registration leads to named group configuration without key entry"
 
 test("reimporting an installed identity reuses its registration", async ({ page }) => {
   const requests = await fixture(page, true);
-  await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Add relay", exact: true }).click();
+  await page.goto("/#/estavelles");
+  await page.getByRole("button", { name: "Add estavelle", exact: true }).click();
   await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "receipt.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(receipt)) });
   await page.getByRole("button", { name: "Register installed relay" }).click();
@@ -81,8 +81,8 @@ test("reimporting an installed identity reuses its registration", async ({ page 
 
 test("unrelated receipts show an error without registration or stale form data", async ({ page }) => {
   const requests = await fixture(page);
-  await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Add relay", exact: true }).click();
+  await page.goto("/#/estavelles");
+  await page.getByRole("button", { name: "Add estavelle", exact: true }).click();
   await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "receipt.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(receipt)) });
   await expect(page.getByRole("button", { name: "Register installed relay" })).toBeVisible();

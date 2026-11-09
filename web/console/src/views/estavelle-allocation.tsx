@@ -26,7 +26,7 @@ import { GroupPicker } from "./access";
  * (relayalloc.requireAuthorizedLocation) -- this filtering is for a sane
  * picker, not the actual guarantee.
  */
-export function AllocateRelay({ onClose, onAllocated }: { onClose: () => void; onAllocated: () => void }) {
+export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => void; onAllocated: () => void }) {
   const infraConnectionsResource = useResource(api.infrastructureConnections);
   // Only offer a connection whose type has a registered allocation driver
   // (ADR-0067) -- every other connection stays visible for registration/
@@ -66,7 +66,7 @@ export function AllocateRelay({ onClose, onAllocated }: { onClose: () => void; o
   const apply = async () => {
     setBusy(true); setMessage(undefined);
     try {
-      await api.allocateRelay({ name: name.trim(), infra_connection_id: connectionId, location: resourceCode, relay_transport: true, permitted_groups: permittedGroups });
+      await api.allocateEstavelle({ name: name.trim(), infra_connection_id: connectionId, location: resourceCode, relay_transport: true, permitted_groups: permittedGroups });
       onAllocated();
     } catch (error) { setMessage((error as Error).message); setReview(false); }
     finally { setBusy(false); }
@@ -97,7 +97,7 @@ export function AllocateRelay({ onClose, onAllocated }: { onClose: () => void; o
             <p className="lede">Only locations already in Authorized Locations are offered. {authorizedResources.length === 0 ? "None of this connection's discovered regions/zones/namespaces are authorized yet — " : "Missing one? "}add it on the Authorized locations page first.</p></>)}
       {notEnabled && selectedResource && <p className="lede">{selectedResource.name || selectedResource.code} is not opted into use yet — enable it on the Authorized locations page first.</p>}
       <fieldset><legend>Capabilities</legend>
-        <label><input type="checkbox" checked readOnly disabled />Relay transport</label>
+        <label><input type="checkbox" checked readOnly disabled />Estavelle transport</label>
         <p className="lede">Internet egress is not yet available through this workflow — it needs an explicitly bound Gateway identity this form does not collect yet. Configure access to this relay directly once it is ready if egress is needed.</p>
       </fieldset>
       <GroupPicker label="Permitted groups" groups={groups.value ?? []} value={permittedGroups} onChange={setPermittedGroups} />

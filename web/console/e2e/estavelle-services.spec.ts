@@ -14,8 +14,8 @@ test.beforeEach(async ({ page }) => {
 test("acknowledged mode withdrawal keeps Ponor and backend records intact", async ({ page }) => {
   let service = { id: "primary", ponor_id: "ponor", ponor_present: true, ponor_disabled: false };
   let submitted: unknown;
-  await page.route("**/api/karst/v1/relays", (route) => route.fulfill({ json: [{ id: "ponor", address: "203.0.113.1:443", health: { admission_state: "confirmed" } }] }));
-  await page.route("**/api/karst/v1/relay-services**", async (route) => {
+  await page.route("**/api/karst/v1/estavelles", (route) => route.fulfill({ json: [{ id: "ponor", address: "203.0.113.1:443", health: { admission_state: "confirmed" } }] }));
+  await page.route("**/api/karst/v1/estavelle-services**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/publication")) { await route.fulfill({ json: { mode: "services" } }); return; }
     if (path.endsWith("/modes")) {
@@ -26,7 +26,7 @@ test("acknowledged mode withdrawal keeps Ponor and backend records intact", asyn
     }
     await route.fulfill({ json: [service] });
   });
-  await page.goto("/#/relays");
+  await page.goto("/#/estavelles");
   await page.getByRole("button", { name: "Change availability" }).click();
   await page.getByRole("checkbox", { name: "Enable relay", exact: true }).uncheck();
   await expect(page.getByRole("button", { name: "Apply availability" })).toBeDisabled();
@@ -42,7 +42,7 @@ test("acknowledged mode withdrawal keeps Ponor and backend records intact", asyn
 test("publication preview is read only and activation requires acknowledgment", async ({ page }) => {
   let mode = "legacy";
   let updates = 0;
-  await page.route("**/api/karst/v1/relay-services**", async (route) => {
+  await page.route("**/api/karst/v1/estavelle-services**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/preview")) { await route.fulfill({ json: [] }); return; }
     if (path.endsWith("/publication")) {
@@ -57,7 +57,7 @@ test("publication preview is read only and activation requires acknowledgment", 
     }
     await route.fulfill({ json: [] });
   });
-  await page.goto("/#/relays");
+  await page.goto("/#/estavelles");
   await page.getByText("Advanced publication and legacy settings", { exact: true }).click();
   await page.getByRole("button", { name: "Preview service publication", exact: true }).click();
   await expect(page.getByText("No services: all Relay endpoints will be withdrawn from clients.")).toBeVisible();
@@ -77,10 +77,10 @@ test("explicit Relay association preserves backend identity and supports removal
   // Other browser tests reset the shared mock, including its endpoint registry.
   // Own both sides of this association so a reset cannot remove our backend.
   const endpoint = { id: "association-ponor", address: "203.0.113.42:443", region: "West", health: { admission_state: "confirmed" } };
-  await page.route("**/api/karst/v1/relays", route => route.fulfill({ json: [endpoint] }));
+  await page.route("**/api/karst/v1/estavelles", route => route.fulfill({ json: [endpoint] }));
   let services: Record<string, unknown>[] = [];
   let submitted: Record<string, unknown> | undefined;
-  await page.route("**/api/karst/v1/relay-services**", async (route) => {
+  await page.route("**/api/karst/v1/estavelle-services**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/publication")) { await route.fulfill({ json: { mode: "services" } }); return; }
     if (path.endsWith("/admission-targets")) { await route.fulfill({ json: [{ relay_id: endpoint.id, refreshed_at: new Date().toISOString() }] }); return; }
@@ -93,7 +93,7 @@ test("explicit Relay association preserves backend identity and supports removal
       await route.fulfill({ status: 204 });
     } else await route.fulfill({ json: services });
   });
-  await page.goto("/#/relays");
+  await page.goto("/#/estavelles");
   // issue #530: association creation always goes through group selection now.
   await page.getByRole("button", { name: "Configure relay", exact: true }).click();
   await expect(page.getByLabel("Registered relay")).toHaveValue(endpoint.id);
@@ -115,18 +115,18 @@ test("explicit Relay association preserves backend identity and supports removal
 });
 
 test("missing Ponor registration remains visible for diagnosis", async ({ page }) => {
-  await page.route("**/api/karst/v1/relays", (route) => route.fulfill({ json: [] }));
-  await page.route("**/api/karst/v1/relay-services", (route) => route.fulfill({ json: [{ id: "degraded", ponor_id: "missing-ponor", ponor_present: false }] }));
-  await page.goto("/#/relays");
+  await page.route("**/api/karst/v1/estavelles", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/karst/v1/estavelle-services", (route) => route.fulfill({ json: [{ id: "degraded", ponor_id: "missing-ponor", ponor_present: false }] }));
+  await page.goto("/#/estavelles");
   await expect(page.getByText("Endpoint registration missing")).toBeVisible();
 });
 
 test("an unavailable service API reports failure instead of an empty healthy view", async ({ page }) => {
-  await page.route("**/api/karst/v1/relay-services", (route) => route.fulfill({ status: 404, json: { message: "Service API unavailable; upgrade control" } }));
-  await page.goto("/#/relays");
+  await page.route("**/api/karst/v1/estavelle-services", (route) => route.fulfill({ status: 404, json: { message: "Service API unavailable; upgrade control" } }));
+  await page.goto("/#/estavelles");
   await expect(page.getByRole("alert")).toContainText("upgrade control");
   await expect(page.getByRole("heading", { name: "No relays configured" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Add relay", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add estavelle", exact: true })).toBeVisible();
 });
 
 for (const scopedIngress of [true, false]) {
@@ -137,16 +137,16 @@ for (const scopedIngress of [true, false]) {
       await page.route("**/api/karst/v1/policy/schema", route => route.fulfill({ json: { type: "object", properties: {} } }));
     }
     await page.route("**/api/groups",route => route.fulfill({json:[{id:"group-sre",name:"sre"}]}));
-    await page.route("**/api/karst/v1/relays",route => route.fulfill({json:[{id:"ponor",address:"203.0.113.1:443",region:"Denver",health:{admission_state:"confirmed"}}]}));
+    await page.route("**/api/karst/v1/estavelles",route => route.fulfill({json:[{id:"ponor",address:"203.0.113.1:443",region:"Denver",health:{admission_state:"confirmed"}}]}));
     await page.route("**/api/karst/v1/nodes?**",route => route.fulfill({json:{items:[{handle:"gateway-key",name:"Gateway host",platform:"Linux"}],next_cursor:null}}));
-    await page.route("**/api/karst/v1/relay-services**",async route => {
+    await page.route("**/api/karst/v1/estavelle-services**",async route => {
       const path=new URL(route.request().url()).pathname;
       if(path.endsWith("/publication")){await route.fulfill({json:{mode:"services"}});return;}
       if(path.endsWith("/admission-targets")){await route.fulfill({json:[{relay_id:"ponor",refreshed_at:new Date().toISOString()}]});return;}
       if(route.request().method()==="POST") {submitted=route.request().postDataJSON();services=[{...submitted,ponor_present:true,revision:1}];await route.fulfill({json:services[0]});return;}
       await route.fulfill({json:services});
     });
-    await page.goto("/#/relays");
+    await page.goto("/#/estavelles");
     await page.getByRole("button",{name:"Configure relay",exact:true}).click();
     await page.getByLabel("Relay name",{exact:true}).fill("denver");
     await page.getByLabel("Registered relay",{exact:true}).selectOption("ponor");
@@ -172,9 +172,9 @@ for (const scopedIngress of [true, false]) {
 
 test("relay group restriction cannot be applied without admission enforcement", async ({page}) => {
   await page.route("**/api/groups",route => route.fulfill({json:[{id:"group-sre",name:"sre"}]}));
-  await page.route("**/api/karst/v1/relays",route => route.fulfill({json:[{id:"ponor",address:"203.0.113.1:443",region:"Denver",health:{admission_state:"confirmed"}}]}));
-  await page.route("**/api/karst/v1/relay-services**",route => route.fulfill({json:new URL(route.request().url()).pathname.endsWith("/publication")?{mode:"services"}:[]}));
-  await page.goto("/#/relays");
+  await page.route("**/api/karst/v1/estavelles",route => route.fulfill({json:[{id:"ponor",address:"203.0.113.1:443",region:"Denver",health:{admission_state:"confirmed"}}]}));
+  await page.route("**/api/karst/v1/estavelle-services**",route => route.fulfill({json:new URL(route.request().url()).pathname.endsWith("/publication")?{mode:"services"}:[]}));
+  await page.goto("/#/estavelles");
   await page.getByRole("button",{name:"Configure relay",exact:true}).click();
   await page.getByLabel("Relay name",{exact:true}).fill("denver");
   await page.getByLabel("Registered relay",{exact:true}).selectOption("ponor");
@@ -184,14 +184,14 @@ test("relay group restriction cannot be applied without admission enforcement", 
 });
 
 test("one relay inventory joins configuration and endpoint health without duplicating the backend", async ({ page }) => {
-  await page.route("**/api/karst/v1/relays", route => route.fulfill({ json: [
+  await page.route("**/api/karst/v1/estavelles", route => route.fulfill({ json: [
     { id: "used", address: "203.0.113.10:443", region: "West", health: { admission_state: "confirmed" } },
     { id: "unused", address: "203.0.113.11:443", region: "East", health: { admission_state: "stale" } },
   ] }));
-  await page.route("**/api/karst/v1/relay-services**", route => route.fulfill({ json: route.request().url().endsWith("/publication") ? { mode: "services" } : [
+  await page.route("**/api/karst/v1/estavelle-services**", route => route.fulfill({ json: route.request().url().endsWith("/publication") ? { mode: "services" } : [
     { id: "production", ponor_id: "used", ponor_present: true, access_managed: true, allowed_groups: ["group-sre"], exit_ipv4: true },
   ] }));
-  await page.goto("/#/relays");
+  await page.goto("/#/estavelles");
   await expect(page.locator("tbody tr")).toHaveCount(2);
   const configured = page.locator("tbody tr").filter({ hasText: "production" });
   await expect(configured).toContainText("203.0.113.10:443");
@@ -211,11 +211,11 @@ test("one relay inventory joins configuration and endpoint health without duplic
 });
 
 test("endpoint diagnosis stays available when relay configuration cannot be loaded", async ({ page }) => {
-  await page.route("**/api/karst/v1/relays", route => route.fulfill({ json: [
+  await page.route("**/api/karst/v1/estavelles", route => route.fulfill({ json: [
     { id: "backend", address: "203.0.113.12:443", health: { admission_state: "stale" } },
   ] }));
-  await page.route("**/api/karst/v1/relay-services", route => route.fulfill({ status: 503, json: { message: "Configuration unavailable" } }));
-  await page.goto("/#/relays");
+  await page.route("**/api/karst/v1/estavelle-services", route => route.fulfill({ status: 503, json: { message: "Configuration unavailable" } }));
+  await page.goto("/#/estavelles");
   await expect(page.getByRole("alert")).toContainText("Configuration unavailable");
   const row = page.locator("tbody tr").filter({ hasText: "203.0.113.12:443" });
   await expect(row.getByRole("button", { name: "Configure relay", exact: true })).toBeDisabled();

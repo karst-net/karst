@@ -2,11 +2,11 @@
 // Copyright the Karst contributors.
 
 import { expect, test } from "vitest";
-import type { GatewayInventory } from "@karst-net/api-client";
-import { admissionObservation, exitObservations } from "./relay-readiness";
+import type { AvenInventory } from "@karst-net/api-client";
+import { admissionObservation, exitObservations } from "./estavelle-readiness";
 
 const service = { id: "denver", ponor_id: "backend", gateway_handle: "bound-key", exit_ipv4: true, exit_ipv6: true };
-const inventory = (): GatewayInventory => ({ schema_version: 1, unresolved_routes: [], unsupported_routes: [], gateways: [{ node_id: "native-id", node_handle: "bound-key", name: "Denver host", control_connected: true, forwarding_readiness: "ready", offers: [
+const inventory = (): AvenInventory => ({ schema_version: 1, unresolved_routes: [], unsupported_routes: [], avens: [{ node_id: "native-id", node_handle: "bound-key", name: "Denver host", control_connected: true, forwarding_readiness: "ready", offers: [
   { id: "relay-exit-denver-0", network_id: "denver", prefix: "0.0.0.0/0", kind: "default_ipv4", enabled: true, masquerade: true, metric: 9999, requires_client_consent: true, forwarding_readiness: "ready", egress_drift: false },
   { id: "relay-exit-denver-1", network_id: "denver", prefix: "::/0", kind: "default_ipv6", enabled: true, masquerade: true, metric: 9999, requires_client_consent: true, forwarding_readiness: "degraded", egress_drift: false },
 ] }] });
@@ -26,32 +26,32 @@ test("each family uses its owned offer on the explicitly bound Gateway", () => {
 });
 
 test("IPv6-only service owns index zero and cannot borrow another offer's readiness", () => {
-  const data = inventory(); data.gateways[0].offers = [{ ...data.gateways[0].offers[1], id: "relay-exit-denver-0" }];
+  const data = inventory(); data.avens[0].offers = [{ ...data.avens[0].offers[1], id: "relay-exit-denver-0" }];
   expect(exitObservations({ ...service, exit_ipv4: false }, data)[0].label).toBe("Forwarding reported degraded");
-  data.gateways[0].offers[0].id = "another-service";
+  data.avens[0].offers[0].id = "another-service";
   expect(exitObservations({ ...service, exit_ipv4: false }, data)[0].state).toBe("unknown");
 });
 
 test("a matching name or native node ID is not proof of the selected public identity", () => {
-  const data = inventory(); data.gateways[0].node_handle = undefined; data.gateways[0].node_id = "bound-key";
+  const data = inventory(); data.avens[0].node_handle = undefined; data.avens[0].node_id = "bound-key";
   expect(exitObservations(service, data).every(offer => offer.state === "unknown")).toBe(true);
-  data.gateways[0].node_handle = "other-key";
+  data.avens[0].node_handle = "other-key";
   expect(exitObservations(service, data).every(offer => offer.state === "unknown")).toBe(true);
 });
 
 test("offline, disabled and unreported offers cannot use aggregate ready status", () => {
-  const data = inventory(); data.gateways[0].control_connected = false;
+  const data = inventory(); data.avens[0].control_connected = false;
   expect(exitObservations(service, data)[0].label).toBe("Gateway disconnected");
-  data.gateways[0].control_connected = true; data.gateways[0].offers[0].enabled = false;
+  data.avens[0].control_connected = true; data.avens[0].offers[0].enabled = false;
   expect(exitObservations(service, data)[0].label).toBe("Exit offer disabled");
-  data.gateways[0].offers[0].enabled = true; data.gateways[0].offers[0].forwarding_readiness = "unreported";
+  data.avens[0].offers[0].enabled = true; data.avens[0].offers[0].forwarding_readiness = "unreported";
   expect(exitObservations(service, data)[0].label).toBe("Forwarding not reported");
 });
 
 test("missing sources, bindings and unresolved routes stay unknown", () => {
   expect(exitObservations(service)[0].state).toBe("unknown");
   expect(exitObservations({ ...service, gateway_handle: "" }, inventory())[0].label).toBe("Gateway not bound");
-  const data = inventory(); data.gateways[0].offers = []; data.unresolved_routes.push("relay-exit-denver-0");
+  const data = inventory(); data.avens[0].offers = []; data.unresolved_routes.push("relay-exit-denver-0");
   expect(exitObservations(service, data)[0].label).toBe("Exit route unresolved");
   expect(exitObservations({ ...service, exit_ipv4: false, exit_ipv6: false }, data)).toEqual([]);
 });

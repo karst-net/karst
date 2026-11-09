@@ -205,7 +205,7 @@ def apply(directory, settings):
             rows = parse_rows(rows)
             if any(not any(row.get("Service") == service and row.get("State") == "running" for row in rows) for service in ("control", "relay")):
                 raise Invalid("control or relay is not running; inspect Docker diagnostics and retry")
-            receipt = {"schema_version": 1, "kind": "karst-relay-installation", "entry": {k: settings[k] for k in ("address", "tls_server_name", "region", "location")}, "relay_id": fields["relay_id"]}
+            receipt = {"schema_version": 1, "kind": "karst-estavelle-installation", "entry": {k: settings[k] for k in ("address", "tls_server_name", "region", "location")}, "relay_id": fields["relay_id"]}
             receipt["entry"]["identity_key"] = fields["identity_pk"]
             atomic(install / "receipt.json", json.dumps(receipt, indent=2))
             atomic(status, json.dumps({"state": "runtime_started", "ready": False}))

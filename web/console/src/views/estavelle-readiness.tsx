@@ -2,13 +2,13 @@
 // Copyright the Karst contributors.
 
 import { Observed, Status } from "@karst-net/ui";
-import type { GatewayInventory } from "@karst-net/api-client";
-import type { ManagedRelayService } from "../api";
-import { admissionObservation, exitObservations } from "../relay-readiness";
+import type { AvenInventory } from "@karst-net/api-client";
+import type { ManagedEstavelleService } from "../api";
+import { admissionObservation, exitObservations } from "../estavelle-readiness";
 
-export function RelayReadiness({ service, targets, inventory, targetError, gatewayError, now }: {
-  service: ManagedRelayService; targets?: Array<{ relay_id: string; refreshed_at: string }>;
-  inventory?: GatewayInventory; targetError?: string; gatewayError?: string; now: number;
+export function EstavelleReadiness({ service, targets, inventory, targetError, gatewayError, now }: {
+  service: ManagedEstavelleService; targets?: Array<{ relay_id: string; refreshed_at: string }>;
+  inventory?: AvenInventory; targetError?: string; gatewayError?: string; now: number;
 }) {
   if (!service.access_managed) return <span>Legacy configuration; group-managed admission not configured.</span>;
   const refreshed = targets?.find(target => target.relay_id === service.ponor_id)?.refreshed_at;

@@ -2,10 +2,10 @@
 // Copyright the Karst contributors.
 
 import { describe, expect, it } from "vitest";
-import { installationScript, parseInstallationReceipt, type InstallationSettings } from "./relay-installation";
+import { installationScript, parseInstallationReceipt, type InstallationSettings } from "./estavelle-installation";
 
 const settings: InstallationSettings = { schema_version: 1, address: "203.0.113.7:443", tls_server_name: "relay.example.com", region: "denver", image: "ghcr.io/karst-net/karst-relay:dev", control_image: "ghcr.io/karst-net/karst-control:dev", location: null };
-const receipt = { schema_version: 1, kind: "karst-relay-installation", relay_id: "ab".repeat(32), entry: { address: settings.address, tls_server_name: settings.tls_server_name, identity_key: "A".repeat(3456), region: settings.region } };
+const receipt = { schema_version: 1, kind: "karst-estavelle-installation", relay_id: "ab".repeat(32), entry: { address: settings.address, tls_server_name: settings.tls_server_name, identity_key: "A".repeat(3456), region: settings.region } };
 
 describe("relay installation handoff", () => {
   it("embeds public settings as UTF-8 data, never Python source", () => {

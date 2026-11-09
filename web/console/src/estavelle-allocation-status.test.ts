@@ -2,10 +2,10 @@
 // Copyright the Karst contributors.
 
 import { expect, test } from "vitest";
-import type { RelayAllocation } from "@karst-net/api-client";
-import { allocationStatus } from "./relay-allocation-status";
+import type { EstavelleAllocation } from "@karst-net/api-client";
+import { allocationStatus } from "./estavelle-allocation-status";
 
-const allocation = (state: RelayAllocation["state"], extra: Partial<RelayAllocation> = {}): RelayAllocation =>
+const allocation = (state: EstavelleAllocation["state"], extra: Partial<EstavelleAllocation> = {}): EstavelleAllocation =>
   ({ name: "denver", infra_connection_id: "conn-1", location: "us-west-2", permitted_groups: ["engineering"], state, ...extra });
 
 test("every non-terminal state renders unknown, not a false positive", () => {

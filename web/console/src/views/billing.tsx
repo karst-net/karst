@@ -2,7 +2,7 @@
 // Copyright the Karst contributors.
 
 import { useEffect, useState, type FormEvent } from "react";
-import type { RelayCapDraft } from "@karst-net/api-client";
+import type { EstavelleCapDraft } from "@karst-net/api-client";
 import { api, ApiError } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
@@ -43,7 +43,7 @@ export function Billing() {
   const usage = useResource(async () => {
     const [devices, relays] = await Promise.all([
       api.deviceUsage(interval.start, interval.end),
-      api.relayUsage(interval.start, interval.end),
+      api.estavelleUsage(interval.start, interval.end),
     ]);
     return { devices, relays };
   }, [reportMonth]);
@@ -52,7 +52,7 @@ export function Billing() {
   // invoice) -- both are expected, non-error account states, not something
   // a Failure-with-retry banner should present as broken.
   const alerts = useResource(async () => {
-    try { return await api.relayAlerts(reportMonth); }
+    try { return await api.estavelleAlerts(reportMonth); }
     catch (error) { if (error instanceof ApiError && error.status === 412) return null; throw error; }
   }, [reportMonth]);
   const payment = useResource(async () => {
@@ -60,7 +60,7 @@ export function Billing() {
     catch (error) { if (error instanceof ApiError && error.status === 412) return null; throw error; }
   }, [reportMonth]);
   const paymentNotices = useResource(() => api.billingPaymentNotices(reportMonth), [reportMonth]);
-  const cap = useResource(() => api.relayCap(capMonth), [capMonth]);
+  const cap = useResource(() => api.estavelleCap(capMonth), [capMonth]);
   const { message, setMessage, run } = useMutation(cap.reload);
   const { message: paymentMessage, setMessage: setPaymentMessage, run: runPayment } = useMutation(payment.reload);
   const [limit, setLimit] = useState("");
@@ -84,9 +84,9 @@ export function Billing() {
       setMessage("Acknowledge the relay interruption behavior before saving a cap.");
       return;
     }
-    const draft: RelayCapDraft = { period: capMonth, overage_limit_minor, acknowledge_interruption: true };
+    const draft: EstavelleCapDraft = { period: capMonth, overage_limit_minor, acknowledge_interruption: true };
     setPaymentMessage(undefined);
-    await run(() => api.setRelayCap(draft), `Relay spending cap saved for ${capMonth}.`);
+    await run(() => api.setEstavelleCap(draft), `Estavelle spending cap saved for ${capMonth}.`);
   };
 
   const now = currentMonth();
@@ -109,7 +109,7 @@ export function Billing() {
           <article><h4>Managed relay usage</h4><p><strong>{usage.value.relays.complete ? "Complete" : "Lower bound"}</strong></p><p>Reported customer payload: <code>{BigInt(usage.value.relays.reported_bytes).toLocaleString()} bytes</code></p><p>{usage.value.relays.missing_windows.toLocaleString()} missing windows of {usage.value.relays.expected_windows.toLocaleString()} expected</p></article>
         </div>
         {!usage.value.devices.complete && <p>Device coverage is incomplete. Only eligible time from complete intervals is shown.</p>}
-        {!usage.value.relays.complete && <p>Relay coverage is incomplete. Reported bytes are a lower bound and do not include missing windows.</p>}
+        {!usage.value.relays.complete && <p>Estavelle coverage is incomplete. Reported bytes are a lower bound and do not include missing windows.</p>}
       </>}
       {alerts.loading && <p>Loading billing alerts…</p>}
       {alertError && <ErrorMessage message={alertError} />}

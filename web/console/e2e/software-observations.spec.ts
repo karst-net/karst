@@ -46,7 +46,7 @@ test("agent reports and actual compatibility checks age without changing the rec
       software: { version: "v1", revision: "agent-commit", observed_at: observed },
       control_check: { status: "incompatible", capability: "gateway_ingress_schema", required_schema: 1, reported_schema: 0, observed_at: observed } },
   ] } }));
-  await page.goto("/#/gateways/metrics");
+  await page.goto("/#/avens/metrics");
   await page.getByRole("region", { name: "Configured Gateway nodes" }).locator("summary").click();
   const agent = page.getByRole("region", { name: "Agent software version" });
   const compatibility = page.getByRole("region", { name: "Control compatibility check" });

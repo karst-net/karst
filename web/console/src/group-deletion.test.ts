@@ -5,11 +5,11 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { api, ApiError } from "./api";
 import { loadGroupDependencies } from "./group-dependencies";
 
-vi.mock("./api", () => ({ ApiError: class extends Error { constructor(message: string, readonly status: number) { super(message); } }, api: { group: vi.fn(), policy: vi.fn(), relayServices: vi.fn(), routes: vi.fn(), nameservers: vi.fn(), dnsSettings: vi.fn(), users: vi.fn(), invitations: vi.fn() } }));
+vi.mock("./api", () => ({ ApiError: class extends Error { constructor(message: string, readonly status: number) { super(message); } }, api: { group: vi.fn(), policy: vi.fn(), estavelleServices: vi.fn(), routes: vi.fn(), nameservers: vi.fn(), dnsSettings: vi.fn(), users: vi.fn(), invitations: vi.fn() } }));
 beforeEach(() => {
   vi.mocked(api.group).mockResolvedValue({ id: "g", name: "Engineering", peers_count: 0, resources_count: 0, peers: [] });
   vi.mocked(api.policy).mockResolvedValue({ version: 1, document: "{}" } as Awaited<ReturnType<typeof api.policy>>);
-  vi.mocked(api.relayServices).mockResolvedValue([]);
+  vi.mocked(api.estavelleServices).mockResolvedValue([]);
   vi.mocked(api.routes).mockResolvedValue([]);
   vi.mocked(api.nameservers).mockResolvedValue([]);
   vi.mocked(api.dnsSettings).mockResolvedValue({ disabled_management_groups: [] });

@@ -2,7 +2,7 @@
 // Copyright the Karst contributors.
 
 import { useState } from "react";
-import type { GatewayOffer } from "@karst-net/api-client";
+import type { AvenOffer } from "@karst-net/api-client";
 import { Dialog, EmptyState, Status } from "@karst-net/ui";
 import { api, type Group, type NetworkRoute, type NetworkRouteDraft } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
@@ -14,7 +14,7 @@ import { ClientVersionObservation } from "./client-version";
 // what it actually self-reported. drift=false covers both "confirmed
 // matching" and "no report yet" -- shown as distinct states here so an
 // operator does not mistake silence for confirmation.
-function EgressDriftNotice({ offer }: { offer: GatewayOffer }) {
+function EgressDriftNotice({ offer }: { offer: AvenOffer }) {
   return <> · pinned <code>{offer.pinned_egress_ip}</code>{offer.observed_egress_ip
     ? offer.egress_drift
       ? <span role="status"> · observed <code>{offer.observed_egress_ip}</code> — drift: the pinned and observed addresses disagree. A legacy firewall allowlisting the pinned address will silently drop this candidate's traffic. Check for a cloud NAT reassignment or a misconfigured pinned_egress_ip.</span>
@@ -41,7 +41,7 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
   const [tab, setTab] = useState(defaultTab);
   const resource = useResource(api.routes);
   const groupResource = useResource(api.groups);
-  const inventory = useResource(api.gateways);
+  const inventory = useResource(api.avens);
   const versions = useResource(api.softwareVersions);
   const { message, setMessage, run } = useMutation(() => { resource.reload(); inventory.reload(); });
   const [draft, setDraft] = useState<{ value: NetworkRouteDraft; id?: string }>();
@@ -86,33 +86,33 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
   };
 
   return <section>
-    <h2>Gateways</h2>
-    <nav aria-label="Gateways view" className="actions">
+    <h2>Avens</h2>
+    <nav aria-label="Avens view" className="actions">
       <button aria-pressed={tab === "manage"} onClick={() => setTab("manage")}>Manage</button>
       <button aria-pressed={tab === "metrics"} onClick={() => setTab("metrics")}>Metrics</button>
     </nav>
-    {tab === "metrics" ? <section aria-label="Configured Gateway nodes">
-      <h3>Configured Gateway nodes</h3>
+    {tab === "metrics" ? <section aria-label="Configured Aven nodes">
+      <h3>Configured Aven nodes</h3>
       <p className="lede">One enrolled node can serve subnet access and default-route egress together. Control connectivity is shown separately from forwarding readiness. Local exit consent and destination policy still apply.</p>
-      <button onClick={() => { inventory.reload(); versions.reload(); }}>Refresh Gateway inventory</button>
-      {inventory.loading ? <p>Loading Gateway inventory…</p> : inventory.error ? <><Failure message={`Gateway inventory unavailable: ${inventory.error}`} retry={inventory.reload} /><p>Route administration remains available under Manage.</p></> : <>
-        {inventory.value?.gateways.length ? <Rows head={<><th>Node</th><th>Configured behaviors</th><th>Agent software</th><th>Recorded control connection</th><th>Forwarding readiness</th></>}>
-          {inventory.value.gateways.map((gateway) => <tr key={gateway.node_id}>
-            <td><strong>{gateway.name}</strong><br /><code>{gateway.node_id}</code><br /><button onClick={() => addBehavior([...new Set(routes.filter((route) => gateway.offers.some((offer) => offer.id === route.id)).flatMap((route) => route.peer_groups))])}>Add behavior to {gateway.name}</button></td>
-            <td>{gateway.offers.map((offer) => <div key={offer.id}><code>{offer.prefix}</code> · {offer.kind === "subnet" ? "Subnet" : offer.kind === "default_ipv4" ? "IPv4 default" : "IPv6 default"} · {offer.enabled ? "enabled" : "disabled"}{offer.requires_client_consent && " · client consent required"} · {offer.forwarding_readiness === "ready" ? "ready" : offer.forwarding_readiness === "degraded" ? "degraded" : "unreported"}{offer.pinned_egress_ip && <EgressDriftNotice offer={offer} />}</div>)}</td>
-            <td><details><summary>{gateway.control_check?.status === "incompatible" && "Incompatible · "}{gateway.software?.version || "Unknown"}</summary><ClientVersionObservation software={gateway.software} controlCheck={gateway.control_check} controlVersion={versions.value?.control.version} /></details></td>
-            <td>{gateway.control_connected ? "Connected" : "Disconnected"}</td>
-            <td><p>{gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "ready").length} ready · {gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "degraded").length} degraded · {gateway.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "unreported").length} unreported enabled behaviors</p>{gateway.forwarding_readiness === "ready" ? "Ready" : gateway.forwarding_readiness === "degraded" ? "Degraded — check the node for an nftables apply failure." : <>Unreported — inspect <code>karst gateway status</code> on the node.</>}</td>
+      <button onClick={() => { inventory.reload(); versions.reload(); }}>Refresh Aven inventory</button>
+      {inventory.loading ? <p>Loading Aven inventory…</p> : inventory.error ? <><Failure message={`Aven inventory unavailable: ${inventory.error}`} retry={inventory.reload} /><p>Route administration remains available under Manage.</p></> : <>
+        {inventory.value?.avens.length ? <Rows head={<><th>Node</th><th>Configured behaviors</th><th>Agent software</th><th>Recorded control connection</th><th>Forwarding readiness</th></>}>
+          {inventory.value.avens.map((aven) => <tr key={aven.node_id}>
+            <td><strong>{aven.name}</strong><br /><code>{aven.node_id}</code><br /><button onClick={() => addBehavior([...new Set(routes.filter((route) => aven.offers.some((offer) => offer.id === route.id)).flatMap((route) => route.peer_groups))])}>Add behavior to {aven.name}</button></td>
+            <td>{aven.offers.map((offer) => <div key={offer.id}><code>{offer.prefix}</code> · {offer.kind === "subnet" ? "Subnet" : offer.kind === "default_ipv4" ? "IPv4 default" : "IPv6 default"} · {offer.enabled ? "enabled" : "disabled"}{offer.requires_client_consent && " · client consent required"} · {offer.forwarding_readiness === "ready" ? "ready" : offer.forwarding_readiness === "degraded" ? "degraded" : "unreported"}{offer.pinned_egress_ip && <EgressDriftNotice offer={offer} />}</div>)}</td>
+            <td><details><summary>{aven.control_check?.status === "incompatible" && "Incompatible · "}{aven.software?.version || "Unknown"}</summary><ClientVersionObservation software={aven.software} controlCheck={aven.control_check} controlVersion={versions.value?.control.version} /></details></td>
+            <td>{aven.control_connected ? "Connected" : "Disconnected"}</td>
+            <td><p>{aven.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "ready").length} ready · {aven.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "degraded").length} degraded · {aven.offers.filter((offer) => offer.enabled && offer.forwarding_readiness === "unreported").length} unreported enabled behaviors</p>{aven.forwarding_readiness === "ready" ? "Ready" : aven.forwarding_readiness === "degraded" ? "Degraded — check the node for an nftables apply failure." : <>Unreported — inspect <code>karst aven status</code> on the node.</>}</td>
           </tr>)}
-        </Rows> : <p>No Gateway nodes resolved from the configured route offers.</p>}
+        </Rows> : <p>No Aven nodes resolved from the configured route offers.</p>}
         {Boolean(inventory.value?.unresolved_routes.length) && <p role="status">Routes without a visible eligible node: {inventory.value?.unresolved_routes.join(", ")}. Check routing groups and enrolled devices.</p>}
-        {Boolean(inventory.value?.unsupported_routes.length) && <p role="status">Routes outside the CIDR Gateway model: {inventory.value?.unsupported_routes.join(", ")}.</p>}
+        {Boolean(inventory.value?.unsupported_routes.length) && <p role="status">Routes outside the CIDR Aven model: {inventory.value?.unsupported_routes.join(", ")}.</p>}
       </>}
     </section> : <>
-      <h3>Gateway behaviors</h3>
-      <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled devices ("gateways") will carry traffic to it. Advertise a subnet or default route through enrolled gateway devices. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
+      <h3>Aven behaviors</h3>
+      <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled devices ("avens") will carry traffic to it. Advertise a subnet or default route through enrolled aven devices. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
       <div className="actions">
-        <button className="primary" onClick={() => addBehavior()}>Add Gateway behavior</button>
+        <button className="primary" onClick={() => addBehavior()}>Add Aven behavior</button>
         <button onClick={() => setDraft({ value: fresh() })}>Add subnet route</button>
         <button onClick={() => setDraft({ value: fresh("0.0.0.0/0") })}>Add IPv4 exit route</button>
         <button onClick={() => setDraft({ value: fresh("::/0") })}>Add IPv6 exit route</button>
@@ -120,7 +120,7 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
       <Notice message={message} />
       {routes.length === 0
         ? <EmptyState title="No network routes">Add a subnet route or offer an exit route that clients may explicitly accept.</EmptyState>
-        : <Rows head={<><th>Identifier</th><th>Route</th><th>Gateways</th><th>Recipients</th><th>Access</th><th>State</th><th>Actions</th></>}>
+        : <Rows head={<><th>Identifier</th><th>Route</th><th>Avens</th><th>Recipients</th><th>Access</th><th>State</th><th>Actions</th></>}>
           {routes.map((route) => <tr key={route.id}>
             <td><strong>{route.network_id}</strong>{route.description && <><br /><span className="lede">{route.description}</span></>}</td>
             <td><strong>{isExit(route.network) ? "Exit" : "Subnet"}</strong><br /><code>{route.network}</code><br /><span className="lede">metric {route.metric}</span></td>
@@ -139,27 +139,27 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
         </Rows>}
     </>}
 
-    <Dialog open={Boolean(draft)} title={draft?.id ? "Edit Gateway behavior" : "Add Gateway behavior"} onClose={() => setDraft(undefined)}>
+    <Dialog open={Boolean(draft)} title={draft?.id ? "Edit Aven behavior" : "Add Aven behavior"} onClose={() => setDraft(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <label>Identifier<input aria-label="Route identifier" placeholder="aws-prod" value={draft?.value.network_id ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network_id: event.target.value } })} /></label>
-        <label>Behavior<select aria-label="Gateway behavior" value={isExit(draft?.value.network ?? "") ? draft?.value.network : "subnet"} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value === "subnet" ? "" : event.target.value, skip_auto_apply: event.target.value !== "subnet" } })}>
+        <label>Behavior<select aria-label="Aven behavior" value={isExit(draft?.value.network ?? "") ? draft?.value.network : "subnet"} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value === "subnet" ? "" : event.target.value, skip_auto_apply: event.target.value !== "subnet" } })}>
           <option value="subnet">Specific-prefix access</option><option value="0.0.0.0/0">IPv4 default-route egress</option><option value="::/0">IPv6 default-route egress</option>
         </select></label>
         <label>Network (CIDR)<input aria-label="Route network (CIDR)" placeholder="10.10.0.0/16" value={draft?.value.network ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value, skip_auto_apply: isExit(event.target.value) } })} /></label>
-        {isExit(draft?.value.network ?? "") && <p className="lede">The server only offers this default route. Each client must run <code>karst gateway exit use &lt;route-id&gt;</code> locally before it becomes active. IPv4 and IPv6 consent are independent.</p>}
+        {isExit(draft?.value.network ?? "") && <p className="lede">The server only offers this default route. Each client must run <code>karst aven exit use &lt;route-id&gt;</code> locally before it becomes active. IPv4 and IPv6 consent are independent.</p>}
         <label>Description<input aria-label="Route description" value={draft?.value.description ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, description: event.target.value } })} /></label>
         {!isExit(draft?.value.network ?? "") && <label>DNS zone (optional)<input aria-label="Route DNS zone" placeholder="legacy.example.internal" value={draft?.value.dns_zone ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, dns_zone: event.target.value } })} /></label>}
         <label>Pinned egress IP (optional)<input aria-label="Route pinned egress IP" placeholder="203.0.113.10" value={draft?.value.pinned_egress_ip ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, pinned_egress_ip: event.target.value } })} /></label>
-        {Boolean(draft?.value.dns_zone || draft?.value.pinned_egress_ip) && <p className="lede">For a legacy network reachable only through an allowlisted gateway address. Gateway candidates sharing this route must agree on the pinned egress IP, or the save is rejected.</p>}
+        {Boolean(draft?.value.dns_zone || draft?.value.pinned_egress_ip) && <p className="lede">For a legacy network reachable only through an allowlisted aven address. Aven candidates sharing this route must agree on the pinned egress IP, or the save is rejected.</p>}
         <GroupSelect label="Routing groups" groups={groups} value={draft?.value.peer_groups ?? []} onChange={(peer_groups) => setDraft((current) => current && { ...current, value: { ...current.value, peer_groups } })} />
         <p className="lede">These devices must have Linux forwarding and nftables available. Multiple members form a failover set; the selected route metric determines preference.</p>
         <GroupSelect label="Distribution groups" groups={groups} value={draft?.value.groups ?? []} onChange={(selected) => setDraft((current) => current && { ...current, value: { ...current.value, groups: selected } })} />
         <GroupSelect label="Access-control groups" groups={groups} value={draft?.value.access_control_groups ?? []} onChange={(access_control_groups) => setDraft((current) => current && { ...current, value: { ...current.value, access_control_groups } })} />
         <p className="lede">Recipients must be both distributed the offer and authorized by access control. The two gates are intentionally independent.</p>
         <label>Metric<input aria-label="Route metric" type="number" min={1} max={9999} value={draft?.value.metric ?? 9999} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, metric: Number(event.target.value) } })} /></label>
-        <label><input type="checkbox" checked={draft?.value.masquerade ?? true} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, masquerade: event.target.checked } })} /> Masquerade — rewrite the source address to the gateway</label>
+        <label><input type="checkbox" checked={draft?.value.masquerade ?? true} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, masquerade: event.target.checked } })} /> Masquerade — rewrite the source address to the aven</label>
         {!draft?.value.masquerade && <p className="lede">The destination network must have an explicit return route to the Karst overlay. Without it, requests arrive but replies do not.</p>}
-        <label><input type="checkbox" checked={draft?.value.keep_route ?? false} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, keep_route: event.target.checked } })} /> Keep route while a gateway is unavailable (traffic is blackholed)</label>
+        <label><input type="checkbox" checked={draft?.value.keep_route ?? false} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, keep_route: event.target.checked } })} /> Keep route while an aven is unavailable (traffic is blackholed)</label>
         <label><input type="checkbox" checked={draft?.value.enabled ?? true} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, enabled: event.target.checked } })} /> Enabled</label>
         <div className="actions"><button type="button" onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit">{draft?.id ? "Save route" : "Add route"}</button></div>
       </form>

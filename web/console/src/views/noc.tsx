@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { LngLatBounds, Map as MapLibreMap, setWorkerUrl, type GeoJSONSource, type MapGeoJSONFeature, type MapLayerMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
-import type { Location as NocLocation, NocComponent, Relay } from "@karst-net/api-client";
+import type { Location as NocLocation, NocComponent, Estavelle } from "@karst-net/api-client";
 import { Dialog, Observed, Status, type StatusState } from "@karst-net/ui";
 import { api } from "../api";
 import { Failure, formatBytes, useResource, usePolledResource } from "../common";
@@ -57,9 +57,9 @@ function token(name: string): string {
 // glyph here is also always paired with its color in the legend, which is
 // what makes the chart-4/chart-5 slots' relaxed CVD floor acceptable for
 // this use (see the token comment).
-const kindGlyph: Record<string, string> = { relay: "●", route: "▲", control_plane: "■", bedrock: "★" };
-const kindLabel: Record<string, string> = { relay: "Relay", route: "Exit/subnet gateway", control_plane: "Control plane", bedrock: "Bedrock" };
-const kindChartToken: Record<string, string> = { relay: "--chart-1", route: "--chart-3", control_plane: "--chart-4", bedrock: "--chart-5" };
+const kindGlyph: Record<string, string> = { estavelle: "●", route: "▲", control_plane: "■", bedrock: "★" };
+const kindLabel: Record<string, string> = { estavelle: "Estavelle", route: "Exit/subnet gateway", control_plane: "Control plane", bedrock: "Bedrock" };
+const kindChartToken: Record<string, string> = { estavelle: "--chart-1", route: "--chart-3", control_plane: "--chart-4", bedrock: "--chart-5" };
 const kinds = Object.keys(kindGlyph);
 
 const healthState = (health?: string): StatusState => health === "confirmed" ? "healthy" : health === "stale" ? "warning" : "unknown";
@@ -69,8 +69,8 @@ const healthState = (health?: string): StatusState => health === "confirmed" ? "
 // second opinion on it. Only relays carry this richer, telemetry-backed
 // shape; every other kind's detail comes straight from the NocComponent
 // already in hand.
-const relayHealthState = (relay: Relay): StatusState =>
-  relay.health.admission_state === "confirmed" ? "healthy" : relay.health.admission_state === "stale" ? "warning" : "unknown";
+const estavelleHealthState = (estavelle: Estavelle): StatusState =>
+  estavelle.health.admission_state === "confirmed" ? "healthy" : estavelle.health.admission_state === "stale" ? "warning" : "unknown";
 
 function componentFeature(component: NocComponent) {
   return {
@@ -100,7 +100,7 @@ export function Noc() {
   // once, to whatever the first poll actually contains, then leave the
   // operator's own pan/zoom alone on every poll after that.
   const didInitialFit = useRef(false);
-  const [selected, setSelected] = useState<{ kind: string; id: string; component?: NocComponent; relay?: Relay; error?: string }>();
+  const [selected, setSelected] = useState<{ kind: string; id: string; component?: NocComponent; estavelle?: Estavelle; error?: string }>();
 
   // Mount-once: construct the map and its static layers. Component data is
   // pushed in via the effects below, the same construct-once/update-via-ref
@@ -145,18 +145,18 @@ export function Noc() {
       // Relays: clustered, exactly as Phase 1a shipped it -- untouched
       // except for the added glyph layer, which carries this marker's kind
       // the same secondary-channel way every other kind below does.
-      instance.addSource("relays", { type: "geojson", data: { type: "FeatureCollection", features: [] }, cluster: true, clusterRadius: 40 });
+      instance.addSource("estavelles", { type: "geojson", data: { type: "FeatureCollection", features: [] }, cluster: true, clusterRadius: 40 });
       instance.addLayer({
-        id: "relay-clusters", type: "circle", source: "relays", filter: ["has", "point_count"],
+        id: "estavelle-clusters", type: "circle", source: "estavelles", filter: ["has", "point_count"],
         paint: { "circle-color": token("--accent"), "circle-radius": ["step", ["get", "point_count"], 14, 10, 18, 50, 24] },
       });
       instance.addLayer({
-        id: "relay-cluster-count", type: "symbol", source: "relays", filter: ["has", "point_count"],
+        id: "estavelle-cluster-count", type: "symbol", source: "estavelles", filter: ["has", "point_count"],
         layout: { "text-field": "{point_count_abbreviated}", "text-size": 12 },
         paint: { "text-color": token("--accent-text") },
       });
       instance.addLayer({
-        id: "relay-points", type: "circle", source: "relays", filter: ["!", ["has", "point_count"]],
+        id: "estavelle-points", type: "circle", source: "estavelles", filter: ["!", ["has", "point_count"]],
         paint: {
           "circle-radius": 7,
           "circle-stroke-width": 1,
@@ -165,9 +165,9 @@ export function Noc() {
         },
       });
       instance.addLayer({
-        id: "relay-glyph", type: "symbol", source: "relays", filter: ["!", ["has", "point_count"]],
-        layout: { "text-field": kindGlyph.relay, "text-size": 10, "text-allow-overlap": true },
-        paint: { "text-color": token(kindChartToken.relay) },
+        id: "estavelle-glyph", type: "symbol", source: "estavelles", filter: ["!", ["has", "point_count"]],
+        layout: { "text-field": kindGlyph.estavelle, "text-size": 10, "text-allow-overlap": true },
+        paint: { "text-color": token(kindChartToken.estavelle) },
       });
 
       // Every other component kind (ADR-0046 §1): one shared source, not
@@ -209,18 +209,18 @@ export function Noc() {
         paint: { "text-color": token("--muted") },
       });
 
-      for (const layer of ["relay-points", "relay-clusters", "component-points"]) {
+      for (const layer of ["estavelle-points", "estavelle-clusters", "component-points"]) {
         instance.on("mouseenter", layer, () => { instance.getCanvas().style.cursor = "pointer"; });
         instance.on("mouseleave", layer, () => { instance.getCanvas().style.cursor = ""; });
       }
-      instance.on("click", "relay-points", (event: MapLayerMouseEvent) => {
+      instance.on("click", "estavelle-points", (event: MapLayerMouseEvent) => {
         const id = event.features?.[0]?.properties?.id as string | undefined;
-        if (id) setSelected({ kind: "relay", id });
+        if (id) setSelected({ kind: "estavelle", id });
       });
-      instance.on("click", "relay-clusters", (event: MapLayerMouseEvent) => {
+      instance.on("click", "estavelle-clusters", (event: MapLayerMouseEvent) => {
         const feature: MapGeoJSONFeature | undefined = event.features?.[0];
         const clusterId = feature?.properties?.cluster_id as number | undefined;
-        const source = instance.getSource("relays") as GeoJSONSource | undefined;
+        const source = instance.getSource("estavelles") as GeoJSONSource | undefined;
         if (clusterId === undefined || !source || feature?.geometry.type !== "Point") return;
         source.getClusterExpansionZoom(clusterId).then((zoom) => {
           instance.easeTo({ center: feature.geometry.type === "Point" ? (feature.geometry.coordinates as [number, number]) : undefined, zoom });
@@ -264,10 +264,10 @@ export function Noc() {
   // sequenced, since one is a network fetch and the other is WebGL init.
   useEffect(() => {
     if (!mapReady.current || !map.current) return;
-    const relaySource = map.current.getSource("relays") as GeoJSONSource | undefined;
-    relaySource?.setData({ type: "FeatureCollection", features: placed.filter((c) => c.kind === "relay").map(componentFeature) });
+    const estavelleSource = map.current.getSource("estavelles") as GeoJSONSource | undefined;
+    estavelleSource?.setData({ type: "FeatureCollection", features: placed.filter((c) => c.kind === "estavelle").map(componentFeature) });
     const componentSource = map.current.getSource("components") as GeoJSONSource | undefined;
-    componentSource?.setData({ type: "FeatureCollection", features: placed.filter((c) => c.kind !== "relay").map(componentFeature) });
+    componentSource?.setData({ type: "FeatureCollection", features: placed.filter((c) => c.kind !== "estavelle").map(componentFeature) });
     tryInitialFit();
   }, [resource.value]);
 
@@ -279,14 +279,14 @@ export function Noc() {
   }, [locations.value]);
 
   useEffect(() => {
-    if (!selected || selected.kind !== "relay") return;
+    if (!selected || selected.kind !== "estavelle") return;
     let active = true;
-    api.nocRelay(selected.id).then((value) => { if (active) setSelected({ kind: "relay", id: selected.id, relay: value }); })
-      .catch((error: Error) => { if (active) setSelected({ kind: "relay", id: selected.id, error: error.message }); });
+    api.nocEstavelle(selected.id).then((value) => { if (active) setSelected({ kind: "estavelle", id: selected.id, estavelle: value }); })
+      .catch((error: Error) => { if (active) setSelected({ kind: "estavelle", id: selected.id, error: error.message }); });
     return () => { active = false; };
   }, [selected?.kind, selected?.id]);
 
-  const selectedComponent = selected?.kind !== "relay" ? components.find((c) => c.kind === selected?.kind && c.id === selected?.id) : undefined;
+  const selectedComponent = selected?.kind !== "estavelle" ? components.find((c) => c.kind === selected?.kind && c.id === selected?.id) : undefined;
 
   return <section className="noc-view">
     <h2>NOC view</h2>
@@ -309,16 +309,16 @@ export function Noc() {
         </li>)}</ul></div>}
     </details>
 
-    <Dialog open={Boolean(selected)} title={selected?.kind === "relay" ? `Relay — ${selected?.relay?.location?.label || selected?.relay?.region || selected?.id || ""}` : `${kindLabel[selected?.kind ?? ""] ?? selected?.kind} — ${selectedComponent?.label ?? selected?.id ?? ""}`} onClose={() => setSelected(undefined)}>
-      {selected?.kind === "relay"
-        ? (selected.error ? <p role="alert">{selected.error}</p> : !selected.relay ? <p>Loading…</p> : <>
-          <p><code>{selected.relay.address}</code></p>
-          <p>Region: {selected.relay.region}</p>
-          {selected.relay.location && <p>Location: {selected.relay.location.label || `${selected.relay.location.lat}, ${selected.relay.location.lon}`} <span className="lede">({selected.relay.location_source === "detected" ? "detected via cloud metadata" : "declared"})</span></p>}
-          <p>Health: <Status state={relayHealthState(selected.relay)} label={selected.relay.health.admission_state} /></p>
-          <p>Sessions: {selected.relay.health.sessions ?? "—"}</p>
-          <p>Bytes (cumulative): {selected.relay.health.bytes != null ? formatBytes(selected.relay.health.bytes) : "—"}</p>
-          <p>Last confirmed: <Observed at={selected.relay.health.last_confirmed_at} /></p>
+    <Dialog open={Boolean(selected)} title={selected?.kind === "estavelle" ? `Estavelle — ${selected?.estavelle?.location?.label || selected?.estavelle?.region || selected?.id || ""}` : `${kindLabel[selected?.kind ?? ""] ?? selected?.kind} — ${selectedComponent?.label ?? selected?.id ?? ""}`} onClose={() => setSelected(undefined)}>
+      {selected?.kind === "estavelle"
+        ? (selected.error ? <p role="alert">{selected.error}</p> : !selected.estavelle ? <p>Loading…</p> : <>
+          <p><code>{selected.estavelle.address}</code></p>
+          <p>Region: {selected.estavelle.region}</p>
+          {selected.estavelle.location && <p>Location: {selected.estavelle.location.label || `${selected.estavelle.location.lat}, ${selected.estavelle.location.lon}`} <span className="lede">({selected.estavelle.location_source === "detected" ? "detected via cloud metadata" : "declared"})</span></p>}
+          <p>Health: <Status state={estavelleHealthState(selected.estavelle)} label={selected.estavelle.health.admission_state} /></p>
+          <p>Sessions: {selected.estavelle.health.sessions ?? "—"}</p>
+          <p>Bytes (cumulative): {selected.estavelle.health.bytes != null ? formatBytes(selected.estavelle.health.bytes) : "—"}</p>
+          <p>Last confirmed: <Observed at={selected.estavelle.health.last_confirmed_at} /></p>
         </>)
         : selectedComponent && <>
           <p>Kind: {kindLabel[selectedComponent.kind] ?? selectedComponent.kind}</p>

@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, FirstRunState, GatewayInventory, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, InfrastructureConnectionLaunchDefaults, InfrastructureConnectionNomadLaunchDefaults, InfrastructureConnectionKubernetesLaunchDefaults, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayAllocation, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, RolloutComponent, RolloutPlan, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, AvenInventory, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, ComplianceDraftPreview, ComplianceDraftValidation, ComplianceDraftVersion, ComplianceDraftVersionPage, ComplianceDraftWrite, DeviceUsageReport, DiscoveredResource, Estavelle, EstavelleAlertFeed, EstavelleAllocation, EstavelleCap, EstavelleCapDraft, EstavelleLocation, EstavellePublication, EstavelleService, EstavelleServiceView, EstavelleUsageReport, FirstRunState, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, InfrastructureConnectionLaunchDefaults, InfrastructureConnectionNomadLaunchDefaults, InfrastructureConnectionKubernetesLaunchDefaults, Location as NocLocation, LocationCreate, NocComponent, NodeCompliance, NodePage, PolicyPreview, PolicyTestResult, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, RolloutComponent, RolloutPlan, ScalerRecommendations, SessionPage, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -107,11 +107,11 @@ export type DomainDelegation = { id: string; domain_id: string; domain_path: str
 
 export type AccountUser = { id: string; name: string; email: string; role: string; status: string; is_current?: boolean; is_blocked: boolean; auto_groups?: string[]; issued?: string; last_login?: string | null };
 
-export type ManagedRelayService = RelayService & { access_managed?: boolean; allowed_groups?: string[]; gateway_handle?: string; exit_ipv4?: boolean; exit_ipv6?: boolean; metric?: number; revision?: number };
-/** The writable fields of a RelayAllocation — everything else on that type
- * (state, revision, failed_step, …) is server-derived and never accepted
- * from callers (karst-openapi.yml's own `readonly` markings). */
-export type RelayAllocationDraft = { name: string; infra_connection_id: string; location: string; relay_transport: boolean; permitted_groups: string[] };
+export type ManagedEstavelleService = EstavelleService & { access_managed?: boolean; allowed_groups?: string[]; gateway_handle?: string; exit_ipv4?: boolean; exit_ipv6?: boolean; metric?: number; revision?: number };
+/** The writable fields of an EstavelleAllocation — everything else on that
+ * type (state, revision, failed_step, …) is server-derived and never
+ * accepted from callers (karst-openapi.yml's own `readonly` markings). */
+export type EstavelleAllocationDraft = { name: string; infra_connection_id: string; location: string; relay_transport: boolean; permitted_groups: string[] };
 
 /** The writable fields of a RolloutComponent/RolloutPlan — status, observed_digest,
  * compatibility, etc. are server-derived (karst-openapi.yml's own `readOnly`
@@ -170,13 +170,13 @@ export const api = {
   softwareVersions: () => request<SoftwareVersions>("/versions"),
   // ── managed billing ───────────────────────────────────────────────────────
   deviceUsage: (start: string, end: string) => request<DeviceUsageReport>(`/usage/devices?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
-  relayUsage: (start: string, end: string) => request<RelayUsageReport>(`/usage/relays?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
-  relayAlerts: (period: string) => request<RelayAlertFeed>(`/usage/relay-alerts?period=${encodeURIComponent(period)}`),
+  estavelleUsage: (start: string, end: string) => request<EstavelleUsageReport>(`/usage/estavelles?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  estavelleAlerts: (period: string) => request<EstavelleAlertFeed>(`/usage/estavelle-alerts?period=${encodeURIComponent(period)}`),
   billingPayment: (period: string) => request<BillingPayment>(`/billing/payments?period=${encodeURIComponent(period)}`),
   billingPaymentNotices: (period: string) => request<BillingPaymentNoticeFeed>(`/billing/payment-notices?period=${encodeURIComponent(period)}`),
   queueBillingPayment: (period: string) => request<BillingPayment>(`/billing/payments?period=${encodeURIComponent(period)}`, { method: "POST" }),
-  relayCap: (period: string) => request<RelayCap>(`/billing/relay-cap?period=${encodeURIComponent(period)}`),
-  setRelayCap: (draft: RelayCapDraft) => request<RelayCap>("/billing/relay-cap", { method: "PUT", body: body(draft) }),
+  estavelleCap: (period: string) => request<EstavelleCap>(`/billing/estavelle-cap?period=${encodeURIComponent(period)}`),
+  setEstavelleCap: (draft: EstavelleCapDraft) => request<EstavelleCap>("/billing/estavelle-cap", { method: "PUT", body: body(draft) }),
 
   invitations: () => request<DeviceInvitation[]>("/invitations"),
   // domainId places the enrolling device in that mesh domain (ADR-0032)
@@ -260,25 +260,25 @@ export const api = {
   auditSinks: () => request<Array<{ id: string; kind: string; endpoint: string }>>("/audit/sinks"),
   removeAuditSink: (id: string) => request<void>(`/audit/sinks/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
-  // ── relays ─────────────────────────────────────────────────────────────────
-  relayPublication: () => request<RelayPublication>("/relay-services/publication"),
-  previewRelayPublication: () => request<RelayService[]>("/relay-services/publication/preview", { method: "POST" }),
-  setRelayPublication: (mode: RelayPublication["mode"]) => request<RelayPublication>("/relay-services/publication", { method: "PUT", body: body({ mode, acknowledge_connectivity_change: true }) }),
-  setRelayServiceModes: (id: string, ponorEnabled: boolean) => request<RelayService>(`/relay-services/${encodeURIComponent(id)}/modes`, { method: "PUT", body: body({ ponor_enabled: ponorEnabled, acknowledge_connectivity_change: true }) }),
-  relayServices: () => request<Array<RelayServiceView & ManagedRelayService>>("/relay-services"),
-  addRelayService: (service: ManagedRelayService) => request<RelayService>("/relay-services", { method: "POST", body: body(service) }),
-  relayAdmissionTargets: () => request<Array<{ relay_id: string; refreshed_at: string }>>("/relay-services/admission-targets"),
-  setRelayAccess: (service: ManagedRelayService) => request<ManagedRelayService>(`/relay-services/${encodeURIComponent(service.id)}/access`, { method: "PUT", body: body({ ...service, acknowledge_access_change: true }) }),
-  removeRelayService: (id: string) => request<void>(`/relay-services/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  relays: () => request<Relay[]>("/relays"),
-  addRelay: (entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: RelayLocation }) => request<Relay>("/relays", { method: "POST", body: body(entry) }),
-  removeRelay: (id: string) => request<void>(`/relays/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // ── estavelles ─────────────────────────────────────────────────────────────
+  estavellePublication: () => request<EstavellePublication>("/estavelle-services/publication"),
+  previewEstavellePublication: () => request<EstavelleService[]>("/estavelle-services/publication/preview", { method: "POST" }),
+  setEstavellePublication: (mode: EstavellePublication["mode"]) => request<EstavellePublication>("/estavelle-services/publication", { method: "PUT", body: body({ mode, acknowledge_connectivity_change: true }) }),
+  setEstavelleServiceModes: (id: string, ponorEnabled: boolean) => request<EstavelleService>(`/estavelle-services/${encodeURIComponent(id)}/modes`, { method: "PUT", body: body({ ponor_enabled: ponorEnabled, acknowledge_connectivity_change: true }) }),
+  estavelleServices: () => request<Array<EstavelleServiceView & ManagedEstavelleService>>("/estavelle-services"),
+  addEstavelleService: (service: ManagedEstavelleService) => request<EstavelleService>("/estavelle-services", { method: "POST", body: body(service) }),
+  estavelleAdmissionTargets: () => request<Array<{ relay_id: string; refreshed_at: string }>>("/estavelle-services/admission-targets"),
+  setEstavelleAccess: (service: ManagedEstavelleService) => request<ManagedEstavelleService>(`/estavelle-services/${encodeURIComponent(service.id)}/access`, { method: "PUT", body: body({ ...service, acknowledge_access_change: true }) }),
+  removeEstavelleService: (id: string) => request<void>(`/estavelle-services/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  estavelles: () => request<Estavelle[]>("/estavelles"),
+  addEstavelle: (entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: EstavelleLocation }) => request<Estavelle>("/estavelles", { method: "POST", body: body(entry) }),
+  removeEstavelle: (id: string) => request<void>(`/estavelles/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
-  // ── relay allocation (ADR-0063, #455) ───────────────────────────────────────
-  relayAllocations: () => request<RelayAllocation[]>("/relay-allocations"),
-  allocateRelay: (draft: RelayAllocationDraft) => request<RelayAllocation>("/relay-allocations", { method: "POST", body: body(draft) }),
-  deprovisionRelayAllocation: (id: string, revision: number) => request<RelayAllocation>(`/relay-allocations/${encodeURIComponent(id)}/deprovision`, { method: "POST", body: body({ revision, acknowledge_deprovision: true }) }),
-  deleteRelayAllocation: (id: string, revision: number) => request<void>(`/relay-allocations/${encodeURIComponent(id)}?revision=${revision}`, { method: "DELETE" }),
+  // ── estavelle allocation (ADR-0063, #455) ───────────────────────────────────
+  estavelleAllocations: () => request<EstavelleAllocation[]>("/estavelle-allocations"),
+  allocateEstavelle: (draft: EstavelleAllocationDraft) => request<EstavelleAllocation>("/estavelle-allocations", { method: "POST", body: body(draft) }),
+  deprovisionEstavelleAllocation: (id: string, revision: number) => request<EstavelleAllocation>(`/estavelle-allocations/${encodeURIComponent(id)}/deprovision`, { method: "POST", body: body({ revision, acknowledge_deprovision: true }) }),
+  deleteEstavelleAllocation: (id: string, revision: number) => request<void>(`/estavelle-allocations/${encodeURIComponent(id)}?revision=${revision}`, { method: "DELETE" }),
 
   // ── component rollout (ADR-0066, #484) ──────────────────────────────────────
   // Control only computes/tracks/verifies-by-attestation here; it never calls
@@ -303,7 +303,7 @@ export const api = {
   // nocComponents is audit-logged server-side on every request, since it's a
   // GET the console's generic mutation-audit middleware never sees.
   nocComponents: () => request<NocComponent[]>("/noc/components"),
-  nocRelay: (id: string) => request<Relay>(`/noc/relays/${encodeURIComponent(id)}`),
+  nocEstavelle: (id: string) => request<Estavelle>(`/noc/estavelles/${encodeURIComponent(id)}`),
 
   // ── NOC map: admin-authorized "possible locations" registry ────────────────
   // Additive, not a foreign key -- see locationreg's own doc comment. These
@@ -322,11 +322,11 @@ export const api = {
   removeGroupLocation: (groupId: string) => request<void>(`/group-locations/${encodeURIComponent(groupId)}`, { method: "DELETE" }),
 
   // ── NOC map: the control plane's own declared location ─────────────────────
-  controlPlaneLocation: () => request<RelayLocation | undefined>("/control-plane/location"),
-  setControlPlaneLocation: (entry: { lat: number; lon: number; label?: string }) => request<RelayLocation>("/control-plane/location", { method: "PUT", body: body(entry) }),
+  controlPlaneLocation: () => request<EstavelleLocation | undefined>("/control-plane/location"),
+  setControlPlaneLocation: (entry: { lat: number; lon: number; label?: string }) => request<EstavelleLocation>("/control-plane/location", { method: "PUT", body: body(entry) }),
 
   // ── NOC map: Bedrock's own declared location ────────────────────────────────
-  setBedrockLocation: (entry: { lat: number; lon: number; label?: string }) => request<RelayLocation>("/bedrock/location", { method: "PUT", body: body(entry) }),
+  setBedrockLocation: (entry: { lat: number; lon: number; label?: string }) => request<EstavelleLocation>("/bedrock/location", { method: "PUT", body: body(entry) }),
 
   // ── scaler advisor (ADR-0045 §7 Phase 1) ───────────────────────────────────
   // Audit-logged server-side on every request, same as nocComponents/
@@ -390,9 +390,9 @@ export const api = {
   deleteNameserverGroup: (id: string) => management<void>(`/dns/nameservers/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── network routes ─────────────────────────────────────────────────────────
-  gateways: async () => {
-    const inventory = await request<GatewayInventory>("/gateways");
-    if (inventory.schema_version !== 1) throw new Error("Unsupported Gateway inventory schema; upgrade the console before using this view.");
+  avens: async () => {
+    const inventory = await request<AvenInventory>("/avens");
+    if (inventory.schema_version !== 1) throw new Error("Unsupported Aven inventory schema; upgrade the console before using this view.");
     return inventory;
   },
   routes: () => management<NetworkRoute[]>("/routes"),

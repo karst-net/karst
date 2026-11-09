@@ -18,7 +18,7 @@ export async function loadGroupDependencies(id: string): Promise<GroupDependency
     api.group(id), api.policy().catch(error => {
       if (error instanceof ApiError && error.status === 404 && error.message === "no Karst policy version") return { version: 0, document: "{}" };
       throw error;
-    }), api.relayServices(), api.routes(), api.nameservers(), api.dnsSettings(), api.users(), api.invitations(),
+    }), api.estavelleServices(), api.routes(), api.nameservers(), api.dnsSettings(), api.users(), api.invitations(),
   ]);
   const document = JSON.parse(policy.document) as AccessDocument;
   const dependencies: GroupDependencyReview["dependencies"] = [];
@@ -30,7 +30,7 @@ export async function loadGroupDependencies(id: string): Promise<GroupDependency
     if (bound === id) add(`binding:${name}`, `Legacy membership mapping: ${name.replace(/^group:/, "")}`, "#/groups/access");
   }
   const relatedRelays = relays.filter(relay => relay.allowed_groups?.includes(id)).sort((a, b) => a.id.localeCompare(b.id));
-  for (const relay of relatedRelays) add(`relay:${relay.id}`, `Relay: ${relay.id}`, "#/relays");
+  for (const relay of relatedRelays) add(`relay:${relay.id}`, `Estavelle: ${relay.id}`, "#/relays");
   const relatedRoutes = routes.filter(route => [...(route.peer_groups ?? []), ...(route.groups ?? []), ...(route.access_control_groups ?? [])].includes(id)).sort((a, b) => a.id.localeCompare(b.id));
   for (const route of relatedRoutes) add(`route:${route.id}`, `Gateway route: ${route.network_id}`, route.id.startsWith("relay-exit-") ? "#/relays" : "#/routes");
   for (const server of nameservers) if (server.groups.includes(id)) add(`dns:${server.id}`, `DNS servers: ${server.name}`, "#/dns");
