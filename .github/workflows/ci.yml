@@ -539,7 +539,7 @@ jobs:
           path: |
             target/debug/karst
             target/debug/karstd
-            target/debug/karst-relay
+            target/debug/karst-estavelle
             ${{ steps.build.outputs.aquifer_bin }}
             ${{ steps.build.outputs.userspace_bin }}
             ${{ steps.build.outputs.gateway_bin }}
@@ -635,7 +635,7 @@ jobs:
           name: aquifer-fixtures-${{ github.sha }}
           path: target/debug
       - name: Artifact upload does not guarantee the executable bit
-        run: chmod +x target/debug/karst target/debug/karstd target/debug/karst-relay "$AQUIFER_BIN"
+        run: chmod +x target/debug/karst target/debug/karstd target/debug/karst-estavelle "$AQUIFER_BIN"
       # `miniupnpd` serves PCP for the two rows that turn on an explicit port
       # mapping. Masked first: the package's post-install starts the service,
       # which has nothing sensible to bind to on a runner and would fail the
@@ -715,7 +715,7 @@ jobs:
           path: target/debug
       - name: Artifact upload does not guarantee the executable bit
         run: |
-          chmod +x target/debug/karst target/debug/karstd target/debug/karst-relay \
+          chmod +x target/debug/karst target/debug/karstd target/debug/karst-estavelle \
             target/debug/examples/pmprobe "$USERSPACE_BIN" "$GATEWAY_BIN"
       # The NAT-PMP and PCP codecs against `miniupnpd`, an implementation we did
       # not write. Rows 8b and 9 of `aquifer`'s matrix rest on these bytes being
@@ -895,8 +895,8 @@ jobs:
       - name: The relay roster the server renders is the one the relay parses
         run: |
           cd server && go test -count=1 -run TestRosterVector ./management/internals/karst/roster/
-      - name: The relay reads it back
-        run: cargo test -p karst-relay --test roster_vector
+      - name: The estavelle reads it back
+        run: cargo test -p karst-estavelle --test roster_vector
       # Vectors prove the two implementations agree on every derivation and
       # framing function. They cannot prove the two ends actually talk: that
       # needs sockets, HTTP/2, protobuf on the wire, and a real ML-KEM
@@ -912,7 +912,7 @@ jobs:
       # GitHub issue #214 / docs/adr/0044-embedded-library-mode.md: the
       # embeddable library's own real, no-root, no-namespace proof — two
       # karst-embed nodes (NetworkMode::Userspace, no karstd process) and a
-      # real karst-relay, built here just like the fixture above.
+      # real karst-estavelle, built here just like the fixture above.
       - name: Two embedded nodes exchange TCP with no karstd process
         timeout-minutes: 8
         run: cargo test -p karst-embed --test two_nodes -- --ignored --test-threads=1 --nocapture
@@ -1066,7 +1066,7 @@ jobs:
       - name: The journal for all three units, however it ended
         if: always()
         run: |
-          for unit in karst-relay karst-control karstd; do
+          for unit in karst-estavelle karst-control karstd; do
             echo "── $unit ───────────────────────────────"
             sudo journalctl -u "$unit" --no-pager --lines=200 || true
           done

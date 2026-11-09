@@ -3,7 +3,7 @@
 # Copyright the Karst contributors.
 
 # Build from the repository root:
-#   docker build -f deploy/images/karst-relay.Dockerfile -t ghcr.io/karst-net/karst-relay:dev .
+#   docker build -f deploy/images/karst-estavelle.Dockerfile -t ghcr.io/karst-net/karst-estavelle:dev .
 FROM rust:1.89-bookworm AS build
 RUN apt-get update \
     && apt-get install --no-install-recommends -y libprotobuf-dev protobuf-compiler \
@@ -19,8 +19,8 @@ RUN cp -R /usr/include/google ./server/shared/management/proto/google
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/src/target,sharing=locked \
-    cargo build --locked --release --package karst-relay \
-    && cp /src/target/release/karst-relay /usr/local/bin/karst-relay-built
+    cargo build --locked --release --package karst-estavelle \
+    && cp /src/target/release/karst-estavelle /usr/local/bin/karst-estavelle-built
 
 FROM debian:bookworm-slim
 ARG KARST_VERSION=development
@@ -32,7 +32,7 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /etc/karst
-COPY --from=build /usr/local/bin/karst-relay-built /usr/local/bin/karst-relay
+COPY --from=build /usr/local/bin/karst-estavelle-built /usr/local/bin/karst-estavelle
 EXPOSE 443
-ENTRYPOINT ["/usr/local/bin/karst-relay"]
-CMD ["--config", "/etc/karst/relay.toml"]
+ENTRYPOINT ["/usr/local/bin/karst-estavelle"]
+CMD ["--config", "/etc/karst/estavelle.toml"]

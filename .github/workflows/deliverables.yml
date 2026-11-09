@@ -90,21 +90,21 @@ jobs:
           cache-dependency-path: server/go.sum
       - name: Build client and services
         run: |
-          cargo build --locked --release --package karstd --package karst-cli --package karst-relay
+          cargo build --locked --release --package karstd --package karst-cli --package karst-estavelle
           mkdir -p dist/packages
           install -m 0755 target/release/karstd dist/karstd
           install -m 0755 target/release/karst dist/karst
-          install -m 0755 target/release/karst-relay dist/karst-relay
+          install -m 0755 target/release/karst-estavelle dist/karst-estavelle
           (cd server && CGO_ENABLED=1 go build -trimpath -ldflags "-X github.com/netbirdio/netbird/management/internals/karst/buildinfo.Version=$KARST_VERSION -X github.com/netbirdio/netbird/management/internals/karst/buildinfo.Revision=$GITHUB_SHA" -o ../dist/karst-control ./cmd/karst-control)
       - name: The glibc floor is the oldest supported distribution
-        run: ./scripts/glibc-floor.sh 2.34 dist/karstd dist/karst dist/karst-relay dist/karst-control
+        run: ./scripts/glibc-floor.sh 2.34 dist/karstd dist/karst dist/karst-estavelle dist/karst-control
       - name: Install nFPM
         run: |
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Build Debian and RPM packages
         run: |
-          for package in karst-client-linux karst-relay karst-control; do
+          for package in karst-client-linux karst-estavelle karst-control; do
             nfpm package --packager deb --target dist/packages/ --config "packaging/nfpm/$package.yaml"
             nfpm package --packager rpm --target dist/packages/ --config "packaging/nfpm/$package.yaml"
           done
@@ -224,18 +224,18 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
-      - name: Build control fixture and extract packaged relay
+      - name: Build control fixture and extract packaged estavelle
         run: |
           mkdir -p target
           (cd server && go build -o ../target/karst-testserver ./management/internals/karst/testserver)
-          dpkg-deb --extract dist/packages/karst-relay_*.deb target/packaged-relay
+          dpkg-deb --extract dist/packages/karst-estavelle_*.deb target/packaged-estavelle
       - name: Install, paste, authorize, connect, and recover
         env:
           KARST_ACCEPTANCE_PENDING: ${{ matrix.pending }}
         run: |
           ./scripts/enrollment-desktop-verify.sh dist/packages/karst-client-linux_*.deb \
             target/karst-testserver /tmp/karst-enrollment-desktop-results \
-            target/packaged-relay/usr/bin/karst-relay
+            target/packaged-estavelle/usr/bin/karst-estavelle
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -331,7 +331,7 @@ jobs:
           path: dist/release
           merge-multiple: true
       # The console/portal tarball — #249. An operator artifact, like
-      # karst-control and karst-relay above, not something release-manifest.sh
+      # karst-control and karst-estavelle above, not something release-manifest.sh
       # lists on the portal's own end-user download page (it names exactly
       # one file, not a matrix, so no `pattern:` needed).
       - uses: actions/download-artifact@v4
@@ -378,7 +378,7 @@ jobs:
           # SBOM is a claim about an artifact, and "something in this repository
           # depends on it" is not that claim.
           cargo cyclonedx --format json --all
-          for binary in karstd karst-cli karst-relay; do
+          for binary in karstd karst-cli karst-estavelle; do
             find bins/$binary -name '*.cdx.json' -exec cp {} "dist/release/sbom/$binary.cdx.json" \;
           done
           (cd server && "$(go env GOPATH)/bin/cyclonedx-gomod" app -json -main cmd/karst-control \
@@ -417,14 +417,14 @@ jobs:
             image: karstd
             arch: arm64
             runner: ubuntu-24.04-arm
-          - name: relay
-            file: deploy/images/karst-relay.Dockerfile
-            image: karst-relay
+          - name: estavelle
+            file: deploy/images/karst-estavelle.Dockerfile
+            image: karst-estavelle
             arch: amd64
             runner: ubuntu-latest
-          - name: relay
-            file: deploy/images/karst-relay.Dockerfile
-            image: karst-relay
+          - name: estavelle
+            file: deploy/images/karst-estavelle.Dockerfile
+            image: karst-estavelle
             arch: arm64
             runner: ubuntu-24.04-arm
           - name: control
@@ -519,9 +519,9 @@ jobs:
           - name: client
             file: deploy/images/karstd.Dockerfile
             image: karstd
-          - name: relay
-            file: deploy/images/karst-relay.Dockerfile
-            image: karst-relay
+          - name: estavelle
+            file: deploy/images/karst-estavelle.Dockerfile
+            image: karst-estavelle
           - name: control
             file: deploy/images/karst-control.Dockerfile
             image: karst-control

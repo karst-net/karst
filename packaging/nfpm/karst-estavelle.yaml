@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright the Karst contributors.
 
-name: karst-relay
+name: karst-estavelle
 arch: ${ARCH}
 platform: linux
 version: "${VERSION}"
@@ -9,15 +9,15 @@ release: "${RELEASE}"
 section: net
 priority: optional
 maintainer: Karst contributors <maintainers@karst.net>
-description: Karst Ponor relay service
+description: Karst Ponor estavelle service
 license: MIT OR Apache-2.0
 contents:
-  - src: dist/karst-relay
-    dst: /usr/bin/karst-relay
+  - src: dist/karst-estavelle
+    dst: /usr/bin/karst-estavelle
     file_info:
       mode: 0755
-  - src: packaging/systemd/karst-relay.service
-    dst: /usr/lib/systemd/system/karst-relay.service
+  - src: packaging/systemd/karst-estavelle.service
+    dst: /usr/lib/systemd/system/karst-estavelle.service
   - dst: /etc/karst
     type: dir
     file_info:
@@ -25,5 +25,5 @@ contents:
 
 scripts:
   postinstall: packaging/scripts/postinstall.sh
-  preremove: packaging/scripts/preremove-karst-relay.sh
+  preremove: packaging/scripts/preremove-karst-estavelle.sh
   postremove: packaging/scripts/postremove.sh

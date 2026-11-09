@@ -2,14 +2,14 @@
 # Copyright the Karst contributors.
 
 [Unit]
-Description=Karst relay
+Description=Karst estavelle
 Documentation=https://github.com/karst-net/karst
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/karst-relay --config /etc/karst/relay.toml
+ExecStart=/usr/bin/karst-estavelle --config /etc/karst/estavelle.toml
 Restart=on-failure
 RestartSec=2
 

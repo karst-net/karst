@@ -2,7 +2,7 @@
 // Copyright the Karst contributors.
 
 #![forbid(unsafe_code)]
-//! `karst-relay` — the Ponor relay server.
+//! `karst-estavelle` — the Ponor relay server.
 //!
 //! See `spec/ponor-v1.md`.
 
@@ -18,13 +18,13 @@ use karst_estavelle::sign::Identity;
 const DEFAULT_CONFIG: &str = "/etc/karst/relay.toml";
 
 const USAGE: &str = "\
-karst-relay — the Ponor relay server
+karst-estavelle — the Ponor relay server
 
 USAGE:
-    karst-relay [--config PATH]                  run the relay
-    karst-relay check [--config PATH]             validate the configuration and exit
-    karst-relay pubkey [--config PATH]            print this relay's registry entry
-    karst-relay enroll [--config PATH] --bundle PATH
+    karst-estavelle [--config PATH]                  run the relay
+    karst-estavelle check [--config PATH]             validate the configuration and exit
+    karst-estavelle pubkey [--config PATH]            print this relay's registry entry
+    karst-estavelle enroll [--config PATH] --bundle PATH
                                                    complete roster admission using a
                                                    relay-enroll token (ADR-0045 §7
                                                    Phase 2), then exit
@@ -54,7 +54,7 @@ fn main() -> ExitCode {
         Some((&"enroll", rest)) => command_enroll(rest),
         Some((first, _)) if first.starts_with('-') => command_run(&refs),
         Some((other, _)) => {
-            eprintln!("karst-relay: unknown command {other:?}\n\n{USAGE}");
+            eprintln!("karst-estavelle: unknown command {other:?}\n\n{USAGE}");
             ExitCode::FAILURE
         }
     }
@@ -92,12 +92,12 @@ fn command_check(args: &[&str]) -> ExitCode {
     let (path, cfg) = match load(args) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             return ExitCode::FAILURE;
         }
     };
     if let Err(e) = cfg.validate() {
-        eprintln!("karst-relay: {e}");
+        eprintln!("karst-estavelle: {e}");
         return ExitCode::FAILURE;
     }
 
@@ -108,7 +108,7 @@ fn command_check(args: &[&str]) -> ExitCode {
     let roster = match FileRoster::load(&cfg.roster) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -134,7 +134,7 @@ fn command_pubkey(args: &[&str]) -> ExitCode {
     let (_, cfg) = match load(args) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -151,7 +151,7 @@ fn command_pubkey(args: &[&str]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             ExitCode::FAILURE
         }
     }
@@ -245,28 +245,28 @@ fn command_enroll(args: &[&str]) -> ExitCode {
     let (config_path_arg, bundle_path) = match enroll_args(args) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             return ExitCode::FAILURE;
         }
     };
     let cfg = match Config::load(&config_path_arg) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             return ExitCode::FAILURE;
         }
     };
     let bundle_text = match std::fs::read_to_string(&bundle_path) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("karst-relay: reading {}: {e}", bundle_path.display());
+            eprintln!("karst-estavelle: reading {}: {e}", bundle_path.display());
             return ExitCode::FAILURE;
         }
     };
     let bundle: EnrollBundle = match toml::from_str(&bundle_text) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("karst-relay: parsing {}: {e}", bundle_path.display());
+            eprintln!("karst-estavelle: parsing {}: {e}", bundle_path.display());
             return ExitCode::FAILURE;
         }
     };
@@ -276,7 +276,7 @@ fn command_enroll(args: &[&str]) -> ExitCode {
     let identity = match Identity::load_or_create(&cfg.identity_key) {
         Ok(i) => i,
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -292,7 +292,7 @@ fn command_enroll(args: &[&str]) -> ExitCode {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("karst-relay: building the async runtime: {e}");
+                eprintln!("karst-estavelle: building the async runtime: {e}");
                 return ExitCode::FAILURE;
             }
         };
@@ -300,7 +300,7 @@ fn command_enroll(args: &[&str]) -> ExitCode {
             address
         } else {
             eprintln!(
-                "karst-relay: {}: no address, and this instance's own cloud metadata did \
+                "karst-estavelle: {}: no address, and this instance's own cloud metadata did \
                  not yield one",
                 bundle_path.display()
             );
@@ -311,7 +311,7 @@ fn command_enroll(args: &[&str]) -> ExitCode {
         Ok(a) => a,
         Err(e) => {
             eprintln!(
-                "karst-relay: {}: address {address:?}: {e}",
+                "karst-estavelle: {}: address {address:?}: {e}",
                 bundle_path.display()
             );
             return ExitCode::FAILURE;
@@ -325,11 +325,11 @@ fn command_enroll(args: &[&str]) -> ExitCode {
     };
     match enroll(&bundle.control_api_base, &bundle.token, &entry) {
         Ok(()) => {
-            println!("karst-relay: enrolled (identity_pk {})", entry.identity_key);
+            println!("karst-estavelle: enrolled (identity_pk {})", entry.identity_key);
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("karst-relay: enroll: {e}");
+            eprintln!("karst-estavelle: enroll: {e}");
             ExitCode::FAILURE
         }
     }
@@ -370,12 +370,12 @@ fn command_run(args: &[&str]) -> ExitCode {
     let (_, cfg) = match load(args) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             return ExitCode::FAILURE;
         }
     };
     if let Err(e) = cfg.validate() {
-        eprintln!("karst-relay: {e}");
+        eprintln!("karst-estavelle: {e}");
         return ExitCode::FAILURE;
     }
 
@@ -388,14 +388,14 @@ fn command_run(args: &[&str]) -> ExitCode {
     {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             return ExitCode::FAILURE;
         }
     };
     match runtime.block_on(karst_estavelle::server::run(&cfg)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("karst-relay: {e}");
+            eprintln!("karst-estavelle: {e}");
             ExitCode::FAILURE
         }
     }
