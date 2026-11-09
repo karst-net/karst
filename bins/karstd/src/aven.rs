@@ -672,7 +672,7 @@ mod tests {
             pb::KarstRouteOffer {
                 route_id: id.to_owned(),
                 prefix: prefix.to_owned(),
-                gateway_id: if role == pb::KarstRouteRole::Gateway {
+                gateway_id: if role == pb::KarstRouteRole::Aven {
                     vec![7]
                 } else {
                     vec![8]
@@ -735,14 +735,14 @@ mod tests {
     fn only_gateway_offers_become_forwarding_grants() {
         let mut config = config();
         config.route_offers = vec![
-            offer("lan", "192.168.50.0/24", pb::KarstRouteRole::Gateway, true),
+            offer("lan", "192.168.50.0/24", pb::KarstRouteRole::Aven, true),
             offer(
                 "not-mine",
                 "10.0.0.0/8",
                 pb::KarstRouteRole::Recipient,
                 true,
             ),
-            offer("v6", "2001:db8:50::/64", pb::KarstRouteRole::Gateway, false),
+            offer("v6", "2001:db8:50::/64", pb::KarstRouteRole::Aven, false),
         ];
         let rules = Ruleset::from_config(&config);
         assert_eq!(rules.grants.len(), 2);
@@ -754,9 +754,9 @@ mod tests {
     fn local_forwarding_switch_gates_both_behaviors_and_families() {
         let mut config = config();
         config.route_offers = vec![
-            offer("lan", "192.168.50.0/24", pb::KarstRouteRole::Gateway, true),
-            offer("internet", "0.0.0.0/0", pb::KarstRouteRole::Gateway, true),
-            offer("internet-v6", "::/0", pb::KarstRouteRole::Gateway, true),
+            offer("lan", "192.168.50.0/24", pb::KarstRouteRole::Aven, true),
+            offer("internet", "0.0.0.0/0", pb::KarstRouteRole::Aven, true),
+            offer("internet-v6", "::/0", pb::KarstRouteRole::Aven, true),
         ];
         assert_eq!(Ruleset::from_config(&config).grants.len(), 3);
         config.aven_forwarding = false;
@@ -887,8 +887,8 @@ print('IPv4/IPv6 local aliases denied; explicit machine ports preserved')
     fn generated_rules_are_scoped_and_masquerade_only_when_requested() {
         let mut config = config();
         config.route_offers = vec![
-            offer("lan", "192.168.50.0/24", pb::KarstRouteRole::Gateway, true),
-            offer("v6", "2001:db8:50::/64", pb::KarstRouteRole::Gateway, false),
+            offer("lan", "192.168.50.0/24", pb::KarstRouteRole::Aven, true),
+            offer("v6", "2001:db8:50::/64", pb::KarstRouteRole::Aven, false),
         ];
         let batch = Ruleset::from_config(&config).nft_batch("karst0");
         assert!(
@@ -918,10 +918,10 @@ print('IPv4/IPv6 local aliases denied; explicit machine ports preserved')
     fn specific_non_nat_prefixes_bypass_overlapping_default_nat_in_both_families() {
         let mut config = config();
         config.route_offers = vec![
-            offer("v4-exit", "0.0.0.0/0", pb::KarstRouteRole::Gateway, true),
-            offer("v6-exit", "::/0", pb::KarstRouteRole::Gateway, true),
-            offer("v4-lan", "10.99.0.0/24", pb::KarstRouteRole::Gateway, false),
-            offer("v6-lan", "fd99::/64", pb::KarstRouteRole::Gateway, false),
+            offer("v4-exit", "0.0.0.0/0", pb::KarstRouteRole::Aven, true),
+            offer("v6-exit", "::/0", pb::KarstRouteRole::Aven, true),
+            offer("v4-lan", "10.99.0.0/24", pb::KarstRouteRole::Aven, false),
+            offer("v6-lan", "fd99::/64", pb::KarstRouteRole::Aven, false),
         ];
         let batch = Ruleset::from_config(&config).nft_batch("karst0");
         for (specific, default) in [
@@ -950,8 +950,8 @@ print('IPv4/IPv6 local aliases denied; explicit machine ports preserved')
         // under genuine specificity ordering.
         let mut config = config();
         config.route_offers = vec![
-            offer("z-wide", "0.0.0.0/0", pb::KarstRouteRole::Gateway, true),
-            offer("a-narrow", "10.0.0.0/8", pb::KarstRouteRole::Gateway, true),
+            offer("z-wide", "0.0.0.0/0", pb::KarstRouteRole::Aven, true),
+            offer("a-narrow", "10.0.0.0/8", pb::KarstRouteRole::Aven, true),
         ];
         let rules = Ruleset::from_config(&config);
         assert_eq!(
@@ -984,8 +984,8 @@ print('IPv4/IPv6 local aliases denied; explicit machine ports preserved')
         // the narrow route.
         let mut config = config();
         config.route_offers = vec![
-            offer("z-wide", "0.0.0.0/0", pb::KarstRouteRole::Gateway, true),
-            offer("a-narrow", "10.0.0.0/8", pb::KarstRouteRole::Gateway, true),
+            offer("z-wide", "0.0.0.0/0", pb::KarstRouteRole::Aven, true),
+            offer("a-narrow", "10.0.0.0/8", pb::KarstRouteRole::Aven, true),
         ];
         let batch = Ruleset::from_config(&config).nft_batch("karst0");
         let narrow = batch
@@ -1209,7 +1209,7 @@ print('IPv4/IPv6 local aliases denied; explicit machine ports preserved')
         config.route_offers = vec![offer(
             "lan",
             "192.168.50.0/24",
-            pb::KarstRouteRole::Gateway,
+            pb::KarstRouteRole::Aven,
             true,
         )];
         let rules = Ruleset::from_config(&config);
@@ -1241,7 +1241,7 @@ print('IPv4/IPv6 local aliases denied; explicit machine ports preserved')
         config.route_offers = vec![offer(
             "lan",
             "192.168.50.0/24",
-            pb::KarstRouteRole::Gateway,
+            pb::KarstRouteRole::Aven,
             false,
         )];
         let rules = Ruleset::from_config(&config);

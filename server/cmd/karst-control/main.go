@@ -500,7 +500,7 @@ func startBedrockAnchorScheduler(ctx context.Context, k *bootstrap.Karst) {
 // A registry that is set and unreadable is fatal, for the reason a bad policy
 // is: karstd fails the *entire* netmap over one malformed entry, so a typo here
 // takes the whole deployment down with a symptom that points nowhere near it.
-func loadRelays() ([]*proto.KarstRelay, error) {
+func loadRelays() ([]*proto.KarstEstavelle, error) {
 	path := os.Getenv(karstRelayRegistryEnv)
 	if path == "" {
 		return nil, nil

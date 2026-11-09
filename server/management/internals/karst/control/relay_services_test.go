@@ -49,7 +49,7 @@ func TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback(t *test
 	// (issue #530); this test is about publication authority, not that.
 	require.NoError(t, db.Create(&estavelleservice.Service{AccountID: "acct", ID: "primary", PonorID: p.ID, Revision: 1}).Error)
 	f.handler.RelayServices = services
-	f.handler.Relays = []*proto.KarstRelay{{Address: "203.0.113.9:443"}}
+	f.handler.Relays = []*proto.KarstEstavelle{{Address: "203.0.113.9:443"}}
 	lifecycleRequest := func(known uint64) *proto.KarstNetmapResponse {
 		payload, err := pb.Marshal(&proto.KarstNetmapRequest{KnownVersion: known, RelayLifecycleSchema: 1})
 		require.NoError(t, err)

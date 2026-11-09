@@ -234,7 +234,7 @@ func (s *Store) AllowedOnRelay(ctx context.Context, relayID, account, handle str
 	return count > 0, err
 }
 
-func (s *Store) FilterForPeer(ctx context.Context, peerID string, relays []*proto.KarstRelay) ([]*proto.KarstRelay, error) {
+func (s *Store) FilterForPeer(ctx context.Context, peerID string, relays []*proto.KarstEstavelle) ([]*proto.KarstEstavelle, error) {
 	account, err := accountFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -257,7 +257,7 @@ func (s *Store) FilterForPeer(ctx context.Context, peerID string, relays []*prot
 	if err := s.db.WithContext(ctx).Where("account_id = ? AND id = ?", account, peerID).First(&peer).Error; err != nil {
 		return nil, err
 	}
-	out := make([]*proto.KarstRelay, 0, len(relays))
+	out := make([]*proto.KarstEstavelle, 0, len(relays))
 	for _, relay := range relays {
 		ok, err := s.AllowedOnRelay(ctx, base64.RawURLEncoding.EncodeToString(relay.RelayId), account, peer.Key)
 		if err != nil {

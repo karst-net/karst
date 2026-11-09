@@ -47,7 +47,7 @@ func TestProjectRouteOffersPreservesStableIdentityAndRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gateway[0].GetRole() != proto.KarstRouteRole_KARST_ROUTE_ROLE_GATEWAY {
+	if gateway[0].GetRole() != proto.KarstRouteRole_KARST_ROUTE_ROLE_AVEN {
 		t.Fatalf("gateway role = %s", gateway[0].GetRole())
 	}
 }

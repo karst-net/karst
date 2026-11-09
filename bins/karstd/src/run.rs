@@ -6564,7 +6564,7 @@ mod route_tests {
                 } as i32,
                 masquerade: true,
                 keep_route: false,
-                role: pb::KarstRouteRole::Gateway as i32,
+                role: pb::KarstRouteRole::Aven as i32,
                 ..Default::default()
             },
             &[1],

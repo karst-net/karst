@@ -161,7 +161,7 @@ const relayAllocatePollInterval = 15 * time.Second
 // allocation closed with a clear reason, the same "configured-but-absent"
 // posture scalerAdvisorURL already has -- see estavellealloc.Store.Create and
 // provisionStep's own doc comments.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration, relayAllocateControlAPIBase string, relayAllocateMaxConcurrent int) (*Karst, error) {
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstEstavelle, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration, relayAllocateControlAPIBase string, relayAllocateMaxConcurrent int) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through

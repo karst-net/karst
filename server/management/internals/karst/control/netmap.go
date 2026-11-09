@@ -166,12 +166,12 @@ type NetmapHandler struct {
 	// Relays is the authenticated Ponor registry. Entries are static at this
 	// boundary until relay administration is moved into the control database.
 	RelayServices interface {
-		Netmap(context.Context) (bool, []*proto.KarstRelay, error)
+		Netmap(context.Context) (bool, []*proto.KarstEstavelle, error)
 		Publication(context.Context) (estavelleservice.Publication, error)
 	}
-	Relays     []*proto.KarstRelay
+	Relays     []*proto.KarstEstavelle
 	RelayStore interface {
-		NetmapRelays(context.Context) ([]*proto.KarstRelay, error)
+		NetmapRelays(context.Context) ([]*proto.KarstEstavelle, error)
 	}
 
 	// Policy is the ACL document to compile a per-node filter from (§4.3).
@@ -422,7 +422,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// deployment, so treating its presence alone as the switch would make
 	// the static, file/env-configured list permanently unreachable --
 	// exactly the accounts it exists to serve.
-	var relays []*proto.KarstRelay
+	var relays []*proto.KarstEstavelle
 	servicePublication := false
 	if h.RelayServices != nil {
 		servicePublication, relays, err = h.RelayServices.Netmap(estavelleservice.WithAccount(ctx, accountID))
@@ -443,7 +443,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		}
 	}
 	if scoped, ok := h.RelayServices.(interface {
-		FilterForPeer(context.Context, string, []*proto.KarstRelay) ([]*proto.KarstRelay, error)
+		FilterForPeer(context.Context, string, []*proto.KarstEstavelle) ([]*proto.KarstEstavelle, error)
 	}); ok {
 		relays, err = scoped.FilterForPeer(estavelleservice.WithAccount(ctx, accountID), selfPeer.ID, relays)
 		if err != nil {
@@ -1055,7 +1055,7 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 	// without a second lookup.
 	gateways := make(map[string]*proto.KarstRouteOffer, len(offers))
 	for _, offer := range offers {
-		if offer.GetRole() == proto.KarstRouteRole_KARST_ROUTE_ROLE_GATEWAY && string(offer.GetGatewayId()) == self {
+		if offer.GetRole() == proto.KarstRouteRole_KARST_ROUTE_ROLE_AVEN && string(offer.GetGatewayId()) == self {
 			gateways[offer.GetRouteId()] = offer
 		}
 	}

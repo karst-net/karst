@@ -75,6 +75,84 @@ func (e AuthorityStatus) Valid() bool {
 	}
 }
 
+// Defines values for AvenInventorySchemaVersion.
+const (
+	AvenInventorySchemaVersionN1 AvenInventorySchemaVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the AvenInventorySchemaVersion enum.
+func (e AvenInventorySchemaVersion) Valid() bool {
+	switch e {
+	case AvenInventorySchemaVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AvenNodeForwardingReadiness.
+const (
+	AvenNodeForwardingReadinessDegraded   AvenNodeForwardingReadiness = "degraded"
+	AvenNodeForwardingReadinessReady      AvenNodeForwardingReadiness = "ready"
+	AvenNodeForwardingReadinessUnreported AvenNodeForwardingReadiness = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the AvenNodeForwardingReadiness enum.
+func (e AvenNodeForwardingReadiness) Valid() bool {
+	switch e {
+	case AvenNodeForwardingReadinessDegraded:
+		return true
+	case AvenNodeForwardingReadinessReady:
+		return true
+	case AvenNodeForwardingReadinessUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AvenOfferForwardingReadiness.
+const (
+	AvenOfferForwardingReadinessDegraded   AvenOfferForwardingReadiness = "degraded"
+	AvenOfferForwardingReadinessReady      AvenOfferForwardingReadiness = "ready"
+	AvenOfferForwardingReadinessUnreported AvenOfferForwardingReadiness = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the AvenOfferForwardingReadiness enum.
+func (e AvenOfferForwardingReadiness) Valid() bool {
+	switch e {
+	case AvenOfferForwardingReadinessDegraded:
+		return true
+	case AvenOfferForwardingReadinessReady:
+		return true
+	case AvenOfferForwardingReadinessUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AvenOfferKind.
+const (
+	AvenOfferKindDefaultIpv4 AvenOfferKind = "default_ipv4"
+	AvenOfferKindDefaultIpv6 AvenOfferKind = "default_ipv6"
+	AvenOfferKindSubnet      AvenOfferKind = "subnet"
+)
+
+// Valid indicates whether the value is a known member of the AvenOfferKind enum.
+func (e AvenOfferKind) Valid() bool {
+	switch e {
+	case AvenOfferKindDefaultIpv4:
+		return true
+	case AvenOfferKindDefaultIpv6:
+		return true
+	case AvenOfferKindSubnet:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BedrockModeWriteMode.
 const (
 	BedrockModeWriteModeAdvisory  BedrockModeWriteMode = "advisory"
@@ -492,78 +570,267 @@ func (e EnrollmentSettingsControlMinimumVersion) Valid() bool {
 	}
 }
 
-// Defines values for GatewayInventorySchemaVersion.
+// Defines values for EstavelleLocationSource.
 const (
-	GatewayInventorySchemaVersionN1 GatewayInventorySchemaVersion = 1
+	EstavelleLocationSourceDeclared EstavelleLocationSource = "declared"
+	EstavelleLocationSourceDetected EstavelleLocationSource = "detected"
 )
 
-// Valid indicates whether the value is a known member of the GatewayInventorySchemaVersion enum.
-func (e GatewayInventorySchemaVersion) Valid() bool {
+// Valid indicates whether the value is a known member of the EstavelleLocationSource enum.
+func (e EstavelleLocationSource) Valid() bool {
 	switch e {
-	case GatewayInventorySchemaVersionN1:
+	case EstavelleLocationSourceDeclared:
+		return true
+	case EstavelleLocationSourceDetected:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for GatewayNodeForwardingReadiness.
+// Defines values for EstavelleAlertCandidateTarget.
 const (
-	GatewayNodeForwardingReadinessDegraded   GatewayNodeForwardingReadiness = "degraded"
-	GatewayNodeForwardingReadinessReady      GatewayNodeForwardingReadiness = "ready"
-	GatewayNodeForwardingReadinessUnreported GatewayNodeForwardingReadiness = "unreported"
+	EstavelleAlertCandidateTargetIncludedAllowance EstavelleAlertCandidateTarget = "included_allowance"
+	EstavelleAlertCandidateTargetSpendingCap       EstavelleAlertCandidateTarget = "spending_cap"
 )
 
-// Valid indicates whether the value is a known member of the GatewayNodeForwardingReadiness enum.
-func (e GatewayNodeForwardingReadiness) Valid() bool {
+// Valid indicates whether the value is a known member of the EstavelleAlertCandidateTarget enum.
+func (e EstavelleAlertCandidateTarget) Valid() bool {
 	switch e {
-	case GatewayNodeForwardingReadinessDegraded:
+	case EstavelleAlertCandidateTargetIncludedAllowance:
 		return true
-	case GatewayNodeForwardingReadinessReady:
-		return true
-	case GatewayNodeForwardingReadinessUnreported:
+	case EstavelleAlertCandidateTargetSpendingCap:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for GatewayOfferForwardingReadiness.
+// Defines values for EstavelleAlertCandidateThresholdPercent.
 const (
-	GatewayOfferForwardingReadinessDegraded   GatewayOfferForwardingReadiness = "degraded"
-	GatewayOfferForwardingReadinessReady      GatewayOfferForwardingReadiness = "ready"
-	GatewayOfferForwardingReadinessUnreported GatewayOfferForwardingReadiness = "unreported"
+	EstavelleAlertCandidateThresholdPercentN100 EstavelleAlertCandidateThresholdPercent = 100
+	EstavelleAlertCandidateThresholdPercentN75  EstavelleAlertCandidateThresholdPercent = 75
+	EstavelleAlertCandidateThresholdPercentN90  EstavelleAlertCandidateThresholdPercent = 90
 )
 
-// Valid indicates whether the value is a known member of the GatewayOfferForwardingReadiness enum.
-func (e GatewayOfferForwardingReadiness) Valid() bool {
+// Valid indicates whether the value is a known member of the EstavelleAlertCandidateThresholdPercent enum.
+func (e EstavelleAlertCandidateThresholdPercent) Valid() bool {
 	switch e {
-	case GatewayOfferForwardingReadinessDegraded:
+	case EstavelleAlertCandidateThresholdPercentN100:
 		return true
-	case GatewayOfferForwardingReadinessReady:
+	case EstavelleAlertCandidateThresholdPercentN75:
 		return true
-	case GatewayOfferForwardingReadinessUnreported:
+	case EstavelleAlertCandidateThresholdPercentN90:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for GatewayOfferKind.
+// Defines values for EstavelleAllocationFailedStep.
 const (
-	GatewayOfferKindDefaultIpv4 GatewayOfferKind = "default_ipv4"
-	GatewayOfferKindDefaultIpv6 GatewayOfferKind = "default_ipv6"
-	GatewayOfferKindSubnet      GatewayOfferKind = "subnet"
+	EstavelleAllocationFailedStepDeprovisioning EstavelleAllocationFailedStep = "deprovisioning"
+	EstavelleAllocationFailedStepGranting       EstavelleAllocationFailedStep = "granting"
+	EstavelleAllocationFailedStepProvisioning   EstavelleAllocationFailedStep = "provisioning"
+	EstavelleAllocationFailedStepRequested      EstavelleAllocationFailedStep = "requested"
+	EstavelleAllocationFailedStepRevoking       EstavelleAllocationFailedStep = "revoking"
 )
 
-// Valid indicates whether the value is a known member of the GatewayOfferKind enum.
-func (e GatewayOfferKind) Valid() bool {
+// Valid indicates whether the value is a known member of the EstavelleAllocationFailedStep enum.
+func (e EstavelleAllocationFailedStep) Valid() bool {
 	switch e {
-	case GatewayOfferKindDefaultIpv4:
+	case EstavelleAllocationFailedStepDeprovisioning:
 		return true
-	case GatewayOfferKindDefaultIpv6:
+	case EstavelleAllocationFailedStepGranting:
 		return true
-	case GatewayOfferKindSubnet:
+	case EstavelleAllocationFailedStepProvisioning:
+		return true
+	case EstavelleAllocationFailedStepRequested:
+		return true
+	case EstavelleAllocationFailedStepRevoking:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavelleAllocationState.
+const (
+	EstavelleAllocationStateDeprovisioned  EstavelleAllocationState = "deprovisioned"
+	EstavelleAllocationStateDeprovisioning EstavelleAllocationState = "deprovisioning"
+	EstavelleAllocationStateFailed         EstavelleAllocationState = "failed"
+	EstavelleAllocationStateGranting       EstavelleAllocationState = "granting"
+	EstavelleAllocationStateProvisioning   EstavelleAllocationState = "provisioning"
+	EstavelleAllocationStateReady          EstavelleAllocationState = "ready"
+	EstavelleAllocationStateRequested      EstavelleAllocationState = "requested"
+	EstavelleAllocationStateRevoking       EstavelleAllocationState = "revoking"
+)
+
+// Valid indicates whether the value is a known member of the EstavelleAllocationState enum.
+func (e EstavelleAllocationState) Valid() bool {
+	switch e {
+	case EstavelleAllocationStateDeprovisioned:
+		return true
+	case EstavelleAllocationStateDeprovisioning:
+		return true
+	case EstavelleAllocationStateFailed:
+		return true
+	case EstavelleAllocationStateGranting:
+		return true
+	case EstavelleAllocationStateProvisioning:
+		return true
+	case EstavelleAllocationStateReady:
+		return true
+	case EstavelleAllocationStateRequested:
+		return true
+	case EstavelleAllocationStateRevoking:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavelleCapCurrency.
+const (
+	EstavelleCapCurrencyUSD EstavelleCapCurrency = "USD"
+)
+
+// Valid indicates whether the value is a known member of the EstavelleCapCurrency enum.
+func (e EstavelleCapCurrency) Valid() bool {
+	switch e {
+	case EstavelleCapCurrencyUSD:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavelleCapDraftAcknowledgeInterruption.
+const (
+	EstavelleCapDraftAcknowledgeInterruptionTrue EstavelleCapDraftAcknowledgeInterruption = true
+)
+
+// Valid indicates whether the value is a known member of the EstavelleCapDraftAcknowledgeInterruption enum.
+func (e EstavelleCapDraftAcknowledgeInterruption) Valid() bool {
+	switch e {
+	case EstavelleCapDraftAcknowledgeInterruptionTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavelleHealthAdmissionState.
+const (
+	EstavelleHealthAdmissionStateConfirmed EstavelleHealthAdmissionState = "confirmed"
+	EstavelleHealthAdmissionStateStale     EstavelleHealthAdmissionState = "stale"
+	EstavelleHealthAdmissionStateUnknown   EstavelleHealthAdmissionState = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the EstavelleHealthAdmissionState enum.
+func (e EstavelleHealthAdmissionState) Valid() bool {
+	switch e {
+	case EstavelleHealthAdmissionStateConfirmed:
+		return true
+	case EstavelleHealthAdmissionStateStale:
+		return true
+	case EstavelleHealthAdmissionStateUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavelleHealthSource.
+const (
+	EstavelleHealthSourceRelayTelemetry EstavelleHealthSource = "relay_telemetry"
+	EstavelleHealthSourceRosterMtime    EstavelleHealthSource = "roster_mtime"
+)
+
+// Valid indicates whether the value is a known member of the EstavelleHealthSource enum.
+func (e EstavelleHealthSource) Valid() bool {
+	switch e {
+	case EstavelleHealthSourceRelayTelemetry:
+		return true
+	case EstavelleHealthSourceRosterMtime:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavellePublicationMode.
+const (
+	EstavellePublicationModeLegacy   EstavellePublicationMode = "legacy"
+	EstavellePublicationModeServices EstavellePublicationMode = "services"
+)
+
+// Valid indicates whether the value is a known member of the EstavellePublicationMode enum.
+func (e EstavellePublicationMode) Valid() bool {
+	switch e {
+	case EstavellePublicationModeLegacy:
+		return true
+	case EstavellePublicationModeServices:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavellePublicationSchemaVersion.
+const (
+	EstavellePublicationSchemaVersionN2 EstavellePublicationSchemaVersion = 2
+	EstavellePublicationSchemaVersionN3 EstavellePublicationSchemaVersion = 3
+)
+
+// Valid indicates whether the value is a known member of the EstavellePublicationSchemaVersion enum.
+func (e EstavellePublicationSchemaVersion) Valid() bool {
+	switch e {
+	case EstavellePublicationSchemaVersionN2:
+		return true
+	case EstavellePublicationSchemaVersionN3:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavelleUsageDayGapReasons.
+const (
+	EstavelleUsageDayGapReasonsCapacity          EstavelleUsageDayGapReasons = "capacity"
+	EstavelleUsageDayGapReasonsClock             EstavelleUsageDayGapReasons = "clock"
+	EstavelleUsageDayGapReasonsObservationLost   EstavelleUsageDayGapReasons = "observation_lost"
+	EstavelleUsageDayGapReasonsOverflow          EstavelleUsageDayGapReasons = "overflow"
+	EstavelleUsageDayGapReasonsUnresolvedMapping EstavelleUsageDayGapReasons = "unresolved_mapping"
+)
+
+// Valid indicates whether the value is a known member of the EstavelleUsageDayGapReasons enum.
+func (e EstavelleUsageDayGapReasons) Valid() bool {
+	switch e {
+	case EstavelleUsageDayGapReasonsCapacity:
+		return true
+	case EstavelleUsageDayGapReasonsClock:
+		return true
+	case EstavelleUsageDayGapReasonsObservationLost:
+		return true
+	case EstavelleUsageDayGapReasonsOverflow:
+		return true
+	case EstavelleUsageDayGapReasonsUnresolvedMapping:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavelleUsageReportCoverage.
+const (
+	EstavelleUsageReportCoverageAuthorizedProducers EstavelleUsageReportCoverage = "authorized_producers"
+)
+
+// Valid indicates whether the value is a known member of the EstavelleUsageReportCoverage enum.
+func (e EstavelleUsageReportCoverage) Valid() bool {
+	switch e {
+	case EstavelleUsageReportCoverageAuthorizedProducers:
 		return true
 	default:
 		return false
@@ -709,7 +976,7 @@ func (e NocComponentHealth) Valid() bool {
 const (
 	NocComponentKindBedrock      NocComponentKind = "bedrock"
 	NocComponentKindControlPlane NocComponentKind = "control_plane"
-	NocComponentKindRelay        NocComponentKind = "relay"
+	NocComponentKindEstavelle    NocComponentKind = "estavelle"
 	NocComponentKindRoute        NocComponentKind = "route"
 )
 
@@ -720,7 +987,7 @@ func (e NocComponentKind) Valid() bool {
 		return true
 	case NocComponentKindControlPlane:
 		return true
-	case NocComponentKindRelay:
+	case NocComponentKindEstavelle:
 		return true
 	case NocComponentKindRoute:
 		return true
@@ -876,7 +1143,7 @@ func (e NodePostureStatus) Valid() bool {
 // Defines values for PathObservationKind.
 const (
 	PathObservationKindDirect      PathObservationKind = "direct"
-	PathObservationKindRelay       PathObservationKind = "relay"
+	PathObservationKindEstavelle   PathObservationKind = "estavelle"
 	PathObservationKindTurn        PathObservationKind = "turn"
 	PathObservationKindUnreachable PathObservationKind = "unreachable"
 )
@@ -886,278 +1153,11 @@ func (e PathObservationKind) Valid() bool {
 	switch e {
 	case PathObservationKindDirect:
 		return true
-	case PathObservationKindRelay:
+	case PathObservationKindEstavelle:
 		return true
 	case PathObservationKindTurn:
 		return true
 	case PathObservationKindUnreachable:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayLocationSource.
-const (
-	RelayLocationSourceDeclared RelayLocationSource = "declared"
-	RelayLocationSourceDetected RelayLocationSource = "detected"
-)
-
-// Valid indicates whether the value is a known member of the RelayLocationSource enum.
-func (e RelayLocationSource) Valid() bool {
-	switch e {
-	case RelayLocationSourceDeclared:
-		return true
-	case RelayLocationSourceDetected:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayAlertCandidateTarget.
-const (
-	RelayAlertCandidateTargetIncludedAllowance RelayAlertCandidateTarget = "included_allowance"
-	RelayAlertCandidateTargetSpendingCap       RelayAlertCandidateTarget = "spending_cap"
-)
-
-// Valid indicates whether the value is a known member of the RelayAlertCandidateTarget enum.
-func (e RelayAlertCandidateTarget) Valid() bool {
-	switch e {
-	case RelayAlertCandidateTargetIncludedAllowance:
-		return true
-	case RelayAlertCandidateTargetSpendingCap:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayAlertCandidateThresholdPercent.
-const (
-	RelayAlertCandidateThresholdPercentN100 RelayAlertCandidateThresholdPercent = 100
-	RelayAlertCandidateThresholdPercentN75  RelayAlertCandidateThresholdPercent = 75
-	RelayAlertCandidateThresholdPercentN90  RelayAlertCandidateThresholdPercent = 90
-)
-
-// Valid indicates whether the value is a known member of the RelayAlertCandidateThresholdPercent enum.
-func (e RelayAlertCandidateThresholdPercent) Valid() bool {
-	switch e {
-	case RelayAlertCandidateThresholdPercentN100:
-		return true
-	case RelayAlertCandidateThresholdPercentN75:
-		return true
-	case RelayAlertCandidateThresholdPercentN90:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayAllocationFailedStep.
-const (
-	RelayAllocationFailedStepDeprovisioning RelayAllocationFailedStep = "deprovisioning"
-	RelayAllocationFailedStepGranting       RelayAllocationFailedStep = "granting"
-	RelayAllocationFailedStepProvisioning   RelayAllocationFailedStep = "provisioning"
-	RelayAllocationFailedStepRequested      RelayAllocationFailedStep = "requested"
-	RelayAllocationFailedStepRevoking       RelayAllocationFailedStep = "revoking"
-)
-
-// Valid indicates whether the value is a known member of the RelayAllocationFailedStep enum.
-func (e RelayAllocationFailedStep) Valid() bool {
-	switch e {
-	case RelayAllocationFailedStepDeprovisioning:
-		return true
-	case RelayAllocationFailedStepGranting:
-		return true
-	case RelayAllocationFailedStepProvisioning:
-		return true
-	case RelayAllocationFailedStepRequested:
-		return true
-	case RelayAllocationFailedStepRevoking:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayAllocationState.
-const (
-	RelayAllocationStateDeprovisioned  RelayAllocationState = "deprovisioned"
-	RelayAllocationStateDeprovisioning RelayAllocationState = "deprovisioning"
-	RelayAllocationStateFailed         RelayAllocationState = "failed"
-	RelayAllocationStateGranting       RelayAllocationState = "granting"
-	RelayAllocationStateProvisioning   RelayAllocationState = "provisioning"
-	RelayAllocationStateReady          RelayAllocationState = "ready"
-	RelayAllocationStateRequested      RelayAllocationState = "requested"
-	RelayAllocationStateRevoking       RelayAllocationState = "revoking"
-)
-
-// Valid indicates whether the value is a known member of the RelayAllocationState enum.
-func (e RelayAllocationState) Valid() bool {
-	switch e {
-	case RelayAllocationStateDeprovisioned:
-		return true
-	case RelayAllocationStateDeprovisioning:
-		return true
-	case RelayAllocationStateFailed:
-		return true
-	case RelayAllocationStateGranting:
-		return true
-	case RelayAllocationStateProvisioning:
-		return true
-	case RelayAllocationStateReady:
-		return true
-	case RelayAllocationStateRequested:
-		return true
-	case RelayAllocationStateRevoking:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayCapCurrency.
-const (
-	RelayCapCurrencyUSD RelayCapCurrency = "USD"
-)
-
-// Valid indicates whether the value is a known member of the RelayCapCurrency enum.
-func (e RelayCapCurrency) Valid() bool {
-	switch e {
-	case RelayCapCurrencyUSD:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayCapDraftAcknowledgeInterruption.
-const (
-	RelayCapDraftAcknowledgeInterruptionTrue RelayCapDraftAcknowledgeInterruption = true
-)
-
-// Valid indicates whether the value is a known member of the RelayCapDraftAcknowledgeInterruption enum.
-func (e RelayCapDraftAcknowledgeInterruption) Valid() bool {
-	switch e {
-	case RelayCapDraftAcknowledgeInterruptionTrue:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayHealthAdmissionState.
-const (
-	RelayHealthAdmissionStateConfirmed RelayHealthAdmissionState = "confirmed"
-	RelayHealthAdmissionStateStale     RelayHealthAdmissionState = "stale"
-	RelayHealthAdmissionStateUnknown   RelayHealthAdmissionState = "unknown"
-)
-
-// Valid indicates whether the value is a known member of the RelayHealthAdmissionState enum.
-func (e RelayHealthAdmissionState) Valid() bool {
-	switch e {
-	case RelayHealthAdmissionStateConfirmed:
-		return true
-	case RelayHealthAdmissionStateStale:
-		return true
-	case RelayHealthAdmissionStateUnknown:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayHealthSource.
-const (
-	RelayHealthSourceRelayTelemetry RelayHealthSource = "relay_telemetry"
-	RelayHealthSourceRosterMtime    RelayHealthSource = "roster_mtime"
-)
-
-// Valid indicates whether the value is a known member of the RelayHealthSource enum.
-func (e RelayHealthSource) Valid() bool {
-	switch e {
-	case RelayHealthSourceRelayTelemetry:
-		return true
-	case RelayHealthSourceRosterMtime:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayPublicationMode.
-const (
-	RelayPublicationModeLegacy   RelayPublicationMode = "legacy"
-	RelayPublicationModeServices RelayPublicationMode = "services"
-)
-
-// Valid indicates whether the value is a known member of the RelayPublicationMode enum.
-func (e RelayPublicationMode) Valid() bool {
-	switch e {
-	case RelayPublicationModeLegacy:
-		return true
-	case RelayPublicationModeServices:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayPublicationSchemaVersion.
-const (
-	RelayPublicationSchemaVersionN2 RelayPublicationSchemaVersion = 2
-	RelayPublicationSchemaVersionN3 RelayPublicationSchemaVersion = 3
-)
-
-// Valid indicates whether the value is a known member of the RelayPublicationSchemaVersion enum.
-func (e RelayPublicationSchemaVersion) Valid() bool {
-	switch e {
-	case RelayPublicationSchemaVersionN2:
-		return true
-	case RelayPublicationSchemaVersionN3:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayUsageDayGapReasons.
-const (
-	RelayUsageDayGapReasonsCapacity          RelayUsageDayGapReasons = "capacity"
-	RelayUsageDayGapReasonsClock             RelayUsageDayGapReasons = "clock"
-	RelayUsageDayGapReasonsObservationLost   RelayUsageDayGapReasons = "observation_lost"
-	RelayUsageDayGapReasonsOverflow          RelayUsageDayGapReasons = "overflow"
-	RelayUsageDayGapReasonsUnresolvedMapping RelayUsageDayGapReasons = "unresolved_mapping"
-)
-
-// Valid indicates whether the value is a known member of the RelayUsageDayGapReasons enum.
-func (e RelayUsageDayGapReasons) Valid() bool {
-	switch e {
-	case RelayUsageDayGapReasonsCapacity:
-		return true
-	case RelayUsageDayGapReasonsClock:
-		return true
-	case RelayUsageDayGapReasonsObservationLost:
-		return true
-	case RelayUsageDayGapReasonsOverflow:
-		return true
-	case RelayUsageDayGapReasonsUnresolvedMapping:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for RelayUsageReportCoverage.
-const (
-	RelayUsageReportCoverageAuthorizedProducers RelayUsageReportCoverage = "authorized_producers"
-)
-
-// Valid indicates whether the value is a known member of the RelayUsageReportCoverage enum.
-func (e RelayUsageReportCoverage) Valid() bool {
-	switch e {
-	case RelayUsageReportCoverageAuthorizedProducers:
 		return true
 	default:
 		return false
@@ -1479,6 +1479,84 @@ func (e CommitRootRenameJSONBodyConfirmNoAliases) Valid() bool {
 	}
 }
 
+// Defines values for DeprovisionEstavelleAllocationJSONBodyAcknowledgeDeprovision.
+const (
+	DeprovisionEstavelleAllocationJSONBodyAcknowledgeDeprovisionTrue DeprovisionEstavelleAllocationJSONBodyAcknowledgeDeprovision = true
+)
+
+// Valid indicates whether the value is a known member of the DeprovisionEstavelleAllocationJSONBodyAcknowledgeDeprovision enum.
+func (e DeprovisionEstavelleAllocationJSONBodyAcknowledgeDeprovision) Valid() bool {
+	switch e {
+	case DeprovisionEstavelleAllocationJSONBodyAcknowledgeDeprovisionTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetEstavellePublicationJSONBodyAcknowledgeConnectivityChange.
+const (
+	SetEstavellePublicationJSONBodyAcknowledgeConnectivityChangeTrue SetEstavellePublicationJSONBodyAcknowledgeConnectivityChange = true
+)
+
+// Valid indicates whether the value is a known member of the SetEstavellePublicationJSONBodyAcknowledgeConnectivityChange enum.
+func (e SetEstavellePublicationJSONBodyAcknowledgeConnectivityChange) Valid() bool {
+	switch e {
+	case SetEstavellePublicationJSONBodyAcknowledgeConnectivityChangeTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetEstavellePublicationJSONBodyMode.
+const (
+	SetEstavellePublicationJSONBodyModeLegacy   SetEstavellePublicationJSONBodyMode = "legacy"
+	SetEstavellePublicationJSONBodyModeServices SetEstavellePublicationJSONBodyMode = "services"
+)
+
+// Valid indicates whether the value is a known member of the SetEstavellePublicationJSONBodyMode enum.
+func (e SetEstavellePublicationJSONBodyMode) Valid() bool {
+	switch e {
+	case SetEstavellePublicationJSONBodyModeLegacy:
+		return true
+	case SetEstavellePublicationJSONBodyModeServices:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChange.
+const (
+	UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChangeTrue UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChange = true
+)
+
+// Valid indicates whether the value is a known member of the UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChange enum.
+func (e UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChange) Valid() bool {
+	switch e {
+	case UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChangeTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetEstavelleServiceModesJSONBodyAcknowledgeConnectivityChange.
+const (
+	SetEstavelleServiceModesJSONBodyAcknowledgeConnectivityChangeTrue SetEstavelleServiceModesJSONBodyAcknowledgeConnectivityChange = true
+)
+
+// Valid indicates whether the value is a known member of the SetEstavelleServiceModesJSONBodyAcknowledgeConnectivityChange enum.
+func (e SetEstavelleServiceModesJSONBodyAcknowledgeConnectivityChange) Valid() bool {
+	switch e {
+	case SetEstavelleServiceModesJSONBodyAcknowledgeConnectivityChangeTrue:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListNodesParamsPosture.
 const (
 	ListNodesParamsPostureLatticeOnly ListNodesParamsPosture = "lattice_only"
@@ -1542,84 +1620,6 @@ func (e ListPostureSessionsParamsPosture) Valid() bool {
 	case ListPostureSessionsParamsPostureStale:
 		return true
 	case ListPostureSessionsParamsPostureUnknown:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision.
-const (
-	DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovisionTrue DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision = true
-)
-
-// Valid indicates whether the value is a known member of the DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision enum.
-func (e DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision) Valid() bool {
-	switch e {
-	case DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovisionTrue:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for SetRelayPublicationJSONBodyAcknowledgeConnectivityChange.
-const (
-	SetRelayPublicationJSONBodyAcknowledgeConnectivityChangeTrue SetRelayPublicationJSONBodyAcknowledgeConnectivityChange = true
-)
-
-// Valid indicates whether the value is a known member of the SetRelayPublicationJSONBodyAcknowledgeConnectivityChange enum.
-func (e SetRelayPublicationJSONBodyAcknowledgeConnectivityChange) Valid() bool {
-	switch e {
-	case SetRelayPublicationJSONBodyAcknowledgeConnectivityChangeTrue:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for SetRelayPublicationJSONBodyMode.
-const (
-	SetRelayPublicationJSONBodyModeLegacy   SetRelayPublicationJSONBodyMode = "legacy"
-	SetRelayPublicationJSONBodyModeServices SetRelayPublicationJSONBodyMode = "services"
-)
-
-// Valid indicates whether the value is a known member of the SetRelayPublicationJSONBodyMode enum.
-func (e SetRelayPublicationJSONBodyMode) Valid() bool {
-	switch e {
-	case SetRelayPublicationJSONBodyModeLegacy:
-		return true
-	case SetRelayPublicationJSONBodyModeServices:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange.
-const (
-	UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChangeTrue UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange = true
-)
-
-// Valid indicates whether the value is a known member of the UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange enum.
-func (e UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange) Valid() bool {
-	switch e {
-	case UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChangeTrue:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange.
-const (
-	SetRelayServiceModesJSONBodyAcknowledgeConnectivityChangeTrue SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange = true
-)
-
-// Valid indicates whether the value is a known member of the SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange enum.
-func (e SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange) Valid() bool {
-	switch e {
-	case SetRelayServiceModesJSONBodyAcknowledgeConnectivityChangeTrue:
 		return true
 	default:
 		return false
@@ -1775,6 +1775,72 @@ type Authority struct {
 // AuthorityStatus defines model for Authority.Status.
 type AuthorityStatus string
 
+// AvenInventory defines model for AvenInventory.
+type AvenInventory struct {
+	Avens         []AvenNode                 `json:"avens"`
+	SchemaVersion AvenInventorySchemaVersion `json:"schema_version"`
+
+	// UnresolvedRoutes Configured routes without a visible eligible node, including empty or missing routing groups.
+	UnresolvedRoutes []string `json:"unresolved_routes"`
+
+	// UnsupportedRoutes Non-CIDR route declarations that cannot be projected as Karst Aven offers.
+	UnsupportedRoutes []string `json:"unsupported_routes"`
+}
+
+// AvenInventorySchemaVersion defines model for AvenInventory.SchemaVersion.
+type AvenInventorySchemaVersion int
+
+// AvenNode defines model for AvenNode.
+type AvenNode struct {
+	// ControlCheck Last actual control-server capability check. Accepted means a netmap was built; it does not establish client application or data-plane compatibility. Missing means unknown. Independent of software report freshness.
+	ControlCheck     *NodeControlCheck `json:"control_check,omitempty"`
+	ControlConnected bool              `json:"control_connected"`
+
+	// ForwardingReadiness Aggregated across this node's own offers, degraded-first.
+	ForwardingReadiness AvenNodeForwardingReadiness `json:"forwarding_readiness"`
+	Name                string                      `json:"name"`
+
+	// NodeHandle Enrolled node public handle for explicit resource bindings. Optional for compatibility with older control servers; never infer it from names or addresses.
+	NodeHandle *string     `json:"node_handle,omitempty"`
+	NodeId     string      `json:"node_id"`
+	Offers     []AvenOffer `json:"offers"`
+
+	// Software Running agent identity self-reported over the authenticated control channel, independent of compliance collection. Advisory, not attestation or a compatibility verdict. Omitted for agents with no observation. Missing identities remain unknown.
+	Software *NodeSoftware `json:"software,omitempty"`
+}
+
+// AvenNodeForwardingReadiness Aggregated across this node's own offers, degraded-first.
+type AvenNodeForwardingReadiness string
+
+// AvenOffer defines model for AvenOffer.
+type AvenOffer struct {
+	// EgressDrift True only on a confident, comparable mismatch between pinned_egress_ip and observed_egress_ip. False covers both "confirmed matching" and "not enough information yet" -- it is never a confirmation by itself.
+	EgressDrift bool `json:"egress_drift"`
+	Enabled     bool `json:"enabled"`
+
+	// ForwardingReadiness Self-reported by this offer's aven over the authenticated control channel; never inferred from connectivity or traffic alone.
+	ForwardingReadiness AvenOfferForwardingReadiness `json:"forwarding_readiness"`
+	Id                  string                       `json:"id"`
+	Kind                AvenOfferKind                `json:"kind"`
+	Masquerade          bool                         `json:"masquerade"`
+	Metric              int                          `json:"metric"`
+	NetworkId           string                       `json:"network_id"`
+
+	// ObservedEgressIp Issue #554: this candidate's own self-reported outbound address toward the route. Absent when the route has no pinned_egress_ip or no report has arrived yet.
+	ObservedEgressIp *string `json:"observed_egress_ip,omitempty"`
+
+	// PinnedEgressIp ADR-0068's operator-declared address for this candidate, if any. Absent for an ordinary, unpinned offer.
+	PinnedEgressIp        *string `json:"pinned_egress_ip,omitempty"`
+	Prefix                string  `json:"prefix"`
+	RequiresClientConsent bool    `json:"requires_client_consent"`
+}
+
+// AvenOfferForwardingReadiness Self-reported by this offer's aven over the authenticated control channel; never inferred from connectivity or traffic alone.
+type AvenOfferForwardingReadiness string
+
+// AvenOfferKind defines model for AvenOffer.Kind.
+type AvenOfferKind string
+
 // BedrockBootstrapBundle defines model for BedrockBootstrapBundle.
 type BedrockBootstrapBundle struct {
 	Format  string `json:"format"`
@@ -1806,17 +1872,17 @@ type BedrockModeWriteMode string
 
 // BedrockStatus defines model for BedrockStatus.
 type BedrockStatus struct {
-	Authorities      []Authority       `json:"authorities"`
-	CoveredCount     *int              `json:"covered_count,omitempty"`
-	Disabled         *bool             `json:"disabled,omitempty"`
-	Head             *string           `json:"head,omitempty"`
-	HeadSeq          *int              `json:"head_seq,omitempty"`
-	Location         *RelayLocation    `json:"location,omitempty"`
-	Mode             BedrockStatusMode `json:"mode"`
-	Quorum           int               `json:"quorum"`
-	Roots            []Authority       `json:"roots"`
-	UncoveredHandles []string          `json:"uncovered_handles"`
-	Zone             *string           `json:"zone,omitempty"`
+	Authorities      []Authority        `json:"authorities"`
+	CoveredCount     *int               `json:"covered_count,omitempty"`
+	Disabled         *bool              `json:"disabled,omitempty"`
+	Head             *string            `json:"head,omitempty"`
+	HeadSeq          *int               `json:"head_seq,omitempty"`
+	Location         *EstavelleLocation `json:"location,omitempty"`
+	Mode             BedrockStatusMode  `json:"mode"`
+	Quorum           int                `json:"quorum"`
+	Roots            []Authority        `json:"roots"`
+	UncoveredHandles []string           `json:"uncovered_handles"`
+	Zone             *string            `json:"zone,omitempty"`
 }
 
 // BedrockStatusMode defines model for BedrockStatus.Mode.
@@ -2133,6 +2199,329 @@ type Error struct {
 	RequestId *string `json:"request_id,omitempty"`
 }
 
+// Estavelle defines model for Estavelle.
+type Estavelle struct {
+	Address string          `json:"address"`
+	Health  EstavelleHealth `json:"health"`
+
+	// Id Derived from identity_key; never accepted from callers.
+	Id          *string            `json:"id,omitempty"`
+	IdentityKey []byte             `json:"identity_key"`
+	Location    *EstavelleLocation `json:"location,omitempty"`
+
+	// LocationSource Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on EstavelleCreate.
+	LocationSource *EstavelleLocationSource `json:"location_source,omitempty"`
+	Region         string                   `json:"region"`
+	TlsServerName  *string                  `json:"tls_server_name,omitempty"`
+}
+
+// EstavelleLocationSource Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on EstavelleCreate.
+type EstavelleLocationSource string
+
+// EstavelleAlertCandidate defines model for EstavelleAlertCandidate.
+type EstavelleAlertCandidate struct {
+	AsOf             time.Time                               `json:"as_of"`
+	PeriodEnd        time.Time                               `json:"period_end"`
+	PeriodStart      time.Time                               `json:"period_start"`
+	ReportedBytes    string                                  `json:"reported_bytes"`
+	ScheduleVersion  string                                  `json:"schedule_version"`
+	Target           EstavelleAlertCandidateTarget           `json:"target"`
+	ThresholdBytes   string                                  `json:"threshold_bytes"`
+	ThresholdPercent EstavelleAlertCandidateThresholdPercent `json:"threshold_percent"`
+
+	// UsageComplete False means this event was evaluated from lower-bound usage coverage.
+	UsageComplete bool `json:"usage_complete"`
+}
+
+// EstavelleAlertCandidateTarget defines model for EstavelleAlertCandidate.Target.
+type EstavelleAlertCandidateTarget string
+
+// EstavelleAlertCandidateThresholdPercent defines model for EstavelleAlertCandidate.ThresholdPercent.
+type EstavelleAlertCandidateThresholdPercent int
+
+// EstavelleAlertFeed defines model for EstavelleAlertFeed.
+type EstavelleAlertFeed struct {
+	Alerts []EstavelleAlertCandidate `json:"alerts"`
+	AsOf   time.Time                 `json:"as_of"`
+
+	// CoverageComplete False means amounts are lower bounds and must not be treated as final usage.
+	CoverageComplete bool `json:"coverage_complete"`
+
+	// CoverageWarning Present when usage coverage is incomplete.
+	CoverageWarning *string   `json:"coverage_warning,omitempty"`
+	PeriodEnd       time.Time `json:"period_end"`
+	PeriodStart     time.Time `json:"period_start"`
+}
+
+// EstavelleAllocation defines model for EstavelleAllocation.
+type EstavelleAllocation struct {
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+
+	// EgressV4 Not yet supported; rejected if set until Gateway-identity binding is designed.
+	EgressV4 *bool `json:"egress_v4,omitempty"`
+
+	// EgressV6 Not yet supported; rejected if set until Gateway-identity binding is designed.
+	EgressV6 *bool `json:"egress_v6,omitempty"`
+
+	// FailedStep Only meaningful while state is failed.
+	FailedStep    *EstavelleAllocationFailedStep `json:"failed_step,omitempty"`
+	FailureReason *string                        `json:"failure_reason,omitempty"`
+
+	// Id Server-generated; never accepted from callers.
+	Id *string `json:"id,omitempty"`
+
+	// InfraConnectionId Existing account-local infrastructure connection ID.
+	InfraConnectionId string `json:"infra_connection_id"`
+
+	// InstanceId The Driver-reported compute instance
+	InstanceId *string `json:"instance_id,omitempty"`
+
+	// Location Region/zone/namespace code from that connection's own discovery.
+	Location string `json:"location"`
+	Name     string `json:"name"`
+
+	// PermittedGroups Stable account group IDs granted access once ready.
+	PermittedGroups []string `json:"permitted_groups"`
+
+	// RelayId The relay registry ID
+	RelayId *string `json:"relay_id,omitempty"`
+
+	// RelayTransport The only capability this workflow grants in v1 -- required true.
+	RelayTransport *bool `json:"relay_transport,omitempty"`
+
+	// Revision Expected revision for the next compare-and-set action against this allocation.
+	Revision  *int                      `json:"revision,omitempty"`
+	State     *EstavelleAllocationState `json:"state,omitempty"`
+	UpdatedAt *time.Time                `json:"updated_at,omitempty"`
+}
+
+// EstavelleAllocationFailedStep Only meaningful while state is failed.
+type EstavelleAllocationFailedStep string
+
+// EstavelleAllocationState defines model for EstavelleAllocation.State.
+type EstavelleAllocationState string
+
+// EstavelleCap defines model for EstavelleCap.
+type EstavelleCap struct {
+	AcknowledgedInterruption bool                 `json:"acknowledged_interruption"`
+	Currency                 EstavelleCapCurrency `json:"currency"`
+
+	// EffectiveAt Initial cap activation time after outstanding uncapped relay leases expire.
+	EffectiveAt       *time.Time `json:"effective_at,omitempty"`
+	Enabled           bool       `json:"enabled"`
+	OverageLimitMinor *int64     `json:"overage_limit_minor,omitempty"`
+	PeriodEnd         time.Time  `json:"period_end"`
+	PeriodStart       time.Time  `json:"period_start"`
+}
+
+// EstavelleCapCurrency defines model for EstavelleCap.Currency.
+type EstavelleCapCurrency string
+
+// EstavelleCapDraft defines model for EstavelleCapDraft.
+type EstavelleCapDraft struct {
+	AcknowledgeInterruption EstavelleCapDraftAcknowledgeInterruption `json:"acknowledge_interruption"`
+
+	// OverageLimitMinor USD cents; byte budgets truncate down.
+	OverageLimitMinor int64  `json:"overage_limit_minor"`
+	Period            string `json:"period"`
+}
+
+// EstavelleCapDraftAcknowledgeInterruption defines model for EstavelleCapDraft.AcknowledgeInterruption.
+type EstavelleCapDraftAcknowledgeInterruption bool
+
+// EstavelleCreate defines model for EstavelleCreate.
+type EstavelleCreate struct {
+	Address       string             `json:"address"`
+	IdentityKey   []byte             `json:"identity_key"`
+	Location      *EstavelleLocation `json:"location,omitempty"`
+	Region        string             `json:"region"`
+	TlsServerName *string            `json:"tls_server_name,omitempty"`
+}
+
+// EstavelleCreditGrant defines model for EstavelleCreditGrant.
+type EstavelleCreditGrant struct {
+	AccountId       string    `json:"account_id"`
+	CapRevision     int64     `json:"cap_revision"`
+	CreatedAt       time.Time `json:"created_at"`
+	Generation      string    `json:"generation"`
+	GrantId         string    `json:"grant_id"`
+	GrantedBytes    string    `json:"granted_bytes"`
+	MappingVersion  string    `json:"mapping_version"`
+	PeriodEnd       time.Time `json:"period_end"`
+	PeriodStart     time.Time `json:"period_start"`
+	RelayId         string    `json:"relay_id"`
+	RequestedBytes  string    `json:"requested_bytes"`
+	ScheduleVersion string    `json:"schedule_version"`
+}
+
+// EstavelleCreditRequest defines model for EstavelleCreditRequest.
+type EstavelleCreditRequest struct {
+	DeploymentId   string `json:"deployment_id"`
+	Generation     string `json:"generation"`
+	MappingVersion string `json:"mapping_version"`
+	RelayId        string `json:"relay_id"`
+	RequestId      string `json:"request_id"`
+	RequestedBytes string `json:"requested_bytes"`
+	Signature      []byte `json:"signature"`
+}
+
+// EstavelleCreditSurrender defines model for EstavelleCreditSurrender.
+type EstavelleCreditSurrender struct {
+	ConsumedBytes  string `json:"consumed_bytes"`
+	DeploymentId   string `json:"deployment_id"`
+	Generation     string `json:"generation"`
+	GrantId        string `json:"grant_id"`
+	MappingVersion string `json:"mapping_version"`
+	RelayId        string `json:"relay_id"`
+	Signature      []byte `json:"signature"`
+}
+
+// EstavelleHealth defines model for EstavelleHealth.
+type EstavelleHealth struct {
+	AdmissionState  EstavelleHealthAdmissionState `json:"admission_state"`
+	Bytes           *int                          `json:"bytes,omitempty"`
+	LastConfirmedAt *time.Time                    `json:"last_confirmed_at"`
+	Sessions        *int                          `json:"sessions,omitempty"`
+	Source          EstavelleHealthSource         `json:"source"`
+}
+
+// EstavelleHealthAdmissionState defines model for EstavelleHealth.AdmissionState.
+type EstavelleHealthAdmissionState string
+
+// EstavelleHealthSource defines model for EstavelleHealth.Source.
+type EstavelleHealthSource string
+
+// EstavelleLocation defines model for EstavelleLocation.
+type EstavelleLocation struct {
+	Label *string `json:"label,omitempty"`
+	Lat   float32 `json:"lat"`
+	Lon   float32 `json:"lon"`
+}
+
+// EstavellePublication defines model for EstavellePublication.
+type EstavellePublication struct {
+	Mode EstavellePublicationMode `json:"mode"`
+
+	// SchemaVersion Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
+	SchemaVersion *EstavellePublicationSchemaVersion `json:"schema_version,omitempty"`
+}
+
+// EstavellePublicationMode defines model for EstavellePublication.Mode.
+type EstavellePublicationMode string
+
+// EstavellePublicationSchemaVersion Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
+type EstavellePublicationSchemaVersion int
+
+// EstavelleService defines model for EstavelleService.
+type EstavelleService struct {
+	// AccessManaged Use live registry-group membership for estavelle admission. Requires a live identity-bound roster writer. POST /estavelle-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.
+	AccessManaged *bool `json:"access_managed,omitempty"`
+
+	// AllowedGroups Stable account group IDs permitted to use this backend. POST /estavelle-services requires at least one entry.
+	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
+	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
+	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`
+
+	// GatewayHandle Explicitly selected enrolled Linux machine providing internet egress.
+	GatewayHandle *string `json:"gateway_handle,omitempty"`
+	Id            string  `json:"id"`
+	Metric        *int    `json:"metric,omitempty"`
+
+	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
+	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
+
+	// PonorId Existing account-local Ponor registry ID.
+	PonorId string `json:"ponor_id"`
+
+	// Revision Expected service revision when updating access.
+	Revision *int `json:"revision,omitempty"`
+}
+
+// EstavelleServiceView defines model for EstavelleServiceView.
+type EstavelleServiceView struct {
+	// AccessManaged Use live registry-group membership for estavelle admission. Requires a live identity-bound roster writer. POST /estavelle-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.
+	AccessManaged *bool `json:"access_managed,omitempty"`
+
+	// AllowedGroups Stable account group IDs permitted to use this backend. POST /estavelle-services requires at least one entry.
+	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
+	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
+	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`
+
+	// GatewayHandle Explicitly selected enrolled Linux machine providing internet egress.
+	GatewayHandle *string `json:"gateway_handle,omitempty"`
+	Id            string  `json:"id"`
+	Metric        *int    `json:"metric,omitempty"`
+
+	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
+	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
+
+	// PonorId Existing account-local Ponor registry ID.
+	PonorId string `json:"ponor_id"`
+
+	// PonorPresent Referenced Ponor registry entry exists in this account; not a health result.
+	PonorPresent bool `json:"ponor_present"`
+
+	// Revision Expected service revision when updating access.
+	Revision *int `json:"revision,omitempty"`
+}
+
+// EstavelleUsageDay defines model for EstavelleUsageDay.
+type EstavelleUsageDay struct {
+	Date              openapi_types.Date            `json:"date"`
+	ExpectedWindows   int64                         `json:"expected_windows"`
+	GapReasons        []EstavelleUsageDayGapReasons `json:"gap_reasons"`
+	GapWindows        int64                         `json:"gap_windows"`
+	MissingWindows    int64                         `json:"missing_windows"`
+	ReportedBytes     string                        `json:"reported_bytes"`
+	ReportedWindows   int64                         `json:"reported_windows"`
+	UnexpectedWindows int64                         `json:"unexpected_windows"`
+}
+
+// EstavelleUsageDayGapReasons defines model for EstavelleUsageDay.GapReasons.
+type EstavelleUsageDayGapReasons string
+
+// EstavelleUsageReport defines model for EstavelleUsageReport.
+type EstavelleUsageReport struct {
+	AsOf time.Time `json:"as_of"`
+
+	// AuthorizationHistoryStart Cutover when producer authorization coverage began to be recorded; earlier reporting intervals remain unknown.
+	AuthorizationHistoryStart time.Time `json:"authorization_history_start"`
+
+	// Complete True only when authorization history covers the request
+	Complete bool `json:"complete"`
+
+	// Coverage Completeness is measured over explicitly operator-authorized producers and account mappings only.
+	Coverage EstavelleUsageReportCoverage `json:"coverage"`
+	Days     []EstavelleUsageDay          `json:"days"`
+	End      time.Time                    `json:"end"`
+
+	// ExpectedWindows Expected producer/account minute windows derived from retained authorization periods.
+	ExpectedWindows int64 `json:"expected_windows"`
+
+	// FirstReceivedWindowStart Earliest received window in the requested period; null when no batches were received. This is not the producer authorization start.
+	FirstReceivedWindowStart *time.Time `json:"first_received_window_start"`
+
+	// HistoryComplete True when the entire requested interval begins at or after the recorded authorization-history cutover.
+	HistoryComplete bool `json:"history_complete"`
+
+	// LastReceivedAt Receipt time of the most recently received batch in the requested period; use with as_of to assess report freshness.
+	LastReceivedAt *time.Time `json:"last_received_at"`
+	Limitations    []string   `json:"limitations"`
+
+	// MissingWindows Expected minute windows for which no producer batch was received.
+	MissingWindows int64 `json:"missing_windows"`
+
+	// ReportedBytes Exact decimal bytes reported in received batches only.
+	ReportedBytes string    `json:"reported_bytes"`
+	Start         time.Time `json:"start"`
+
+	// UnexpectedWindows Received account windows outside retained authorization periods.
+	UnexpectedWindows int64 `json:"unexpected_windows"`
+}
+
+// EstavelleUsageReportCoverage Completeness is measured over explicitly operator-authorized producers and account mappings only.
+type EstavelleUsageReportCoverage string
+
 // FirstRunState defines model for FirstRunState.
 type FirstRunState struct {
 	// Completed Whether the account has finished the console's first-run setup wizard (default domain + initial groups). A brand-new account defaults to false; an account that existed before this feature shipped defaults to true.
@@ -2147,72 +2536,6 @@ type Flow struct {
 	Protocol    string `json:"protocol"`
 	Source      string `json:"source"`
 }
-
-// GatewayInventory defines model for GatewayInventory.
-type GatewayInventory struct {
-	Gateways      []GatewayNode                 `json:"gateways"`
-	SchemaVersion GatewayInventorySchemaVersion `json:"schema_version"`
-
-	// UnresolvedRoutes Configured routes without a visible eligible node, including empty or missing routing groups.
-	UnresolvedRoutes []string `json:"unresolved_routes"`
-
-	// UnsupportedRoutes Non-CIDR route declarations that cannot be projected as Karst Gateway offers.
-	UnsupportedRoutes []string `json:"unsupported_routes"`
-}
-
-// GatewayInventorySchemaVersion defines model for GatewayInventory.SchemaVersion.
-type GatewayInventorySchemaVersion int
-
-// GatewayNode defines model for GatewayNode.
-type GatewayNode struct {
-	// ControlCheck Last actual control-server capability check. Accepted means a netmap was built; it does not establish client application or data-plane compatibility. Missing means unknown. Independent of software report freshness.
-	ControlCheck     *NodeControlCheck `json:"control_check,omitempty"`
-	ControlConnected bool              `json:"control_connected"`
-
-	// ForwardingReadiness Aggregated across this node's own offers, degraded-first.
-	ForwardingReadiness GatewayNodeForwardingReadiness `json:"forwarding_readiness"`
-	Name                string                         `json:"name"`
-
-	// NodeHandle Enrolled node public handle for explicit resource bindings. Optional for compatibility with older control servers; never infer it from names or addresses.
-	NodeHandle *string        `json:"node_handle,omitempty"`
-	NodeId     string         `json:"node_id"`
-	Offers     []GatewayOffer `json:"offers"`
-
-	// Software Running agent identity self-reported over the authenticated control channel, independent of compliance collection. Advisory, not attestation or a compatibility verdict. Omitted for agents with no observation. Missing identities remain unknown.
-	Software *NodeSoftware `json:"software,omitempty"`
-}
-
-// GatewayNodeForwardingReadiness Aggregated across this node's own offers, degraded-first.
-type GatewayNodeForwardingReadiness string
-
-// GatewayOffer defines model for GatewayOffer.
-type GatewayOffer struct {
-	// EgressDrift True only on a confident, comparable mismatch between pinned_egress_ip and observed_egress_ip. False covers both "confirmed matching" and "not enough information yet" -- it is never a confirmation by itself.
-	EgressDrift bool `json:"egress_drift"`
-	Enabled     bool `json:"enabled"`
-
-	// ForwardingReadiness Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
-	ForwardingReadiness GatewayOfferForwardingReadiness `json:"forwarding_readiness"`
-	Id                  string                          `json:"id"`
-	Kind                GatewayOfferKind                `json:"kind"`
-	Masquerade          bool                            `json:"masquerade"`
-	Metric              int                             `json:"metric"`
-	NetworkId           string                          `json:"network_id"`
-
-	// ObservedEgressIp Issue #554: this candidate's own self-reported outbound address toward the route. Absent when the route has no pinned_egress_ip or no report has arrived yet.
-	ObservedEgressIp *string `json:"observed_egress_ip,omitempty"`
-
-	// PinnedEgressIp ADR-0068's operator-declared address for this candidate, if any. Absent for an ordinary, unpinned offer.
-	PinnedEgressIp        *string `json:"pinned_egress_ip,omitempty"`
-	Prefix                string  `json:"prefix"`
-	RequiresClientConsent bool    `json:"requires_client_consent"`
-}
-
-// GatewayOfferForwardingReadiness Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
-type GatewayOfferForwardingReadiness string
-
-// GatewayOfferKind defines model for GatewayOffer.Kind.
-type GatewayOfferKind string
 
 // GroupLocation defines model for GroupLocation.
 type GroupLocation struct {
@@ -2378,7 +2701,7 @@ type NocComponent struct {
 	IngressPackets *int64              `json:"ingress_packets,omitempty"`
 	Kind           NocComponentKind    `json:"kind"`
 	Label          string              `json:"label"`
-	Location       *RelayLocation      `json:"location,omitempty"`
+	Location       *EstavelleLocation  `json:"location,omitempty"`
 	Packets        *int64              `json:"packets,omitempty"`
 }
 
@@ -2586,329 +2909,6 @@ type RegionDemand struct {
 	RttOver100ms int    `json:"rtt_over_100ms"`
 	RttUnder20ms int    `json:"rtt_under_20ms"`
 }
-
-// Relay defines model for Relay.
-type Relay struct {
-	Address string      `json:"address"`
-	Health  RelayHealth `json:"health"`
-
-	// Id Derived from identity_key; never accepted from callers.
-	Id          *string        `json:"id,omitempty"`
-	IdentityKey []byte         `json:"identity_key"`
-	Location    *RelayLocation `json:"location,omitempty"`
-
-	// LocationSource Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on RelayCreate.
-	LocationSource *RelayLocationSource `json:"location_source,omitempty"`
-	Region         string               `json:"region"`
-	TlsServerName  *string              `json:"tls_server_name,omitempty"`
-}
-
-// RelayLocationSource Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on RelayCreate.
-type RelayLocationSource string
-
-// RelayAlertCandidate defines model for RelayAlertCandidate.
-type RelayAlertCandidate struct {
-	AsOf             time.Time                           `json:"as_of"`
-	PeriodEnd        time.Time                           `json:"period_end"`
-	PeriodStart      time.Time                           `json:"period_start"`
-	ReportedBytes    string                              `json:"reported_bytes"`
-	ScheduleVersion  string                              `json:"schedule_version"`
-	Target           RelayAlertCandidateTarget           `json:"target"`
-	ThresholdBytes   string                              `json:"threshold_bytes"`
-	ThresholdPercent RelayAlertCandidateThresholdPercent `json:"threshold_percent"`
-
-	// UsageComplete False means this event was evaluated from lower-bound usage coverage.
-	UsageComplete bool `json:"usage_complete"`
-}
-
-// RelayAlertCandidateTarget defines model for RelayAlertCandidate.Target.
-type RelayAlertCandidateTarget string
-
-// RelayAlertCandidateThresholdPercent defines model for RelayAlertCandidate.ThresholdPercent.
-type RelayAlertCandidateThresholdPercent int
-
-// RelayAlertFeed defines model for RelayAlertFeed.
-type RelayAlertFeed struct {
-	Alerts []RelayAlertCandidate `json:"alerts"`
-	AsOf   time.Time             `json:"as_of"`
-
-	// CoverageComplete False means amounts are lower bounds and must not be treated as final usage.
-	CoverageComplete bool `json:"coverage_complete"`
-
-	// CoverageWarning Present when usage coverage is incomplete.
-	CoverageWarning *string   `json:"coverage_warning,omitempty"`
-	PeriodEnd       time.Time `json:"period_end"`
-	PeriodStart     time.Time `json:"period_start"`
-}
-
-// RelayAllocation defines model for RelayAllocation.
-type RelayAllocation struct {
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-
-	// EgressV4 Not yet supported; rejected if set until Gateway-identity binding is designed.
-	EgressV4 *bool `json:"egress_v4,omitempty"`
-
-	// EgressV6 Not yet supported; rejected if set until Gateway-identity binding is designed.
-	EgressV6 *bool `json:"egress_v6,omitempty"`
-
-	// FailedStep Only meaningful while state is failed.
-	FailedStep    *RelayAllocationFailedStep `json:"failed_step,omitempty"`
-	FailureReason *string                    `json:"failure_reason,omitempty"`
-
-	// Id Server-generated; never accepted from callers.
-	Id *string `json:"id,omitempty"`
-
-	// InfraConnectionId Existing account-local infrastructure connection ID.
-	InfraConnectionId string `json:"infra_connection_id"`
-
-	// InstanceId The Driver-reported compute instance
-	InstanceId *string `json:"instance_id,omitempty"`
-
-	// Location Region/zone/namespace code from that connection's own discovery.
-	Location string `json:"location"`
-	Name     string `json:"name"`
-
-	// PermittedGroups Stable account group IDs granted access once ready.
-	PermittedGroups []string `json:"permitted_groups"`
-
-	// RelayId The relay registry ID
-	RelayId *string `json:"relay_id,omitempty"`
-
-	// RelayTransport The only capability this workflow grants in v1 -- required true.
-	RelayTransport *bool `json:"relay_transport,omitempty"`
-
-	// Revision Expected revision for the next compare-and-set action against this allocation.
-	Revision  *int                  `json:"revision,omitempty"`
-	State     *RelayAllocationState `json:"state,omitempty"`
-	UpdatedAt *time.Time            `json:"updated_at,omitempty"`
-}
-
-// RelayAllocationFailedStep Only meaningful while state is failed.
-type RelayAllocationFailedStep string
-
-// RelayAllocationState defines model for RelayAllocation.State.
-type RelayAllocationState string
-
-// RelayCap defines model for RelayCap.
-type RelayCap struct {
-	AcknowledgedInterruption bool             `json:"acknowledged_interruption"`
-	Currency                 RelayCapCurrency `json:"currency"`
-
-	// EffectiveAt Initial cap activation time after outstanding uncapped relay leases expire.
-	EffectiveAt       *time.Time `json:"effective_at,omitempty"`
-	Enabled           bool       `json:"enabled"`
-	OverageLimitMinor *int64     `json:"overage_limit_minor,omitempty"`
-	PeriodEnd         time.Time  `json:"period_end"`
-	PeriodStart       time.Time  `json:"period_start"`
-}
-
-// RelayCapCurrency defines model for RelayCap.Currency.
-type RelayCapCurrency string
-
-// RelayCapDraft defines model for RelayCapDraft.
-type RelayCapDraft struct {
-	AcknowledgeInterruption RelayCapDraftAcknowledgeInterruption `json:"acknowledge_interruption"`
-
-	// OverageLimitMinor USD cents; byte budgets truncate down.
-	OverageLimitMinor int64  `json:"overage_limit_minor"`
-	Period            string `json:"period"`
-}
-
-// RelayCapDraftAcknowledgeInterruption defines model for RelayCapDraft.AcknowledgeInterruption.
-type RelayCapDraftAcknowledgeInterruption bool
-
-// RelayCreate defines model for RelayCreate.
-type RelayCreate struct {
-	Address       string         `json:"address"`
-	IdentityKey   []byte         `json:"identity_key"`
-	Location      *RelayLocation `json:"location,omitempty"`
-	Region        string         `json:"region"`
-	TlsServerName *string        `json:"tls_server_name,omitempty"`
-}
-
-// RelayCreditGrant defines model for RelayCreditGrant.
-type RelayCreditGrant struct {
-	AccountId       string    `json:"account_id"`
-	CapRevision     int64     `json:"cap_revision"`
-	CreatedAt       time.Time `json:"created_at"`
-	Generation      string    `json:"generation"`
-	GrantId         string    `json:"grant_id"`
-	GrantedBytes    string    `json:"granted_bytes"`
-	MappingVersion  string    `json:"mapping_version"`
-	PeriodEnd       time.Time `json:"period_end"`
-	PeriodStart     time.Time `json:"period_start"`
-	RelayId         string    `json:"relay_id"`
-	RequestedBytes  string    `json:"requested_bytes"`
-	ScheduleVersion string    `json:"schedule_version"`
-}
-
-// RelayCreditRequest defines model for RelayCreditRequest.
-type RelayCreditRequest struct {
-	DeploymentId   string `json:"deployment_id"`
-	Generation     string `json:"generation"`
-	MappingVersion string `json:"mapping_version"`
-	RelayId        string `json:"relay_id"`
-	RequestId      string `json:"request_id"`
-	RequestedBytes string `json:"requested_bytes"`
-	Signature      []byte `json:"signature"`
-}
-
-// RelayCreditSurrender defines model for RelayCreditSurrender.
-type RelayCreditSurrender struct {
-	ConsumedBytes  string `json:"consumed_bytes"`
-	DeploymentId   string `json:"deployment_id"`
-	Generation     string `json:"generation"`
-	GrantId        string `json:"grant_id"`
-	MappingVersion string `json:"mapping_version"`
-	RelayId        string `json:"relay_id"`
-	Signature      []byte `json:"signature"`
-}
-
-// RelayHealth defines model for RelayHealth.
-type RelayHealth struct {
-	AdmissionState  RelayHealthAdmissionState `json:"admission_state"`
-	Bytes           *int                      `json:"bytes,omitempty"`
-	LastConfirmedAt *time.Time                `json:"last_confirmed_at"`
-	Sessions        *int                      `json:"sessions,omitempty"`
-	Source          RelayHealthSource         `json:"source"`
-}
-
-// RelayHealthAdmissionState defines model for RelayHealth.AdmissionState.
-type RelayHealthAdmissionState string
-
-// RelayHealthSource defines model for RelayHealth.Source.
-type RelayHealthSource string
-
-// RelayLocation defines model for RelayLocation.
-type RelayLocation struct {
-	Label *string `json:"label,omitempty"`
-	Lat   float32 `json:"lat"`
-	Lon   float32 `json:"lon"`
-}
-
-// RelayPublication defines model for RelayPublication.
-type RelayPublication struct {
-	Mode RelayPublicationMode `json:"mode"`
-
-	// SchemaVersion Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
-	SchemaVersion *RelayPublicationSchemaVersion `json:"schema_version,omitempty"`
-}
-
-// RelayPublicationMode defines model for RelayPublication.Mode.
-type RelayPublicationMode string
-
-// RelayPublicationSchemaVersion Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
-type RelayPublicationSchemaVersion int
-
-// RelayService defines model for RelayService.
-type RelayService struct {
-	// AccessManaged Use live registry-group membership for relay admission. Requires a live identity-bound roster writer. POST /relay-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.
-	AccessManaged *bool `json:"access_managed,omitempty"`
-
-	// AllowedGroups Stable account group IDs permitted to use this backend. POST /relay-services requires at least one entry.
-	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
-	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
-	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`
-
-	// GatewayHandle Explicitly selected enrolled Linux machine providing internet egress.
-	GatewayHandle *string `json:"gateway_handle,omitempty"`
-	Id            string  `json:"id"`
-	Metric        *int    `json:"metric,omitempty"`
-
-	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
-	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
-
-	// PonorId Existing account-local Ponor registry ID.
-	PonorId string `json:"ponor_id"`
-
-	// Revision Expected service revision when updating access.
-	Revision *int `json:"revision,omitempty"`
-}
-
-// RelayServiceView defines model for RelayServiceView.
-type RelayServiceView struct {
-	// AccessManaged Use live registry-group membership for relay admission. Requires a live identity-bound roster writer. POST /relay-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.
-	AccessManaged *bool `json:"access_managed,omitempty"`
-
-	// AllowedGroups Stable account group IDs permitted to use this backend. POST /relay-services requires at least one entry.
-	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
-	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
-	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`
-
-	// GatewayHandle Explicitly selected enrolled Linux machine providing internet egress.
-	GatewayHandle *string `json:"gateway_handle,omitempty"`
-	Id            string  `json:"id"`
-	Metric        *int    `json:"metric,omitempty"`
-
-	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
-	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
-
-	// PonorId Existing account-local Ponor registry ID.
-	PonorId string `json:"ponor_id"`
-
-	// PonorPresent Referenced Ponor registry entry exists in this account; not a health result.
-	PonorPresent bool `json:"ponor_present"`
-
-	// Revision Expected service revision when updating access.
-	Revision *int `json:"revision,omitempty"`
-}
-
-// RelayUsageDay defines model for RelayUsageDay.
-type RelayUsageDay struct {
-	Date              openapi_types.Date        `json:"date"`
-	ExpectedWindows   int64                     `json:"expected_windows"`
-	GapReasons        []RelayUsageDayGapReasons `json:"gap_reasons"`
-	GapWindows        int64                     `json:"gap_windows"`
-	MissingWindows    int64                     `json:"missing_windows"`
-	ReportedBytes     string                    `json:"reported_bytes"`
-	ReportedWindows   int64                     `json:"reported_windows"`
-	UnexpectedWindows int64                     `json:"unexpected_windows"`
-}
-
-// RelayUsageDayGapReasons defines model for RelayUsageDay.GapReasons.
-type RelayUsageDayGapReasons string
-
-// RelayUsageReport defines model for RelayUsageReport.
-type RelayUsageReport struct {
-	AsOf time.Time `json:"as_of"`
-
-	// AuthorizationHistoryStart Cutover when producer authorization coverage began to be recorded; earlier reporting intervals remain unknown.
-	AuthorizationHistoryStart time.Time `json:"authorization_history_start"`
-
-	// Complete True only when authorization history covers the request
-	Complete bool `json:"complete"`
-
-	// Coverage Completeness is measured over explicitly operator-authorized producers and account mappings only.
-	Coverage RelayUsageReportCoverage `json:"coverage"`
-	Days     []RelayUsageDay          `json:"days"`
-	End      time.Time                `json:"end"`
-
-	// ExpectedWindows Expected producer/account minute windows derived from retained authorization periods.
-	ExpectedWindows int64 `json:"expected_windows"`
-
-	// FirstReceivedWindowStart Earliest received window in the requested period; null when no batches were received. This is not the producer authorization start.
-	FirstReceivedWindowStart *time.Time `json:"first_received_window_start"`
-
-	// HistoryComplete True when the entire requested interval begins at or after the recorded authorization-history cutover.
-	HistoryComplete bool `json:"history_complete"`
-
-	// LastReceivedAt Receipt time of the most recently received batch in the requested period; use with as_of to assess report freshness.
-	LastReceivedAt *time.Time `json:"last_received_at"`
-	Limitations    []string   `json:"limitations"`
-
-	// MissingWindows Expected minute windows for which no producer batch was received.
-	MissingWindows int64 `json:"missing_windows"`
-
-	// ReportedBytes Exact decimal bytes reported in received batches only.
-	ReportedBytes string    `json:"reported_bytes"`
-	Start         time.Time `json:"start"`
-
-	// UnexpectedWindows Received account windows outside retained authorization periods.
-	UnexpectedWindows int64 `json:"unexpected_windows"`
-}
-
-// RelayUsageReportCoverage Completeness is measured over explicitly operator-authorized producers and account mappings only.
-type RelayUsageReportCoverage string
 
 // RolloutComponent defines model for RolloutComponent.
 type RolloutComponent struct {
@@ -3128,6 +3128,9 @@ type Coverage string
 // Cursor defines model for cursor.
 type Cursor = string
 
+// EstavelleId defines model for estavelleId.
+type EstavelleId = string
+
 // ExportFormat defines model for exportFormat.
 type ExportFormat string
 
@@ -3145,9 +3148,6 @@ type ObservedSince = time.Time
 
 // Posture defines model for posture.
 type Posture string
-
-// RelayId defines model for relayId.
-type RelayId = string
 
 // SinkId defines model for sinkId.
 type SinkId = string
@@ -3203,6 +3203,11 @@ type ListBedrockLogParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetEstavelleSpendingCapParams defines parameters for GetEstavelleSpendingCap.
+type GetEstavelleSpendingCapParams struct {
+	Period string `form:"period" json:"period"`
+}
+
 // GetBillingPaymentNoticesParams defines parameters for GetBillingPaymentNotices.
 type GetBillingPaymentNoticesParams struct {
 	// Period UTC calendar month in YYYY-MM form.
@@ -3218,11 +3223,6 @@ type GetBillingPaymentParams struct {
 // QueueBillingPaymentParams defines parameters for QueueBillingPayment.
 type QueueBillingPaymentParams struct {
 	// Period UTC calendar month in YYYY-MM form.
-	Period string `form:"period" json:"period"`
-}
-
-// GetRelaySpendingCapParams defines parameters for GetRelaySpendingCap.
-type GetRelaySpendingCapParams struct {
 	Period string `form:"period" json:"period"`
 }
 
@@ -3264,6 +3264,86 @@ type CommitRootRenameJSONBodyConfirmNoAliases bool
 type PreviewRootRenameJSONBody struct {
 	DnsSuffix string `json:"dns_suffix"`
 }
+
+// DeleteEstavelleAllocationParams defines parameters for DeleteEstavelleAllocation.
+type DeleteEstavelleAllocationParams struct {
+	Revision int `form:"revision" json:"revision"`
+}
+
+// DeprovisionEstavelleAllocationJSONBody defines parameters for DeprovisionEstavelleAllocation.
+type DeprovisionEstavelleAllocationJSONBody struct {
+	AcknowledgeDeprovision DeprovisionEstavelleAllocationJSONBodyAcknowledgeDeprovision `json:"acknowledge_deprovision"`
+	Revision               int                                                          `json:"revision"`
+}
+
+// DeprovisionEstavelleAllocationJSONBodyAcknowledgeDeprovision defines parameters for DeprovisionEstavelleAllocation.
+type DeprovisionEstavelleAllocationJSONBodyAcknowledgeDeprovision bool
+
+// ConfirmEstavelleAllocationDeprovisionedJSONBody defines parameters for ConfirmEstavelleAllocationDeprovisioned.
+type ConfirmEstavelleAllocationDeprovisionedJSONBody struct {
+	ExpectedRevision int `json:"expected_revision"`
+}
+
+// ReportEstavelleAllocationFailedJSONBody defines parameters for ReportEstavelleAllocationFailed.
+type ReportEstavelleAllocationFailedJSONBody struct {
+	ExpectedRevision int    `json:"expected_revision"`
+	Reason           string `json:"reason"`
+}
+
+// GrantEstavelleAllocationJSONBody defines parameters for GrantEstavelleAllocation.
+type GrantEstavelleAllocationJSONBody struct {
+	ExpectedRevision int    `json:"expected_revision"`
+	TlsServerName    string `json:"tls_server_name"`
+}
+
+// RecordEstavelleAllocationProvisioningJSONBody defines parameters for RecordEstavelleAllocationProvisioning.
+type RecordEstavelleAllocationProvisioningJSONBody struct {
+	ExpectedRevision int    `json:"expected_revision"`
+	InstanceId       string `json:"instance_id"`
+}
+
+// RevokeEstavelleAllocationJSONBody defines parameters for RevokeEstavelleAllocation.
+type RevokeEstavelleAllocationJSONBody struct {
+	ExpectedRevision int `json:"expected_revision"`
+}
+
+// SetEstavellePublicationJSONBody defines parameters for SetEstavellePublication.
+type SetEstavellePublicationJSONBody struct {
+	AcknowledgeConnectivityChange SetEstavellePublicationJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
+	Mode                          SetEstavellePublicationJSONBodyMode                          `json:"mode"`
+}
+
+// SetEstavellePublicationJSONBodyAcknowledgeConnectivityChange defines parameters for SetEstavellePublication.
+type SetEstavellePublicationJSONBodyAcknowledgeConnectivityChange bool
+
+// SetEstavellePublicationJSONBodyMode defines parameters for SetEstavellePublication.
+type SetEstavellePublicationJSONBodyMode string
+
+// UpdateEstavelleServiceAccessJSONBody defines parameters for UpdateEstavelleServiceAccess.
+type UpdateEstavelleServiceAccessJSONBody struct {
+	AccessManaged           *bool                                                       `json:"access_managed,omitempty"`
+	AcknowledgeAccessChange UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChange `json:"acknowledge_access_change"`
+	AllowedGroups           []string                                                    `json:"allowed_groups"`
+	ExitIpv4                *bool                                                       `json:"exit_ipv4,omitempty"`
+	ExitIpv6                *bool                                                       `json:"exit_ipv6,omitempty"`
+	GatewayHandle           *string                                                     `json:"gateway_handle,omitempty"`
+	Id                      *string                                                     `json:"id,omitempty"`
+	Metric                  *int                                                        `json:"metric,omitempty"`
+	PonorId                 *string                                                     `json:"ponor_id,omitempty"`
+	Revision                int                                                         `json:"revision"`
+}
+
+// UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChange defines parameters for UpdateEstavelleServiceAccess.
+type UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChange bool
+
+// SetEstavelleServiceModesJSONBody defines parameters for SetEstavelleServiceModes.
+type SetEstavelleServiceModesJSONBody struct {
+	AcknowledgeConnectivityChange SetEstavelleServiceModesJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
+	PonorEnabled                  bool                                                          `json:"ponor_enabled"`
+}
+
+// SetEstavelleServiceModesJSONBodyAcknowledgeConnectivityChange defines parameters for SetEstavelleServiceModes.
+type SetEstavelleServiceModesJSONBodyAcknowledgeConnectivityChange bool
 
 // ListNodesParams defines parameters for ListNodes.
 type ListNodesParams struct {
@@ -3313,86 +3393,6 @@ type ListPostureSessionsParams struct {
 
 // ListPostureSessionsParamsPosture defines parameters for ListPostureSessions.
 type ListPostureSessionsParamsPosture string
-
-// DeleteRelayAllocationParams defines parameters for DeleteRelayAllocation.
-type DeleteRelayAllocationParams struct {
-	Revision int `form:"revision" json:"revision"`
-}
-
-// DeprovisionRelayAllocationJSONBody defines parameters for DeprovisionRelayAllocation.
-type DeprovisionRelayAllocationJSONBody struct {
-	AcknowledgeDeprovision DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision `json:"acknowledge_deprovision"`
-	Revision               int                                                      `json:"revision"`
-}
-
-// DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision defines parameters for DeprovisionRelayAllocation.
-type DeprovisionRelayAllocationJSONBodyAcknowledgeDeprovision bool
-
-// ConfirmRelayAllocationDeprovisionedJSONBody defines parameters for ConfirmRelayAllocationDeprovisioned.
-type ConfirmRelayAllocationDeprovisionedJSONBody struct {
-	ExpectedRevision int `json:"expected_revision"`
-}
-
-// ReportRelayAllocationFailedJSONBody defines parameters for ReportRelayAllocationFailed.
-type ReportRelayAllocationFailedJSONBody struct {
-	ExpectedRevision int    `json:"expected_revision"`
-	Reason           string `json:"reason"`
-}
-
-// GrantRelayAllocationJSONBody defines parameters for GrantRelayAllocation.
-type GrantRelayAllocationJSONBody struct {
-	ExpectedRevision int    `json:"expected_revision"`
-	TlsServerName    string `json:"tls_server_name"`
-}
-
-// RecordRelayAllocationProvisioningJSONBody defines parameters for RecordRelayAllocationProvisioning.
-type RecordRelayAllocationProvisioningJSONBody struct {
-	ExpectedRevision int    `json:"expected_revision"`
-	InstanceId       string `json:"instance_id"`
-}
-
-// RevokeRelayAllocationJSONBody defines parameters for RevokeRelayAllocation.
-type RevokeRelayAllocationJSONBody struct {
-	ExpectedRevision int `json:"expected_revision"`
-}
-
-// SetRelayPublicationJSONBody defines parameters for SetRelayPublication.
-type SetRelayPublicationJSONBody struct {
-	AcknowledgeConnectivityChange SetRelayPublicationJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
-	Mode                          SetRelayPublicationJSONBodyMode                          `json:"mode"`
-}
-
-// SetRelayPublicationJSONBodyAcknowledgeConnectivityChange defines parameters for SetRelayPublication.
-type SetRelayPublicationJSONBodyAcknowledgeConnectivityChange bool
-
-// SetRelayPublicationJSONBodyMode defines parameters for SetRelayPublication.
-type SetRelayPublicationJSONBodyMode string
-
-// UpdateRelayServiceAccessJSONBody defines parameters for UpdateRelayServiceAccess.
-type UpdateRelayServiceAccessJSONBody struct {
-	AccessManaged           *bool                                                   `json:"access_managed,omitempty"`
-	AcknowledgeAccessChange UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange `json:"acknowledge_access_change"`
-	AllowedGroups           []string                                                `json:"allowed_groups"`
-	ExitIpv4                *bool                                                   `json:"exit_ipv4,omitempty"`
-	ExitIpv6                *bool                                                   `json:"exit_ipv6,omitempty"`
-	GatewayHandle           *string                                                 `json:"gateway_handle,omitempty"`
-	Id                      *string                                                 `json:"id,omitempty"`
-	Metric                  *int                                                    `json:"metric,omitempty"`
-	PonorId                 *string                                                 `json:"ponor_id,omitempty"`
-	Revision                int                                                     `json:"revision"`
-}
-
-// UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange defines parameters for UpdateRelayServiceAccess.
-type UpdateRelayServiceAccessJSONBodyAcknowledgeAccessChange bool
-
-// SetRelayServiceModesJSONBody defines parameters for SetRelayServiceModes.
-type SetRelayServiceModesJSONBody struct {
-	AcknowledgeConnectivityChange SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
-	PonorEnabled                  bool                                                      `json:"ponor_enabled"`
-}
-
-// SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange defines parameters for SetRelayServiceModes.
-type SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange bool
 
 // CreateRolloutJSONBody defines parameters for CreateRollout.
 type CreateRolloutJSONBody struct {
@@ -3444,13 +3444,13 @@ type GetDeviceUsageParams struct {
 	End   time.Time `form:"end" json:"end"`
 }
 
-// GetRelayBillingAlertsParams defines parameters for GetRelayBillingAlerts.
-type GetRelayBillingAlertsParams struct {
+// GetEstavelleBillingAlertsParams defines parameters for GetEstavelleBillingAlerts.
+type GetEstavelleBillingAlertsParams struct {
 	Period string `form:"period" json:"period"`
 }
 
-// GetRelayUsageParams defines parameters for GetRelayUsage.
-type GetRelayUsageParams struct {
+// GetEstavelleUsageParams defines parameters for GetEstavelleUsage.
+type GetEstavelleUsageParams struct {
 	Start time.Time `form:"start" json:"start"`
 	End   time.Time `form:"end" json:"end"`
 }
@@ -3465,7 +3465,7 @@ type CreateAuditSinkJSONRequestBody = AuditSinkWrite
 type ImportBedrockBootstrapJSONRequestBody = BedrockBootstrapBundle
 
 // SetBedrockLocationJSONRequestBody defines body for SetBedrockLocation for application/json ContentType.
-type SetBedrockLocationJSONRequestBody = RelayLocation
+type SetBedrockLocationJSONRequestBody = EstavelleLocation
 
 // SetBedrockModeJSONRequestBody defines body for SetBedrockMode for application/json ContentType.
 type SetBedrockModeJSONRequestBody = BedrockModeWrite
@@ -3473,14 +3473,14 @@ type SetBedrockModeJSONRequestBody = BedrockModeWrite
 // ImportBedrockResponsesJSONRequestBody defines body for ImportBedrockResponses for application/json ContentType.
 type ImportBedrockResponsesJSONRequestBody = SignedBundle
 
-// SetRelaySpendingCapJSONRequestBody defines body for SetRelaySpendingCap for application/json ContentType.
-type SetRelaySpendingCapJSONRequestBody = RelayCapDraft
+// SetEstavelleSpendingCapJSONRequestBody defines body for SetEstavelleSpendingCap for application/json ContentType.
+type SetEstavelleSpendingCapJSONRequestBody = EstavelleCapDraft
 
-// RequestRelayCreditsJSONRequestBody defines body for RequestRelayCredits for application/json ContentType.
-type RequestRelayCreditsJSONRequestBody = RelayCreditRequest
+// RequestEstavelleCreditsJSONRequestBody defines body for RequestEstavelleCredits for application/json ContentType.
+type RequestEstavelleCreditsJSONRequestBody = EstavelleCreditRequest
 
-// SurrenderRelayCreditsJSONRequestBody defines body for SurrenderRelayCredits for application/json ContentType.
-type SurrenderRelayCreditsJSONRequestBody = RelayCreditSurrender
+// SurrenderEstavelleCreditsJSONRequestBody defines body for SurrenderEstavelleCredits for application/json ContentType.
+type SurrenderEstavelleCreditsJSONRequestBody = EstavelleCreditSurrender
 
 // CreateCloudAccountJSONRequestBody defines body for CreateCloudAccount for application/json ContentType.
 type CreateCloudAccountJSONRequestBody = CloudAccountCreate
@@ -3501,13 +3501,49 @@ type TestComplianceDraftJSONRequestBody = ComplianceDraftWrite
 type ValidateComplianceDraftJSONRequestBody = ComplianceDraftWrite
 
 // SetControlPlaneLocationJSONRequestBody defines body for SetControlPlaneLocation for application/json ContentType.
-type SetControlPlaneLocationJSONRequestBody = RelayLocation
+type SetControlPlaneLocationJSONRequestBody = EstavelleLocation
 
 // CommitRootRenameJSONRequestBody defines body for CommitRootRename for application/json ContentType.
 type CommitRootRenameJSONRequestBody CommitRootRenameJSONBody
 
 // PreviewRootRenameJSONRequestBody defines body for PreviewRootRename for application/json ContentType.
 type PreviewRootRenameJSONRequestBody PreviewRootRenameJSONBody
+
+// CreateEstavelleAllocationJSONRequestBody defines body for CreateEstavelleAllocation for application/json ContentType.
+type CreateEstavelleAllocationJSONRequestBody = EstavelleAllocation
+
+// DeprovisionEstavelleAllocationJSONRequestBody defines body for DeprovisionEstavelleAllocation for application/json ContentType.
+type DeprovisionEstavelleAllocationJSONRequestBody DeprovisionEstavelleAllocationJSONBody
+
+// ConfirmEstavelleAllocationDeprovisionedJSONRequestBody defines body for ConfirmEstavelleAllocationDeprovisioned for application/json ContentType.
+type ConfirmEstavelleAllocationDeprovisionedJSONRequestBody ConfirmEstavelleAllocationDeprovisionedJSONBody
+
+// ReportEstavelleAllocationFailedJSONRequestBody defines body for ReportEstavelleAllocationFailed for application/json ContentType.
+type ReportEstavelleAllocationFailedJSONRequestBody ReportEstavelleAllocationFailedJSONBody
+
+// GrantEstavelleAllocationJSONRequestBody defines body for GrantEstavelleAllocation for application/json ContentType.
+type GrantEstavelleAllocationJSONRequestBody GrantEstavelleAllocationJSONBody
+
+// RecordEstavelleAllocationProvisioningJSONRequestBody defines body for RecordEstavelleAllocationProvisioning for application/json ContentType.
+type RecordEstavelleAllocationProvisioningJSONRequestBody RecordEstavelleAllocationProvisioningJSONBody
+
+// RevokeEstavelleAllocationJSONRequestBody defines body for RevokeEstavelleAllocation for application/json ContentType.
+type RevokeEstavelleAllocationJSONRequestBody RevokeEstavelleAllocationJSONBody
+
+// CreateEstavelleServiceJSONRequestBody defines body for CreateEstavelleService for application/json ContentType.
+type CreateEstavelleServiceJSONRequestBody = EstavelleService
+
+// SetEstavellePublicationJSONRequestBody defines body for SetEstavellePublication for application/json ContentType.
+type SetEstavellePublicationJSONRequestBody SetEstavellePublicationJSONBody
+
+// UpdateEstavelleServiceAccessJSONRequestBody defines body for UpdateEstavelleServiceAccess for application/json ContentType.
+type UpdateEstavelleServiceAccessJSONRequestBody UpdateEstavelleServiceAccessJSONBody
+
+// SetEstavelleServiceModesJSONRequestBody defines body for SetEstavelleServiceModes for application/json ContentType.
+type SetEstavelleServiceModesJSONRequestBody SetEstavelleServiceModesJSONBody
+
+// CreateEstavelleJSONRequestBody defines body for CreateEstavelle for application/json ContentType.
+type CreateEstavelleJSONRequestBody = EstavelleCreate
 
 // SetGroupLocationJSONRequestBody defines body for SetGroupLocation for application/json ContentType.
 type SetGroupLocationJSONRequestBody = LocationCreate
@@ -3550,42 +3586,6 @@ type ValidatePolicyJSONRequestBody = PolicyWrite
 
 // CreateAllowedRegionJSONRequestBody defines body for CreateAllowedRegion for application/json ContentType.
 type CreateAllowedRegionJSONRequestBody = AllowedRegion
-
-// CreateRelayAllocationJSONRequestBody defines body for CreateRelayAllocation for application/json ContentType.
-type CreateRelayAllocationJSONRequestBody = RelayAllocation
-
-// DeprovisionRelayAllocationJSONRequestBody defines body for DeprovisionRelayAllocation for application/json ContentType.
-type DeprovisionRelayAllocationJSONRequestBody DeprovisionRelayAllocationJSONBody
-
-// ConfirmRelayAllocationDeprovisionedJSONRequestBody defines body for ConfirmRelayAllocationDeprovisioned for application/json ContentType.
-type ConfirmRelayAllocationDeprovisionedJSONRequestBody ConfirmRelayAllocationDeprovisionedJSONBody
-
-// ReportRelayAllocationFailedJSONRequestBody defines body for ReportRelayAllocationFailed for application/json ContentType.
-type ReportRelayAllocationFailedJSONRequestBody ReportRelayAllocationFailedJSONBody
-
-// GrantRelayAllocationJSONRequestBody defines body for GrantRelayAllocation for application/json ContentType.
-type GrantRelayAllocationJSONRequestBody GrantRelayAllocationJSONBody
-
-// RecordRelayAllocationProvisioningJSONRequestBody defines body for RecordRelayAllocationProvisioning for application/json ContentType.
-type RecordRelayAllocationProvisioningJSONRequestBody RecordRelayAllocationProvisioningJSONBody
-
-// RevokeRelayAllocationJSONRequestBody defines body for RevokeRelayAllocation for application/json ContentType.
-type RevokeRelayAllocationJSONRequestBody RevokeRelayAllocationJSONBody
-
-// CreateRelayServiceJSONRequestBody defines body for CreateRelayService for application/json ContentType.
-type CreateRelayServiceJSONRequestBody = RelayService
-
-// SetRelayPublicationJSONRequestBody defines body for SetRelayPublication for application/json ContentType.
-type SetRelayPublicationJSONRequestBody SetRelayPublicationJSONBody
-
-// UpdateRelayServiceAccessJSONRequestBody defines body for UpdateRelayServiceAccess for application/json ContentType.
-type UpdateRelayServiceAccessJSONRequestBody UpdateRelayServiceAccessJSONBody
-
-// SetRelayServiceModesJSONRequestBody defines body for SetRelayServiceModes for application/json ContentType.
-type SetRelayServiceModesJSONRequestBody SetRelayServiceModesJSONBody
-
-// CreateRelayJSONRequestBody defines body for CreateRelay for application/json ContentType.
-type CreateRelayJSONRequestBody = RelayCreate
 
 // CreateRolloutJSONRequestBody defines body for CreateRollout for application/json ContentType.
 type CreateRolloutJSONRequestBody CreateRolloutJSONBody

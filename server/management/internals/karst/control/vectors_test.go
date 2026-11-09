@@ -294,9 +294,9 @@ func pattern(n int, seed byte) []byte {
 // Through estavellereg rather than a literal, so the fixture cannot drift from the
 // package that renders real registries — and karstd recomputes the same digest
 // while decoding, rejecting the whole netmap when it disagrees.
-func relayFor(address, serverName string, seed byte, region string) *proto.KarstRelay {
+func relayFor(address, serverName string, seed byte, region string) *proto.KarstEstavelle {
 	key := pattern(estavellereg.IdentityKeySize, seed)
-	return &proto.KarstRelay{
+	return &proto.KarstEstavelle{
 		Address:       address,
 		TlsServerName: serverName,
 		RelayId:       estavellereg.EstavelleID(key),
@@ -761,7 +761,7 @@ func TestVectors(t *testing.T) {
 					DnsName:    "beta",
 					AllowedIps: []string{"100.64.0.2/32"},
 				}},
-				Relays: []*proto.KarstRelay{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default")},
+				Relays: []*proto.KarstEstavelle{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default")},
 			},
 			psks: []string{hex.EncodeToString(pattern(32, 0x70))},
 		},
@@ -783,7 +783,7 @@ func TestVectors(t *testing.T) {
 					DnsName:    "beta",
 					AllowedIps: []string{"100.64.0.2/32"},
 				}},
-				Relays: []*proto.KarstRelay{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "eu-west")},
+				Relays: []*proto.KarstEstavelle{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "eu-west")},
 			},
 			psks: []string{hex.EncodeToString(pattern(32, 0x70))},
 		},
@@ -847,7 +847,7 @@ func TestVectors(t *testing.T) {
 				NodeId:    []byte("node-one"),
 				DnsName:   "alpha",
 				Addresses: []string{"100.64.0.1"},
-				Relays: []*proto.KarstRelay{
+				Relays: []*proto.KarstEstavelle{
 					relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default"),
 					relayFor("198.51.100.9:443", "two.example.com", 0xB0, "eu-west"),
 				},

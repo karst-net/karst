@@ -148,13 +148,13 @@ func (s *Store) protectModeSchema(ctx context.Context, tx *gorm.DB, account stri
 
 // Netmap projects the service model into existing authenticated wire fields.
 // The boolean distinguishes legacy authority from an empty service projection.
-func (s *Store) Netmap(ctx context.Context) (bool, []*proto.KarstRelay, error) {
+func (s *Store) Netmap(ctx context.Context) (bool, []*proto.KarstEstavelle, error) {
 	account, err := accountFromContext(ctx)
 	if err != nil {
 		return false, nil, err
 	}
 	active := false
-	var relays []*proto.KarstRelay
+	var relays []*proto.KarstEstavelle
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		value, err := publication(tx, account)
 		if err != nil {
@@ -170,12 +170,12 @@ func (s *Store) Netmap(ctx context.Context) (bool, []*proto.KarstRelay, error) {
 	return active, relays, err
 }
 
-func project(tx *gorm.DB, account string, strict bool) ([]Service, []*proto.KarstRelay, error) {
+func project(tx *gorm.DB, account string, strict bool) ([]Service, []*proto.KarstEstavelle, error) {
 	services := make([]Service, 0)
 	if err := tx.Where("account_id = ?", account).Order("id").Find(&services).Error; err != nil {
 		return nil, nil, err
 	}
-	relays := make([]*proto.KarstRelay, 0)
+	relays := make([]*proto.KarstEstavelle, 0)
 	seenPonor := map[string]bool{}
 	for _, service := range services {
 		if err := validate(service); err != nil {

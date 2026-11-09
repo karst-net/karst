@@ -134,10 +134,10 @@ type document struct {
 
 // Compile validates one API-supplied relay entry through the exact same path
 // the startup registry uses. The derived relay ID is never caller supplied.
-func Compile(entry Entry) (*proto.KarstRelay, error) { return entry.compile() }
+func Compile(entry Entry) (*proto.KarstEstavelle, error) { return entry.compile() }
 
 // Load reads and validates a registry file.
-func Load(path string) ([]*proto.KarstRelay, error) {
+func Load(path string) ([]*proto.KarstEstavelle, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("relay registry: %w", err)
@@ -154,7 +154,7 @@ func Load(path string) ([]*proto.KarstRelay, error) {
 // Every check here mirrors one in `karstd`'s `Relay::from_wire`, so a file
 // this accepts is one every node accepts. Where the two could drift they are
 // pinned together by a shared vector — see `TestRelayRegistryVector`.
-func Parse(raw []byte) ([]*proto.KarstRelay, error) {
+func Parse(raw []byte) ([]*proto.KarstEstavelle, error) {
 	var doc document
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	// A misspelled field would otherwise be dropped in silence, leaving a
@@ -175,7 +175,7 @@ func Parse(raw []byte) ([]*proto.KarstRelay, error) {
 	}
 
 	seen := make(map[string]int, len(doc.Relays))
-	out := make([]*proto.KarstRelay, 0, len(doc.Relays))
+	out := make([]*proto.KarstEstavelle, 0, len(doc.Relays))
 	for i := range doc.Relays {
 		relay, err := doc.Relays[i].compile()
 		if err != nil {
@@ -194,7 +194,7 @@ func Parse(raw []byte) ([]*proto.KarstRelay, error) {
 	return out, nil
 }
 
-func (e Entry) compile() (*proto.KarstRelay, error) {
+func (e Entry) compile() (*proto.KarstEstavelle, error) {
 	if _, err := netip.ParseAddrPort(e.Address); err != nil {
 		// Named rather than paraphrased: the usual mistake is a DNS name, and
 		// an operator who wrote one needs to be told that this field cannot
@@ -219,19 +219,19 @@ func (e Entry) compile() (*proto.KarstRelay, error) {
 		region = DefaultRegion
 	}
 
-	var location *proto.RelayLocation
+	var location *proto.EstavelleLocation
 	if e.Location != nil {
 		if err := ValidLocation(e.Location.Lat, e.Location.Lon); err != nil {
 			return nil, err
 		}
-		location = &proto.RelayLocation{
+		location = &proto.EstavelleLocation{
 			Lat:   e.Location.Lat,
 			Lon:   e.Location.Lon,
 			Label: e.Location.Label,
 		}
 	}
 
-	return &proto.KarstRelay{
+	return &proto.KarstEstavelle{
 		Address:       e.Address,
 		TlsServerName: e.TLSServerName,
 		RelayId:       EstavelleID(key),

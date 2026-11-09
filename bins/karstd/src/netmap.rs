@@ -411,7 +411,7 @@ impl fmt::Debug for Estavelle {
 }
 
 impl Estavelle {
-    fn from_wire(relay: &pb::KarstRelay) -> Result<Self, Error> {
+    fn from_wire(relay: &pb::KarstEstavelle) -> Result<Self, Error> {
         if relay.address.parse::<std::net::SocketAddr>().is_err() {
             return Err(Error::Estavelle("address is not a socket address".to_owned()));
         }
@@ -458,8 +458,8 @@ impl Estavelle {
         })
     }
 
-    fn to_wire(&self) -> pb::KarstRelay {
-        pb::KarstRelay {
+    fn to_wire(&self) -> pb::KarstEstavelle {
+        pb::KarstEstavelle {
             address: self.address.clone(),
             tls_server_name: self.tls_server_name.clone(),
             relay_id: self.relay_id.to_vec(),
@@ -1408,12 +1408,12 @@ mod tests {
         map
     }
 
-    fn wire_relay(identity_byte: u8) -> pb::KarstRelay {
+    fn wire_relay(identity_byte: u8) -> pb::KarstEstavelle {
         let identity_key = vec![identity_byte; RELAY_IDENTITY_KEY_LEN];
         let mut h = Sha256::new();
         h.update(b"karst-estavelle-id-v1");
         h.update(&identity_key);
-        pb::KarstRelay {
+        pb::KarstEstavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
             relay_id: h.finalize().to_vec(),
@@ -1945,7 +1945,7 @@ mod tests {
 
     #[test]
     fn a_relay_with_an_unpinned_identity_is_refused() {
-        let relay = pb::KarstRelay {
+        let relay = pb::KarstEstavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
             relay_id: vec![0x11; RELAY_ID_LEN],
@@ -1965,7 +1965,7 @@ mod tests {
 
     #[test]
     fn a_relay_id_must_be_derived_from_its_pinned_key() {
-        let relay = pb::KarstRelay {
+        let relay = pb::KarstEstavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
             relay_id: vec![0x11; RELAY_ID_LEN],

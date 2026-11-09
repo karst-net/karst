@@ -120,7 +120,7 @@ func (EstavelleTelemetryRecord) TableName() string { return "karst_estavelle_tel
 type Store struct {
 	db             *gorm.DB
 	compiledMu     sync.RWMutex
-	compiledNetmap map[string]*proto.KarstRelay
+	compiledNetmap map[string]*proto.KarstEstavelle
 	// Metrics is optional (nil is a valid, no-op value) and drives
 	// management.karst.relay.registry.size.
 	Metrics *telemetry.KarstMetrics
@@ -143,7 +143,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if err := db.AutoMigrate(&StoredEstavelle{}, &EstavelleTelemetryRecord{}, &RegionDemandSample{}); err != nil {
 		return nil, fmt.Errorf("relay registry: migrate: %w", err)
 	}
-	return &Store{db: db, compiledNetmap: make(map[string]*proto.KarstRelay)}, nil
+	return &Store{db: db, compiledNetmap: make(map[string]*proto.KarstEstavelle)}, nil
 }
 
 func (s *Store) Create(ctx context.Context, entry Entry) (*StoredEstavelle, error) {
@@ -567,12 +567,12 @@ func (s *Store) recordSize(accountID string) {
 	s.Metrics.SetRelayRegistrySize(accountID, int(n))
 }
 
-func (s *Store) NetmapRelays(ctx context.Context) ([]*proto.KarstRelay, error) {
+func (s *Store) NetmapRelays(ctx context.Context) ([]*proto.KarstEstavelle, error) {
 	records, err := s.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	relays := make([]*proto.KarstRelay, 0, len(records))
+	relays := make([]*proto.KarstEstavelle, 0, len(records))
 	for _, record := range records {
 		relay, err := s.compiledRelay(record)
 		if err != nil {
@@ -583,7 +583,7 @@ func (s *Store) NetmapRelays(ctx context.Context) ([]*proto.KarstRelay, error) {
 	return relays, nil
 }
 
-func (s *Store) compiledRelay(record StoredEstavelle) (*proto.KarstRelay, error) {
+func (s *Store) compiledRelay(record StoredEstavelle) (*proto.KarstEstavelle, error) {
 	key := record.AccountID + "\x00" + record.ID
 	s.compiledMu.RLock()
 	cached := s.compiledNetmap[key]
@@ -611,8 +611,8 @@ func (s *Store) invalidateCompiled(accountID, id string) {
 	s.compiledMu.Unlock()
 }
 
-func cloneRelay(relay *proto.KarstRelay) *proto.KarstRelay {
-	cloned := &proto.KarstRelay{
+func cloneRelay(relay *proto.KarstEstavelle) *proto.KarstEstavelle {
+	cloned := &proto.KarstEstavelle{
 		Address:       relay.Address,
 		RelayId:       append([]byte(nil), relay.RelayId...),
 		IdentityKey:   append([]byte(nil), relay.IdentityKey...),
@@ -620,12 +620,12 @@ func cloneRelay(relay *proto.KarstRelay) *proto.KarstRelay {
 		TlsServerName: relay.TlsServerName,
 	}
 	if relay.Location != nil {
-		cloned.Location = &proto.RelayLocation{Lat: relay.Location.Lat, Lon: relay.Location.Lon, Label: relay.Location.Label}
+		cloned.Location = &proto.EstavelleLocation{Lat: relay.Location.Lat, Lon: relay.Location.Lon, Label: relay.Location.Label}
 	}
 	return cloned
 }
 
-func (r StoredEstavelle) ToProto() (*proto.KarstRelay, error) {
+func (r StoredEstavelle) ToProto() (*proto.KarstEstavelle, error) {
 	entry := Entry{Address: r.Address, TLSServerName: r.TLSServerName, IdentityKey: r.IdentityKey, Region: r.Region}
 	if r.LocationLat != nil {
 		entry.Location = &Location{Lat: *r.LocationLat, Lon: *r.LocationLon, Label: r.LocationLabel}

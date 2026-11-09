@@ -430,7 +430,7 @@ func TestVersionChangesWithContent(t *testing.T) {
 	t.Run("relay registry changed", func(t *testing.T) {
 		saved := f.handler.Relays
 		defer func() { f.handler.Relays = saved }()
-		f.handler.Relays = []*proto.KarstRelay{{
+		f.handler.Relays = []*proto.KarstEstavelle{{
 			Address:       "127.0.0.1:443",
 			TlsServerName: "relay.test",
 			RelayId:       bytes.Repeat([]byte{0x91}, 32),
@@ -1581,7 +1581,7 @@ func TestNetmapCarriesRelaysFromTheStore(t *testing.T) {
 	// Relays is deliberately left populated with something else, so the test
 	// also proves the store takes priority rather than merely working when
 	// the static field is empty.
-	f.handler.Relays = []*proto.KarstRelay{{
+	f.handler.Relays = []*proto.KarstEstavelle{{
 		Address:       "127.0.0.1:443",
 		TlsServerName: "relay.static.example.com",
 		RelayId:       bytes.Repeat([]byte{0x91}, 32),
@@ -1628,7 +1628,7 @@ func TestNetmapFallsBackToStaticRelaysWhenStoreIsEmpty(t *testing.T) {
 		t.Fatalf("relay store: %v", err)
 	}
 
-	f.handler.Relays = []*proto.KarstRelay{{
+	f.handler.Relays = []*proto.KarstEstavelle{{
 		Address:       "127.0.0.1:443",
 		TlsServerName: "relay.static.example.com",
 		RelayId:       bytes.Repeat([]byte{0x91}, 32),

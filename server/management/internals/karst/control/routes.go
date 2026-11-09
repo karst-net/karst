@@ -90,7 +90,7 @@ func projectRouteOffers(networkMap *types.NetworkMap, self string) ([]*proto.Kar
 		}
 		role := proto.KarstRouteRole_KARST_ROUTE_ROLE_RECIPIENT
 		if route.Peer == self {
-			role = proto.KarstRouteRole_KARST_ROUTE_ROLE_GATEWAY
+			role = proto.KarstRouteRole_KARST_ROUTE_ROLE_AVEN
 		}
 		offers = append(offers, &proto.KarstRouteOffer{
 			RouteId: string(route.GetResourceID()), Prefix: prefix.String(),
