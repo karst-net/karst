@@ -15,7 +15,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -291,15 +291,15 @@ func pattern(n int, seed byte) []byte {
 
 // relayFor builds a registry entry with its id derived the way production does.
 //
-// Through relayreg rather than a literal, so the fixture cannot drift from the
+// Through estavellereg rather than a literal, so the fixture cannot drift from the
 // package that renders real registries — and karstd recomputes the same digest
 // while decoding, rejecting the whole netmap when it disagrees.
 func relayFor(address, serverName string, seed byte, region string) *proto.KarstRelay {
-	key := pattern(relayreg.IdentityKeySize, seed)
+	key := pattern(estavellereg.IdentityKeySize, seed)
 	return &proto.KarstRelay{
 		Address:       address,
 		TlsServerName: serverName,
-		RelayId:       relayreg.RelayID(key),
+		RelayId:       estavellereg.RelayID(key),
 		IdentityKey:   key,
 		Region:        region,
 	}

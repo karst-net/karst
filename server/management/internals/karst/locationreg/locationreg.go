@@ -6,7 +6,7 @@
 // operator has declared this deployment may place infrastructure at,
 // independent of whether anything is actually deployed there yet.
 //
-// This is deliberately additive, not a foreign key. relayreg/turncred/the
+// This is deliberately additive, not a foreign key. estavellereg/turncred/the
 // group-location and Bedrock/control-plane locations below are unaffected by
 // what is or is not in this registry — a relay may still declare a location
 // that is not an authorized one. Coupling the two would force every existing
@@ -30,7 +30,7 @@ type Entry struct {
 	Kind string `json:"kind,omitempty"`
 }
 
-// Compile validates one entry. Named to match relayreg.Compile/turncred's
+// Compile validates one entry. Named to match estavellereg.Compile/turncred's
 // own validate() — every registry in this package family runs API input
 // through the same validate-then-store shape.
 func Compile(entry Entry) (Entry, error) {

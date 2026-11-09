@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 )
 
@@ -21,7 +21,7 @@ func TestAuthorizedRelayCreditReservationVerifiesAndBindsMappingAtomically(t *te
 	store := testBillingStore(t)
 	ctx := context.Background()
 	require.NoError(t, usage.Migrate(store.db))
-	relays, err := relayusage.NewStore(store.db)
+	relays, err := estavelleusage.NewStore(store.db)
 	require.NoError(t, err)
 
 	accountID := "managed-account"
@@ -67,12 +67,12 @@ func TestAuthorizedRelayCreditReservationVerifiesAndBindsMappingAtomically(t *te
 	require.NoError(t, err)
 	unauthorized := signedCreditRequestForBillingTest(t, key, relayID, unapproved.Version, "2122232425262728292a2b2c2d2e2f30", "3132333435363738393a3b3c3d3e3f40", "100")
 	_, err = store.ReserveAuthorizedRelayCredits(ctx, relays, start, end, unauthorized)
-	require.ErrorIs(t, err, relayusage.ErrMappingNotAllowed)
+	require.ErrorIs(t, err, estavelleusage.ErrMappingNotAllowed)
 }
 
-func signedCreditRequestForBillingTest(t *testing.T, key *identity.Key, relayID, mappingVersion, generation, requestID, requested string) relayusage.CreditRequest {
+func signedCreditRequestForBillingTest(t *testing.T, key *identity.Key, relayID, mappingVersion, generation, requestID, requested string) estavelleusage.CreditRequest {
 	t.Helper()
-	request := relayusage.CreditRequest{RelayID: relayID, DeploymentID: "deployment-a", MappingVersion: mappingVersion,
+	request := estavelleusage.CreditRequest{RelayID: relayID, DeploymentID: "deployment-a", MappingVersion: mappingVersion,
 		Generation: generation, RequestID: requestID, RequestedBytes: requested}
 	input, err := request.SigningInput()
 	require.NoError(t, err)

@@ -316,7 +316,7 @@ func TestMigrationPreservesExistingColumnOnRename(t *testing.T) {
 }
 
 // fakeAllocationChecker is a minimal AllocationReferenceChecker for
-// exercising Delete's own guard without pulling in package relayalloc
+// exercising Delete's own guard without pulling in package estavellealloc
 // (which already imports this package the other way -- a test-only
 // import back would recreate the exact cycle SetAllocationReferenceChecker
 // exists to avoid).

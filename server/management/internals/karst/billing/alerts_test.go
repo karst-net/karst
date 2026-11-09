@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,7 +74,7 @@ func TestEvaluateRelayAlertsRejectsInvalidPeriodUsageAndCap(t *testing.T) {
 
 	report = completeRelayReport(start, start.AddDate(0, 1, 0), "01")
 	_, err = EvaluateRelayAlerts(report, testSchedule(), nil)
-	require.ErrorIs(t, err, relayusage.ErrReportData)
+	require.ErrorIs(t, err, estavelleusage.ErrReportData)
 
 	report = completeRelayReport(start, start.AddDate(0, 1, 0), "0")
 	report.End = start.AddDate(0, 1, 1)

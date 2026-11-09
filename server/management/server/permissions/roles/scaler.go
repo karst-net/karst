@@ -26,7 +26,7 @@ import (
 // allowlist, not this struct, is what actually keeps this role narrow; see
 // its own doc comment for why.
 //
-// Delete stays false even though relayDeenroll removes a relayreg.Store row
+// Delete stays false even though relayDeenroll removes a estavellereg.Store row
 // (ADR-0045 §7, issue #319): the route is a POST, deliberately shaped as a
 // Create-permission request naming the one resource this role is allowed
 // to remove, rather than a widened generic Delete grant that would need

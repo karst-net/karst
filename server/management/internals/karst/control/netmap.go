@@ -26,8 +26,8 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -167,7 +167,7 @@ type NetmapHandler struct {
 	// boundary until relay administration is moved into the control database.
 	RelayServices interface {
 		Netmap(context.Context) (bool, []*proto.KarstRelay, error)
-		Publication(context.Context) (relayservice.Publication, error)
+		Publication(context.Context) (estavelleservice.Publication, error)
 	}
 	Relays     []*proto.KarstRelay
 	RelayStore interface {
@@ -336,7 +336,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		return nil, fmt.Errorf("record DNS zone affinity capability: %w", err)
 	}
 	if h.RelayServices != nil {
-		publication, err := h.RelayServices.Publication(relayservice.WithAccount(ctx, accountID))
+		publication, err := h.RelayServices.Publication(estavelleservice.WithAccount(ctx, accountID))
 		if err != nil {
 			return nil, fmt.Errorf("load Relay publication compatibility: %w", err)
 		}
@@ -425,7 +425,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	var relays []*proto.KarstRelay
 	servicePublication := false
 	if h.RelayServices != nil {
-		servicePublication, relays, err = h.RelayServices.Netmap(relayservice.WithAccount(ctx, accountID))
+		servicePublication, relays, err = h.RelayServices.Netmap(estavelleservice.WithAccount(ctx, accountID))
 		if err != nil {
 			return nil, fmt.Errorf("load Relay services: %w", err)
 		}
@@ -433,7 +433,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if !servicePublication {
 		relays = h.Relays
 		if h.RelayStore != nil {
-			stored, err := h.RelayStore.NetmapRelays(relayreg.WithAccount(ctx, accountID))
+			stored, err := h.RelayStore.NetmapRelays(estavellereg.WithAccount(ctx, accountID))
 			if err != nil {
 				return nil, fmt.Errorf("load relays: %w", err)
 			}
@@ -445,7 +445,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if scoped, ok := h.RelayServices.(interface {
 		FilterForPeer(context.Context, string, []*proto.KarstRelay) ([]*proto.KarstRelay, error)
 	}); ok {
-		relays, err = scoped.FilterForPeer(relayservice.WithAccount(ctx, accountID), selfPeer.ID, relays)
+		relays, err = scoped.FilterForPeer(estavelleservice.WithAccount(ctx, accountID), selfPeer.ID, relays)
 		if err != nil {
 			return nil, fmt.Errorf("relay group access: %w", err)
 		}

@@ -35,7 +35,7 @@ type Configuration struct {
 
 	// LocationLat/LocationLon/LocationLabel is this account's declared
 	// NOC-map position for Bedrock (ADR-0046 §1), the same flat nullable
-	// column shape relayreg.StoredRelay's own location fields use. There is
+	// column shape estavellereg.StoredEstavelle's own location fields use. There is
 	// no multi-instance Bedrock service to place individually -- see
 	// package cplocation's doc comment for the matching reasoning about the
 	// control plane -- so, like Configuration itself, this is one

@@ -13,21 +13,21 @@ servers:
 security:
   - bearerAuth: []
 paths:
-  /gateways:
+  /avens:
     get:
-      operationId: gatewayInventory
-      description: Account-scoped configured Gateway capabilities resolved through visible route, group and administrative peer records. Control connectivity does not establish forwarding readiness. No consent or route writes.
+      operationId: avenInventory
+      description: Account-scoped configured Aven capabilities resolved through visible route, group and administrative peer records. Control connectivity does not establish forwarding readiness. No consent or route writes.
       responses:
         '200':
           description: Unified subnet and default-route offers per enrolled node
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GatewayInventory'
+                $ref: '#/components/schemas/AvenInventory'
         '403':
           description: Caller lacks source permissions
         '412':
-          description: Gateway inventory sources unavailable
+          description: Aven inventory sources unavailable
   /versions:
     get:
       operationId: softwareVersions
@@ -1597,7 +1597,7 @@ components:
     VersionConflict: {description: The supplied policy version is no longer current, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     AcknowledgmentMismatch: {description: Enforcing acknowledgment does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgmentMismatch'}}}}
   schemas:
-    GatewayOffer:
+    AvenOffer:
       type: object
       required: [id, network_id, prefix, kind, enabled, masquerade, metric, requires_client_consent, forwarding_readiness, egress_drift]
       properties:
@@ -1609,11 +1609,11 @@ components:
         masquerade: { type: boolean }
         metric: { type: integer }
         requires_client_consent: { type: boolean }
-        forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone. }
+        forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: Self-reported by this offer's aven over the authenticated control channel; never inferred from connectivity or traffic alone. }
         pinned_egress_ip: { type: string, description: "ADR-0068's operator-declared address for this candidate, if any. Absent for an ordinary, unpinned offer." }
         observed_egress_ip: { type: string, description: "Issue #554: this candidate's own self-reported outbound address toward the route. Absent when the route has no pinned_egress_ip or no report has arrived yet." }
         egress_drift: { type: boolean, description: "True only on a confident, comparable mismatch between pinned_egress_ip and observed_egress_ip. False covers both \"confirmed matching\" and \"not enough information yet\" -- it is never a confirmation by itself." }
-    GatewayNode:
+    AvenNode:
       type: object
       required: [node_id, name, control_connected, forwarding_readiness, offers]
       properties:
@@ -1626,22 +1626,22 @@ components:
         forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: "Aggregated across this node's own offers, degraded-first." }
         offers:
           type: array
-          items: { $ref: '#/components/schemas/GatewayOffer' }
-    GatewayInventory:
+          items: { $ref: '#/components/schemas/AvenOffer' }
+    AvenInventory:
       type: object
-      required: [schema_version, gateways, unresolved_routes, unsupported_routes]
+      required: [schema_version, avens, unresolved_routes, unsupported_routes]
       properties:
         schema_version: { type: integer, enum: [1] }
-        gateways:
+        avens:
           type: array
-          items: { $ref: '#/components/schemas/GatewayNode' }
+          items: { $ref: '#/components/schemas/AvenNode' }
         unresolved_routes:
           type: array
           description: Configured routes without a visible eligible node, including empty or missing routing groups.
           items: { type: string }
         unsupported_routes:
           type: array
-          description: Non-CIDR route declarations that cannot be projected as Karst Gateway offers.
+          description: Non-CIDR route declarations that cannot be projected as Karst Aven offers.
           items: { type: string }
     MeshDomainView:
       type: object

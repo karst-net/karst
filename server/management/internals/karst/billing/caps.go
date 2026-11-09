@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -368,11 +368,11 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 // enabled operator mapping in the same outer transaction that reserves the
 // account-wide credits. A mapping revocation cannot race between validation
 // and issuance.
-func (s *Store) ReserveAuthorizedRelayCredits(ctx context.Context, relayStore *relayusage.Store, start, end time.Time, request relayusage.CreditRequest) (RelayCreditGrant, error) {
+func (s *Store) ReserveAuthorizedRelayCredits(ctx context.Context, relayStore *estavelleusage.Store, start, end time.Time, request estavelleusage.CreditRequest) (RelayCreditGrant, error) {
 	if relayStore == nil {
 		return RelayCreditGrant{}, ErrCreditGrantConflict
 	}
-	requestedBytes, err := relayusage.DecodeRequestedCreditBytes(request)
+	requestedBytes, err := estavelleusage.DecodeRequestedCreditBytes(request)
 	if err != nil {
 		return RelayCreditGrant{}, err
 	}
@@ -394,11 +394,11 @@ func (s *Store) ReserveAuthorizedRelayCredits(ctx context.Context, relayStore *r
 // while the account has no spending cap. Leases are short, persisted and
 // serialized with cap changes; enabling a cap waits for the latest lease to
 // expire, after which the relay must refresh before forwarding again.
-func (s *Store) IssueAuthorizedRelayUncappedLease(ctx context.Context, relayStore *relayusage.Store, start, end time.Time, request relayusage.CreditRequest) (time.Time, error) {
+func (s *Store) IssueAuthorizedRelayUncappedLease(ctx context.Context, relayStore *estavelleusage.Store, start, end time.Time, request estavelleusage.CreditRequest) (time.Time, error) {
 	if relayStore == nil {
 		return time.Time{}, ErrCreditGrantConflict
 	}
-	if _, err := relayusage.DecodeRequestedCreditBytes(request); err != nil {
+	if _, err := estavelleusage.DecodeRequestedCreditBytes(request); err != nil {
 		return time.Time{}, err
 	}
 	startUS, endUS, err := billingPeriodMicros(start, end)
@@ -510,7 +510,7 @@ func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, gen
 
 // SurrenderAuthorizedRelayCredits atomically verifies the enabled producer,
 // signed mapping, and immutable grant ownership before releasing unused bytes.
-func (s *Store) SurrenderAuthorizedRelayCredits(ctx context.Context, relayStore *relayusage.Store, request relayusage.CreditSurrender) (RelayCreditGrant, error) {
+func (s *Store) SurrenderAuthorizedRelayCredits(ctx context.Context, relayStore *estavelleusage.Store, request estavelleusage.CreditSurrender) (RelayCreditGrant, error) {
 	if relayStore == nil {
 		return RelayCreditGrant{}, ErrCreditGrantConflict
 	}

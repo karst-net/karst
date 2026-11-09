@@ -11,7 +11,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -20,7 +20,7 @@ import (
 )
 
 type relayUsageReporter interface {
-	Report(context.Context, string, time.Time, time.Time) (relayusage.Report, error)
+	Report(context.Context, string, time.Time, time.Time) (estavelleusage.Report, error)
 }
 
 // RegisterRelayUsageEndpoints mounts the customer relay report before the
@@ -64,9 +64,9 @@ func RegisterRelayUsageEndpoints(router *mux.Router, manager permissions.Manager
 		report, err := reporter.Report(ctx, user.AccountId, start, end)
 		if err != nil {
 			switch {
-			case errors.Is(err, relayusage.ErrInvalidReport):
+			case errors.Is(err, estavelleusage.ErrInvalidReport):
 				err = status.Errorf(status.InvalidArgument, "request a past, nonempty window of at most 93 days aligned to whole minutes")
-			case errors.Is(err, relayusage.ErrReportLimit):
+			case errors.Is(err, estavelleusage.ErrReportLimit):
 				err = status.Errorf(status.InvalidArgument, "too many relay usage records; request a shorter window")
 			default:
 				err = status.Errorf(status.Internal, "could not read relay usage report")

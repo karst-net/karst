@@ -31,7 +31,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/server/account"
@@ -341,18 +341,18 @@ func (s *spyAccountUpdater) UpdateAccountPeers(_ context.Context, accountID stri
 
 type scanRelays struct{}
 
-func (scanRelays) List(context.Context) ([]relayreg.StoredRelay, error) { return nil, nil }
-func (scanRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
-	return &relayreg.StoredRelay{}, nil
+func (scanRelays) List(context.Context) ([]estavellereg.StoredEstavelle, error) { return nil, nil }
+func (scanRelays) Create(context.Context, estavellereg.Entry) (*estavellereg.StoredEstavelle, error) {
+	return &estavellereg.StoredEstavelle{}, nil
 }
 func (scanRelays) Delete(context.Context, string) error                { return nil }
 func (scanRelays) DeleteByAddress(context.Context, string) error       { return nil }
 func (scanRelays) DeleteByTLSServerName(context.Context, string) error { return nil }
-func (scanRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
+func (scanRelays) LatestTelemetry(context.Context, string) (*estavellereg.EstavelleTelemetryRecord, error) {
 	return nil, nil
 }
-func (scanRelays) DemandByRegion(context.Context) ([]relayreg.RegionDemand, error) { return nil, nil }
-func (scanRelays) DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error) {
+func (scanRelays) DemandByRegion(context.Context) ([]estavellereg.RegionDemand, error) { return nil, nil }
+func (scanRelays) DemandHistory(context.Context, time.Time, time.Time) ([]estavellereg.RegionDemandSample, error) {
 	return nil, nil
 }
 
@@ -360,8 +360,8 @@ func (scanRelays) DemandHistory(context.Context, time.Time, time.Time) ([]relayr
 // relaysEnroll/relaysCreate "relay already exists" path.
 type scanRelaysExists struct{ scanRelays }
 
-func (scanRelaysExists) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
-	return nil, relayreg.ErrExists
+func (scanRelaysExists) Create(context.Context, estavellereg.Entry) (*estavellereg.StoredEstavelle, error) {
+	return nil, estavellereg.ErrExists
 }
 
 // scanRelaysMissing reports every DeleteByAddress/DeleteByTLSServerName as
@@ -370,11 +370,11 @@ func (scanRelaysExists) Create(context.Context, relayreg.Entry) (*relayreg.Store
 type scanRelaysMissing struct{ scanRelays }
 
 func (scanRelaysMissing) DeleteByAddress(context.Context, string) error {
-	return relayreg.ErrNotFound
+	return estavellereg.ErrNotFound
 }
 
 func (scanRelaysMissing) DeleteByTLSServerName(context.Context, string) error {
-	return relayreg.ErrNotFound
+	return estavellereg.ErrNotFound
 }
 
 // scanRelayEnrollAccounts fakes the two ADR-0045 §7 Phase 2 methods
@@ -406,22 +406,22 @@ func (s scanRelayEnrollAccounts) ConsumeRelayEnrollKey(context.Context, string) 
 	return s.consumeAccountID, s.consumeKeyID, nil
 }
 
-type fixedRelays []relayreg.StoredRelay
+type fixedRelays []estavellereg.StoredEstavelle
 
-func (f fixedRelays) List(context.Context) ([]relayreg.StoredRelay, error) { return f, nil }
-func (f fixedRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
+func (f fixedRelays) List(context.Context) ([]estavellereg.StoredEstavelle, error) { return f, nil }
+func (f fixedRelays) Create(context.Context, estavellereg.Entry) (*estavellereg.StoredEstavelle, error) {
 	return &f[0], nil
 }
 func (fixedRelays) Delete(context.Context, string) error                { return nil }
 func (fixedRelays) DeleteByAddress(context.Context, string) error       { return nil }
 func (fixedRelays) DeleteByTLSServerName(context.Context, string) error { return nil }
-func (fixedRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
+func (fixedRelays) LatestTelemetry(context.Context, string) (*estavellereg.EstavelleTelemetryRecord, error) {
 	return nil, nil
 }
-func (fixedRelays) DemandByRegion(context.Context) ([]relayreg.RegionDemand, error) {
+func (fixedRelays) DemandByRegion(context.Context) ([]estavellereg.RegionDemand, error) {
 	return nil, nil
 }
-func (fixedRelays) DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error) {
+func (fixedRelays) DemandHistory(context.Context, time.Time, time.Time) ([]estavellereg.RegionDemandSample, error) {
 	return nil, nil
 }
 
@@ -430,10 +430,10 @@ func (fixedRelays) DemandHistory(context.Context, time.Time, time.Time) ([]relay
 // (ADR-0048), which fixedRelays' own always-nil LatestTelemetry cannot.
 type relaysWithTelemetry struct {
 	fixedRelays
-	telemetry *relayreg.RelayTelemetryRecord
+	telemetry *estavellereg.EstavelleTelemetryRecord
 }
 
-func (r relaysWithTelemetry) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
+func (r relaysWithTelemetry) LatestTelemetry(context.Context, string) (*estavellereg.EstavelleTelemetryRecord, error) {
 	return r.telemetry, nil
 }
 
@@ -663,7 +663,7 @@ func TestRelayDeenroll_ScalerAndAdminCanRemoveAdvisorCannot(t *testing.T) {
 	}
 }
 
-// Confirms relayDeenroll passes relayreg.ErrNotFound through as 404, the
+// Confirms relayDeenroll passes estavellereg.ErrNotFound through as 404, the
 // same contract relaysDelete already has, rather than masking it as a
 // generic error.
 func TestRelayDeenroll_UnknownAddressIsNotFound(t *testing.T) {
@@ -1710,10 +1710,10 @@ func TestOnlyAdvisorRoleReachesDemandEndpoints(t *testing.T) {
 // need to customize.
 type fixedDemandHistory struct {
 	fixedRelays
-	samples []relayreg.RegionDemandSample
+	samples []estavellereg.RegionDemandSample
 }
 
-func (f fixedDemandHistory) DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error) {
+func (f fixedDemandHistory) DemandHistory(context.Context, time.Time, time.Time) ([]estavellereg.RegionDemandSample, error) {
 	return f.samples, nil
 }
 
@@ -1722,7 +1722,7 @@ func (f fixedDemandHistory) DemandHistory(context.Context, time.Time, time.Time)
 // TestDemandRegionsResponseShape already holds demandRegions to.
 func TestDemandRegionsHistoryResponseShape(t *testing.T) {
 	sampledAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	relays := fixedDemandHistory{samples: []relayreg.RegionDemandSample{
+	relays := fixedDemandHistory{samples: []estavellereg.RegionDemandSample{
 		{Region: "eu", AccountID: "account-a", SampledAt: sampledAt, RTTUnder20ms: 5, RTT20To50ms: 1, RTT50To100ms: 2, RTTOver100ms: 3},
 	}}
 	router := mux.NewRouter()
@@ -1761,7 +1761,7 @@ func TestDemandRegionsHistoryRequiresSinceAndUntil(t *testing.T) {
 }
 
 // TestDemandRegionsResponseShape confirms the wire response uses the
-// openapi.yml field spelling (snake_case), not relayreg.RegionDemand's bare
+// openapi.yml field spelling (snake_case), not estavellereg.RegionDemand's bare
 // Go field names.
 func TestDemandRegionsResponseShape(t *testing.T) {
 	relays := fixedRelays{{AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu"}}
@@ -2117,7 +2117,7 @@ func TestDetectedLocationOverridesDeclared(t *testing.T) {
 			AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu",
 			LocationLat: &declaredLat, LocationLon: &declaredLon, LocationLabel: "Denver",
 		}},
-		telemetry: &relayreg.RelayTelemetryRecord{DetectedLat: &lat, DetectedLon: &lon},
+		telemetry: &estavellereg.EstavelleTelemetryRecord{DetectedLat: &lat, DetectedLon: &lon},
 	}
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)

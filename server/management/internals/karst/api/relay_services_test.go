@@ -16,8 +16,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/auth"
@@ -38,19 +38,19 @@ func TestRelayServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	require.NoError(t, db.AutoMigrate(&relayreg.StoredRelay{}, &types.Group{}, &policy.Version{}))
-	ponor, err := relayreg.NewStore(db)
+	require.NoError(t, db.AutoMigrate(&estavellereg.StoredEstavelle{}, &types.Group{}, &policy.Version{}))
+	ponor, err := estavellereg.NewStore(db)
 	require.NoError(t, err)
-	registered, err := ponor.Create(relayreg.WithAccount(context.Background(), "a"), relayreg.Entry{
+	registered, err := ponor.Create(estavellereg.WithAccount(context.Background(), "a"), estavellereg.Entry{
 		Address: "203.0.113.1:443", TLSServerName: "relay.example.com",
-		IdentityKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, relayreg.IdentityKeySize)),
+		IdentityKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, estavellereg.IdentityKeySize)),
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&relayreg.StoredRelay{AccountID: "b", ID: "ponor-b"}).Error)
+	require.NoError(t, db.Create(&estavellereg.StoredEstavelle{AccountID: "b", ID: "ponor-b"}).Error)
 	require.NoError(t, db.Create(&types.Group{ID: "eng", AccountID: "a", Name: "Engineering"}).Error)
-	store, err := relayservice.NewStore(db)
+	store, err := estavelleservice.NewStore(db)
 	require.NoError(t, err)
-	ctx := relayservice.WithAccount(context.Background(), "a")
+	ctx := estavelleservice.WithAccount(context.Background(), "a")
 	_, err = store.SetPublication(ctx, "services")
 	require.NoError(t, err)
 	require.NoError(t, store.RefreshAdmissionLease(registered.ID))
@@ -88,17 +88,17 @@ func TestRelayServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
 	w = serviceRequest(router, http.MethodDelete, "/one", "", true)
 	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
 	var remaining int64
-	require.NoError(t, db.Model(&relayreg.StoredRelay{}).Count(&remaining).Error)
+	require.NoError(t, db.Model(&estavellereg.StoredEstavelle{}).Count(&remaining).Error)
 	require.EqualValues(t, 2, remaining, "deleting the association must not delete the underlying relay registry rows")
 }
 
-func (s *serviceStub) Create(_ context.Context, service relayservice.Service) (*relayservice.Service, error) {
+func (s *serviceStub) Create(_ context.Context, service estavelleservice.Service) (*estavelleservice.Service, error) {
 	s.calls++
 	return &service, s.err
 }
-func (s *serviceStub) List(context.Context) ([]relayservice.View, error) {
+func (s *serviceStub) List(context.Context) ([]estavelleservice.View, error) {
 	s.calls++
-	return []relayservice.View{}, s.err
+	return []estavelleservice.View{}, s.err
 }
 func (s *serviceStub) Delete(context.Context, string) error { s.calls++; return s.err }
 
@@ -161,9 +161,9 @@ func TestRelayServiceAPIValidatesJSONAndMapsStorageResults(t *testing.T) {
 		err  error
 		code int
 	}{
-		{relayservice.ErrInvalid, http.StatusUnprocessableEntity},
-		{relayservice.ErrExists, http.StatusConflict},
-		{relayservice.ErrNotFound, http.StatusNotFound},
+		{estavelleservice.ErrInvalid, http.StatusUnprocessableEntity},
+		{estavelleservice.ErrExists, http.StatusConflict},
+		{estavelleservice.ErrNotFound, http.StatusNotFound},
 	} {
 		store.err = tc.err
 		w = serviceRequest(router, http.MethodPost, "", `{"id":"one","ponor_id":"p"}`, true)

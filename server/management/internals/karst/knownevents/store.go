@@ -5,7 +5,7 @@
 // first-class operator inputs" — a planned migration, a company all-hands,
 // a holiday calendar, "often more valuable than inferred seasonality."
 // Account-scoped, not deployment-wide like the demand history
-// (relayreg.RegionDemandSample) it is meant to sit alongside later: when an
+// (estavellereg.RegionDemandSample) it is meant to sit alongside later: when an
 // organization's own traffic is expected to change is that organization's
 // own calendar, not the deployment's, and §8 separately treats
 // pattern-of-life data as sensitive metadata about the organization.
@@ -16,7 +16,7 @@
 // not assumed here.
 //
 // Deliberately capture-only: no forecaster yet consumes these. See
-// relayreg.RegionDemandSample's own doc comment for the same reasoning
+// estavellereg.RegionDemandSample's own doc comment for the same reasoning
 // applied to demand history — this is an input Phase 3 eventually needs,
 // not the phase itself.
 package knownevents
@@ -74,7 +74,7 @@ func (e Entry) validate() (Entry, error) {
 
 // StoredKnownEvent is the database form of a validated Entry. ID is a
 // generated identifier, not derived from content the way
-// relayreg.StoredRelay's or turncred.StoredTurnServer's are — two known
+// estavellereg.StoredEstavelle's or turncred.StoredTurnServer's are — two known
 // events can legitimately share a label and even overlap (an operator
 // might record "company all-hands" every quarter), so there is no natural
 // content-derived key to deduplicate against.

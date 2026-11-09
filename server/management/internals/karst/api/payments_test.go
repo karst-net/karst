@@ -18,7 +18,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/billing"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -41,7 +41,7 @@ func TestCustomerPaymentQueueIsAccountScopedAuditedAndAsynchronous(t *testing.T)
 	deviceCount := int64(2)
 	devices := usage.DeviceReport{Start: start, End: end, AsOf: end, Complete: true,
 		Segments: []usage.DeviceSegment{{Start: start, End: end, Coverage: "complete", Devices: &deviceCount}}}
-	relays := relayusage.Report{Start: start, End: end, AsOf: end, Coverage: "authorized_producers", Complete: true, HistoryComplete: true, ExpectedWindows: 1, ReportedBytes: "0"}
+	relays := estavelleusage.Report{Start: start, End: end, AsOf: end, Coverage: "authorized_producers", Complete: true, HistoryComplete: true, ExpectedWindows: 1, ReportedBytes: "0"}
 	_, err = store.FinalizeInvoice(ctx, devices, relays)
 	require.NoError(t, err)
 	_, err = store.ConfigurePaddleAccount(ctx, true, "ctm_01grnn4zta5a1mf02jjze7y2ys", "pro_01grnn4zta5a1mf02jjze7y2ys")

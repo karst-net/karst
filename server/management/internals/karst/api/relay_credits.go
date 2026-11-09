@@ -16,26 +16,26 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/netbirdio/netbird/management/internals/karst/billing"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 )
 
 // RegisterRelayCreditEndpoint mounts the relay-only, ML-DSA-authenticated
 // credit reservation endpoint. It does not use customer session auth because
 // the managed relay identity and signed mapping request are its authority.
-func RegisterRelayCreditEndpoint(router *mux.Router, relayStore *relayusage.Store, billingStore *billing.Store) {
-	router.Handle(relayusage.CreditRequestPath, &relayCreditHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
-	router.Handle(relayusage.CreditSurrenderPath+"{grant_id}/surrender", &relayCreditSurrenderHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
+func RegisterRelayCreditEndpoint(router *mux.Router, relayStore *estavelleusage.Store, billingStore *billing.Store) {
+	router.Handle(estavelleusage.CreditRequestPath, &relayCreditHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
+	router.Handle(estavelleusage.CreditSurrenderPath+"{grant_id}/surrender", &relayCreditSurrenderHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
 }
 
 type relayCreditSurrenderHandler struct {
-	relays  *relayusage.Store
+	relays  *estavelleusage.Store
 	billing *billing.Store
 }
 
 func (h *relayCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	grantID := mux.Vars(r)["grant_id"]
-	expectedPath := relayusage.CreditSurrenderPath + grantID + "/surrender"
+	expectedPath := estavelleusage.CreditSurrenderPath + grantID + "/surrender"
 	if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.EscapedPath() != expectedPath || h.relays == nil || h.billing == nil {
 		http.Error(w, "invalid relay cap credit surrender", http.StatusBadRequest)
 		return
@@ -55,7 +55,7 @@ func (h *relayCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		}
 		return
 	}
-	request, err := relayusage.ParseCreditSurrender(body)
+	request, err := estavelleusage.ParseCreditSurrender(body)
 	if err != nil || request.GrantID != grantID {
 		http.Error(w, "invalid relay cap surrender", http.StatusBadRequest)
 		return
@@ -65,9 +65,9 @@ func (h *relayCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 	_, err = h.billing.SurrenderAuthorizedRelayCredits(ctx, h.relays, request)
 	if err != nil {
 		switch {
-		case errors.Is(err, relayusage.ErrInvalidCreditRequest):
+		case errors.Is(err, estavelleusage.ErrInvalidCreditRequest):
 			http.Error(w, "invalid relay cap surrender", http.StatusBadRequest)
-		case errors.Is(err, relayusage.ErrUnauthorized), errors.Is(err, relayusage.ErrProducerMissing), errors.Is(err, relayusage.ErrMappingNotAllowed):
+		case errors.Is(err, estavelleusage.ErrUnauthorized), errors.Is(err, estavelleusage.ErrProducerMissing), errors.Is(err, estavelleusage.ErrMappingNotAllowed):
 			http.Error(w, "relay cap surrender rejected", http.StatusForbidden)
 		case errors.Is(err, billing.ErrCreditGrantNotFound):
 			http.Error(w, "relay cap grant not found", http.StatusNotFound)
@@ -82,13 +82,13 @@ func (h *relayCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 }
 
 type relayCreditHandler struct {
-	relays  *relayusage.Store
+	relays  *estavelleusage.Store
 	billing *billing.Store
 }
 
 func (h *relayCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.EscapedPath() != relayusage.CreditRequestPath {
+	if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.EscapedPath() != estavelleusage.CreditRequestPath {
 		http.Error(w, "invalid relay cap credit request", http.StatusBadRequest)
 		return
 	}
@@ -111,7 +111,7 @@ func (h *relayCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	request, err := relayusage.ParseCreditRequest(body)
+	request, err := estavelleusage.ParseCreditRequest(body)
 	if err != nil {
 		http.Error(w, "invalid relay cap request", http.StatusBadRequest)
 		return
@@ -138,9 +138,9 @@ func (h *relayCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		switch {
-		case errors.Is(err, relayusage.ErrInvalidCreditRequest):
+		case errors.Is(err, estavelleusage.ErrInvalidCreditRequest):
 			http.Error(w, "invalid relay cap request", http.StatusBadRequest)
-		case errors.Is(err, relayusage.ErrUnauthorized), errors.Is(err, relayusage.ErrProducerMissing), errors.Is(err, relayusage.ErrMappingNotAllowed):
+		case errors.Is(err, estavelleusage.ErrUnauthorized), errors.Is(err, estavelleusage.ErrProducerMissing), errors.Is(err, estavelleusage.ErrMappingNotAllowed):
 			http.Error(w, "relay cap request rejected", http.StatusForbidden)
 		case errors.Is(err, billing.ErrRelayCapPending):
 			w.Header().Set("Retry-After", "1")

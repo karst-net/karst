@@ -44,7 +44,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/tutorialmode"
@@ -302,7 +302,7 @@ type infraConnectionReadWriter interface {
 	EnableLocalZone(ctx context.Context, id, code, parentRegion string) (infraconnections.DiscoveredRegion, error)
 	// UpdateLaunchDefaults is ADR-0045's 2026-11-04 addendum: the AWS
 	// launch shape (AMI/instance type/subnet/security groups) a named
-	// relay allocation (ADR-0063, package relayalloc) actuates against,
+	// relay allocation (ADR-0063, package estavellealloc) actuates against,
 	// set here rather than collected on the allocation request itself --
 	// see UpdateLaunchDefaultsRequest's own doc comment.
 	UpdateLaunchDefaults(ctx context.Context, id string, req infraconnections.UpdateLaunchDefaultsRequest) (*infraconnections.Account, error)
@@ -324,10 +324,10 @@ type tenancyReader interface {
 	AccessibleAccounts(ctx context.Context, userID string) ([]string, error)
 }
 
-// relayHealth is deliberately separate from relayreg.StoredRelay. Registry
+// relayHealth is deliberately separate from estavellereg.StoredEstavelle. Registry
 // records describe what nodes may dial; admission telemetry belongs to a
 // relay. ADR-0021: populated from a relay's own signed reports
-// (relayreg.Store.LatestTelemetry) when any have arrived; unknown remains the
+// (estavellereg.Store.LatestTelemetry) when any have arrived; unknown remains the
 // only truthful value for a relay that has never reported.
 type relayHealth struct {
 	Source          string     `json:"source"`
@@ -338,12 +338,12 @@ type relayHealth struct {
 }
 
 type relayResponse struct {
-	relayreg.StoredRelay
+	estavellereg.StoredEstavelle
 	Health relayHealth `json:"health"`
 	// Location is the relay's NOC-map position -- declared (ADR-0046 §1) or
 	// detected via cloud instance metadata (ADR-0048), whichever locationFor
 	// resolves. Nil means neither source has one.
-	Location *relayreg.Location `json:"location,omitempty"`
+	Location *estavellereg.Location `json:"location,omitempty"`
 	// LocationSource says which of the two it came from, mirroring
 	// relayHealth.Source's existing "roster_mtime"/"relay_telemetry"
 	// provenance-tagging shape rather than inventing a new one. Omitted
@@ -422,8 +422,8 @@ func (h *handler) healthFor(ctx context.Context, id string) relayHealth {
 	}
 }
 
-func (h *handler) relayResponseFor(ctx context.Context, relay relayreg.StoredRelay) relayResponse {
-	resp := relayResponse{StoredRelay: relay, Health: h.healthFor(ctx, relay.ID)}
+func (h *handler) relayResponseFor(ctx context.Context, relay estavellereg.StoredEstavelle) relayResponse {
+	resp := relayResponse{StoredEstavelle: relay, Health: h.healthFor(ctx, relay.ID)}
 	resp.Location, resp.LocationSource = h.locationFor(ctx, relay)
 	return resp
 }
@@ -432,14 +432,14 @@ func (h *handler) relayResponseFor(ctx context.Context, relay relayreg.StoredRel
 // overrides declared (ADR-0046 §1) when present, declared is the fallback,
 // neither is "unknown". A read error is treated the same as no detected
 // location, the same posture healthFor already takes for telemetry reads.
-func (h *handler) locationFor(ctx context.Context, relay relayreg.StoredRelay) (*relayreg.Location, string) {
+func (h *handler) locationFor(ctx context.Context, relay estavellereg.StoredEstavelle) (*estavellereg.Location, string) {
 	if h.relays != nil {
 		if record, err := h.relays.LatestTelemetry(ctx, relay.ID); err == nil && record != nil && record.DetectedLat != nil {
-			return &relayreg.Location{Lat: *record.DetectedLat, Lon: *record.DetectedLon}, "detected"
+			return &estavellereg.Location{Lat: *record.DetectedLat, Lon: *record.DetectedLon}, "detected"
 		}
 	}
 	if relay.LocationLat != nil {
-		return &relayreg.Location{Lat: *relay.LocationLat, Lon: *relay.LocationLon, Label: relay.LocationLabel}, "declared"
+		return &estavellereg.Location{Lat: *relay.LocationLat, Lon: *relay.LocationLon, Label: relay.LocationLabel}, "declared"
 	}
 	return nil, ""
 }
@@ -491,29 +491,29 @@ type auditAnchorReader interface {
 	VerifyFrom(context.Context, uint64, string) (uint64, error)
 }
 type relayReader interface {
-	List(context.Context) ([]relayreg.StoredRelay, error)
-	Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error)
+	List(context.Context) ([]estavellereg.StoredEstavelle, error)
+	Create(context.Context, estavellereg.Entry) (*estavellereg.StoredEstavelle, error)
 	Delete(context.Context, string) error
 	// DeleteByAddress is ADR-0045 §7's own driver-initiated teardown path
-	// (issue #319) — see relayDeenroll and relayreg.Store.DeleteByAddress's
+	// (issue #319) — see relayDeenroll and estavellereg.Store.DeleteByAddress's
 	// own doc comment for why this is keyed by address, not id.
 	DeleteByAddress(context.Context, string) error
 	// DeleteByTLSServerName is DeleteByAddress's own counterpart for the
-	// AWS driver (issue #329) — see relayreg.Store.DeleteByTLSServerName's
+	// AWS driver (issue #329) — see estavellereg.Store.DeleteByTLSServerName's
 	// own doc comment for why that driver needs a different key than the
 	// Kubernetes driver does.
 	DeleteByTLSServerName(context.Context, string) error
 	// LatestTelemetry is ADR-0021's read side: a relay's most recent
 	// self-report, or nil if it has never reported.
-	LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error)
+	LatestTelemetry(context.Context, string) (*estavellereg.EstavelleTelemetryRecord, error)
 	// DemandByRegion is ADR-0045 §7 Phase 1's demand-side input — see its
-	// own doc comment on relayreg.Store for why it is deliberately not
+	// own doc comment on estavellereg.Store for why it is deliberately not
 	// account-scoped the way every other method here is.
-	DemandByRegion(context.Context) ([]relayreg.RegionDemand, error)
+	DemandByRegion(context.Context) ([]estavellereg.RegionDemand, error)
 	// DemandHistory is ADR-0045 §8 (Phase 3)'s retained time series over
-	// the same signal DemandByRegion reads live — see relayreg.Store's own
+	// the same signal DemandByRegion reads live — see estavellereg.Store's own
 	// doc comment on RegionDemandSample for why this exists at all.
-	DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error)
+	DemandHistory(context.Context, time.Time, time.Time) ([]estavellereg.RegionDemandSample, error)
 }
 
 // demandReader is ADR-0045 §4b/§7's deployment-wide anchor-RTT histogram —
@@ -622,7 +622,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	} else {
 		karstRouter.Use(karstAuthorization(permissionsManager))
 	}
-	karstRouter.HandleFunc("/gateways", h.gateways).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/avens", h.avens).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/invitations", h.invitations).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/invitations/{id}/revoke", h.revokeInvitation).Methods(http.MethodPost, http.MethodOptions)
 	// Mesh domains (ADR-0032). Deliberately exempted from the blanket
@@ -897,7 +897,7 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			// future endpoint added under this same module gate would
 			// otherwise permit it to reach. Deliberately NOT allowlisted:
 			// relay-services' own routes — granting/revoking an allocation's
-			// access calls relayservice in-process from inside the
+			// access calls estavelleservice in-process from inside the
 			// relay-allocations handler itself (see
 			// RegisterRelayAllocationEndpoints), so the Scaler role never
 			// needs, and is never given, direct relay-services access.
@@ -926,7 +926,7 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 func scopeToAccount(ctx context.Context, accountID string) context.Context {
 	ctx = knownevents.WithAccount(ctx, accountID)
 	ctx = karstpolicy.WithAccount(ctx, accountID)
-	ctx = relayreg.WithAccount(ctx, accountID)
+	ctx = estavellereg.WithAccount(ctx, accountID)
 	ctx = locationreg.WithAccount(ctx, accountID)
 	ctx = grouplocation.WithAccount(ctx, accountID)
 	ctx = cplocation.WithAccount(ctx, accountID)
@@ -1865,13 +1865,13 @@ func (h *handler) relaysCreate(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
-	var entry relayreg.Entry
+	var entry estavellereg.Entry
 	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
 	relay, err := h.relays.Create(r.Context(), entry)
-	if errors.Is(err, relayreg.ErrExists) {
+	if errors.Is(err, estavellereg.ErrExists) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay already exists"), w)
 		return
 	}
@@ -1894,7 +1894,7 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
-	if err := h.relays.Delete(r.Context(), mux.Vars(r)["relayId"]); errors.Is(err, relayreg.ErrNotFound) {
+	if err := h.relays.Delete(r.Context(), mux.Vars(r)["relayId"]); errors.Is(err, estavellereg.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
 		return
 	} else if err != nil {
@@ -1910,7 +1910,7 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 // to-be-destroyed instance's own address deterministically at create() time
 // and has no reason to List first just to recover the id relaysDelete
 // expects. A relay's registry id cannot be derived from its address either
-// -- see relayreg.Store.DeleteByAddress's own doc comment for why that
+// -- see estavellereg.Store.DeleteByAddress's own doc comment for why that
 // matters to how this request is handled, not just how it is shaped.
 //
 // Exactly one of Address/TLSServerName must be set -- the two keys two
@@ -1929,7 +1929,7 @@ type relayDeenrollRequest struct {
 	TLSServerName string `json:"tls_server_name,omitempty"`
 }
 
-// relayDeenroll lets the Scaler role remove a relayreg.Store entry without
+// relayDeenroll lets the Scaler role remove a estavellereg.Store entry without
 // the generic Delete grant relaysDelete needs -- see this route's own
 // entry in the Scaler hard-allowlist (above, in karstAuthorization) for
 // why this is shaped as a POST/Create request rather than a widened Delete
@@ -1960,7 +1960,7 @@ func (h *handler) relayDeenroll(w http.ResponseWriter, r *http.Request) {
 		util.WriteErrorResponse("exactly one of address or tls_server_name is required", http.StatusBadRequest, w)
 		return
 	}
-	if errors.Is(err, relayreg.ErrNotFound) {
+	if errors.Is(err, estavellereg.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
 		return
 	} else if err != nil {
@@ -2088,14 +2088,14 @@ func (h *handler) relaysEnroll(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	var entry relayreg.Entry
+	var entry estavellereg.Entry
 	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
-	ctx := relayreg.WithAccount(r.Context(), accountID)
+	ctx := estavellereg.WithAccount(r.Context(), accountID)
 	relay, err := h.relays.Create(ctx, entry)
-	if errors.Is(err, relayreg.ErrExists) {
+	if errors.Is(err, estavellereg.ErrExists) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay already exists"), w)
 		return
 	}
@@ -2332,9 +2332,9 @@ func (h *handler) nocRelay(w http.ResponseWriter, r *http.Request) {
 	util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
 }
 
-// regionDemandResponse mirrors relayreg.RegionDemand with the JSON spelling
+// regionDemandResponse mirrors estavellereg.RegionDemand with the JSON spelling
 // karst-openapi.yml's RegionDemand schema declares; RegionDemand itself
-// carries no JSON tags, since relayreg has no reason to know the API's
+// carries no JSON tags, since estavellereg has no reason to know the API's
 // field-naming convention.
 type regionDemandResponse struct {
 	Region       string `json:"region"`
@@ -2346,7 +2346,7 @@ type regionDemandResponse struct {
 }
 
 // anchorHistogramResponse mirrors regionallow.AnchorHistogramEntry, for the
-// same reason regionDemandResponse mirrors relayreg.RegionDemand.
+// same reason regionDemandResponse mirrors estavellereg.RegionDemand.
 type anchorHistogramResponse struct {
 	Provider string `json:"provider"`
 	Region   string `json:"region"`
@@ -2378,7 +2378,7 @@ func requireAdvisorRole(ctx context.Context) error {
 
 // demandRegions is ADR-0045 §7 Phase 1's per-(region, aquifer) demand feed
 // — §4a's RTT histogram, aggregated across every account's relays.
-// Deliberately cross-account; see relayreg.Store.DemandByRegion's own doc
+// Deliberately cross-account; see estavellereg.Store.DemandByRegion's own doc
 // comment for why. Audit-logged on every call — more deliberately than
 // nocComponents's karst.noc.view above, since every call here sees every
 // tenant's data, not just the caller's own account's.
@@ -2434,7 +2434,7 @@ type regionDemandHistoryResponse struct {
 }
 
 // demandRegionsHistory is ADR-0045 §8 (Phase 3)'s retained time series over
-// demandRegions' own live signal — see relayreg.Store's own doc comment on
+// demandRegions' own live signal — see estavellereg.Store's own doc comment on
 // RegionDemandSample for why this exists (Phases 0-1 did not actually build
 // the history §8 says they should have) and what it does and does not
 // store. Gated behind the same UserRoleAdvisor role as demandRegions, for

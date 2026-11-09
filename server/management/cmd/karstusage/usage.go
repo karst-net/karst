@@ -19,7 +19,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -102,7 +102,7 @@ func newRelayCommands(opener StoreOpener) *cobra.Command {
 			return fmt.Errorf("provide valid --deployment-id and --actor labels")
 		}
 		relayID, err := runRelayMutation(cmd, opener, actor, "authorize", "", "deployment="+deployment,
-			func(relays *relayusage.Store) (string, error) {
+			func(relays *estavelleusage.Store) (string, error) {
 				return relays.AuthorizeProducer(cmd.Context(), publicKey, deployment)
 			})
 		if err != nil {
@@ -124,7 +124,7 @@ func newRelayCommands(opener StoreOpener) *cobra.Command {
 			return fmt.Errorf("provide a valid --relay-id and --actor")
 		}
 		_, err := runRelayMutation(cmd, opener, revokeActor, "revoke", revokeID, "",
-			func(relays *relayusage.Store) (string, error) {
+			func(relays *estavelleusage.Store) (string, error) {
 				return revokeID, relays.RevokeProducer(cmd.Context(), revokeID)
 			})
 		return err
@@ -142,7 +142,7 @@ func newRelayCommands(opener StoreOpener) *cobra.Command {
 		}
 		detail := "deployment=" + mappingDeployment + " mapping=" + mappingVersion
 		_, err := runRelayMutation(cmd, opener, mappingActor, "allow-mapping", mappingRelay, detail,
-			func(relays *relayusage.Store) (string, error) {
+			func(relays *estavelleusage.Store) (string, error) {
 				return mappingRelay, relays.AllowMapping(cmd.Context(), mappingRelay, mappingDeployment, mappingVersion)
 			})
 		return err
@@ -160,7 +160,7 @@ func newRelayCommands(opener StoreOpener) *cobra.Command {
 		}
 		detail := "deployment=" + revokeMappingDeployment + " mapping=" + revokeMappingVersion
 		_, err := runRelayMutation(cmd, opener, revokeMappingActor, "revoke-mapping", revokeMappingRelay, detail,
-			func(relays *relayusage.Store) (string, error) {
+			func(relays *estavelleusage.Store) (string, error) {
 				return revokeMappingRelay, relays.RevokeMapping(cmd.Context(), revokeMappingRelay, revokeMappingDeployment, revokeMappingVersion)
 			})
 		return err
@@ -169,14 +169,14 @@ func newRelayCommands(opener StoreOpener) *cobra.Command {
 	return root
 }
 
-func runRelayMutation(cmd *cobra.Command, opener StoreOpener, actor, action, target, detail string, mutate func(*relayusage.Store) (string, error)) (string, error) {
+func runRelayMutation(cmd *cobra.Command, opener StoreOpener, actor, action, target, detail string, mutate func(*estavelleusage.Store) (string, error)) (string, error) {
 	var result string
 	err := opener(cmd, func(ctx context.Context, raw store.Store) error {
 		sql, ok := raw.(*store.SqlStore)
 		if !ok {
 			return fmt.Errorf("managed relay usage requires a SQL store")
 		}
-		base, err := relayusage.NewStore(sql.GetDB())
+		base, err := estavelleusage.NewStore(sql.GetDB())
 		if err != nil {
 			return err
 		}

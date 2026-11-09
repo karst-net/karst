@@ -12,7 +12,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -21,19 +21,19 @@ import (
 )
 
 type relayServiceStore interface {
-	Create(context.Context, relayservice.Service) (*relayservice.Service, error)
-	List(context.Context) ([]relayservice.View, error)
+	Create(context.Context, estavelleservice.Service) (*estavelleservice.Service, error)
+	List(context.Context) ([]estavelleservice.View, error)
 	Delete(context.Context, string) error
 }
 
 type relayServicePublisher interface {
-	Publication(context.Context) (relayservice.Publication, error)
-	Preview(context.Context) ([]relayservice.Service, error)
-	SetPublication(context.Context, string) (relayservice.Publication, error)
+	Publication(context.Context) (estavelleservice.Publication, error)
+	Preview(context.Context) ([]estavelleservice.Service, error)
+	SetPublication(context.Context, string) (estavelleservice.Publication, error)
 }
 
 type relayServiceModes interface {
-	SetModes(context.Context, string, bool) (*relayservice.Service, error)
+	SetModes(context.Context, string, bool) (*estavelleservice.Service, error)
 }
 
 type RelayServiceOptions struct {
@@ -75,17 +75,17 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay service storage is not configured"), w)
 			return
 		}
-		ctx := relayservice.WithActor(relayservice.WithAccount(r.Context(), user.AccountId), user.UserId)
+		ctx := estavelleservice.WithActor(estavelleservice.WithAccount(r.Context(), user.AccountId), user.UserId)
 		if mux.CurrentRoute(r).GetName() == "relay-access" {
 			scoped, ok := store.(interface {
-				UpdateAccess(context.Context, string, relayservice.Service) (*relayservice.Service, error)
+				UpdateAccess(context.Context, string, estavelleservice.Service) (*estavelleservice.Service, error)
 			})
 			if !ok {
 				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay access storage unavailable"), w)
 				return
 			}
 			var request struct {
-				relayservice.Service
+				estavelleservice.Service
 				ExpectedRevision *uint64 `json:"revision"`
 				Acknowledge      bool    `json:"acknowledge_access_change"`
 			}
@@ -119,7 +119,7 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 		}
 		if mux.CurrentRoute(r).GetName() == "relay-admission-targets" {
 			scoped, ok := store.(interface {
-				AdmissionTargets(context.Context) ([]relayservice.AdmissionLease, error)
+				AdmissionTargets(context.Context) ([]estavelleservice.AdmissionLease, error)
 			})
 			if !ok {
 				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay admission capability unavailable"), w)
@@ -232,7 +232,7 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			}
 			util.WriteJSONObject(ctx, w, views)
 		case http.MethodPost:
-			var service relayservice.Service
+			var service estavelleservice.Service
 			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&service); err != nil {
@@ -272,13 +272,13 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 
 func relayServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, relayservice.ErrInvalid):
+	case errors.Is(err, estavelleservice.ErrInvalid):
 		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
-	case errors.Is(err, relayservice.ErrExists), errors.Is(err, policy.ErrVersionConflict):
+	case errors.Is(err, estavelleservice.ErrExists), errors.Is(err, policy.ErrVersionConflict):
 		util.WriteError(r.Context(), status.Errorf(status.AlreadyExists, "Relay service already exists"), w)
-	case errors.Is(err, relayservice.ErrNotFound):
+	case errors.Is(err, estavelleservice.ErrNotFound):
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "Relay service not found"), w)
-	case errors.Is(err, relayservice.ErrNoAccount):
+	case errors.Is(err, estavelleservice.ErrNoAccount):
 		util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "account scope required"), w)
 	default:
 		util.WriteError(r.Context(), status.Errorf(status.Internal, "Relay service storage failed"), w)

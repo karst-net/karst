@@ -11,7 +11,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 )
 
@@ -28,7 +28,7 @@ type FinalInvoice struct {
 	ScheduleVersion string             `json:"schedule_version"`
 	Currency        string             `json:"currency"`
 	DeviceUsage     usage.DeviceReport `json:"device_usage"`
-	RelayUsage      relayusage.Report  `json:"relay_usage"`
+	RelayUsage      estavelleusage.Report  `json:"relay_usage"`
 	DeviceInputHash string             `json:"device_input_sha256"`
 	RelayInputHash  string             `json:"relay_input_sha256"`
 	DeviceExact     ExactAmount        `json:"device_exact_minor"`

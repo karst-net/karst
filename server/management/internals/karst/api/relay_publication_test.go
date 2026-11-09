@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/stretchr/testify/require"
 )
@@ -21,9 +21,9 @@ type publicationStub struct {
 	setCalls int
 }
 
-func (s *publicationStub) SetModes(_ context.Context, id string, ponor bool) (*relayservice.Service, error) {
+func (s *publicationStub) SetModes(_ context.Context, id string, ponor bool) (*estavelleservice.Service, error) {
 	s.setCalls++
-	return &relayservice.Service{ID: id, PonorID: "p", PonorDisabled: !ponor}, s.err
+	return &estavelleservice.Service{ID: id, PonorID: "p", PonorDisabled: !ponor}, s.err
 }
 
 func TestRelayModesRequireCompleteAcknowledgedStateAndPushOnlyAfterSuccess(t *testing.T) {
@@ -44,7 +44,7 @@ func TestRelayModesRequireCompleteAcknowledgedStateAndPushOnlyAfterSuccess(t *te
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"ponor_disabled":true`)
 	require.Equal(t, []string{"a"}, push.accounts)
-	store.err = relayservice.ErrNotFound
+	store.err = estavelleservice.ErrNotFound
 	w = serviceRequest(router, http.MethodPut, "/other/modes", `{"ponor_enabled":true,"acknowledge_connectivity_change":true}`, true)
 	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 	require.Equal(t, []string{"a"}, push.accounts)
@@ -56,19 +56,19 @@ func TestRelayModesRequireCompleteAcknowledgedStateAndPushOnlyAfterSuccess(t *te
 	}
 }
 
-func (s *publicationStub) Publication(context.Context) (relayservice.Publication, error) {
-	return relayservice.Publication{Mode: s.mode}, s.err
+func (s *publicationStub) Publication(context.Context) (estavelleservice.Publication, error) {
+	return estavelleservice.Publication{Mode: s.mode}, s.err
 }
-func (s *publicationStub) Preview(context.Context) ([]relayservice.Service, error) {
+func (s *publicationStub) Preview(context.Context) ([]estavelleservice.Service, error) {
 	s.previews++
-	return []relayservice.Service{{ID: "one", PonorID: "p"}}, s.err
+	return []estavelleservice.Service{{ID: "one", PonorID: "p"}}, s.err
 }
-func (s *publicationStub) SetPublication(_ context.Context, mode string) (relayservice.Publication, error) {
+func (s *publicationStub) SetPublication(_ context.Context, mode string) (estavelleservice.Publication, error) {
 	s.setCalls++
 	if s.err == nil {
 		s.mode = mode
 	}
-	return relayservice.Publication{Mode: mode}, s.err
+	return estavelleservice.Publication{Mode: mode}, s.err
 }
 
 type publicationPush struct{ accounts []string }
@@ -99,7 +99,7 @@ func TestRelayPublicationPreviewAndAcknowledgedApplyNotifyOnlyAfterSuccess(t *te
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Equal(t, "services", store.mode)
 	require.Equal(t, []string{"a"}, push.accounts)
-	store.err = relayservice.ErrInvalid
+	store.err = estavelleservice.ErrInvalid
 	w = serviceRequest(router, http.MethodPut, "/publication", `{"mode":"legacy","acknowledge_connectivity_change":true}`, true)
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	require.Equal(t, []string{"a"}, push.accounts)

@@ -2,20 +2,20 @@
 // Copyright the Karst contributors.
 
 // Package infraprovision defines the provider-agnostic interface
-// relayalloc's reconciliation loop (ADR-0063) drives a named relay
+// estavellealloc's reconciliation loop (ADR-0063) drives a named relay
 // allocation through, so the loop itself never names a cloud SDK call --
 // see docs/adr/0067-unified-relay-provisioning-workflow.md. It holds only
 // the interface and the few provider-agnostic helpers both concrete
 // drivers (infraprovision/awsdriver, infraprovision/nomaddriver) need
-// identically. It has no dependency on infraconnections or relayalloc, so
+// identically. It has no dependency on infraconnections or estavellealloc, so
 // neither forms an import cycle through it: infraconnections constructs a
-// Driver (it alone holds the decrypted credential), relayalloc only ever
+// Driver (it alone holds the decrypted credential), estavellealloc only ever
 // calls one.
 //
 // This is not karst_scaler_driver.Driver (crates/karst-scaler-driver)
 // reused: that trait is Rust, pool-scoped (list/create(n)/drain/destroy
 // against a pool_id), for the separate continuous pool autoscaler.
-// relayalloc drives exactly one named instance at a time, with no pool
+// estavellealloc drives exactly one named instance at a time, with no pool
 // and no count -- ADR-0067's "Alternatives rejected" explains why forcing
 // pool shape onto this a second time was rejected.
 package infraprovision
@@ -31,11 +31,11 @@ import (
 // right now -- Create's own return value.
 type Instance struct {
 	// ID is the provider's own handle: an EC2 instance id for awsdriver, a
-	// dispatched Nomad job id for nomaddriver. Opaque to relayalloc, which
+	// dispatched Nomad job id for nomaddriver. Opaque to estavellealloc, which
 	// only ever stores and replays it back into TLSServerName/Drain/Destroy.
 	ID string
 	// TLSServerName is the correlation label a relay registers itself
-	// under (relayreg.StoredRelay.TLSServerName) -- "" if not yet
+	// under (estavellereg.StoredEstavelle.TLSServerName) -- "" if not yet
 	// discoverable, which callers must treat as "retry later," not a
 	// failure.
 	TLSServerName string
@@ -49,7 +49,7 @@ type CreateRequest struct {
 	// enroll` boot path knows where to call back.
 	ControlAPIBase string
 	// Token is a single-use, narrowly-scoped relay-enroll credential,
-	// minted by the caller (relayalloc's own enrollMinter) immediately
+	// minted by the caller (estavellealloc's own enrollMinter) immediately
 	// before calling Create -- a Driver never mints its own.
 	Token string
 }
@@ -67,7 +67,7 @@ type DriverError struct {
 
 func (e *DriverError) Error() string { return e.Msg }
 
-// Driver is what relayalloc's reconciliation loop drives a named
+// Driver is what estavellealloc's reconciliation loop drives a named
 // allocation through, once per tick, regardless of which infrastructure
 // connection backs it -- see the package doc comment for why this is not
 // the Rust pool Driver trait reused.
@@ -89,7 +89,7 @@ type Driver interface {
 	Drain(ctx context.Context, instanceID string) error
 	// Destroy removes instanceID for good and returns its TLSServerName
 	// if still discoverable (so the caller can deenroll the matching
-	// relayreg row), "" if not.
+	// estavellereg row), "" if not.
 	Destroy(ctx context.Context, instanceID string) (string, error)
 }
 
@@ -97,7 +97,7 @@ type Driver interface {
 // correlation label a Driver implementation uses -- SHA-256(token), first
 // 6 bytes, lowercase hex, dotted with suffix so two drivers' labels (or a
 // BYO-registered relay's own address-derived one) never collide. The raw
-// token is single-use and this label ends up in a relayreg entry other
+// token is single-use and this label ends up in a estavellereg entry other
 // peers can see, so it is derived by hashing, never embedded verbatim.
 //
 // awsdriver must call this with suffix "aws.karst.internal" -- byte-for-

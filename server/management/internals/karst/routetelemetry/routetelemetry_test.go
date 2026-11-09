@@ -112,7 +112,7 @@ func TestObservedEgressIPReplacesOnEachReport(t *testing.T) {
 	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{GatewayID: "primary", ObservedEgressIP: "203.0.113.9"}); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	rows, err := s.LatestByGateway(ctx, "acct-a")
+	rows, err := s.LatestByAven(ctx, "acct-a")
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestObservedEgressIPReplacesOnEachReport(t *testing.T) {
 	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{GatewayID: "primary", ObservedEgressIP: "203.0.113.99"}); err != nil {
 		t.Fatalf("record drifted: %v", err)
 	}
-	rows, err = s.LatestByGateway(ctx, "acct-a")
+	rows, err = s.LatestByAven(ctx, "acct-a")
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestGatewayHealthKeepsCandidatesAndAccountsIndependent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rows, err := s.LatestByGateway(ctx, "a")
+	rows, err := s.LatestByAven(ctx, "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestGatewayHealthKeepsCandidatesAndAccountsIndependent(t *testing.T) {
 	if err := s.RecordRouteBytes(ctx, "a", "legacy-route", RouteReport{ForwardingActive: true}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err = s.LatestByGateway(ctx, "a")
+	rows, err = s.LatestByAven(ctx, "a")
 	if err != nil {
 		t.Fatal(err)
 	}

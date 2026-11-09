@@ -166,7 +166,7 @@ func (s *Store) AddRegion(ctx context.Context, provider, region string) error {
 	// The preflight above gives a clear response in the ordinary case; the
 	// conflict clause handles two simultaneous adds without exposing a
 	// driver-specific unique-constraint message to either caller -- same
-	// discipline as relayreg.Store.Create.
+	// discipline as estavellereg.Store.Create.
 	result := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&regionRow{Provider: provider, Region: region})
 	if result.Error != nil {
 		return fmt.Errorf("allowed regions: add %s/%s: %w", provider, region, result.Error)

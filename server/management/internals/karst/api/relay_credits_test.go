@@ -23,7 +23,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/billing"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 )
 
@@ -34,7 +34,7 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	require.NoError(t, usage.Migrate(db))
-	relays, err := relayusage.NewStore(db)
+	relays, err := estavelleusage.NewStore(db)
 	require.NoError(t, err)
 	billingStore, err := billing.NewStore(db)
 	require.NoError(t, err)
@@ -54,7 +54,7 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	relayID, err := relays.AuthorizeProducer(context.Background(), key.Public(), "deployment-a")
 	require.NoError(t, err)
 	require.NoError(t, relays.AllowMapping(context.Background(), relayID, mapping.DeploymentID, mapping.Version))
-	request := relayusage.CreditRequest{RelayID: relayID, DeploymentID: "deployment-a", MappingVersion: mapping.Version,
+	request := estavelleusage.CreditRequest{RelayID: relayID, DeploymentID: "deployment-a", MappingVersion: mapping.Version,
 		Generation: "0102030405060708090a0b0c0d0e0f10", RequestID: "1112131415161718191a1b1c1d1e1f20", RequestedBytes: "3000000000"}
 	input, err := request.SigningInput()
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	router := mux.NewRouter()
 	RegisterRelayCreditEndpoint(router, relays, billingStore)
 	response := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, relayusage.CreditRequestPath, bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, estavelleusage.CreditRequestPath, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
@@ -80,7 +80,7 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, cap.EffectiveAt.UnixMicro(), leaseUntilUS, "a cap must wait for previously issued uncapped leases")
 	response = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, relayusage.CreditRequestPath, bytes.NewReader(body))
+	req = httptest.NewRequest(http.MethodPost, estavelleusage.CreditRequestPath, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusTooEarly, response.Code, response.Body.String())
@@ -90,7 +90,7 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	require.NoError(t, db.Table("karst_billing_relay_caps").Where("account_id = ? AND period_start_us = ?", "account-1", start.UnixMicro()).
 		Update("effective_at_us", time.Now().UTC().Add(-time.Second).UnixMicro()).Error)
 	response = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, relayusage.CreditRequestPath, bytes.NewReader(body))
+	req = httptest.NewRequest(http.MethodPost, estavelleusage.CreditRequestPath, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -103,7 +103,7 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	require.Equal(t, "account-1", grant.AccountID)
 	require.Equal(t, "3000000000", grant.GrantedBytes)
 
-	surrender := relayusage.CreditSurrender{GrantID: grant.GrantID, RelayID: relayID, DeploymentID: "deployment-a",
+	surrender := estavelleusage.CreditSurrender{GrantID: grant.GrantID, RelayID: relayID, DeploymentID: "deployment-a",
 		MappingVersion: mapping.Version, Generation: request.Generation, ConsumedBytes: "1000000000"}
 	surrenderInput, err := surrender.SigningInput()
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	surrender.Signature = base64.StdEncoding.EncodeToString(surrenderSignature)
 	surrenderBody, err := json.Marshal(surrender)
 	require.NoError(t, err)
-	surrenderPath := relayusage.CreditSurrenderPath + grant.GrantID + "/surrender"
+	surrenderPath := estavelleusage.CreditSurrenderPath + grant.GrantID + "/surrender"
 	response = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, surrenderPath, bytes.NewReader(surrenderBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -131,7 +131,7 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	body, err = json.Marshal(request) // The original signature no longer authenticates this body.
 	require.NoError(t, err)
 	response = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, relayusage.CreditRequestPath, bytes.NewReader(body))
+	req = httptest.NewRequest(http.MethodPost, estavelleusage.CreditRequestPath, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())

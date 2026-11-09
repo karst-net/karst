@@ -41,7 +41,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
@@ -137,7 +137,7 @@ const karstRelayAllocateControlAPIBaseEnv = "KARST_RELAY_ALLOCATE_CONTROL_API_BA
 // with no 'unlimited' value," applied a second time by that ADR's
 // 2026-11-04 addendum now that this actuation runs in-process. Unset (or
 // non-positive) means every allocation request is refused, not
-// "unlimited" -- see relayalloc.Store.Create's own doc comment.
+// "unlimited" -- see estavellealloc.Store.Create's own doc comment.
 const karstRelayAllocateMaxConcurrentEnv = "KARST_RELAY_ALLOCATE_MAX_CONCURRENT"
 
 // karstDemandHistoryIntervalEnv/karstDemandHistoryRetentionEnv configure
@@ -505,7 +505,7 @@ func loadRelays() ([]*proto.KarstRelay, error) {
 	if path == "" {
 		return nil, nil
 	}
-	relays, err := relayreg.Load(path)
+	relays, err := estavellereg.Load(path)
 	if err != nil {
 		return nil, err
 	}
@@ -622,7 +622,7 @@ func checkLegacyTurnConfig(cfg *nbserver.Config) error {
 // warning -- the in-process default. A non-integer raw value is a genuine
 // misconfiguration and comes back as err. A successfully parsed non-positive
 // value comes back as 0 with warn=true rather than err: this const's own doc
-// comment and relayalloc.Store.Create's both treat non-positive as "refuse
+// comment and estavellealloc.Store.Create's both treat non-positive as "refuse
 // every allocation request," not a startup failure -- it is this
 // deployment's documented default, not a typo the way a non-numeric value
 // above is.

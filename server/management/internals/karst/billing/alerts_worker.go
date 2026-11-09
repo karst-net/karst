@@ -9,13 +9,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 )
 
 const relayAlertAccountPageSize = 128
 
 type relayUsageReporter interface {
-	Report(context.Context, string, time.Time, time.Time) (relayusage.Report, error)
+	Report(context.Context, string, time.Time, time.Time) (estavelleusage.Report, error)
 }
 
 // EvaluateCurrentRelayAlerts evaluates all explicitly scheduled accounts for

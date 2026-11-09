@@ -30,7 +30,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/tutorialmode"
@@ -569,7 +569,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("compliance draft store: %v", err)
 	}
-	relayStore, err := relayreg.NewStore(db)
+	relayStore, err := estavellereg.NewStore(db)
 	if err != nil {
 		t.Fatalf("relay store: %v", err)
 	}

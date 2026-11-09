@@ -23,9 +23,9 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
 	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
-	"github.com/netbirdio/netbird/management/internals/karst/relayalloc"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellealloc"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/auth"
@@ -33,9 +33,9 @@ import (
 
 type relayAllocationEnv struct {
 	db         *gorm.DB
-	alloc      *relayalloc.Store
-	registry   *relayreg.Store
-	grants     *relayservice.Store
+	alloc      *estavellealloc.Store
+	registry   *estavellereg.Store
+	grants     *estavelleservice.Store
 	connection string
 	group      string
 }
@@ -52,16 +52,16 @@ func relayAllocationFixture(t *testing.T) relayAllocationEnv {
 	require.NoError(t, db.Create(&connection).Error)
 	group := types.Group{ID: "engineering", AccountID: "a", Name: "Engineering"}
 	require.NoError(t, db.Create(&group).Error)
-	alloc, err := relayalloc.NewStore(db)
+	alloc, err := estavellealloc.NewStore(db)
 	require.NoError(t, err)
 	// Create refuses every request until this is set (ADR-0045 §6 bullet
 	// 4's "mandatory configuration, no unlimited value," applied to this
 	// actuator by that ADR's 2026-11-04 addendum) -- high enough that no
 	// existing test's own handful of allocations trips it.
 	alloc.SetMaxConcurrentAllocations(100)
-	registry, err := relayreg.NewStore(db)
+	registry, err := estavellereg.NewStore(db)
 	require.NoError(t, err)
-	grants, err := relayservice.NewStore(db)
+	grants, err := estavelleservice.NewStore(db)
 	require.NoError(t, err)
 	// Every test below allocates against "us-west-2" -- requireAuthorizedLocation
 	// rejects that unless it is already in the Authorized Locations registry.
@@ -84,9 +84,9 @@ func allocationRequest(router *mux.Router, method, path, body string) *httptest.
 	return w
 }
 
-func decodeAllocation(t *testing.T, w *httptest.ResponseRecorder) relayalloc.Allocation {
+func decodeAllocation(t *testing.T, w *httptest.ResponseRecorder) estavellealloc.Allocation {
 	t.Helper()
-	var allocation relayalloc.Allocation
+	var allocation estavellealloc.Allocation
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &allocation), w.Body.String())
 	return allocation
 }
@@ -105,7 +105,7 @@ func assertAllocationResponseFields(t *testing.T, w *httptest.ResponseRecorder, 
 // console (Admin role) would reach it, one as the Scaler-role
 // reconciliation loop would. Confirms the grant step's relay lookup,
 // idempotent retries, and the reversed teardown order (revoke withdraws
-// the relayservice grant before anything reports compute torn down).
+// the estavelleservice grant before anything reports compute torn down).
 func TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) {
 	e := relayAllocationFixture(t)
 	admin := relayAllocationRouter(e, types.UserRoleAdmin)
@@ -114,13 +114,13 @@ func TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) 
 	w := allocationRequest(admin, http.MethodPost, "", `{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	created := decodeAllocation(t, w)
-	require.Equal(t, relayalloc.StateRequested, created.State)
+	require.Equal(t, estavellealloc.StateRequested, created.State)
 	assertAllocationResponseFields(t, w, "/relay-allocations", "post", "201")
 
 	// Scaler sees it as pending.
 	w = allocationRequest(scaler, http.MethodPost, "/pending", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	var pending []relayalloc.Allocation
+	var pending []estavellealloc.Allocation
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &pending))
 	require.Len(t, pending, 1)
 	// Scaler must never reach the console-only routes, though -- that
@@ -130,7 +130,7 @@ func TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) 
 
 	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
 		fmt.Sprintf(`{"expected_revision":%d,"instance_id":"i-1"}`, created.Revision)))
-	require.Equal(t, relayalloc.StateProvisioning, provisioning.State)
+	require.Equal(t, estavellealloc.StateProvisioning, provisioning.State)
 	require.Equal(t, "i-1", provisioning.InstanceID)
 
 	// The relay has not registered yet -- not ready, not an error.
@@ -139,18 +139,18 @@ func TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) 
 	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 
 	// It registers.
-	relay, err := e.registry.Create(relayreg.WithAccount(context.Background(), "a"), relayreg.Entry{
+	relay, err := e.registry.Create(estavellereg.WithAccount(context.Background(), "a"), estavellereg.Entry{
 		Address:       "203.0.113.5:443",
 		TLSServerName: "denver.aws.karst.internal",
-		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, relayreg.IdentityKeySize)),
+		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, estavellereg.IdentityKeySize)),
 	})
 	require.NoError(t, err)
 
-	// relayservice.configureAccess's own prerequisites, independent of
+	// estavelleservice.configureAccess's own prerequisites, independent of
 	// this allocation -- a live admission writer and service publication
-	// mode, set up exactly as relayservice's own fixture does.
+	// mode, set up exactly as estavelleservice's own fixture does.
 	require.NoError(t, e.grants.RefreshAdmissionLease(relay.ID))
-	_, err = e.grants.SetPublication(relayservice.WithAccount(context.Background(), "a"), "services")
+	_, err = e.grants.SetPublication(estavelleservice.WithAccount(context.Background(), "a"), "services")
 	require.NoError(t, err)
 
 	// Retrying grant now succeeds -- note this reuses the SAME
@@ -161,53 +161,53 @@ func TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) 
 		fmt.Sprintf(`{"expected_revision":%d,"tls_server_name":"denver.aws.karst.internal"}`, provisioning.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	ready := decodeAllocation(t, w)
-	require.Equal(t, relayalloc.StateReady, ready.State)
+	require.Equal(t, estavellealloc.StateReady, ready.State)
 	require.Equal(t, relay.ID, ready.RelayID)
 	assertAllocationResponseFields(t, w, "/relay-allocations/{id}/grant", "post", "200")
 
 	var serviceCount int64
-	require.NoError(t, e.db.Model(&relayservice.Service{}).Where("id = ? AND ponor_id = ?", created.ID, relay.ID).Count(&serviceCount).Error)
+	require.NoError(t, e.db.Model(&estavelleservice.Service{}).Where("id = ? AND ponor_id = ?", created.ID, relay.ID).Count(&serviceCount).Error)
 	require.EqualValues(t, 1, serviceCount)
 
 	// Retrying grant again (the loop re-polling an already-ready
-	// allocation) is a safe no-op, not a second relayservice.Create.
+	// allocation) is a safe no-op, not a second estavelleservice.Create.
 	w = allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/grant",
 		fmt.Sprintf(`{"expected_revision":%d,"tls_server_name":"denver.aws.karst.internal"}`, ready.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	require.Equal(t, relayalloc.StateReady, decodeAllocation(t, w).State)
+	require.Equal(t, estavellealloc.StateReady, decodeAllocation(t, w).State)
 
 	// Console requests deprovision.
 	w = allocationRequest(admin, http.MethodPost, "/"+created.ID+"/deprovision",
 		fmt.Sprintf(`{"revision":%d,"acknowledge_deprovision":true}`, ready.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	revoking := decodeAllocation(t, w)
-	require.Equal(t, relayalloc.StateRevoking, revoking.State)
+	require.Equal(t, estavellealloc.StateRevoking, revoking.State)
 
 	// Scaler withdraws the grant -- before anything reports compute torn
 	// down.
 	w = allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/revoke", fmt.Sprintf(`{"expected_revision":%d}`, revoking.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	deprovisioning := decodeAllocation(t, w)
-	require.Equal(t, relayalloc.StateDeprovisioning, deprovisioning.State)
+	require.Equal(t, estavellealloc.StateDeprovisioning, deprovisioning.State)
 
-	require.NoError(t, e.db.Model(&relayservice.Service{}).Where("id = ?", created.ID).Count(&serviceCount).Error)
+	require.NoError(t, e.db.Model(&estavelleservice.Service{}).Where("id = ?", created.ID).Count(&serviceCount).Error)
 	require.Zero(t, serviceCount, "the grant must be withdrawn before anything confirms compute deprovisioned")
 
 	w = allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/deprovisioned", fmt.Sprintf(`{"expected_revision":%d}`, deprovisioning.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	deprovisioned := decodeAllocation(t, w)
-	require.Equal(t, relayalloc.StateDeprovisioned, deprovisioned.State)
+	require.Equal(t, estavellealloc.StateDeprovisioned, deprovisioned.State)
 
 	w = allocationRequest(admin, http.MethodDelete, fmt.Sprintf("/%s?revision=%d", created.ID, deprovisioned.Revision), "")
 	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
 
 	var remaining int64
-	require.NoError(t, e.db.Model(&relayalloc.Allocation{}).Count(&remaining).Error)
+	require.NoError(t, e.db.Model(&estavellealloc.Allocation{}).Count(&remaining).Error)
 	require.Zero(t, remaining)
 }
 
 // TestRelayAllocationGrantReportsFailureWithoutLeavingAPartialGrant covers
-// the other branch of granting: relayservice rejects the attempt (no live
+// the other branch of granting: estavelleservice rejects the attempt (no live
 // admission writer configured here), and the allocation must land in
 // StateFailed with no Service row ever created -- never a grant believed
 // to have failed while compute silently kept running unaccounted for.
@@ -221,10 +221,10 @@ func TestRelayAllocationGrantReportsFailureWithoutLeavingAPartialGrant(t *testin
 	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
 		fmt.Sprintf(`{"expected_revision":%d,"instance_id":"i-1"}`, created.Revision)))
 
-	_, err := e.registry.Create(relayreg.WithAccount(context.Background(), "a"), relayreg.Entry{
+	_, err := e.registry.Create(estavellereg.WithAccount(context.Background(), "a"), estavellereg.Entry{
 		Address:       "203.0.113.6:443",
 		TLSServerName: "denver.aws.karst.internal",
-		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, relayreg.IdentityKeySize)),
+		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, estavellereg.IdentityKeySize)),
 	})
 	require.NoError(t, err)
 	// No RefreshAdmissionLease, no SetPublication -- configureAccess must
@@ -234,12 +234,12 @@ func TestRelayAllocationGrantReportsFailureWithoutLeavingAPartialGrant(t *testin
 		fmt.Sprintf(`{"expected_revision":%d,"tls_server_name":"denver.aws.karst.internal"}`, provisioning.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	failed := decodeAllocation(t, w)
-	require.Equal(t, relayalloc.StateFailed, failed.State)
-	require.Equal(t, relayalloc.StateGranting, failed.FailedStep)
+	require.Equal(t, estavellealloc.StateFailed, failed.State)
+	require.Equal(t, estavellealloc.StateGranting, failed.FailedStep)
 	require.NotEmpty(t, failed.FailureReason)
 
 	var serviceCount int64
-	require.NoError(t, e.db.Model(&relayservice.Service{}).Count(&serviceCount).Error)
+	require.NoError(t, e.db.Model(&estavelleservice.Service{}).Count(&serviceCount).Error)
 	require.Zero(t, serviceCount)
 }
 
@@ -305,8 +305,8 @@ func TestRelayAllocationFailedInfersFromStateAndIsIdempotent(t *testing.T) {
 		fmt.Sprintf(`{"expected_revision":%d,"reason":"quota exceeded"}`, created.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	failed := decodeAllocation(t, w)
-	require.Equal(t, relayalloc.StateFailed, failed.State)
-	require.Equal(t, relayalloc.StateRequested, failed.FailedStep)
+	require.Equal(t, estavellealloc.StateFailed, failed.State)
+	require.Equal(t, estavellealloc.StateRequested, failed.FailedStep)
 	require.Equal(t, "quota exceeded", failed.FailureReason)
 
 	// Idempotent retry -- same result, no error, no second Transition.
@@ -332,7 +332,7 @@ func TestRelayAllocationDeleteRequiresDeprovisionFirst(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
 
 	var remaining int64
-	require.NoError(t, e.db.Model(&relayalloc.Allocation{}).Count(&remaining).Error)
+	require.NoError(t, e.db.Model(&estavellealloc.Allocation{}).Count(&remaining).Error)
 	require.EqualValues(t, 1, remaining)
 }
 

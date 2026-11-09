@@ -16,7 +16,7 @@ import (
 )
 
 // ActuationDriver returns a ready infraprovision.Driver for connection id,
-// for relayalloc's reconciliation loop (ADR-0063; ADR-0067) -- replacing
+// for estavellealloc's reconciliation loop (ADR-0063; ADR-0067) -- replacing
 // the pre-ADR-0067 AWS-only AWSActuationClient. Built fresh on every call,
 // deliberately never cached: a rotated or edited secret, or changed launch
 // defaults, takes effect on the very next call, matching every other

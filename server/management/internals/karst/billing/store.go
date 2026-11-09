@@ -14,7 +14,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -130,7 +130,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 // account period. It is safe to retry with identical inputs; later changes to
 // usage or estimates cannot replace a finalized snapshot. This records amounts
 // only and does not create a provider charge or payment.
-func (s *Store) FinalizeInvoice(ctx context.Context, deviceReport usage.DeviceReport, relayReport relayusage.Report) (FinalInvoice, error) {
+func (s *Store) FinalizeInvoice(ctx context.Context, deviceReport usage.DeviceReport, relayReport estavelleusage.Report) (FinalInvoice, error) {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
 		return FinalInvoice{}, err
@@ -365,7 +365,7 @@ func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []RelayAlertCa
 // assigned immutable schedule and persists them by deduplicated threshold. A
 // caller must provide an authenticated account context and choose when reports
 // are reevaluated.
-func (s *Store) EvaluateAndRecordRelayAlerts(ctx context.Context, report relayusage.Report, capOverageMinor *int64) ([]RelayAlertCandidate, error) {
+func (s *Store) EvaluateAndRecordRelayAlerts(ctx context.Context, report estavelleusage.Report, capOverageMinor *int64) ([]RelayAlertCandidate, error) {
 	_, err := billingAccountFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -596,7 +596,7 @@ func (s *Store) AssignedSchedule(ctx context.Context, start, end time.Time) (Rat
 // Calculate estimates exact charges using only the rate schedule explicitly
 // assigned to the device report's account and period. It does not persist an
 // invoice or create a charge; unassigned periods return ErrScheduleUnassigned.
-func (s *Store) Calculate(ctx context.Context, deviceReport usage.DeviceReport, relayReport relayusage.Report) (Estimate, error) {
+func (s *Store) Calculate(ctx context.Context, deviceReport usage.DeviceReport, relayReport estavelleusage.Report) (Estimate, error) {
 	schedule, err := s.AssignedSchedule(ctx, deviceReport.Start, deviceReport.End)
 	if err != nil {
 		return Estimate{}, err

@@ -108,7 +108,7 @@ type Identity struct {
 	// each other whenever the relay itself was unreachable.
 	//
 	// JSON-encoded into a plain string column rather than through GORM's
-	// `serializer:json` tag (unlike `relayalloc`/`relayservice`'s `[]string`
+	// `serializer:json` tag (unlike `estavellealloc`/`estavelleservice`'s `[]string`
 	// fields): `SetCandidates`' own change-detection `WHERE` clause needs to
 	// compare it as ordinary text, the same way `SetHomeRelay`'s already
 	// does for `home_relay` — binding a raw `[]string` into that clause

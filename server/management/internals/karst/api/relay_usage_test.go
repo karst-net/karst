@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/auth"
@@ -37,10 +37,10 @@ func (a *relayUsageAuditCapture) Append(_ context.Context, userID, action, _, _ 
 	return &audit.Entry{}, nil
 }
 
-func (s *relayUsageReportStub) Report(_ context.Context, account string, start, end time.Time) (relayusage.Report, error) {
+func (s *relayUsageReportStub) Report(_ context.Context, account string, start, end time.Time) (estavelleusage.Report, error) {
 	s.account, s.calls = account, s.calls+1
-	return relayusage.Report{Start: start, End: end, AsOf: end, AuthorizationHistoryStart: start, Coverage: "authorized_producers", HistoryComplete: false, Complete: false,
-		ReportedBytes: "123", Days: []relayusage.ReportDay{{Date: "2026-10-01", ReportedBytes: "123", ReportedWindows: 1, GapReasons: []string{}}},
+	return estavelleusage.Report{Start: start, End: end, AsOf: end, AuthorizationHistoryStart: start, Coverage: "authorized_producers", HistoryComplete: false, Complete: false,
+		ReportedBytes: "123", Days: []estavelleusage.ReportDay{{Date: "2026-10-01", ReportedBytes: "123", ReportedWindows: 1, GapReasons: []string{}}},
 		Limitations: []string{"producer coverage is not historized"}}, nil
 }
 

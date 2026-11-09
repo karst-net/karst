@@ -15,7 +15,7 @@ import (
 // KarstMetrics are the server-side metrics for Karst's own subsystems —
 // Bedrock anchoring, the relay registry, and PSK epoch rotation — tracked
 // separately from the eleven metrics types above because none of those
-// packages (bedrock, relayreg, karst/control) exist outside Karst.
+// packages (bedrock, estavellereg, karst/control) exist outside Karst.
 //
 // Every gauge here is an ObservableGauge read by callback rather than
 // recorded on a timer: the underlying value is cheap to keep current in an
@@ -43,7 +43,7 @@ type KarstMetrics struct {
 	// Keyed by account ID. Karst's server-side account model is single-tenant
 	// per deployment in the intended use (PLAN.md §0, bedrock.Scheduler's own
 	// doc comment), so these maps hold one entry in practice — but the write
-	// sites (bedrock.Log.Import, bedrock.Scheduler.Tick, relayreg.Store's
+	// sites (bedrock.Log.Import, bedrock.Scheduler.Tick, estavellereg.Store's
 	// Create/Delete) already carry an accountID, and every other per-account
 	// metric in this package (GRPCMetrics, AccountManagerMetrics) labels by
 	// it, so dropping the label here would be the inconsistent choice.

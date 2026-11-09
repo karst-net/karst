@@ -49,11 +49,11 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayalloc"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
-	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellealloc"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelletelemetry"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/rollout"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
@@ -123,10 +123,10 @@ type Karst struct {
 	// — Fleet.Reconcile reads which accounts have Bedrock enabled from it.
 	Store *bedrock.Store
 	// RelayServices exposes the observation worker for process-scoped startup.
-	RelayServices *relayservice.Store
+	RelayServices *estavelleservice.Store
 }
 
-// relayAllocatePollInterval is relayalloc.RunAllocateWorker's own tick
+// relayAllocatePollInterval is estavellealloc.RunAllocateWorker's own tick
 // interval -- matches the external Rust loop's own documented example
 // default (docs/operations/scaler-aws-driver.md's poll_interval_secs = 15,
 // since removed along with that loop). Not operator-configurable: unlike
@@ -142,7 +142,7 @@ const relayAllocatePollInterval = 15 * time.Second
 // The relay registry is passed in rather than discovered because a relay's
 // identity key is a pin: §4.2 has a node trust the key this server vouches for
 // and nothing else, which is only meaningful if a human decided what it is.
-// Nil means no relays, and therefore no relaying — see karst/relayreg.
+// Nil means no relays, and therefore no relaying — see karst/estavellereg.
 //
 // scalerAdvisorURL is ADR-0045 §7 Phase 1 PR 5's own operator-configured
 // address (KARST_SCALER_ADVISOR_URL): where karst-scaler advise's own
@@ -152,14 +152,14 @@ const relayAllocatePollInterval = 15 * time.Second
 //
 // relayAllocateControlAPIBase and relayAllocateMaxConcurrent are ADR-0045's
 // 2026-11-04 addendum's own two operator-configured values for the
-// in-process relay-allocation actuation loop (relayalloc.RunAllocateWorker,
+// in-process relay-allocation actuation loop (estavellealloc.RunAllocateWorker,
 // below) -- KARST_RELAY_ALLOCATE_CONTROL_API_BASE (this server's own
 // externally-reachable API base, embedded in every launched instance's
 // enroll bundle) and KARST_RELAY_ALLOCATE_MAX_CONCURRENT (the per-account
 // concurrency ceiling ADR-0045 §6 bullet 4 requires as mandatory
 // configuration with no "unlimited" value). Either left unset fails every
 // allocation closed with a clear reason, the same "configured-but-absent"
-// posture scalerAdvisorURL already has -- see relayalloc.Store.Create and
+// posture scalerAdvisorURL already has -- see estavellealloc.Store.Create and
 // provisionStep's own doc comments.
 func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration, relayAllocateControlAPIBase string, relayAllocateMaxConcurrent int) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
@@ -290,12 +290,12 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: compliance draft store: %w", err)
 	}
-	relayStore, err := relayreg.NewStore(db)
+	relayStore, err := estavellereg.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay store: %w", err)
 	}
 	relayStore.Metrics = karstMetrics
-	usageRelayStore, err := relayusage.NewStore(db)
+	usageRelayStore, err := estavelleusage.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay usage store: %w", err)
 	}
@@ -317,18 +317,18 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	})
 	// ADR-0045 §8 (Phase 3): retains demand history on an interval so a
 	// future forecaster (and the NOC view's own time-series panels) have
-	// data to train/chart against -- see relayreg.Store's own doc comment
+	// data to train/chart against -- see estavellereg.Store's own doc comment
 	// on RegionDemandSample for why this did not already exist.
 	relayStore.StartDemandHistoryWorker(context.Background(), demandHistoryInterval, demandHistoryRetention)
-	relayServiceStore, err := relayservice.NewStore(db)
+	relayServiceStore, err := estavelleservice.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay service store: %w", err)
 	}
 	relayServiceStore.LifecycleAgents = nodes
 	// ADR-0063/#455: the admin-triggered relay allocation record and its
 	// own state machine, independent of relayServiceStore's access state
-	// and the scaler's pool state. See relayalloc's own package doc.
-	relayAllocationStore, err := relayalloc.NewStore(db)
+	// and the scaler's pool state. See estavellealloc's own package doc.
+	relayAllocationStore, err := estavellealloc.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay allocation store: %w", err)
 	}
@@ -465,7 +465,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		return nil, fmt.Errorf("karst: infrastructure connection store: %w", err)
 	}
 	// relayAllocationStore itself implements infraconnections.AllocationReferenceChecker
-	// (relayalloc.Store.HasNonTerminalAllocations) -- wired here, the one
+	// (estavellealloc.Store.HasNonTerminalAllocations) -- wired here, the one
 	// place both stores already exist, rather than through NewStore's own
 	// signature (see AllocationReferenceChecker's own doc comment for why).
 	infraConnectionStore.SetAllocationReferenceChecker(relayAllocationStore)
@@ -482,7 +482,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if enroller, ok := s.AccountManager().(interface {
 		MintRelayEnrollKey(context.Context, string, string, time.Duration) (string, error)
 	}); ok {
-		go relayalloc.RunAllocateWorker(context.Background(), relayAllocationStore, relayalloc.AllocateDeps{
+		go estavellealloc.RunAllocateWorker(context.Background(), relayAllocationStore, estavellealloc.AllocateDeps{
 			InfraConnections: infraConnectionStore,
 			Enroll:           enroller,
 			Relays:           relayStore,
@@ -504,7 +504,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// Register after NewAPIHandler has installed the shared auth, CORS, and
 	// metrics middleware and its built-in routes, so the route ordering stays
 	// mechanically clear. Every route here rides that shared user-session
-	// path except relaytelemetry's, which is deliberately outside it —
+	// path except estavelletelemetry's, which is deliberately outside it —
 	// ADR-0021: a relay authenticates itself by an ML-DSA-87 signature, not a
 	// user session, the same reason RegisterEnrollmentMetadata already sits
 	// outside karstapi's own `/karst/v1` subrouter for its own auth check.
@@ -523,8 +523,8 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager(), Audit: auditLog})
 		karstapi.RegisterRelayAllocationEndpoints(router, s.PermissionsManager(), relayAllocationStore, relayStore, relayServiceStore, karstapi.RelayAllocationOptions{Audit: auditLog})
 		karstapi.RegisterRolloutEndpoints(router, s.PermissionsManager(), rolloutStore, nodes, karstapi.RolloutOptions{Audit: auditLog})
-		relaytelemetry.RegisterEndpoints(router, relayStore)
-		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
+		estavelletelemetry.RegisterEndpoints(router, relayStore)
+		estavelleusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)
 	}}); err != nil {
 		return nil, fmt.Errorf("karst: register API extension: %w", err)

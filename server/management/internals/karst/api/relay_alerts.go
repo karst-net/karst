@@ -12,7 +12,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/netbirdio/netbird/management/internals/karst/billing"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -21,13 +21,13 @@ import (
 )
 
 type relayAlertBillingStore interface {
-	EvaluateAndRecordRelayAlerts(context.Context, relayusage.Report, *int64) ([]billing.RelayAlertCandidate, error)
+	EvaluateAndRecordRelayAlerts(context.Context, estavelleusage.Report, *int64) ([]billing.RelayAlertCandidate, error)
 	RelayAlerts(context.Context, time.Time, time.Time) ([]billing.RelayAlertCandidate, error)
 	RelaySpendingCap(context.Context, time.Time, time.Time) (billing.RelaySpendingCap, error)
 }
 
 type relayAlertUsageReporter interface {
-	Report(context.Context, string, time.Time, time.Time) (relayusage.Report, error)
+	Report(context.Context, string, time.Time, time.Time) (estavelleusage.Report, error)
 }
 
 type relayAlertFeed struct {
@@ -113,9 +113,9 @@ func RegisterRelayAlertEndpoints(router *mux.Router, manager permissions.Manager
 			report, err := usageStore.Report(ctx, user.AccountId, start, end)
 			if err != nil {
 				switch {
-				case errors.Is(err, relayusage.ErrInvalidReport):
+				case errors.Is(err, estavelleusage.ErrInvalidReport):
 					err = status.Errorf(status.InvalidArgument, "period must be a past or current UTC calendar month")
-				case errors.Is(err, relayusage.ErrReportLimit):
+				case errors.Is(err, estavelleusage.ErrReportLimit):
 					err = status.Errorf(status.InvalidArgument, "relay usage report exceeds the supported window")
 				default:
 					err = status.Errorf(status.Internal, "could not read relay usage report")

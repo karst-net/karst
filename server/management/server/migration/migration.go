@@ -360,6 +360,30 @@ func MigrateNewField[T any](ctx context.Context, db *gorm.DB, columnName string,
 	return nil
 }
 
+// RenameTable renames oldName to T's current TableName(), if oldName exists
+// and T's table does not yet. Idempotent: once the rename has happened, a
+// later run finds T's table already present and does nothing.
+func RenameTable[T any](ctx context.Context, db *gorm.DB, oldName string) error {
+	var model T
+
+	if !db.Migrator().HasTable(oldName) {
+		log.WithContext(ctx).Debugf("table %s does not exist, no migration needed", oldName)
+		return nil
+	}
+
+	if db.Migrator().HasTable(&model) {
+		log.WithContext(ctx).Debugf("table for %T already exists, no migration needed", model)
+		return nil
+	}
+
+	if err := db.Migrator().RenameTable(oldName, &model); err != nil {
+		return fmt.Errorf("failed to rename table %s: %w", oldName, err)
+	}
+
+	log.WithContext(ctx).Infof("renamed table %s to match %T", oldName, model)
+	return nil
+}
+
 func DropIndex[T any](ctx context.Context, db *gorm.DB, indexName string) error {
 	var model T
 

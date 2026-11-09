@@ -9,7 +9,7 @@
 // bins/karst-scaler-k8s's own K8sDriver manages a StatefulSet's ordinal
 // pods for the separate continuous pool autoscaler (ADR-0045 §7 Phase 2),
 // a pool shape ADR-0067's "Alternatives rejected" already declined to
-// force onto relayalloc's one-named-allocation semantics a second time.
+// force onto estavellealloc's one-named-allocation semantics a second time.
 // This package instead creates one bare Pod per allocation directly,
 // the same relationship awsdriver's RunInstances call has to AWS: Karst
 // builds the resource from LaunchDefaults, rather than dispatching
@@ -46,7 +46,7 @@ const (
 // drainTimeout/drainPollInterval mirror awsdriver's own constants in
 // spirit -- a pod's own termination (container runtime teardown, kubelet
 // status propagation) is typically faster than an EC2 stop, but still not
-// instant, and this must not hang relayalloc's whole reconciliation tick.
+// instant, and this must not hang estavellealloc's whole reconciliation tick.
 const (
 	drainTimeout      = 30 * time.Second
 	drainPollInterval = 2 * time.Second
@@ -104,7 +104,7 @@ var _ infraprovision.Driver = (*Driver)(nil)
 // caller-chosen -- so this driver skips the list-then-filter dance
 // entirely and just reads the name it would have created. Embedding
 // allocationID directly is safe: it is always an xid
-// (relayalloc.Store.Create's xid.New().String()), lowercase alphanumeric
+// (estavellealloc.Store.Create's xid.New().String()), lowercase alphanumeric
 // and well within the 253-character DNS-subdomain limit.
 func podName(allocationID string) string {
 	return "karst-relay-" + allocationID
@@ -234,7 +234,7 @@ func (d *Driver) Drain(ctx context.Context, instanceID string) error {
 // Destroy reads the tls-server-name annotation back while the pod still
 // fully exists, *then* deletes -- the same read-before-terminate ordering
 // awsdriver's Destroy and nomaddriver's Destroy both use, so a caller can
-// still deenroll the matching relayreg row by name after this returns.
+// still deenroll the matching estavellereg row by name after this returns.
 func (d *Driver) Destroy(ctx context.Context, instanceID string) (string, error) {
 	tlsServerName, err := d.TLSServerName(ctx, instanceID)
 	if err != nil {

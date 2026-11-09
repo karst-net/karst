@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +48,7 @@ func TestPilotRateScheduleProducesApprovedSensitivityExamples(t *testing.T) {
 				Start: start, End: end, Coverage: "complete", Devices: &deviceCount,
 			}},
 		}
-		relayReport := relayusage.Report{
+		relayReport := estavelleusage.Report{
 			Start: start, End: end, AsOf: end, Coverage: "authorized_producers",
 			HistoryComplete: true, Complete: true, ExpectedWindows: 1,
 			ReportedBytes: strconv.FormatInt(tc.relayGB*1_000_000_000, 10),

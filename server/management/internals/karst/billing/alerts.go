@@ -8,7 +8,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 )
 
 // RelayAlertCandidate is a deterministic threshold crossing. It is not sent or
@@ -46,7 +46,7 @@ func MaxRelayBytesForOverage(schedule RateSchedule, overageMinor int64) (*big.In
 // lower-bound candidates for incomplete reports; UsageComplete makes that
 // limitation explicit for the eventual notification. No alert channel,
 // deduplication state, or customer preference is assumed here.
-func EvaluateRelayAlerts(report relayusage.Report, schedule RateSchedule, capOverageMinor *int64) ([]RelayAlertCandidate, error) {
+func EvaluateRelayAlerts(report estavelleusage.Report, schedule RateSchedule, capOverageMinor *int64) ([]RelayAlertCandidate, error) {
 	if err := validateRateSchedule(schedule); err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func EvaluateRelayAlerts(report relayusage.Report, schedule RateSchedule, capOve
 	}
 	bytes, ok := new(big.Int).SetString(report.ReportedBytes, 10)
 	if !ok || bytes.Sign() < 0 || bytes.String() != report.ReportedBytes {
-		return nil, relayusage.ErrReportData
+		return nil, estavelleusage.ErrReportData
 	}
 	if capOverageMinor != nil && (*capOverageMinor < 0 || schedule.RelayMinorPerUnit == 0) {
 		return nil, ErrInvalidRateSchedule
@@ -98,7 +98,7 @@ func EvaluateRelayAlerts(report relayusage.Report, schedule RateSchedule, capOve
 	return candidates, nil
 }
 
-func relayReportComplete(report relayusage.Report) bool {
+func relayReportComplete(report estavelleusage.Report) bool {
 	if !report.Complete || !report.HistoryComplete || report.Coverage != "authorized_producers" || report.ExpectedWindows == 0 ||
 		report.MissingWindows != 0 || report.UnexpectedWindows != 0 {
 		return false

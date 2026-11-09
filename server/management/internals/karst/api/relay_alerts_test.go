@@ -17,7 +17,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/billing"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/auth"
@@ -28,10 +28,10 @@ type relayAlertUsageStub struct {
 	calls   int
 }
 
-func (s *relayAlertUsageStub) Report(_ context.Context, account string, start, end time.Time) (relayusage.Report, error) {
+func (s *relayAlertUsageStub) Report(_ context.Context, account string, start, end time.Time) (estavelleusage.Report, error) {
 	s.account = account
 	s.calls++
-	return relayusage.Report{Start: start, End: end, AsOf: time.Now().UTC(), ReportedBytes: "123"}, nil
+	return estavelleusage.Report{Start: start, End: end, AsOf: time.Now().UTC(), ReportedBytes: "123"}, nil
 }
 
 type relayAlertBillingStub struct {
@@ -40,7 +40,7 @@ type relayAlertBillingStub struct {
 	alerts    []billing.RelayAlertCandidate
 }
 
-func (s *relayAlertBillingStub) EvaluateAndRecordRelayAlerts(_ context.Context, _ relayusage.Report, cap *int64) ([]billing.RelayAlertCandidate, error) {
+func (s *relayAlertBillingStub) EvaluateAndRecordRelayAlerts(_ context.Context, _ estavelleusage.Report, cap *int64) ([]billing.RelayAlertCandidate, error) {
 	s.evaluated = true
 	if cap != nil {
 		return nil, errors.New("unexpected cap")

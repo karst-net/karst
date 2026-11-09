@@ -14,9 +14,9 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayalloc"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellealloc"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
 	"github.com/netbirdio/netbird/shared/management/http/util"
@@ -24,25 +24,25 @@ import (
 )
 
 type relayAllocationStore interface {
-	Create(context.Context, relayalloc.Allocation) (*relayalloc.Allocation, error)
-	List(context.Context) ([]relayalloc.Allocation, error)
-	Get(context.Context, string) (*relayalloc.Allocation, error)
-	Transition(ctx context.Context, id string, expectedRevision uint64, expectedState, to, reason, instanceID, relayID string) (*relayalloc.Allocation, error)
-	RequestDeprovision(ctx context.Context, id string, expectedRevision uint64) (*relayalloc.Allocation, error)
+	Create(context.Context, estavellealloc.Allocation) (*estavellealloc.Allocation, error)
+	List(context.Context) ([]estavellealloc.Allocation, error)
+	Get(context.Context, string) (*estavellealloc.Allocation, error)
+	Transition(ctx context.Context, id string, expectedRevision uint64, expectedState, to, reason, instanceID, relayID string) (*estavellealloc.Allocation, error)
+	RequestDeprovision(ctx context.Context, id string, expectedRevision uint64) (*estavellealloc.Allocation, error)
 	Delete(ctx context.Context, id string, expectedRevision uint64) error
 }
 
 type relayAllocationRegistry interface {
-	FindByTLSServerName(context.Context, string) (*relayreg.StoredRelay, error)
+	FindByTLSServerName(context.Context, string) (*estavellereg.StoredEstavelle, error)
 }
 
-// relayAllocationGrantStore is relayservice.Store's own Create/Delete,
+// relayAllocationGrantStore is estavelleservice.Store's own Create/Delete,
 // reused directly rather than re-implemented -- ADR-0063 is explicit that
 // granting must call "that exact transactional path", not a second one.
-// Delete here only removes the association (relayservice.Store.Delete's
+// Delete here only removes the association (estavelleservice.Store.Delete's
 // own doc comment); it never touches the backend's registry row.
 type relayAllocationGrantStore interface {
-	Create(context.Context, relayservice.Service) (*relayservice.Service, error)
+	Create(context.Context, estavelleservice.Service) (*estavelleservice.Service, error)
 	Delete(context.Context, string) error
 }
 
@@ -59,7 +59,7 @@ type RelayAllocationOptions struct {
 // trying to fold it into the same pattern.
 //
 // Deprecated, not removed: ADR-0045's 2026-11-04 addendum moves relay
-// allocation's own reconciliation in-process (package relayalloc,
+// allocation's own reconciliation in-process (package estavellealloc,
 // awsdrive_loop.go's RunAllocateWorker), which drives the same state
 // machine through direct Go calls instead of these six routes. Nothing in
 // this codebase calls them anymore, but they are kept working, exactly as
@@ -77,7 +77,7 @@ var relayAllocationScalerActionPath = regexp.MustCompile(`^/karst/v1/relay-alloc
 // single-purpose actions (pending/provisioning/grant/revoke/deprovisioned/
 // failed) that only the Scaler role's hard-allowlisted PAT can reach -- the
 // reconciliation loop issue #455 adds next drives an allocation through
-// these one step at a time. grant/revoke call relayservice directly,
+// these one step at a time. grant/revoke call estavelleservice directly,
 // in-process: the Scaler role itself is never given relay-services access,
 // keeping its reach exactly as narrow as roles.Scaler's own doc comment
 // says it should be.
@@ -112,18 +112,18 @@ func RegisterRelayAllocationEndpoints(router *mux.Router, manager permissions.Ma
 			util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay allocation storage is not configured"), w)
 			return
 		}
-		allocCtx := relayalloc.WithAccount(r.Context(), user.AccountId)
+		allocCtx := estavellealloc.WithAccount(r.Context(), user.AccountId)
 		switch mux.CurrentRoute(r).GetName() {
 		case "relay-allocations-pending":
 			handleRelayAllocationsPending(w, r, allocCtx, store)
 		case "relay-allocation-provisioning":
 			handleRelayAllocationProvisioning(w, r, allocCtx, store)
 		case "relay-allocation-grant":
-			registryCtx := relayreg.WithAccount(r.Context(), user.AccountId)
-			serviceCtx := relayservice.WithActor(relayservice.WithAccount(r.Context(), user.AccountId), user.UserId)
+			registryCtx := estavellereg.WithAccount(r.Context(), user.AccountId)
+			serviceCtx := estavelleservice.WithActor(estavelleservice.WithAccount(r.Context(), user.AccountId), user.UserId)
 			handleRelayAllocationGrant(w, r, allocCtx, registryCtx, serviceCtx, store, registry, grants)
 		case "relay-allocation-revoke":
-			serviceCtx := relayservice.WithActor(relayservice.WithAccount(r.Context(), user.AccountId), user.UserId)
+			serviceCtx := estavelleservice.WithActor(estavelleservice.WithAccount(r.Context(), user.AccountId), user.UserId)
 			handleRelayAllocationRevoke(w, r, allocCtx, serviceCtx, store, grants)
 		case "relay-allocation-deprovisioned":
 			handleRelayAllocationDeprovisioned(w, r, allocCtx, store)
@@ -182,7 +182,7 @@ func handleRelayAllocationsList(w http.ResponseWriter, _ *http.Request, ctx cont
 }
 
 func handleRelayAllocationsCreate(w http.ResponseWriter, r *http.Request, ctx context.Context, store relayAllocationStore) {
-	var draft relayalloc.Allocation
+	var draft estavellealloc.Allocation
 	if !decodeRelayAllocationRequest(w, r, 8192, &draft) {
 		return
 	}
@@ -259,10 +259,10 @@ func handleRelayAllocationsPending(w http.ResponseWriter, _ *http.Request, ctx c
 		relayAllocationError(ctx, w, err)
 		return
 	}
-	pending := make([]relayalloc.Allocation, 0, len(rows))
+	pending := make([]estavellealloc.Allocation, 0, len(rows))
 	for _, row := range rows {
 		switch row.State {
-		case relayalloc.StateRequested, relayalloc.StateProvisioning, relayalloc.StateGranting, relayalloc.StateRevoking, relayalloc.StateDeprovisioning:
+		case estavellealloc.StateRequested, estavellealloc.StateProvisioning, estavellealloc.StateGranting, estavellealloc.StateRevoking, estavellealloc.StateDeprovisioning:
 			pending = append(pending, row)
 		}
 	}
@@ -271,7 +271,7 @@ func handleRelayAllocationsPending(w http.ResponseWriter, _ *http.Request, ctx c
 
 // handleRelayAllocationProvisioning records the Driver::create result the
 // loop already has once Driver::create returns -- bookkeeping only, no
-// relayservice call here.
+// estavelleservice call here.
 func handleRelayAllocationProvisioning(w http.ResponseWriter, r *http.Request, ctx context.Context, store relayAllocationStore) {
 	var request struct {
 		ExpectedRevision *uint64 `json:"expected_revision"`
@@ -290,11 +290,11 @@ func handleRelayAllocationProvisioning(w http.ResponseWriter, r *http.Request, c
 		relayAllocationError(ctx, w, err)
 		return
 	}
-	if current.State == relayalloc.StateProvisioning {
+	if current.State == estavellealloc.StateProvisioning {
 		util.WriteJSONObject(ctx, w, current) // already recorded -- idempotent retry
 		return
 	}
-	updated, err := store.Transition(ctx, id, *request.ExpectedRevision, relayalloc.StateRequested, relayalloc.StateProvisioning, "", request.InstanceID, "")
+	updated, err := store.Transition(ctx, id, *request.ExpectedRevision, estavellealloc.StateRequested, estavellealloc.StateProvisioning, "", request.InstanceID, "")
 	if err != nil {
 		relayAllocationError(ctx, w, err)
 		return
@@ -305,8 +305,8 @@ func handleRelayAllocationProvisioning(w http.ResponseWriter, r *http.Request, c
 // handleRelayAllocationGrant is ADR-0063's "granting" step end to end:
 // look up the now-registered relay by the tls_server_name the loop's own
 // Driver computed before the instance even existed, then call
-// relayservice.Create with the allocation's permitted groups -- the exact
-// transactional path relayservice.UpdateAccess's own callers use, not a
+// estavelleservice.Create with the allocation's permitted groups -- the exact
+// transactional path estavelleservice.UpdateAccess's own callers use, not a
 // second one. A 404 here specifically means "not registered yet, keep
 // polling," distinct from every other error, which the loop should report
 // through /failed instead of retrying forever.
@@ -333,14 +333,14 @@ func handleRelayAllocationGrant(w http.ResponseWriter, r *http.Request, allocCtx
 		return
 	}
 	switch current.State {
-	case relayalloc.StateReady:
+	case estavellealloc.StateReady:
 		util.WriteJSONObject(allocCtx, w, current) // already granted -- idempotent retry
 		return
-	case relayalloc.StateGranting:
+	case estavellealloc.StateGranting:
 		// A previous attempt already recorded intent; fall through and
 		// retry the relay lookup/grant call itself.
-	case relayalloc.StateProvisioning:
-		current, err = store.Transition(allocCtx, id, *request.ExpectedRevision, relayalloc.StateProvisioning, relayalloc.StateGranting, "", "", "")
+	case estavellealloc.StateProvisioning:
+		current, err = store.Transition(allocCtx, id, *request.ExpectedRevision, estavellealloc.StateProvisioning, estavellealloc.StateGranting, "", "", "")
 		if err != nil {
 			relayAllocationError(allocCtx, w, err)
 			return
@@ -351,14 +351,14 @@ func handleRelayAllocationGrant(w http.ResponseWriter, r *http.Request, allocCtx
 	}
 	relay, err := registry.FindByTLSServerName(registryCtx, request.TLSServerName)
 	if err != nil {
-		if errors.Is(err, relayreg.ErrNotFound) {
+		if errors.Is(err, estavellereg.ErrNotFound) {
 			util.WriteErrorResponse("relay has not registered yet", http.StatusNotFound, w)
 			return
 		}
 		relayAllocationError(allocCtx, w, err)
 		return
 	}
-	service := relayservice.Service{
+	service := estavelleservice.Service{
 		ID:            id,
 		PonorID:       relay.ID,
 		AccessManaged: true,
@@ -369,8 +369,8 @@ func handleRelayAllocationGrant(w http.ResponseWriter, r *http.Request, allocCtx
 	// ErrExists here means a previous attempt's Create already landed and
 	// only the Transition below crashed or timed out -- resuming forward
 	// is correct, not a real failure.
-	if _, err := grants.Create(serviceCtx, service); err != nil && !errors.Is(err, relayservice.ErrExists) {
-		failed, ferr := store.Transition(allocCtx, id, current.Revision, relayalloc.StateGranting, relayalloc.StateFailed, err.Error(), "", "")
+	if _, err := grants.Create(serviceCtx, service); err != nil && !errors.Is(err, estavelleservice.ErrExists) {
+		failed, ferr := store.Transition(allocCtx, id, current.Revision, estavellealloc.StateGranting, estavellealloc.StateFailed, err.Error(), "", "")
 		if ferr != nil {
 			relayAllocationError(allocCtx, w, ferr)
 			return
@@ -378,7 +378,7 @@ func handleRelayAllocationGrant(w http.ResponseWriter, r *http.Request, allocCtx
 		util.WriteJSONObject(allocCtx, w, failed)
 		return
 	}
-	ready, err := store.Transition(allocCtx, id, current.Revision, relayalloc.StateGranting, relayalloc.StateReady, "", "", relay.ID)
+	ready, err := store.Transition(allocCtx, id, current.Revision, estavellealloc.StateGranting, estavellealloc.StateReady, "", "", relay.ID)
 	if err != nil {
 		relayAllocationError(allocCtx, w, err)
 		return
@@ -386,9 +386,9 @@ func handleRelayAllocationGrant(w http.ResponseWriter, r *http.Request, allocCtx
 	util.WriteJSONObject(allocCtx, w, ready)
 }
 
-// handleRelayAllocationRevoke withdraws the grant relayservice.Store holds
+// handleRelayAllocationRevoke withdraws the grant estavelleservice.Store holds
 // before anything about teardown is reported back as deprovisioning --
-// ADR-0063's reversed order's first half. relayservice.ErrNotFound (never
+// ADR-0063's reversed order's first half. estavelleservice.ErrNotFound (never
 // granted, or already revoked by a previous attempt) is success, not a
 // failure, mirroring AwsDriver's own deenroll-404-is-success convention.
 func handleRelayAllocationRevoke(w http.ResponseWriter, r *http.Request, allocCtx, serviceCtx context.Context, store relayAllocationStore, grants relayAllocationGrantStore) {
@@ -412,16 +412,16 @@ func handleRelayAllocationRevoke(w http.ResponseWriter, r *http.Request, allocCt
 		relayAllocationError(allocCtx, w, err)
 		return
 	}
-	if current.State == relayalloc.StateDeprovisioning || current.State == relayalloc.StateDeprovisioned {
+	if current.State == estavellealloc.StateDeprovisioning || current.State == estavellealloc.StateDeprovisioned {
 		util.WriteJSONObject(allocCtx, w, current) // already withdrawn -- idempotent retry
 		return
 	}
-	if current.State != relayalloc.StateRevoking {
+	if current.State != estavellealloc.StateRevoking {
 		util.WriteErrorResponse("allocation is not awaiting revocation", http.StatusConflict, w)
 		return
 	}
-	if err := grants.Delete(serviceCtx, id); err != nil && !errors.Is(err, relayservice.ErrNotFound) {
-		failed, ferr := store.Transition(allocCtx, id, current.Revision, relayalloc.StateRevoking, relayalloc.StateFailed, err.Error(), "", "")
+	if err := grants.Delete(serviceCtx, id); err != nil && !errors.Is(err, estavelleservice.ErrNotFound) {
+		failed, ferr := store.Transition(allocCtx, id, current.Revision, estavellealloc.StateRevoking, estavellealloc.StateFailed, err.Error(), "", "")
 		if ferr != nil {
 			relayAllocationError(allocCtx, w, ferr)
 			return
@@ -429,7 +429,7 @@ func handleRelayAllocationRevoke(w http.ResponseWriter, r *http.Request, allocCt
 		util.WriteJSONObject(allocCtx, w, failed)
 		return
 	}
-	deprovisioning, err := store.Transition(allocCtx, id, current.Revision, relayalloc.StateRevoking, relayalloc.StateDeprovisioning, "", "", "")
+	deprovisioning, err := store.Transition(allocCtx, id, current.Revision, estavellealloc.StateRevoking, estavellealloc.StateDeprovisioning, "", "", "")
 	if err != nil {
 		relayAllocationError(allocCtx, w, err)
 		return
@@ -438,7 +438,7 @@ func handleRelayAllocationRevoke(w http.ResponseWriter, r *http.Request, allocCt
 }
 
 // handleRelayAllocationDeprovisioned records that Driver::drain/destroy
-// already completed -- bookkeeping only, no relayservice call here (the
+// already completed -- bookkeeping only, no estavelleservice call here (the
 // grant was already withdrawn by /revoke, before compute teardown began).
 func handleRelayAllocationDeprovisioned(w http.ResponseWriter, r *http.Request, ctx context.Context, store relayAllocationStore) {
 	var request struct {
@@ -457,11 +457,11 @@ func handleRelayAllocationDeprovisioned(w http.ResponseWriter, r *http.Request, 
 		relayAllocationError(ctx, w, err)
 		return
 	}
-	if current.State == relayalloc.StateDeprovisioned {
+	if current.State == estavellealloc.StateDeprovisioned {
 		util.WriteJSONObject(ctx, w, current)
 		return
 	}
-	updated, err := store.Transition(ctx, id, *request.ExpectedRevision, relayalloc.StateDeprovisioning, relayalloc.StateDeprovisioned, "", "", "")
+	updated, err := store.Transition(ctx, id, *request.ExpectedRevision, estavellealloc.StateDeprovisioning, estavellealloc.StateDeprovisioned, "", "", "")
 	if err != nil {
 		relayAllocationError(ctx, w, err)
 		return
@@ -491,11 +491,11 @@ func handleRelayAllocationFailed(w http.ResponseWriter, r *http.Request, ctx con
 		relayAllocationError(ctx, w, err)
 		return
 	}
-	if current.State == relayalloc.StateFailed {
+	if current.State == estavellealloc.StateFailed {
 		util.WriteJSONObject(ctx, w, current)
 		return
 	}
-	updated, err := store.Transition(ctx, id, *request.ExpectedRevision, current.State, relayalloc.StateFailed, request.Reason, "", "")
+	updated, err := store.Transition(ctx, id, *request.ExpectedRevision, current.State, estavellealloc.StateFailed, request.Reason, "", "")
 	if err != nil {
 		relayAllocationError(ctx, w, err)
 		return
@@ -505,13 +505,13 @@ func handleRelayAllocationFailed(w http.ResponseWriter, r *http.Request, ctx con
 
 func relayAllocationError(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, relayalloc.ErrInvalid):
+	case errors.Is(err, estavellealloc.ErrInvalid):
 		util.WriteError(ctx, status.Errorf(status.InvalidArgument, "%s", err), w)
-	case errors.Is(err, relayalloc.ErrExists):
+	case errors.Is(err, estavellealloc.ErrExists):
 		util.WriteError(ctx, status.Errorf(status.AlreadyExists, "allocation changed; reload before retrying"), w)
-	case errors.Is(err, relayalloc.ErrNotFound):
+	case errors.Is(err, estavellealloc.ErrNotFound):
 		util.WriteError(ctx, status.Errorf(status.NotFound, "relay allocation not found"), w)
-	case errors.Is(err, relayalloc.ErrNoAccount):
+	case errors.Is(err, estavellealloc.ErrNoAccount):
 		util.WriteError(ctx, status.Errorf(status.PermissionDenied, "account scope required"), w)
 	default:
 		util.WriteError(ctx, status.Errorf(status.Internal, "relay allocation storage failed"), w)
