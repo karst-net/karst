@@ -37,10 +37,10 @@ func (s *relayAlertUsageStub) Report(_ context.Context, account string, start, e
 type relayAlertBillingStub struct {
 	evaluated bool
 	listed    bool
-	alerts    []billing.RelayAlertCandidate
+	alerts    []billing.EstavelleAlertCandidate
 }
 
-func (s *relayAlertBillingStub) EvaluateAndRecordRelayAlerts(_ context.Context, _ estavelleusage.Report, cap *int64) ([]billing.RelayAlertCandidate, error) {
+func (s *relayAlertBillingStub) EvaluateAndRecordEstavelleAlerts(_ context.Context, _ estavelleusage.Report, cap *int64) ([]billing.EstavelleAlertCandidate, error) {
 	s.evaluated = true
 	if cap != nil {
 		return nil, errors.New("unexpected cap")
@@ -48,13 +48,13 @@ func (s *relayAlertBillingStub) EvaluateAndRecordRelayAlerts(_ context.Context, 
 	return s.alerts, nil
 }
 
-func (s *relayAlertBillingStub) RelayAlerts(context.Context, time.Time, time.Time) ([]billing.RelayAlertCandidate, error) {
+func (s *relayAlertBillingStub) EstavelleAlerts(context.Context, time.Time, time.Time) ([]billing.EstavelleAlertCandidate, error) {
 	s.listed = true
 	return s.alerts, nil
 }
 
-func (s *relayAlertBillingStub) RelaySpendingCap(context.Context, time.Time, time.Time) (billing.RelaySpendingCap, error) {
-	return billing.RelaySpendingCap{}, billing.ErrRelayCapNotConfigured
+func (s *relayAlertBillingStub) EstavelleSpendingCap(context.Context, time.Time, time.Time) (billing.EstavelleSpendingCap, error) {
+	return billing.EstavelleSpendingCap{}, billing.ErrEstavelleCapNotConfigured
 }
 
 type relayAlertAuditStub struct {
@@ -71,12 +71,12 @@ func (a *relayAlertAuditStub) Append(_ context.Context, userID, action, _, _ str
 func TestRelayAlertFeedIsAccountScopedForOwnersAndAdmins(t *testing.T) {
 	usageStore := &relayAlertUsageStub{}
 	start := time.Now().UTC().Format("2006-01")
-	alerts := []billing.RelayAlertCandidate{{Threshold: 75, ReportedBytes: "123", ThresholdBytes: "100"}}
+	alerts := []billing.EstavelleAlertCandidate{{Threshold: 75, ReportedBytes: "123", ThresholdBytes: "100"}}
 	billingStore := &relayAlertBillingStub{alerts: alerts}
 	auditLog := &relayAlertAuditStub{}
 	router := mux.NewRouter()
-	RegisterRelayAlertEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, usageStore, billingStore, auditLog)
-	req := httptest.NewRequest(http.MethodGet, "/karst/v1/usage/relay-alerts?period="+start, nil)
+	RegisterEstavelleAlertEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, usageStore, billingStore, auditLog)
+	req := httptest.NewRequest(http.MethodGet, "/karst/v1/usage/estavelle-alerts?period="+start, nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-1", UserId: "billing-viewer"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
@@ -87,14 +87,14 @@ func TestRelayAlertFeedIsAccountScopedForOwnersAndAdmins(t *testing.T) {
 	require.True(t, billingStore.evaluated)
 	require.True(t, billingStore.listed)
 	require.Equal(t, "billing-viewer", auditLog.userID)
-	require.Equal(t, "karst.billing.relay_alerts.view", auditLog.action)
+	require.Equal(t, "karst.billing.estavelle_alerts.view", auditLog.action)
 	require.Contains(t, response.Body.String(), `"threshold_percent":75`)
 	require.Contains(t, response.Body.String(), `"coverage_complete":false`)
 	require.Contains(t, response.Body.String(), "lower bounds")
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
 	spec := loadKarstOpenAPISchemas(t)
-	assertDeclaredResponseFields(t, spec, responseSchema(spec, "/usage/relay-alerts", "GET", "200"), body, "relay alert feed")
+	assertDeclaredResponseFields(t, spec, responseSchema(spec, "/usage/estavelle-alerts", "GET", "200"), body, "estavelle alert feed")
 }
 
 func TestRelayAlertFeedRejectsUnauthorizedAndMalformedPeriod(t *testing.T) {
@@ -103,15 +103,15 @@ func TestRelayAlertFeedRejectsUnauthorizedAndMalformedPeriod(t *testing.T) {
 		role types.UserRole
 		url  string
 	}{
-		{name: "regular user", role: types.UserRoleUser, url: "/karst/v1/usage/relay-alerts?period=2026-10"},
-		{name: "malformed month", role: types.UserRoleOwner, url: "/karst/v1/usage/relay-alerts?period=2026-13"},
-		{name: "duplicate month", role: types.UserRoleOwner, url: "/karst/v1/usage/relay-alerts?period=2026-10&period=2026-11"},
+		{name: "regular user", role: types.UserRoleUser, url: "/karst/v1/usage/estavelle-alerts?period=2026-10"},
+		{name: "malformed month", role: types.UserRoleOwner, url: "/karst/v1/usage/estavelle-alerts?period=2026-13"},
+		{name: "duplicate month", role: types.UserRoleOwner, url: "/karst/v1/usage/estavelle-alerts?period=2026-10&period=2026-11"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			usageStore := &relayAlertUsageStub{}
 			billingStore := &relayAlertBillingStub{}
 			router := mux.NewRouter()
-			RegisterRelayAlertEndpoints(router, scanPermissions{role: tc.role}, usageStore, billingStore, &relayAlertAuditStub{})
+			RegisterEstavelleAlertEndpoints(router, scanPermissions{role: tc.role}, usageStore, billingStore, &relayAlertAuditStub{})
 			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-1", UserId: "viewer"})
 			response := httptest.NewRecorder()

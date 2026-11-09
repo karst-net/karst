@@ -520,11 +520,11 @@ async fn request_until_ready(
             Ok(Ok(response)) if response.status == 204 => {
                 let valid_ms = response
                     .headers
-                    .get("x-karst-relay-cap-lease-millis")
+                    .get("x-karst-estavelle-cap-lease-millis")
                     .and_then(|value| value.parse::<u64>().ok());
                 if response
                     .headers
-                    .get("x-karst-relay-cap-mode")
+                    .get("x-karst-estavelle-cap-mode")
                     .map(String::as_str)
                     != Some("uncapped")
                     || valid_ms != Some(UNCAPPED_LEASE_MILLIS)
@@ -542,7 +542,7 @@ async fn request_until_ready(
             Ok(Ok(response)) if response.status == 200 => {
                 let valid_ms = response
                     .headers
-                    .get("x-karst-relay-cap-grant-valid-millis")
+                    .get("x-karst-estavelle-cap-grant-valid-millis")
                     .and_then(|value| value.parse::<u64>().ok())
                     .filter(|millis| *millis > 0 && *millis <= 31 * 24 * 60 * 60 * 1000);
                 let Some(valid_ms) = valid_ms else {

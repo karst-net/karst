@@ -20,11 +20,11 @@ func TestMintAndConsumeRelayEnrollKey(t *testing.T) {
 	account, err := manager.GetOrCreateAccountByUser(context.Background(), auth.UserAuth{UserId: "relay-enroll-user"})
 	require.NoError(t, err)
 
-	secret, err := manager.MintRelayEnrollKey(context.Background(), account.Id, "pool-1", time.Minute)
+	secret, err := manager.MintEstavelleEnrollKey(context.Background(), account.Id, "pool-1", time.Minute)
 	require.NoError(t, err)
 	require.NotEmpty(t, secret)
 
-	accountID, keyID, err := manager.ConsumeRelayEnrollKey(context.Background(), secret)
+	accountID, keyID, err := manager.ConsumeEstavelleEnrollKey(context.Background(), secret)
 	require.NoError(t, err)
 	require.Equal(t, account.Id, accountID)
 	require.NotEmpty(t, keyID)
@@ -36,13 +36,13 @@ func TestConsumeRelayEnrollKey_IsSingleUse(t *testing.T) {
 	account, err := manager.GetOrCreateAccountByUser(context.Background(), auth.UserAuth{UserId: "relay-enroll-user"})
 	require.NoError(t, err)
 
-	secret, err := manager.MintRelayEnrollKey(context.Background(), account.Id, "pool-1", time.Minute)
+	secret, err := manager.MintEstavelleEnrollKey(context.Background(), account.Id, "pool-1", time.Minute)
 	require.NoError(t, err)
 
-	_, _, err = manager.ConsumeRelayEnrollKey(context.Background(), secret)
+	_, _, err = manager.ConsumeEstavelleEnrollKey(context.Background(), secret)
 	require.NoError(t, err)
 
-	_, _, err = manager.ConsumeRelayEnrollKey(context.Background(), secret)
+	_, _, err = manager.ConsumeEstavelleEnrollKey(context.Background(), secret)
 	require.Error(t, err, "a relay-enroll key must not be redeemable twice")
 }
 
@@ -50,14 +50,14 @@ func TestConsumeRelayEnrollKey_RefusesAnUnknownOrExpiredSecret(t *testing.T) {
 	manager, _, err := createManager(t)
 	require.NoError(t, err)
 
-	_, _, err = manager.ConsumeRelayEnrollKey(context.Background(), "NEVER-MINTED")
+	_, _, err = manager.ConsumeEstavelleEnrollKey(context.Background(), "NEVER-MINTED")
 	require.Error(t, err)
 
 	account, err := manager.GetOrCreateAccountByUser(context.Background(), auth.UserAuth{UserId: "relay-enroll-user"})
 	require.NoError(t, err)
-	secret, err := manager.MintRelayEnrollKey(context.Background(), account.Id, "", -time.Second)
+	secret, err := manager.MintEstavelleEnrollKey(context.Background(), account.Id, "", -time.Second)
 	require.NoError(t, err, "a negative duration mints fine -- it just produces an already-expired key")
-	_, _, err = manager.ConsumeRelayEnrollKey(context.Background(), secret)
+	_, _, err = manager.ConsumeEstavelleEnrollKey(context.Background(), secret)
 	require.Error(t, err, "an expired relay-enroll key must be refused")
 }
 
@@ -75,7 +75,7 @@ func TestConsumeRelayEnrollKey_RejectsAnOrdinaryPeerSetupKeySecret(t *testing.T)
 	require.NoError(t, err)
 	require.NotEmpty(t, peerKey.Key)
 
-	_, _, err = manager.ConsumeRelayEnrollKey(context.Background(), peerKey.Key)
+	_, _, err = manager.ConsumeEstavelleEnrollKey(context.Background(), peerKey.Key)
 	require.Error(t, err, "an ordinary peer setup key's plaintext must not redeem as a relay-enroll key")
 }
 
@@ -83,6 +83,6 @@ func TestMintRelayEnrollKey_RequiresAnAccount(t *testing.T) {
 	manager, _, err := createManager(t)
 	require.NoError(t, err)
 
-	_, err = manager.MintRelayEnrollKey(context.Background(), "", "", time.Minute)
+	_, err = manager.MintEstavelleEnrollKey(context.Background(), "", "", time.Minute)
 	require.Error(t, err)
 }

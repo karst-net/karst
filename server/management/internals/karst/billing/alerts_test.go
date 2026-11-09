@@ -21,7 +21,7 @@ func TestEvaluateRelayAlertsIncludesThresholdAndCoverage(t *testing.T) {
 	report.Complete = false
 	report.MissingWindows = 1
 
-	alerts, err := EvaluateRelayAlerts(report, testSchedule(), nil)
+	alerts, err := EvaluateEstavelleAlerts(report, testSchedule(), nil)
 	require.NoError(t, err)
 	require.Len(t, alerts, 2)
 	require.Equal(t, []uint8{75, 90}, []uint8{alerts[0].Threshold, alerts[1].Threshold})
@@ -37,9 +37,9 @@ func TestEvaluateRelayAlertsUsesCappedRelayOverageBudget(t *testing.T) {
 	report := completeRelayReport(start, start.AddDate(0, 1, 0), "18000000000")
 	cap := int64(200) // $2.00 of relay overage permits 10 additional decimal GB.
 
-	alerts, err := EvaluateRelayAlerts(report, testSchedule(), &cap)
+	alerts, err := EvaluateEstavelleAlerts(report, testSchedule(), &cap)
 	require.NoError(t, err)
-	var capAlerts []RelayAlertCandidate
+	var capAlerts []EstavelleAlertCandidate
 	for _, candidate := range alerts {
 		if candidate.Target == "spending_cap" {
 			capAlerts = append(capAlerts, candidate)
@@ -53,15 +53,15 @@ func TestEvaluateRelayAlertsUsesCappedRelayOverageBudget(t *testing.T) {
 
 func TestMaxRelayBytesForOverageTruncatesAndAvoidsOverflow(t *testing.T) {
 	schedule := testSchedule()
-	bytes, err := MaxRelayBytesForOverage(schedule, 1)
+	bytes, err := MaxEstavelleBytesForOverage(schedule, 1)
 	require.NoError(t, err)
 	require.Equal(t, "10050000000", bytes.String())
 
-	bytes, err = MaxRelayBytesForOverage(schedule, int64(^uint64(0)>>1))
+	bytes, err = MaxEstavelleBytesForOverage(schedule, int64(^uint64(0)>>1))
 	require.NoError(t, err)
 	require.True(t, bytes.IsUint64() == false, "large cap byte budget should remain exact beyond uint64")
 
-	_, err = MaxRelayBytesForOverage(schedule, -1)
+	_, err = MaxEstavelleBytesForOverage(schedule, -1)
 	require.ErrorIs(t, err, ErrInvalidRateSchedule)
 }
 
@@ -69,28 +69,28 @@ func TestEvaluateRelayAlertsRejectsInvalidPeriodUsageAndCap(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	report := completeRelayReport(start, start.AddDate(0, 1, 0), "0")
 	report.Start = start.Add(time.Hour)
-	_, err := EvaluateRelayAlerts(report, testSchedule(), nil)
+	_, err := EvaluateEstavelleAlerts(report, testSchedule(), nil)
 	require.ErrorIs(t, err, ErrInvalidPeriod)
 
 	report = completeRelayReport(start, start.AddDate(0, 1, 0), "01")
-	_, err = EvaluateRelayAlerts(report, testSchedule(), nil)
+	_, err = EvaluateEstavelleAlerts(report, testSchedule(), nil)
 	require.ErrorIs(t, err, estavelleusage.ErrReportData)
 
 	report = completeRelayReport(start, start.AddDate(0, 1, 0), "0")
 	report.End = start.AddDate(0, 1, 1)
 	report.AsOf = report.End
-	_, err = EvaluateRelayAlerts(report, testSchedule(), nil)
+	_, err = EvaluateEstavelleAlerts(report, testSchedule(), nil)
 	require.ErrorIs(t, err, ErrInvalidPeriod)
 
 	report = completeRelayReport(start, start.AddDate(0, 1, 0), "0")
 	negativeCap := int64(-1)
-	_, err = EvaluateRelayAlerts(report, testSchedule(), &negativeCap)
+	_, err = EvaluateEstavelleAlerts(report, testSchedule(), &negativeCap)
 	require.ErrorIs(t, err, ErrInvalidRateSchedule)
 
 	noRelayPrice := testSchedule()
 	noRelayPrice.RelayMinorPerUnit = 0
 	cap := int64(1)
-	_, err = EvaluateRelayAlerts(report, noRelayPrice, &cap)
+	_, err = EvaluateEstavelleAlerts(report, noRelayPrice, &cap)
 	require.ErrorIs(t, err, ErrInvalidRateSchedule)
 }
 
@@ -103,15 +103,15 @@ func TestRelayAlertStoreIsAccountScopedAndDeduplicatesThresholds(t *testing.T) {
 	require.NoError(t, store.PutSchedule(ctx, schedule))
 	require.NoError(t, store.AssignSchedule(ctx, start, end, schedule.Version))
 	report := completeRelayReport(start, end, "9000000000")
-	alerts, err := EvaluateRelayAlerts(report, schedule, nil)
+	alerts, err := EvaluateEstavelleAlerts(report, schedule, nil)
 	require.NoError(t, err)
 	require.NoError(t, store.RecordRelayAlerts(ctx, alerts))
 	require.NoError(t, store.RecordRelayAlerts(ctx, alerts))
 
-	stored, err := store.RelayAlerts(ctx, start, end)
+	stored, err := store.EstavelleAlerts(ctx, start, end)
 	require.NoError(t, err)
 	require.Equal(t, alerts, stored)
-	other, err := store.RelayAlerts(WithAccount(context.Background(), "org-other"), start, end)
+	other, err := store.EstavelleAlerts(WithAccount(context.Background(), "org-other"), start, end)
 	require.NoError(t, err)
 	require.Empty(t, other)
 	if err := store.RecordRelayAlerts(context.Background(), alerts); !errors.Is(err, ErrNoBillingAccount) {
@@ -125,7 +125,7 @@ func TestRelayAlertStoreRequiresAssignedSchedule(t *testing.T) {
 	end := start.AddDate(0, 1, 0)
 	schedule := testSchedule()
 	report := completeRelayReport(start, end, "9000000000")
-	alerts, err := EvaluateRelayAlerts(report, schedule, nil)
+	alerts, err := EvaluateEstavelleAlerts(report, schedule, nil)
 	require.NoError(t, err)
 	err = store.RecordRelayAlerts(WithAccount(context.Background(), "org-unassigned"), alerts)
 	require.ErrorIs(t, err, ErrScheduleUnassigned)
@@ -145,7 +145,7 @@ func TestRelayAlertRefreshKeepsOneThresholdAndUpdatesCoverage(t *testing.T) {
 	incomplete.Complete = false
 	incomplete.AsOf = start.Add(24 * time.Hour)
 	incomplete.End = incomplete.AsOf
-	first, err := EvaluateRelayAlerts(incomplete, schedule, nil)
+	first, err := EvaluateEstavelleAlerts(incomplete, schedule, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, first)
 	require.False(t, first[0].UsageComplete)
@@ -154,11 +154,11 @@ func TestRelayAlertRefreshKeepsOneThresholdAndUpdatesCoverage(t *testing.T) {
 	complete := completeRelayReport(start, end, "9500000000")
 	complete.AsOf = start.Add(48 * time.Hour)
 	complete.End = complete.AsOf
-	updated, err := EvaluateRelayAlerts(complete, schedule, nil)
+	updated, err := EvaluateEstavelleAlerts(complete, schedule, nil)
 	require.NoError(t, err)
 	require.NoError(t, store.RecordRelayAlerts(ctx, updated))
 
-	stored, err := store.RelayAlerts(ctx, start, end)
+	stored, err := store.EstavelleAlerts(ctx, start, end)
 	require.NoError(t, err)
 	require.Len(t, stored, len(first), "threshold crossings remain one feed item per period")
 	require.Equal(t, updated, stored, "latest report refreshes the feed snapshot and completeness state")

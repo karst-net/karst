@@ -69,7 +69,7 @@ func newTestRelay(t *testing.T, accountID string) testRelay {
 	if err != nil {
 		t.Fatalf("generate identity: %v", err)
 	}
-	rawID := estavellereg.RelayID(key.Public())
+	rawID := estavellereg.EstavelleID(key.Public())
 	return testRelay{
 		key:       key,
 		accountID: accountID,
@@ -117,7 +117,7 @@ func (r testRelay) sign(t *testing.T, req report) report {
 		t.Fatalf("decode id: %v", err)
 	}
 	req.RelayID = r.id
-	sig, err := r.key.Sign([]byte(identity.RelayTelemetryContext), signingInput(rawID, req))
+	sig, err := r.key.Sign([]byte(identity.EstavelleTelemetryContext), signingInput(rawID, req))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -131,8 +131,8 @@ func post(t *testing.T, h http.Handler, relayID string, req report) *httptest.Re
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/"+relayID+"/telemetry", bytes.NewReader(body))
-	r = mux.SetURLVars(r, map[string]string{"relayId": relayID})
+	r := httptest.NewRequest(http.MethodPost, "/karst/v1/estavelles/"+relayID+"/telemetry", bytes.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"estavelleId": relayID})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
@@ -333,8 +333,8 @@ func TestAnOutOfRangeLocationDropsOnlyTheLocation(t *testing.T) {
 
 func TestMalformedJSONIsRejected(t *testing.T) {
 	store := &fakeStore{}
-	r := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/x/telemetry", bytes.NewReader([]byte("not json")))
-	r = mux.SetURLVars(r, map[string]string{"relayId": "x"})
+	r := httptest.NewRequest(http.MethodPost, "/karst/v1/estavelles/x/telemetry", bytes.NewReader([]byte("not json")))
+	r = mux.SetURLVars(r, map[string]string{"estavelleId": "x"})
 	w := httptest.NewRecorder()
 	newHandler(store).ServeHTTP(w, r)
 

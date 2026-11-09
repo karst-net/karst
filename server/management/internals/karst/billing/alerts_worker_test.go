@@ -38,14 +38,14 @@ func TestEvaluateCurrentRelayAlertsOnlyProcessesAssignedAccounts(t *testing.T) {
 		report := completeRelayReport(start, reportEnd, "9000000000")
 		return report, nil
 	})
-	require.NoError(t, store.EvaluateCurrentRelayAlerts(ctx, reporter, now))
+	require.NoError(t, store.EvaluateCurrentEstavelleAlerts(ctx, reporter, now))
 	require.Equal(t, 1, reports)
 
-	alerts, err := store.RelayAlerts(accountCtx, start, periodEnd)
+	alerts, err := store.EstavelleAlerts(accountCtx, start, periodEnd)
 	require.NoError(t, err)
 	require.Len(t, alerts, 2)
 
-	other, err := store.RelayAlerts(WithAccount(ctx, "unconfigured-account"), start, periodEnd)
+	other, err := store.EstavelleAlerts(WithAccount(ctx, "unconfigured-account"), start, periodEnd)
 	require.NoError(t, err)
 	require.Empty(t, other)
 }
@@ -58,6 +58,6 @@ func TestEvaluateCurrentRelayAlertsDoesNoWorkWithoutAssignments(t *testing.T) {
 		reports++
 		return estavelleusage.Report{}, nil
 	})
-	require.NoError(t, store.EvaluateCurrentRelayAlerts(context.Background(), reporter, now))
+	require.NoError(t, store.EvaluateCurrentEstavelleAlerts(context.Background(), reporter, now))
 	require.Zero(t, reports)
 }

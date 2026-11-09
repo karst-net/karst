@@ -70,14 +70,14 @@ const DefaultRegion = "default"
 // The disjointness is load-bearing rather than tidy: it is what makes §8's
 // role separation structural, so a node id can never be found in the mesh
 // directory.
-var idLabel = []byte("karst-relay-id-v1")
+var idLabel = []byte("karst-estavelle-id-v1")
 
-// RelayID is SHA-256("karst-relay-id-v1" ‖ identity_pk) — §5.2.
+// RelayID is SHA-256("karst-estavelle-id-v1" ‖ identity_pk) — §5.2.
 //
 // Derived rather than configured, for the reason the roster derives node ids:
 // an operator-written id would make a silent mismatch a typo away, and
 // `karstd` recomputes this and rejects the netmap when the two disagree.
-func RelayID(identityPK []byte) []byte {
+func EstavelleID(identityPK []byte) []byte {
 	h := sha256.New()
 	h.Write(idLabel)
 	h.Write(identityPK)
@@ -234,7 +234,7 @@ func (e Entry) compile() (*proto.KarstRelay, error) {
 	return &proto.KarstRelay{
 		Address:       e.Address,
 		TlsServerName: e.TLSServerName,
-		RelayId:       RelayID(key),
+		RelayId:       EstavelleID(key),
 		IdentityKey:   key,
 		Region:        region,
 		Location:      location,

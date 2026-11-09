@@ -1280,7 +1280,7 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 		writePorts(h, r.GetPorts())
 	}
 
-	writeField(h, []byte("karst-relays"))
+	writeField(h, []byte("karst-estavelles"))
 	for _, relay := range resp.GetRelays() {
 		writeField(h, []byte(relay.GetAddress()))
 		writeField(h, []byte(relay.GetTlsServerName()))

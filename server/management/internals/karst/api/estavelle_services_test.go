@@ -32,7 +32,7 @@ type serviceStub struct {
 	err   error
 }
 
-func TestRelayServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
+func TestEstavelleServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -55,7 +55,7 @@ func TestRelayServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.RefreshAdmissionLease(registered.ID))
 	router := mux.NewRouter()
-	RegisterRelayServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store)
+	RegisterEstavelleServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store)
 	// issue #530: POST no longer accepts an unmanaged ("legacy") association.
 	w := serviceRequest(router, http.MethodPost, "", fmt.Sprintf(`{"id":"one","ponor_id":%q}`, registered.ID), true)
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
@@ -69,9 +69,9 @@ func TestRelayServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
 	var response any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	spec := loadKarstOpenAPISchemas(t)
-	assertDeclaredResponseFields(t, spec, responseSchema(spec, "/relay-services", "GET", "200"), response, "Relay service list")
+	assertDeclaredResponseFields(t, spec, responseSchema(spec, "/estavelle-services", "GET", "200"), response, "Estavelle service list")
 	for _, method := range []string{http.MethodGet, http.MethodDelete} {
-		path := "/karst/v1/relay-services"
+		path := "/karst/v1/estavelle-services"
 		if method == http.MethodDelete {
 			path += "/one"
 		}
@@ -89,7 +89,7 @@ func TestRelayServiceAPIUsesAuthenticatedAccountWithRealStorage(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
 	var remaining int64
 	require.NoError(t, db.Model(&estavellereg.StoredEstavelle{}).Count(&remaining).Error)
-	require.EqualValues(t, 2, remaining, "deleting the association must not delete the underlying relay registry rows")
+	require.EqualValues(t, 2, remaining, "deleting the association must not delete the underlying estavelle registry rows")
 }
 
 func (s *serviceStub) Create(_ context.Context, service estavelleservice.Service) (*estavelleservice.Service, error) {
@@ -103,7 +103,7 @@ func (s *serviceStub) List(context.Context) ([]estavelleservice.View, error) {
 func (s *serviceStub) Delete(context.Context, string) error { s.calls++; return s.err }
 
 func serviceRequest(router *mux.Router, method, path, body string, authenticated bool) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(method, "/karst/v1/relay-services"+path, strings.NewReader(body))
+	r := httptest.NewRequest(method, "/karst/v1/estavelle-services"+path, strings.NewReader(body))
 	if authenticated {
 		r = nbcontext.SetUserAuthInRequest(r, auth.UserAuth{AccountId: "a", UserId: "admin"})
 	}
@@ -112,11 +112,11 @@ func serviceRequest(router *mux.Router, method, path, body string, authenticated
 	return w
 }
 
-func TestRelayServiceAPIRejectsUnauthorizedBeforeStorage(t *testing.T) {
+func TestEstavelleServiceAPIRejectsUnauthorizedBeforeStorage(t *testing.T) {
 	for _, role := range []types.UserRole{types.UserRoleUser, types.UserRoleScaler} {
 		store := &serviceStub{}
 		router := mux.NewRouter()
-		RegisterRelayServiceEndpoints(router, scanPermissions{role: role}, store)
+		RegisterEstavelleServiceEndpoints(router, scanPermissions{role: role}, store)
 		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
 			path := ""
 			if method == http.MethodDelete {
@@ -129,21 +129,21 @@ func TestRelayServiceAPIRejectsUnauthorizedBeforeStorage(t *testing.T) {
 	}
 	store := &serviceStub{}
 	router := mux.NewRouter()
-	RegisterRelayServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store)
+	RegisterEstavelleServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store)
 	w := serviceRequest(router, http.MethodGet, "", "", false)
 	require.GreaterOrEqual(t, w.Code, 400)
 	require.Zero(t, store.calls)
 	router = mux.NewRouter()
-	RegisterRelayServiceEndpoints(router, nil, store)
+	RegisterEstavelleServiceEndpoints(router, nil, store)
 	w = serviceRequest(router, http.MethodGet, "", "", true)
 	require.Equal(t, http.StatusForbidden, w.Code)
 	require.Zero(t, store.calls)
 }
 
-func TestRelayServiceAPIValidatesJSONAndMapsStorageResults(t *testing.T) {
+func TestEstavelleServiceAPIValidatesJSONAndMapsStorageResults(t *testing.T) {
 	store := &serviceStub{}
 	router := mux.NewRouter()
-	RegisterRelayServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store)
+	RegisterEstavelleServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store)
 	for _, body := range []string{`{"id":"one","shared_secret":"secret"}`, `{"account_id":"other"}`, `{} {}`, `{"id":"` + strings.Repeat("x", 8192) + `"}`} {
 		w := serviceRequest(router, http.MethodPost, "", body, true)
 		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())

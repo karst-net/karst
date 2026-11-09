@@ -15,7 +15,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 )
 
-const UploadPath = "/karst/v1/usage/relay-batches"
+const UploadPath = "/karst/v1/usage/estavelle-batches"
 const maxAuthorizationBytes = 6400
 
 var ErrInvalidUploadAuth = errors.New("relay usage: invalid upload authentication")
@@ -78,8 +78,8 @@ func UploadSigningInput(method, path string, timestampMicros uint64, nonce [32]b
 		return nil, ErrInvalidUploadAuth
 	}
 	var size [2]byte
-	out := make([]byte, 0, len("karst-relay-usage-upload-request-v1\x00")+2+len(method)+2+len(path)+8+len(nonce)+32)
-	out = append(out, []byte("karst-relay-usage-upload-request-v1\x00")...)
+	out := make([]byte, 0, len("karst-estavelle-usage-upload-request-v1\x00")+2+len(method)+2+len(path)+8+len(nonce)+32)
+	out = append(out, []byte("karst-estavelle-usage-upload-request-v1\x00")...)
 	binary.BigEndian.PutUint16(size[:], uint16(len(method)))
 	out = append(out, size[:]...)
 	out = append(out, method...)

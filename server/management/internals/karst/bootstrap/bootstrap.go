@@ -312,7 +312,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	billingStore.StartWebhookWorker(context.Background(), 5*time.Second, func(err error) {
 		log.WithError(err).Error("karst: process Paddle webhook inbox")
 	})
-	go karstbilling.RunRelayAlertWorker(context.Background(), billingStore, usageRelayStore, 5*time.Minute, func(err error) {
+	go karstbilling.RunEstavelleAlertWorker(context.Background(), billingStore, usageRelayStore, 5*time.Minute, func(err error) {
 		log.WithError(err).Error("karst: relay billing alert evaluation failed")
 	})
 	// ADR-0045 §8 (Phase 3): retains demand history on an interval so a
@@ -480,7 +480,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// deployment that never touches AWS allocation sees no behavior
 	// change from this loop running.
 	if enroller, ok := s.AccountManager().(interface {
-		MintRelayEnrollKey(context.Context, string, string, time.Duration) (string, error)
+		MintEstavelleEnrollKey(context.Context, string, string, time.Duration) (string, error)
 	}); ok {
 		go estavellealloc.RunAllocateWorker(context.Background(), relayAllocationStore, estavellealloc.AllocateDeps{
 			InfraConnections: infraConnectionStore,
@@ -514,18 +514,18 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		router.Handle("/karst/v1/webhooks/paddle", karstbilling.NewPaddleWebhookHandler(paddleWebhookVerifier, billingStore)).Methods(http.MethodPost)
 		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public())
 		karstapi.RegisterUsageEndpoints(router, s.PermissionsManager(), usage.Reporter{DB: db}, auditLog)
-		karstapi.RegisterRelayUsageEndpoints(router, s.PermissionsManager(), usageRelayStore, auditLog)
-		karstapi.RegisterRelayAlertEndpoints(router, s.PermissionsManager(), usageRelayStore, billingStore, auditLog)
-		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
+		karstapi.RegisterEstavelleUsageEndpoints(router, s.PermissionsManager(), usageRelayStore, auditLog)
+		karstapi.RegisterEstavelleAlertEndpoints(router, s.PermissionsManager(), usageRelayStore, billingStore, auditLog)
+		karstapi.RegisterEstavelleCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, nodes, complianceStore, complianceDraftStore, router)
-		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager(), Audit: auditLog})
-		karstapi.RegisterRelayAllocationEndpoints(router, s.PermissionsManager(), relayAllocationStore, relayStore, relayServiceStore, karstapi.RelayAllocationOptions{Audit: auditLog})
+		karstapi.RegisterEstavelleServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.EstavelleServiceOptions{Accounts: s.AccountManager(), Audit: auditLog})
+		karstapi.RegisterEstavelleAllocationEndpoints(router, s.PermissionsManager(), relayAllocationStore, relayStore, relayServiceStore, karstapi.EstavelleAllocationOptions{Audit: auditLog})
 		karstapi.RegisterRolloutEndpoints(router, s.PermissionsManager(), rolloutStore, nodes, karstapi.RolloutOptions{Audit: auditLog})
 		estavelletelemetry.RegisterEndpoints(router, relayStore)
 		estavelleusage.RegisterUploadEndpoint(router, usageRelayStore)
-		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)
+		karstapi.RegisterEstavelleCreditEndpoint(router, usageRelayStore, billingStore)
 	}}); err != nil {
 		return nil, fmt.Errorf("karst: register API extension: %w", err)
 	}

@@ -19,20 +19,20 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 )
 
-// RegisterRelayCreditEndpoint mounts the relay-only, ML-DSA-authenticated
+// RegisterEstavelleCreditEndpoint mounts the relay-only, ML-DSA-authenticated
 // credit reservation endpoint. It does not use customer session auth because
 // the managed relay identity and signed mapping request are its authority.
-func RegisterRelayCreditEndpoint(router *mux.Router, relayStore *estavelleusage.Store, billingStore *billing.Store) {
-	router.Handle(estavelleusage.CreditRequestPath, &relayCreditHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
-	router.Handle(estavelleusage.CreditSurrenderPath+"{grant_id}/surrender", &relayCreditSurrenderHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
+func RegisterEstavelleCreditEndpoint(router *mux.Router, relayStore *estavelleusage.Store, billingStore *billing.Store) {
+	router.Handle(estavelleusage.CreditRequestPath, &estavelleCreditHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
+	router.Handle(estavelleusage.CreditSurrenderPath+"{grant_id}/surrender", &estavelleCreditSurrenderHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
 }
 
-type relayCreditSurrenderHandler struct {
+type estavelleCreditSurrenderHandler struct {
 	relays  *estavelleusage.Store
 	billing *billing.Store
 }
 
-func (h *relayCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *estavelleCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	grantID := mux.Vars(r)["grant_id"]
 	expectedPath := estavelleusage.CreditSurrenderPath + grantID + "/surrender"
@@ -62,7 +62,7 @@ func (h *relayCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	_, err = h.billing.SurrenderAuthorizedRelayCredits(ctx, h.relays, request)
+	_, err = h.billing.SurrenderAuthorizedEstavelleCredits(ctx, h.relays, request)
 	if err != nil {
 		switch {
 		case errors.Is(err, estavelleusage.ErrInvalidCreditRequest):
@@ -81,12 +81,12 @@ func (h *relayCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusNoContent)
 }
 
-type relayCreditHandler struct {
+type estavelleCreditHandler struct {
 	relays  *estavelleusage.Store
 	billing *billing.Store
 }
 
-func (h *relayCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *estavelleCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.EscapedPath() != estavelleusage.CreditRequestPath {
 		http.Error(w, "invalid relay cap credit request", http.StatusBadRequest)
@@ -121,15 +121,15 @@ func (h *relayCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	grant, err := h.billing.ReserveAuthorizedRelayCredits(ctx, h.relays, start, end, request)
-	if errors.Is(err, billing.ErrRelayCapNotConfigured) {
-		until, leaseErr := h.billing.IssueAuthorizedRelayUncappedLease(ctx, h.relays, start, end, request)
-		if errors.Is(leaseErr, billing.ErrRelayCapAlreadyActive) {
-			grant, err = h.billing.ReserveAuthorizedRelayCredits(ctx, h.relays, start, end, request)
+	grant, err := h.billing.ReserveAuthorizedEstavelleCredits(ctx, h.relays, start, end, request)
+	if errors.Is(err, billing.ErrEstavelleCapNotConfigured) {
+		until, leaseErr := h.billing.IssueAuthorizedEstavelleUncappedLease(ctx, h.relays, start, end, request)
+		if errors.Is(leaseErr, billing.ErrEstavelleCapAlreadyActive) {
+			grant, err = h.billing.ReserveAuthorizedEstavelleCredits(ctx, h.relays, start, end, request)
 		} else if leaseErr == nil {
-			w.Header().Set("X-Karst-Relay-Cap-Mode", "uncapped")
-			w.Header().Set("X-Karst-Relay-Cap-Lease-Millis", strconv.FormatInt(billing.RelayUncappedLeaseMillis, 10))
-			w.Header().Set("X-Karst-Relay-Cap-Until", strconv.FormatInt(until.UnixMicro(), 10))
+			w.Header().Set("X-Karst-Estavelle-Cap-Mode", "uncapped")
+			w.Header().Set("X-Karst-Estavelle-Cap-Lease-Millis", strconv.FormatInt(billing.EstavelleUncappedLeaseMillis, 10))
+			w.Header().Set("X-Karst-Estavelle-Cap-Until", strconv.FormatInt(until.UnixMicro(), 10))
 			w.WriteHeader(http.StatusNoContent)
 			return
 		} else {
@@ -142,12 +142,12 @@ func (h *relayCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid relay cap request", http.StatusBadRequest)
 		case errors.Is(err, estavelleusage.ErrUnauthorized), errors.Is(err, estavelleusage.ErrProducerMissing), errors.Is(err, estavelleusage.ErrMappingNotAllowed):
 			http.Error(w, "relay cap request rejected", http.StatusForbidden)
-		case errors.Is(err, billing.ErrRelayCapPending):
+		case errors.Is(err, billing.ErrEstavelleCapPending):
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "relay cap activation is pending uncapped forwarding leases", http.StatusTooEarly)
-		case errors.Is(err, billing.ErrRelayCapNotConfigured):
+		case errors.Is(err, billing.ErrEstavelleCapNotConfigured):
 			http.Error(w, "relay cap state could not be leased", http.StatusServiceUnavailable)
-		case errors.Is(err, billing.ErrRelayCapExhausted):
+		case errors.Is(err, billing.ErrEstavelleCapExhausted):
 			http.Error(w, "relay spending cap exhausted", http.StatusTooManyRequests)
 		case errors.Is(err, billing.ErrCreditRequestConflict):
 			http.Error(w, "relay cap request ID conflicts with prior request", http.StatusConflict)
@@ -169,9 +169,9 @@ func (h *relayCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
-	w.Header().Set("X-Karst-Relay-Cap-Grant-Valid-Millis", strconv.FormatInt(validMillis, 10))
+	w.Header().Set("X-Karst-Estavelle-Cap-Grant-Valid-Millis", strconv.FormatInt(validMillis, 10))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(encoded)
 }
 
-var _ http.Handler = (*relayCreditHandler)(nil)
+var _ http.Handler = (*estavelleCreditHandler)(nil)

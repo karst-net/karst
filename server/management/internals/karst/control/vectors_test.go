@@ -155,7 +155,7 @@ type versionDNSUpstream struct {
 
 // versionRelay is the relay registry as the version hash sees it.
 //
-// The `karst-relays` term has existed on both sides since 2026-08-18 and until
+// The `karst-estavelles` term has existed on both sides since 2026-08-18 and until
 // now no vector carried a single relay, so the one field of the netmap that a
 // production server had never populated (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)) was also the one the
 // two implementations had never been checked to agree on. A disagreement here
@@ -299,7 +299,7 @@ func relayFor(address, serverName string, seed byte, region string) *proto.Karst
 	return &proto.KarstRelay{
 		Address:       address,
 		TlsServerName: serverName,
-		RelayId:       estavellereg.RelayID(key),
+		RelayId:       estavellereg.EstavelleID(key),
 		IdentityKey:   key,
 		Region:        region,
 	}
@@ -331,7 +331,7 @@ func TestVectors(t *testing.T) {
 		Spec: "KARST-CONTROL v1",
 		Note: "Cross-implementation vectors. Covers derivation and framing, " +
 			"not ML-KEM/ML-DSA themselves (those have NIST KATs). " +
-			"2026-08-18: netmap_version gained the domain-separated karst-relays " +
+			"2026-08-18: netmap_version gained the domain-separated karst-estavelles " +
 			"term; pre-change version values are intentionally incompatible. " +
 			"2026-08-21: netmap_version cases carry relay registries. The term " +
 			"had been hashed by both ends since 2026-08-18 with no vector " +

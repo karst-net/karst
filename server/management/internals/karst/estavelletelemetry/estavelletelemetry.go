@@ -65,7 +65,7 @@ type store interface {
 // same router, with the same estavellereg.Store.
 func RegisterEndpoints(router *mux.Router, relays store) {
 	h := &handler{relays: relays}
-	router.HandleFunc("/karst/v1/relays/{relayId}/telemetry", h.report).Methods(http.MethodPost)
+	router.HandleFunc("/karst/v1/estavelles/{estavelleId}/telemetry", h.report).Methods(http.MethodPost)
 }
 
 type handler struct {
@@ -102,7 +102,7 @@ type report struct {
 }
 
 func (h *handler) report(w http.ResponseWriter, r *http.Request) {
-	urlRelayID := mux.Vars(r)["relayId"]
+	urlRelayID := mux.Vars(r)["estavelleId"]
 
 	var req report
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes)).Decode(&req); err != nil {
@@ -167,7 +167,7 @@ func (h *handler) report(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		if !identity.Verify(key, []byte(identity.RelayTelemetryContext), msg, sig) {
+		if !identity.Verify(key, []byte(identity.EstavelleTelemetryContext), msg, sig) {
 			continue
 		}
 		if err := h.relays.RecordTelemetry(r.Context(), candidate.AccountID, candidate.ID, t); err != nil {

@@ -70,7 +70,7 @@ type fakeEnroll struct {
 	err   error
 }
 
-func (f fakeEnroll) MintRelayEnrollKey(context.Context, string, string, time.Duration) (string, error) {
+func (f fakeEnroll) MintEstavelleEnrollKey(context.Context, string, string, time.Duration) (string, error) {
 	if f.err != nil {
 		return "", f.err
 	}

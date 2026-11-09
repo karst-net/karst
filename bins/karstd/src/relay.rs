@@ -967,7 +967,7 @@ mod tests {
     fn relay() -> Estavelle {
         let identity_key = vec![0x44; 2592];
         let mut h = Sha256::new();
-        h.update(b"karst-relay-id-v1");
+        h.update(b"karst-estavelle-id-v1");
         h.update(&identity_key);
         Estavelle {
             address: "127.0.0.1:443".to_owned(),

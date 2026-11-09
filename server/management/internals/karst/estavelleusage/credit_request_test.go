@@ -25,7 +25,7 @@ func signedCreditRequest(t *testing.T, key *identity.Key, relayID string, mappin
 		Generation: "0102030405060708090a0b0c0d0e0f10", RequestID: "1112131415161718191a1b1c1d1e1f20", RequestedBytes: "1234567"}
 	input, err := request.SigningInput()
 	require.NoError(t, err)
-	signature, err := key.Sign([]byte(identity.RelayCreditRequestContext), input)
+	signature, err := key.Sign([]byte(identity.EstavelleCreditRequestContext), input)
 	require.NoError(t, err)
 	request.Signature = base64.StdEncoding.EncodeToString(signature)
 	return request
@@ -75,7 +75,7 @@ func TestParseCreditRequestRejectsMalformedAndUnknownFields(t *testing.T) {
 }
 
 func TestSharedCreditRequestSigningVectorMatchesRust(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "..", "spec", "vectors", "relay-credit-request-v1.json")
+	path := filepath.Join("..", "..", "..", "..", "..", "spec", "vectors", "estavelle-credit-request-v1.json")
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	var vector struct {
@@ -102,7 +102,7 @@ func TestCreditSurrenderIsCanonicalAndMapsToAuthorizedRelay(t *testing.T) {
 		Generation: "0102030405060708090a0b0c0d0e0f10", ConsumedBytes: "1234567"}
 	input, err := request.SigningInput()
 	require.NoError(t, err)
-	signature, err := key.Sign([]byte(identity.RelayCreditSurrenderContext), input)
+	signature, err := key.Sign([]byte(identity.EstavelleCreditSurrenderContext), input)
 	require.NoError(t, err)
 	request.Signature = base64.StdEncoding.EncodeToString(signature)
 	body, err := json.Marshal(request)
@@ -126,7 +126,7 @@ func TestCreditSurrenderIsCanonicalAndMapsToAuthorizedRelay(t *testing.T) {
 }
 
 func TestSharedCreditSurrenderSigningVectorMatchesRust(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "..", "spec", "vectors", "relay-credit-surrender-v1.json")
+	path := filepath.Join("..", "..", "..", "..", "..", "spec", "vectors", "estavelle-credit-surrender-v1.json")
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	var vector struct {

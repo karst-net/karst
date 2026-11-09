@@ -18,9 +18,9 @@ type relayUsageReporter interface {
 	Report(context.Context, string, time.Time, time.Time) (estavelleusage.Report, error)
 }
 
-// EvaluateCurrentRelayAlerts evaluates all explicitly scheduled accounts for
+// EvaluateCurrentEstavelleAlerts evaluates all explicitly scheduled accounts for
 // the current UTC month. Missing schedules never create billing or alerts.
-func (s *Store) EvaluateCurrentRelayAlerts(ctx context.Context, reporter relayUsageReporter, now time.Time) error {
+func (s *Store) EvaluateCurrentEstavelleAlerts(ctx context.Context, reporter relayUsageReporter, now time.Time) error {
 	if reporter == nil || now.IsZero() {
 		return ErrInvalidPeriod
 	}
@@ -47,11 +47,11 @@ func (s *Store) EvaluateCurrentRelayAlerts(ctx context.Context, reporter relayUs
 		for _, accountID := range accounts {
 			accountCtx := WithAccount(ctx, accountID)
 			var capMinor *int64
-			cap, err := s.RelaySpendingCap(accountCtx, start, periodEnd)
+			cap, err := s.EstavelleSpendingCap(accountCtx, start, periodEnd)
 			if err == nil {
 				minor := cap.OverageMinor
 				capMinor = &minor
-			} else if !errors.Is(err, ErrRelayCapNotConfigured) {
+			} else if !errors.Is(err, ErrEstavelleCapNotConfigured) {
 				failures = append(failures, fmt.Errorf("billing: read relay cap for account %q: %w", accountID, err))
 				continue
 			}
@@ -60,7 +60,7 @@ func (s *Store) EvaluateCurrentRelayAlerts(ctx context.Context, reporter relayUs
 				failures = append(failures, fmt.Errorf("billing: read relay usage for account %q: %w", accountID, err))
 				continue
 			}
-			if _, err := s.EvaluateAndRecordRelayAlerts(accountCtx, report, capMinor); err != nil {
+			if _, err := s.EvaluateAndRecordEstavelleAlerts(accountCtx, report, capMinor); err != nil {
 				failures = append(failures, fmt.Errorf("billing: evaluate relay alerts for account %q: %w", accountID, err))
 			}
 		}
@@ -72,17 +72,17 @@ func (s *Store) EvaluateCurrentRelayAlerts(ctx context.Context, reporter relayUs
 	return errors.Join(failures...)
 }
 
-// RunRelayAlertWorker periodically refreshes persisted in-app threshold
+// RunEstavelleAlertWorker periodically refreshes persisted in-app threshold
 // events. It does no work for accounts without an explicit schedule and never
 // sends an email or puts alert processing on the networking path.
-func RunRelayAlertWorker(ctx context.Context, store *Store, reporter relayUsageReporter, interval time.Duration, onError func(error)) {
+func RunEstavelleAlertWorker(ctx context.Context, store *Store, reporter relayUsageReporter, interval time.Duration, onError func(error)) {
 	if ctx == nil || store == nil || reporter == nil || interval <= 0 {
 		return
 	}
 	run := func() {
 		workCtx, cancel := context.WithTimeout(ctx, interval)
 		defer cancel()
-		if err := store.EvaluateCurrentRelayAlerts(workCtx, reporter, time.Now().UTC()); err != nil && onError != nil {
+		if err := store.EvaluateCurrentEstavelleAlerts(workCtx, reporter, time.Now().UTC()); err != nil && onError != nil {
 			onError(err)
 		}
 	}

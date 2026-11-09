@@ -77,7 +77,7 @@ impl Drop for TempDir {
 
 fn temp_dir(tag: &str) -> TempDir {
     let p = std::env::temp_dir().join(format!(
-        "karst-relay-{tag}-{}-{:?}",
+        "karst-estavelle-{tag}-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ));

@@ -26,8 +26,8 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 )
 
-const CreditRequestPath = "/karst/v1/billing/relay-credits"
-const CreditSurrenderPath = "/karst/v1/billing/relay-credits/"
+const CreditRequestPath = "/karst/v1/billing/estavelle-credits"
+const CreditSurrenderPath = "/karst/v1/billing/estavelle-credits/"
 
 const maxCreditRequestBytes = 8192
 
@@ -96,7 +96,7 @@ func (r CreditSurrender) SigningInput() ([]byte, error) {
 	}
 	fields := []string{"POST", CreditSurrenderPath + r.GrantID + "/surrender", r.GrantID, r.RelayID,
 		r.DeploymentID, r.MappingVersion, r.Generation, r.ConsumedBytes}
-	out := []byte("karst-relay-credit-surrender-v1\x00")
+	out := []byte("karst-estavelle-credit-surrender-v1\x00")
 	for _, field := range fields {
 		if len(field) > 65535 {
 			return nil, ErrInvalidCreditRequest
@@ -125,7 +125,7 @@ func (r CreditSurrender) VerifySignature(publicKey []byte) bool {
 		return false
 	}
 	signature, err := base64.StdEncoding.DecodeString(r.Signature)
-	return err == nil && identity.Verify(publicKey, []byte(identity.RelayCreditSurrenderContext), transcript, signature)
+	return err == nil && identity.Verify(publicKey, []byte(identity.EstavelleCreditSurrenderContext), transcript, signature)
 }
 
 func ParseCreditRequest(body []byte) (CreditRequest, error) {
@@ -165,7 +165,7 @@ func (r CreditRequest) SigningInput() ([]byte, error) {
 	}
 	fields := []string{"POST", CreditRequestPath, r.RelayID, r.DeploymentID, r.MappingVersion, r.Generation, r.RequestID}
 	out := make([]byte, 0, 64+len(r.RelayID)+len(r.DeploymentID)+len(r.MappingVersion)+len(r.Generation)+len(r.RequestID))
-	out = append(out, []byte("karst-relay-credit-request-v1\x00")...)
+	out = append(out, []byte("karst-estavelle-credit-request-v1\x00")...)
 	for _, field := range fields {
 		if len(field) > math.MaxUint16 {
 			return nil, ErrInvalidCreditRequest
@@ -183,16 +183,16 @@ func (r CreditRequest) SigningInput() ([]byte, error) {
 // currently enabled, operator-authorized mapping. Bind this Store to the same
 // transaction used for reserving credits so a concurrent revocation cannot
 // race with grant issuance.
-func (s *Store) AuthorizeCreditRequest(ctx context.Context, request CreditRequest) (usage.RelayMapping, error) {
+func (s *Store) AuthorizeCreditRequest(ctx context.Context, request CreditRequest) (usage.EstavelleMapping, error) {
 	transcript, err := request.SigningInput()
 	if err != nil {
-		return usage.RelayMapping{}, err
+		return usage.EstavelleMapping{}, err
 	}
 	signature, err := base64.StdEncoding.DecodeString(request.Signature)
 	if err != nil || len(signature) != identity.SignatureSize {
-		return usage.RelayMapping{}, ErrInvalidCreditRequest
+		return usage.EstavelleMapping{}, ErrInvalidCreditRequest
 	}
-	var mapping usage.RelayMapping
+	var mapping usage.EstavelleMapping
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var producer ManagedProducer
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("relay_id = ? AND enabled = ?", request.RelayID, true).Take(&producer).Error; err != nil {
@@ -206,10 +206,10 @@ func (s *Store) AuthorizeCreditRequest(ctx context.Context, request CreditReques
 			return ErrProducerMissing
 		}
 		relayIDBytes, err := base64.RawURLEncoding.DecodeString(request.RelayID)
-		if err != nil || subtle.ConstantTimeCompare(relayIDBytes, estavellereg.RelayID(publicKey)) != 1 {
+		if err != nil || subtle.ConstantTimeCompare(relayIDBytes, estavellereg.EstavelleID(publicKey)) != 1 {
 			return ErrUnauthorized
 		}
-		if !identity.Verify(publicKey, []byte(identity.RelayCreditRequestContext), transcript, signature) {
+		if !identity.Verify(publicKey, []byte(identity.EstavelleCreditRequestContext), transcript, signature) {
 			return ErrUnauthorized
 		}
 		var allowed AllowedMapping
@@ -220,7 +220,7 @@ func (s *Store) AuthorizeCreditRequest(ctx context.Context, request CreditReques
 			}
 			return err
 		}
-		mapping, err = usage.ResolveRelayMapping(ctx, tx, request.DeploymentID, request.MappingVersion)
+		mapping, err = usage.ResolveEstavelleMapping(ctx, tx, request.DeploymentID, request.MappingVersion)
 		if err != nil {
 			if errors.Is(err, usage.ErrMapping) {
 				return ErrMappingNotAllowed
@@ -230,7 +230,7 @@ func (s *Store) AuthorizeCreditRequest(ctx context.Context, request CreditReques
 		return nil
 	})
 	if err != nil {
-		return usage.RelayMapping{}, fmt.Errorf("relay usage: authorize cap credit request: %w", err)
+		return usage.EstavelleMapping{}, fmt.Errorf("relay usage: authorize cap credit request: %w", err)
 	}
 	return mapping, nil
 }
@@ -239,16 +239,16 @@ func (s *Store) AuthorizeCreditRequest(ctx context.Context, request CreditReques
 // enabled producer/mapping in the caller's transaction. Callers can safely
 // return credits in the same transaction as this check, so a concurrent
 // authorization revocation cannot race the surrender.
-func (s *Store) AuthorizeCreditSurrender(ctx context.Context, request CreditSurrender) (usage.RelayMapping, error) {
+func (s *Store) AuthorizeCreditSurrender(ctx context.Context, request CreditSurrender) (usage.EstavelleMapping, error) {
 	transcript, err := request.SigningInput()
 	if err != nil {
-		return usage.RelayMapping{}, err
+		return usage.EstavelleMapping{}, err
 	}
 	signature, err := base64.StdEncoding.DecodeString(request.Signature)
 	if err != nil || len(signature) != identity.SignatureSize {
-		return usage.RelayMapping{}, ErrInvalidCreditRequest
+		return usage.EstavelleMapping{}, ErrInvalidCreditRequest
 	}
-	var mapping usage.RelayMapping
+	var mapping usage.EstavelleMapping
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var producer ManagedProducer
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("relay_id = ? AND enabled = ?", request.RelayID, true).Take(&producer).Error; err != nil {
@@ -262,10 +262,10 @@ func (s *Store) AuthorizeCreditSurrender(ctx context.Context, request CreditSurr
 			return ErrProducerMissing
 		}
 		relayIDBytes, err := base64.RawURLEncoding.DecodeString(request.RelayID)
-		if err != nil || subtle.ConstantTimeCompare(relayIDBytes, estavellereg.RelayID(publicKey)) != 1 {
+		if err != nil || subtle.ConstantTimeCompare(relayIDBytes, estavellereg.EstavelleID(publicKey)) != 1 {
 			return ErrUnauthorized
 		}
-		if !identity.Verify(publicKey, []byte(identity.RelayCreditSurrenderContext), transcript, signature) {
+		if !identity.Verify(publicKey, []byte(identity.EstavelleCreditSurrenderContext), transcript, signature) {
 			return ErrUnauthorized
 		}
 		var allowed AllowedMapping
@@ -276,7 +276,7 @@ func (s *Store) AuthorizeCreditSurrender(ctx context.Context, request CreditSurr
 			}
 			return err
 		}
-		mapping, err = usage.ResolveRelayMapping(ctx, tx, request.DeploymentID, request.MappingVersion)
+		mapping, err = usage.ResolveEstavelleMapping(ctx, tx, request.DeploymentID, request.MappingVersion)
 		if err != nil {
 			if errors.Is(err, usage.ErrMapping) {
 				return ErrMappingNotAllowed
@@ -286,7 +286,7 @@ func (s *Store) AuthorizeCreditSurrender(ctx context.Context, request CreditSurr
 		return nil
 	})
 	if err != nil {
-		return usage.RelayMapping{}, fmt.Errorf("relay usage: authorize cap credit surrender: %w", err)
+		return usage.EstavelleMapping{}, fmt.Errorf("relay usage: authorize cap credit surrender: %w", err)
 	}
 	return mapping, nil
 }
@@ -305,7 +305,7 @@ func (r CreditRequest) VerifySignature(publicKey []byte) bool {
 		return false
 	}
 	signature, err := base64.StdEncoding.DecodeString(r.Signature)
-	return err == nil && identity.Verify(publicKey, []byte(identity.RelayCreditRequestContext), transcript, signature)
+	return err == nil && identity.Verify(publicKey, []byte(identity.EstavelleCreditRequestContext), transcript, signature)
 }
 
 func validCreditHex(value string, bytes int) bool {

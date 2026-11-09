@@ -67,7 +67,7 @@ fn the_aquifer_survives_the_round_trip() {
 #[test]
 fn durable_mapping_references_survive_the_go_rust_boundary() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../spec/vectors/relay-usage-roster-v1.toml");
+        .join("../../spec/vectors/estavelle-usage-roster-v1.toml");
     let roster = FileRoster::load(&path).expect("Go usage roster");
     let key: Vec<u8> = (0..2592)
         .map(|i| 0x11u8.wrapping_add(u8::try_from(i % 251).expect("bounded byte")))
@@ -79,7 +79,7 @@ fn durable_mapping_references_survive_the_go_rust_boundary() {
     assert_eq!(mapping.aquifer, "vector:account-a");
     assert_eq!(
         mapping.version,
-        "9353ec83b89b72601de04824f5379bb639a9507b3c68d9b9a5bc7ddfc810d47e"
+        "dd259b251d65312cdda021baa9b788d3df39e52e82513a3856ed7528b423ac8e"
     );
     assert_eq!(roster.client_count(), 1);
 }

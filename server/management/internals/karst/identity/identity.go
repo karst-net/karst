@@ -72,29 +72,29 @@ const (
 // is not.
 const ControlContext = "karst-control-v1"
 
-// RelayTelemetryContext domain-separates a relay's self-reported telemetry
+// EstavelleTelemetryContext domain-separates a relay's self-reported telemetry
 // signatures (ADR-0021) from every other use of its identity key — the same
 // key Ponor's RelayHello/ClientAuth/RelayAuth already sign, under a
 // completely different transcript and a different verifier, but the
 // discipline is the one this file already established for ControlContext.
-const RelayTelemetryContext = "karst-relay-telemetry-v1"
+const EstavelleTelemetryContext = "karst-estavelle-telemetry-v1"
 
-// RelayUsageContext domain-separates durable managed-relay accounting batches
+// EstavelleUsageContext domain-separates durable managed-relay accounting batches
 // (ADR-0050) from advisory relay telemetry and Ponor authentication.
-const RelayUsageContext = "karst-relay-usage-v1"
+const EstavelleUsageContext = "karst-estavelle-usage-v1"
 
-// RelayUsageUploadContext authenticates a fresh HTTP transmission of an
+// EstavelleUsageUploadContext authenticates a fresh HTTP transmission of an
 // immutable batch. It is separate because a batch signature survives retries,
 // while each upload request must carry a fresh timestamp and nonce.
-const RelayUsageUploadContext = "karst-relay-usage-upload-v1"
+const EstavelleUsageUploadContext = "karst-estavelle-usage-upload-v1"
 
-// RelayCreditRequestContext domain-separates authenticated cross-relay cap
+// EstavelleCreditRequestContext domain-separates authenticated cross-relay cap
 // reservation requests from usage uploads and transport authentication.
-const RelayCreditRequestContext = "karst-relay-credit-request-v1"
+const EstavelleCreditRequestContext = "karst-estavelle-credit-request-v1"
 
-// RelayCreditSurrenderContext authenticates a relay's final, conservative
+// EstavelleCreditSurrenderContext authenticates a relay's final, conservative
 // consumed-byte count for one previously issued grant.
-const RelayCreditSurrenderContext = "karst-relay-credit-surrender-v1"
+const EstavelleCreditSurrenderContext = "karst-estavelle-credit-surrender-v1"
 
 var (
 	ErrKeySize = errors.New("identity: wrong key size")

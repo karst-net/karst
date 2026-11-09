@@ -83,7 +83,7 @@ func TestTheRelayIDIsDerivedAndNotConfigurable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	want := RelayID(key(1))
+	want := EstavelleID(key(1))
 	if hex.EncodeToString(relays[0].GetRelayId()) != hex.EncodeToString(want) {
 		t.Fatalf("relay_id is not the digest of the identity key")
 	}
@@ -99,15 +99,15 @@ func TestTheDerivationMatchesTheSpecDigest(t *testing.T) {
 	// Pinned to the literal construction in ponor-v1.md §5.2 rather than to
 	// this package's own helper, so a changed label is caught here and not by
 	// every node in a deployment failing to parse its netmap.
-	got := hex.EncodeToString(RelayID(key(1)))
+	got := hex.EncodeToString(EstavelleID(key(1)))
 	if len(got) != 64 {
 		t.Fatalf("relay id is %d hex chars, want 64", len(got))
 	}
-	// SHA-256("karst-relay-id-v1" ‖ key(1)), computed outside this codebase.
+	// SHA-256("karst-estavelle-id-v1" ‖ key(1)), computed outside this codebase.
 	// A constant rather than a second call to the same helper: recomputing it
 	// here with crypto/sha256 would agree with a changed domain label, which is
 	// the mistake most worth catching.
-	const want = "1afc82c36fd8902bb0eddd09fddd346465c2de4577ff827c3dfc96c89ae92335"
+	const want = "1098dc3318e44244170f4b9d369acd8679a6046ecde23aecaa7fda3c81cdfe74"
 	if got != want {
 		t.Fatalf("relay id %s, want %s — the domain label or the digest changed, "+
 			"and karstd derives this independently", got, want)

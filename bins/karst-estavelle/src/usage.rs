@@ -92,7 +92,7 @@ impl SignedBatch {
         payload_len: u32,
     ) -> Vec<u8> {
         let mut message = Vec::with_capacity(70 + payload.len());
-        message.extend_from_slice(b"karst-relay-usage-batch-v1\0");
+        message.extend_from_slice(b"karst-estavelle-usage-batch-v1\0");
         message.extend_from_slice(&id.epoch);
         message.extend_from_slice(&id.sequence.to_be_bytes());
         message.extend_from_slice(&payload_len.to_be_bytes());
@@ -719,7 +719,7 @@ mod tests {
         }
 
         let vector: Vector = serde_json::from_str(include_str!(
-            "../../../spec/vectors/relay-usage-batch-v1.json"
+            "../../../spec/vectors/estavelle-usage-batch-v1.json"
         ))
         .expect("valid shared usage vector");
         let mut epoch = [0; 16];

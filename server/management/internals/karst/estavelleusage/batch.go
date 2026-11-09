@@ -40,7 +40,7 @@ const (
 var (
 	ErrInvalidBatch = errors.New("relay usage: invalid batch")
 	ErrUnauthorized = errors.New("relay usage: producer signature rejected")
-	signingPrefix   = []byte("karst-relay-usage-batch-v1\x00")
+	signingPrefix   = []byte("karst-estavelle-usage-batch-v1\x00")
 )
 
 // Batch is an immutable aggregate payload authenticated by a registered relay
@@ -166,7 +166,7 @@ func parsePayload(payload []byte) (Window, error) {
 }
 
 // SigningInput returns the v1 canonical message signed under
-// identity.RelayUsageContext. The payload digest and bytes are both included.
+// identity.EstavelleUsageContext. The payload digest and bytes are both included.
 func (batch Batch) SigningInput() []byte {
 	out := make([]byte, 0, len(signingPrefix)+16+8+4+32+len(batch.Payload))
 	out = append(out, signingPrefix...)
@@ -186,7 +186,7 @@ func VerifyEncoded(publicKey, encoded []byte) (Batch, error) {
 	if err != nil {
 		return Batch{}, err
 	}
-	if !identity.Verify(publicKey, []byte(identity.RelayUsageContext), batch.SigningInput(), batch.Signature) {
+	if !identity.Verify(publicKey, []byte(identity.EstavelleUsageContext), batch.SigningInput(), batch.Signature) {
 		return Batch{}, ErrUnauthorized
 	}
 	return batch, nil

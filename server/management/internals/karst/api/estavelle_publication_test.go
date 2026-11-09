@@ -26,11 +26,11 @@ func (s *publicationStub) SetModes(_ context.Context, id string, ponor bool) (*e
 	return &estavelleservice.Service{ID: id, PonorID: "p", PonorDisabled: !ponor}, s.err
 }
 
-func TestRelayModesRequireCompleteAcknowledgedStateAndPushOnlyAfterSuccess(t *testing.T) {
+func TestEstavelleModesRequireCompleteAcknowledgedStateAndPushOnlyAfterSuccess(t *testing.T) {
 	store := &publicationStub{mode: "legacy"}
 	push := &publicationPush{}
 	router := mux.NewRouter()
-	RegisterRelayServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store, RelayServiceOptions{Accounts: push})
+	RegisterEstavelleServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store, EstavelleServiceOptions{Accounts: push})
 	for _, body := range []string{
 		`{"acknowledge_connectivity_change":true}`,
 		`{"ponor_enabled":true}`,
@@ -50,7 +50,7 @@ func TestRelayModesRequireCompleteAcknowledgedStateAndPushOnlyAfterSuccess(t *te
 	require.Equal(t, []string{"a"}, push.accounts)
 	for _, role := range []types.UserRole{types.UserRoleUser, types.UserRoleScaler} {
 		router := mux.NewRouter()
-		RegisterRelayServiceEndpoints(router, scanPermissions{role: role}, store)
+		RegisterEstavelleServiceEndpoints(router, scanPermissions{role: role}, store)
 		w := serviceRequest(router, http.MethodPut, "/one/modes", `{"ponor_enabled":false,"acknowledge_connectivity_change":true}`, true)
 		require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	}
@@ -77,11 +77,11 @@ func (p *publicationPush) UpdateAccountPeers(_ context.Context, account string, 
 	p.accounts = append(p.accounts, account)
 }
 
-func TestRelayPublicationPreviewAndAcknowledgedApplyNotifyOnlyAfterSuccess(t *testing.T) {
+func TestEstavellePublicationPreviewAndAcknowledgedApplyNotifyOnlyAfterSuccess(t *testing.T) {
 	store := &publicationStub{mode: "legacy"}
 	push := &publicationPush{}
 	router := mux.NewRouter()
-	RegisterRelayServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store, RelayServiceOptions{Accounts: push})
+	RegisterEstavelleServiceEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store, EstavelleServiceOptions{Accounts: push})
 	w := serviceRequest(router, http.MethodGet, "/publication", "", true)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.JSONEq(t, `{"mode":"legacy"}`, w.Body.String())
@@ -105,11 +105,11 @@ func TestRelayPublicationPreviewAndAcknowledgedApplyNotifyOnlyAfterSuccess(t *te
 	require.Equal(t, []string{"a"}, push.accounts)
 }
 
-func TestRelayPublicationIsUnavailableToMembersAndScalers(t *testing.T) {
+func TestEstavellePublicationIsUnavailableToMembersAndScalers(t *testing.T) {
 	for _, role := range []types.UserRole{types.UserRoleUser, types.UserRoleScaler} {
 		store := &publicationStub{mode: "legacy"}
 		router := mux.NewRouter()
-		RegisterRelayServiceEndpoints(router, scanPermissions{role: role}, store)
+		RegisterEstavelleServiceEndpoints(router, scanPermissions{role: role}, store)
 		for _, tc := range []struct{ method, path, body string }{
 			{http.MethodGet, "/publication", ""},
 			{http.MethodPost, "/publication/preview", ""},

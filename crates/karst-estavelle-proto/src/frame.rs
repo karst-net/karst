@@ -110,7 +110,7 @@ pub enum Frame<'a> {
     /// value it has not yet seen and a captured `ClientAuth` is useless
     /// elsewhere — §7.1.
     RelayHello {
-        /// `SHA-256("karst-relay-id-v1" ‖ relay_identity_pk)`.
+        /// `SHA-256("karst-estavelle-id-v1" ‖ relay_identity_pk)`.
         relay_id: [u8; ID_LEN],
         /// Freshness for the peer's signature.
         relay_random: [u8; RANDOM_LEN],

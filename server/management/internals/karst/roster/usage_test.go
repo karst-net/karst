@@ -32,7 +32,7 @@ func TestUsageRosterVector(t *testing.T) {
 	require.NoError(t, err)
 	_, file, _, ok := runtime.Caller(0)
 	require.True(t, ok)
-	path := filepath.Join(filepath.Dir(file), "../../../../../spec/vectors/relay-usage-roster-v1.toml")
+	path := filepath.Join(filepath.Dir(file), "../../../../../spec/vectors/estavelle-usage-roster-v1.toml")
 	if os.Getenv("UPDATE_VECTORS") == "1" {
 		require.NoError(t, os.WriteFile(path, data, 0o644))
 		return
@@ -54,13 +54,13 @@ func TestUsagePublicationPersistsBeforeAdvertisingAndSurvivesLedgerFailure(t *te
 	r, err := New(fixed{rows: rows}, Config{Path: path, Usage: &UsageConfig{DB: db, DeploymentID: "deployment"}}, nil)
 	require.NoError(t, err)
 	require.NoError(t, r.Once())
-	var mappings []usage.RelayMapping
+	var mappings []usage.EstavelleMapping
 	require.NoError(t, db.Find(&mappings).Error)
 	require.Len(t, mappings, 1)
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Contains(t, string(data), "usage_mapping = \""+mappings[0].Version+"\"")
-	resolved, err := usage.ResolveRelayMapping(context.Background(), db, "deployment", mappings[0].Version)
+	resolved, err := usage.ResolveEstavelleMapping(context.Background(), db, "deployment", mappings[0].Version)
 	require.NoError(t, err)
 	require.Equal(t, "account", resolved.AccountID)
 	require.NoError(t, sql.Close())

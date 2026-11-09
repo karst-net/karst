@@ -31,7 +31,7 @@ import (
 	"github.com/netbirdio/netbird/shared/auth"
 )
 
-type relayAllocationEnv struct {
+type estavelleAllocationEnv struct {
 	db         *gorm.DB
 	alloc      *estavellealloc.Store
 	registry   *estavellereg.Store
@@ -40,7 +40,7 @@ type relayAllocationEnv struct {
 	group      string
 }
 
-func relayAllocationFixture(t *testing.T) relayAllocationEnv {
+func estavelleAllocationFixture(t *testing.T) estavelleAllocationEnv {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
@@ -67,17 +67,17 @@ func relayAllocationFixture(t *testing.T) relayAllocationEnv {
 	// rejects that unless it is already in the Authorized Locations registry.
 	// Coordinates match cloudcatalog's own entry for it exactly.
 	require.NoError(t, db.Create(&locationreg.StoredLocation{AccountID: "a", ID: "loc-1", Lat: 45.8696, Lon: -119.6880, Label: "US West (Oregon)"}).Error)
-	return relayAllocationEnv{db: db, alloc: alloc, registry: registry, grants: grants, connection: connection.ID, group: group.ID}
+	return estavelleAllocationEnv{db: db, alloc: alloc, registry: registry, grants: grants, connection: connection.ID, group: group.ID}
 }
 
-func relayAllocationRouter(e relayAllocationEnv, role types.UserRole) *mux.Router {
+func estavelleAllocationRouter(e estavelleAllocationEnv, role types.UserRole) *mux.Router {
 	router := mux.NewRouter()
-	RegisterRelayAllocationEndpoints(router, scanPermissions{role: role}, e.alloc, e.registry, e.grants)
+	RegisterEstavelleAllocationEndpoints(router, scanPermissions{role: role}, e.alloc, e.registry, e.grants)
 	return router
 }
 
 func allocationRequest(router *mux.Router, method, path, body string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(method, "/karst/v1/relay-allocations"+path, strings.NewReader(body))
+	r := httptest.NewRequest(method, "/karst/v1/estavelle-allocations"+path, strings.NewReader(body))
 	r = nbcontext.SetUserAuthInRequest(r, auth.UserAuth{AccountId: "a", UserId: "admin"})
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
@@ -96,26 +96,26 @@ func assertAllocationResponseFields(t *testing.T, w *httptest.ResponseRecorder, 
 	var raw any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
 	spec := loadKarstOpenAPISchemas(t)
-	assertDeclaredResponseFields(t, spec, responseSchema(spec, path, method, status), raw, "Relay allocation "+method+" "+path)
+	assertDeclaredResponseFields(t, spec, responseSchema(spec, path, method, status), raw, "Estavelle allocation "+method+" "+path)
 }
 
-// TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned drives one
+// TestEstavelleAllocationAPIHappyPathToReadyAndBackToDeprovisioned drives one
 // allocation through every step of ADR-0063's state machine purely over
 // HTTP, using two routers against the same underlying stores -- one as the
 // console (Admin role) would reach it, one as the Scaler-role
 // reconciliation loop would. Confirms the grant step's relay lookup,
 // idempotent retries, and the reversed teardown order (revoke withdraws
 // the estavelleservice grant before anything reports compute torn down).
-func TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) {
-	e := relayAllocationFixture(t)
-	admin := relayAllocationRouter(e, types.UserRoleAdmin)
-	scaler := relayAllocationRouter(e, types.UserRoleScaler)
+func TestEstavelleAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
 
 	w := allocationRequest(admin, http.MethodPost, "", `{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	created := decodeAllocation(t, w)
 	require.Equal(t, estavellealloc.StateRequested, created.State)
-	assertAllocationResponseFields(t, w, "/relay-allocations", "post", "201")
+	assertAllocationResponseFields(t, w, "/estavelle-allocations", "post", "201")
 
 	// Scaler sees it as pending.
 	w = allocationRequest(scaler, http.MethodPost, "/pending", "")
@@ -125,7 +125,7 @@ func TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) 
 	require.Len(t, pending, 1)
 	// Scaler must never reach the console-only routes, though -- that
 	// direction of the allowlist is what actually keeps it narrow; see
-	// TestRelayAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither.
+	// TestEstavelleAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither.
 	require.Equal(t, http.StatusForbidden, allocationRequest(scaler, http.MethodGet, "", "").Code)
 
 	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
@@ -163,7 +163,7 @@ func TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) 
 	ready := decodeAllocation(t, w)
 	require.Equal(t, estavellealloc.StateReady, ready.State)
 	require.Equal(t, relay.ID, ready.RelayID)
-	assertAllocationResponseFields(t, w, "/relay-allocations/{id}/grant", "post", "200")
+	assertAllocationResponseFields(t, w, "/estavelle-allocations/{id}/grant", "post", "200")
 
 	var serviceCount int64
 	require.NoError(t, e.db.Model(&estavelleservice.Service{}).Where("id = ? AND ponor_id = ?", created.ID, relay.ID).Count(&serviceCount).Error)
@@ -206,15 +206,15 @@ func TestRelayAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) 
 	require.Zero(t, remaining)
 }
 
-// TestRelayAllocationGrantReportsFailureWithoutLeavingAPartialGrant covers
+// TestEstavelleAllocationGrantReportsFailureWithoutLeavingAPartialGrant covers
 // the other branch of granting: estavelleservice rejects the attempt (no live
 // admission writer configured here), and the allocation must land in
 // StateFailed with no Service row ever created -- never a grant believed
 // to have failed while compute silently kept running unaccounted for.
-func TestRelayAllocationGrantReportsFailureWithoutLeavingAPartialGrant(t *testing.T) {
-	e := relayAllocationFixture(t)
-	admin := relayAllocationRouter(e, types.UserRoleAdmin)
-	scaler := relayAllocationRouter(e, types.UserRoleScaler)
+func TestEstavelleAllocationGrantReportsFailureWithoutLeavingAPartialGrant(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
 
 	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
 		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
@@ -243,17 +243,17 @@ func TestRelayAllocationGrantReportsFailureWithoutLeavingAPartialGrant(t *testin
 	require.Zero(t, serviceCount)
 }
 
-// TestRelayAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither is the
+// TestEstavelleAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither is the
 // security property the hard allowlist exists for. It does not make the
 // Scaler and Admin/Owner roles mutually exclusive -- ADR-0045 §7 Phase 2's
-// own precedent (relayEnrollTokensPath: "Admin/Owner, who already hold
+// own precedent (estavelleEnrollTokensPath: "Admin/Owner, who already hold
 // Create on KarstControl, may too") means Admin can also reach every
 // allocation-driving action. What the allowlist actually narrows is
 // Scaler: it may drive allocations but never reach the console-only
 // routes. A role with no KarstControl grant at all (User) reaches neither.
-func TestRelayAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither(t *testing.T) {
-	e := relayAllocationFixture(t)
-	created := decodeAllocation(t, allocationRequest(relayAllocationRouter(e, types.UserRoleAdmin), http.MethodPost, "",
+func TestEstavelleAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	created := decodeAllocation(t, allocationRequest(estavelleAllocationRouter(e, types.UserRoleAdmin), http.MethodPost, "",
 		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
 
 	consoleOnlyRoutes := []struct{ method, path, body string }{
@@ -271,33 +271,33 @@ func TestRelayAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither(t *testing
 		{http.MethodPost, "/" + created.ID + "/failed", `{"expected_revision":1,"reason":"x"}`},
 	}
 
-	scaler := relayAllocationRouter(e, types.UserRoleScaler)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
 	for _, call := range consoleOnlyRoutes {
 		w := allocationRequest(scaler, call.method, call.path, call.body)
 		require.Equal(t, http.StatusForbidden, w.Code, "scaler %s %s: %s", call.method, call.path, w.Body.String())
 	}
 
-	user := relayAllocationRouter(e, types.UserRoleUser)
+	user := estavelleAllocationRouter(e, types.UserRoleUser)
 	for _, call := range append(append([]struct{ method, path, body string }{}, consoleOnlyRoutes...), scalerOnlyRoutes...) {
 		w := allocationRequest(user, call.method, call.path, call.body)
 		require.Equal(t, http.StatusForbidden, w.Code, "plain user %s %s: %s", call.method, call.path, w.Body.String())
 	}
 
 	// Admin reaches a Scaler-only route too -- the same relationship
-	// relayEnrollTokensPath already has with Admin, not a regression.
-	admin := relayAllocationRouter(e, types.UserRoleAdmin)
+	// estavelleEnrollTokensPath already has with Admin, not a regression.
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
 	w := allocationRequest(admin, http.MethodPost, "/pending", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
-// TestRelayAllocationFailedInfersFromStateAndIsIdempotent covers the
+// TestEstavelleAllocationFailedInfersFromStateAndIsIdempotent covers the
 // generic failure-report action: it reads the "from" state off the row
 // itself rather than trusting a caller-supplied one, and repeating it once
 // already failed is a safe no-op.
-func TestRelayAllocationFailedInfersFromStateAndIsIdempotent(t *testing.T) {
-	e := relayAllocationFixture(t)
-	admin := relayAllocationRouter(e, types.UserRoleAdmin)
-	scaler := relayAllocationRouter(e, types.UserRoleScaler)
+func TestEstavelleAllocationFailedInfersFromStateAndIsIdempotent(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
 	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
 		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
 
@@ -316,13 +316,13 @@ func TestRelayAllocationFailedInfersFromStateAndIsIdempotent(t *testing.T) {
 	require.Equal(t, "quota exceeded", decodeAllocation(t, w).FailureReason)
 }
 
-// TestRelayAllocationDeleteRequiresDeprovisionFirst confirms the API layer
+// TestEstavelleAllocationDeleteRequiresDeprovisionFirst confirms the API layer
 // surfaces Store.Delete's own gating rather than papering over it: a
 // provisioning allocation cannot simply be deleted out from under the loop.
-func TestRelayAllocationDeleteRequiresDeprovisionFirst(t *testing.T) {
-	e := relayAllocationFixture(t)
-	admin := relayAllocationRouter(e, types.UserRoleAdmin)
-	scaler := relayAllocationRouter(e, types.UserRoleScaler)
+func TestEstavelleAllocationDeleteRequiresDeprovisionFirst(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
 	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
 		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
 	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
@@ -336,12 +336,12 @@ func TestRelayAllocationDeleteRequiresDeprovisionFirst(t *testing.T) {
 	require.EqualValues(t, 1, remaining)
 }
 
-// TestRelayAllocationAPIRejectsUnauthenticated mirrors every other karst
+// TestEstavelleAllocationAPIRejectsUnauthenticated mirrors every other karst
 // endpoint's own baseline: no user auth context, no access at all.
-func TestRelayAllocationAPIRejectsUnauthenticated(t *testing.T) {
-	e := relayAllocationFixture(t)
-	router := relayAllocationRouter(e, types.UserRoleAdmin)
-	r := httptest.NewRequest(http.MethodGet, "/karst/v1/relay-allocations", nil)
+func TestEstavelleAllocationAPIRejectsUnauthenticated(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	router := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	r := httptest.NewRequest(http.MethodGet, "/karst/v1/estavelle-allocations", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
 	require.NotEqual(t, http.StatusOK, w.Code)

@@ -26,23 +26,23 @@ const CTX: &[u8] = b"ponor-v1";
 /// the same context string this crate must never reuse). Domain separation is
 /// what lets one key sign for more than one purpose without a signature for
 /// one ever being mistaken for the other.
-const TELEMETRY_CTX: &[u8] = b"karst-relay-telemetry-v1";
+const TELEMETRY_CTX: &[u8] = b"karst-estavelle-telemetry-v1";
 /// Separate accounting purpose; a telemetry report can never be replayed as
 /// a billing batch under the same relay identity.
-pub const USAGE_CTX: &[u8] = b"karst-relay-usage-v1";
+pub const USAGE_CTX: &[u8] = b"karst-estavelle-usage-v1";
 /// Fresh transport requests bind a nonce, time, route, and body separately
 /// from the immutable batch signature used for retry identity.
-pub const USAGE_UPLOAD_CTX: &[u8] = b"karst-relay-usage-upload-v1";
+pub const USAGE_UPLOAD_CTX: &[u8] = b"karst-estavelle-usage-upload-v1";
 pub const USAGE_UPLOAD_METHOD: &str = "POST";
-pub const USAGE_UPLOAD_PATH: &str = "/karst/v1/usage/relay-batches";
+pub const USAGE_UPLOAD_PATH: &str = "/karst/v1/usage/estavelle-batches";
 /// Relay-side managed cap grants are a distinct identity-key use.
-pub const CREDIT_REQUEST_CTX: &[u8] = b"karst-relay-credit-request-v1";
-pub const CREDIT_REQUEST_PATH: &str = "/karst/v1/billing/relay-credits";
-pub const CREDIT_SURRENDER_CTX: &[u8] = b"karst-relay-credit-surrender-v1";
-pub const CREDIT_SURRENDER_PATH: &str = "/karst/v1/billing/relay-credits/";
+pub const CREDIT_REQUEST_CTX: &[u8] = b"karst-estavelle-credit-request-v1";
+pub const CREDIT_REQUEST_PATH: &str = "/karst/v1/billing/estavelle-credits";
+pub const CREDIT_SURRENDER_CTX: &[u8] = b"karst-estavelle-credit-surrender-v1";
+pub const CREDIT_SURRENDER_PATH: &str = "/karst/v1/billing/estavelle-credits/";
 
 /// Domain label for a relay identifier — §5.2.
-const RELAY_ID_LABEL: &[u8] = b"karst-relay-id-v1";
+const RELAY_ID_LABEL: &[u8] = b"karst-estavelle-id-v1";
 
 /// Domain label for a node identifier. The same value as the KARST-CONTROL
 /// handle (§5.1); the handle is its base64 presentation.
@@ -51,7 +51,7 @@ const NODE_ID_LABEL: &[u8] = b"karst-node-handle-v1";
 /// Seed from which the identity key is expanded.
 pub const SEED_LEN: usize = 32;
 
-/// `SHA-256("karst-relay-id-v1" ‖ relay_identity_pk)`.
+/// `SHA-256("karst-estavelle-id-v1" ‖ relay_identity_pk)`.
 #[must_use]
 pub fn relay_id(identity_pk: &[u8]) -> [u8; ID_LEN] {
     let mut h = Sha256::new();
@@ -255,11 +255,14 @@ pub fn usage_upload_signing_input(
 ) -> Vec<u8> {
     let digest = Sha256::digest(encoded_batch);
     let mut message = Vec::with_capacity(64 + encoded_batch.len());
-    message.extend_from_slice(b"karst-relay-usage-upload-request-v1\0");
-    message.extend_from_slice(&4u16.to_be_bytes());
-    message.extend_from_slice(USAGE_UPLOAD_METHOD.as_bytes());
-    message.extend_from_slice(&29u16.to_be_bytes());
-    message.extend_from_slice(USAGE_UPLOAD_PATH.as_bytes());
+    message.extend_from_slice(b"karst-estavelle-usage-upload-request-v1\0");
+    for field in [USAGE_UPLOAD_METHOD, USAGE_UPLOAD_PATH] {
+        let Ok(length) = u16::try_from(field.len()) else {
+            return Vec::new();
+        };
+        message.extend_from_slice(&length.to_be_bytes());
+        message.extend_from_slice(field.as_bytes());
+    }
     message.extend_from_slice(&timestamp_micros.to_be_bytes());
     message.extend_from_slice(nonce);
     message.extend_from_slice(&digest);
@@ -288,7 +291,7 @@ pub fn credit_request_signing_input(
     ];
     let mut message =
         Vec::with_capacity(64 + fields.iter().map(|field| field.len()).sum::<usize>());
-    message.extend_from_slice(b"karst-relay-credit-request-v1\0");
+    message.extend_from_slice(b"karst-estavelle-credit-request-v1\0");
     for field in fields {
         let Ok(length) = u16::try_from(field.len()) else {
             return Vec::new();
@@ -325,7 +328,7 @@ pub fn credit_surrender_signing_input(
     ];
     let mut message =
         Vec::with_capacity(64 + fields.iter().map(|field| field.len()).sum::<usize>());
-    message.extend_from_slice(b"karst-relay-credit-surrender-v1\0");
+    message.extend_from_slice(b"karst-estavelle-credit-surrender-v1\0");
     for field in fields {
         let Ok(length) = u16::try_from(field.len()) else {
             return Vec::new();
@@ -587,7 +590,7 @@ mod tests {
             signing_input_hex: String,
         }
         let vector: Vector = serde_json::from_str(include_str!(
-            "../../../spec/vectors/relay-usage-upload-v1.json"
+            "../../../spec/vectors/estavelle-usage-upload-v1.json"
         ))
         .expect("valid upload vector");
         let nonce = unhex(&vector.nonce_hex).expect("nonce hex");
@@ -610,7 +613,7 @@ mod tests {
             signing_input_hex: String,
         }
         let vector: Vector = serde_json::from_str(include_str!(
-            "../../../spec/vectors/relay-credit-request-v1.json"
+            "../../../spec/vectors/estavelle-credit-request-v1.json"
         ))
         .expect("valid credit request vector");
         let input = credit_request_signing_input(
@@ -637,7 +640,7 @@ mod tests {
             signing_input_hex: String,
         }
         let vector: Vector = serde_json::from_str(include_str!(
-            "../../../spec/vectors/relay-credit-surrender-v1.json"
+            "../../../spec/vectors/estavelle-credit-surrender-v1.json"
         ))
         .expect("valid credit surrender vector");
         let input = credit_surrender_signing_input(
@@ -741,7 +744,7 @@ mod tests {
     fn the_relay_id_matches_the_specified_construction() {
         let pk = identity(3).public_key().to_vec();
         let mut h = Sha256::new();
-        h.update(b"karst-relay-id-v1");
+        h.update(b"karst-estavelle-id-v1");
         h.update(&pk);
         let expected: [u8; ID_LEN] = h.finalize().into();
         assert_eq!(identity(3).relay_id(), expected);
@@ -749,7 +752,7 @@ mod tests {
 
     #[test]
     fn a_seed_round_trips_through_a_file() {
-        let dir = std::env::temp_dir().join(format!("karst-relay-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("karst-estavelle-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("relay.key");
 
@@ -765,7 +768,7 @@ mod tests {
     #[test]
     fn a_world_readable_seed_is_refused() {
         use std::os::unix::fs::PermissionsExt as _;
-        let dir = std::env::temp_dir().join(format!("karst-relay-perm-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("karst-estavelle-perm-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("mkdir");
         let path = dir.join("relay.key");
@@ -783,7 +786,7 @@ mod tests {
     #[test]
     fn a_created_seed_is_not_world_readable() {
         use std::os::unix::fs::PermissionsExt as _;
-        let dir = std::env::temp_dir().join(format!("karst-relay-mode-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("karst-estavelle-mode-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("relay.key");
         let _ = Identity::load_or_create(&path).expect("create");

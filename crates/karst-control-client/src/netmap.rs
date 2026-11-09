@@ -403,7 +403,7 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     push(&mut h, b"karst-ssh-filter");
     h.update(u32::from(content.ssh_filter_present).to_be_bytes());
     push_rules(&mut h, content.ssh_filter);
-    push(&mut h, b"karst-relays");
+    push(&mut h, b"karst-estavelles");
     for relay in content.relays {
         push(&mut h, relay.address.as_bytes());
         push(&mut h, relay.tls_server_name.as_bytes());

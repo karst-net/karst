@@ -32,7 +32,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 )
 
-// enrollMinter is MintRelayEnrollKey's own narrow shape -- the same
+// enrollMinter is MintEstavelleEnrollKey's own narrow shape -- the same
 // method api/nodes.go's relay-enroll-tokens handler already calls
 // through an identically narrow inline interface, satisfied by
 // *server.DefaultAccountManager. Declared here, not imported from
@@ -40,7 +40,7 @@ import (
 // never needs an HTTP/PAT round-trip to mint a token the Rust loop used
 // to fetch over POST /relays/enroll-tokens.
 type enrollMinter interface {
-	MintRelayEnrollKey(ctx context.Context, accountID, poolID string, expiresIn time.Duration) (string, error)
+	MintEstavelleEnrollKey(ctx context.Context, accountID, poolID string, expiresIn time.Duration) (string, error)
 }
 
 // relayFinder is estavellereg.Store's own FindByTLSServerName -- the exact
@@ -201,7 +201,7 @@ func provisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocati
 		return failAllocation(ctx.alloc, store, allocation, StateRequested,
 			errors.New("KARST_RELAY_ALLOCATE_CONTROL_API_BASE is not configured"))
 	}
-	token, err := deps.Enroll.MintRelayEnrollKey(ctx.alloc, allocation.AccountID, allocation.ID, enrollTokenExpiry)
+	token, err := deps.Enroll.MintEstavelleEnrollKey(ctx.alloc, allocation.AccountID, allocation.ID, enrollTokenExpiry)
 	if err != nil {
 		return failAllocation(ctx.alloc, store, allocation, StateRequested, err)
 	}

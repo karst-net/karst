@@ -17,6 +17,8 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/netbirdio/netbird/management/server/migration"
 )
 
 // Kind describes a change to an enrollment generation, independent of whether
@@ -70,7 +72,12 @@ func (event) TableName() string { return "karst_usage_device_events" }
 // have no cascading foreign keys to live membership: a deletion must not
 // destroy historical evidence.
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate(&stream{}, &event{}, &deviceCheckpoint{}, &collection{}, &Period{}, &enrollment{}, &Discrepancy{}, &RelayMapping{})
+	// ADR-0069's clean-break Relay->Estavelle rename: idempotent, no-op once
+	// the rename has happened.
+	if err := migration.RenameTable[EstavelleMapping](context.Background(), db, "karst_usage_relay_mappings"); err != nil {
+		return err
+	}
+	return db.AutoMigrate(&stream{}, &event{}, &deviceCheckpoint{}, &collection{}, &Period{}, &enrollment{}, &Discrepancy{}, &EstavelleMapping{})
 }
 
 func validTime(t time.Time) bool {

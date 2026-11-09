@@ -376,7 +376,7 @@ func relayEntries() []*proto.KarstRelay {
 
 func relayRow(address string, key []byte) *proto.KarstRelay {
 	h := sha256.New()
-	_, _ = h.Write([]byte("karst-relay-id-v1"))
+	_, _ = h.Write([]byte("karst-estavelle-id-v1"))
 	_, _ = h.Write(key)
 	return &proto.KarstRelay{
 		Address:       address,

@@ -107,7 +107,7 @@ var _ infraprovision.Driver = (*Driver)(nil)
 // (estavellealloc.Store.Create's xid.New().String()), lowercase alphanumeric
 // and well within the 253-character DNS-subdomain limit.
 func podName(allocationID string) string {
-	return "karst-relay-" + allocationID
+	return "karst-estavelle-" + allocationID
 }
 
 func (d *Driver) buildPod(name, allocationID, tlsServerName string, req infraprovision.CreateRequest) (*corev1.Pod, error) {

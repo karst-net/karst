@@ -19,13 +19,13 @@ import (
 	"github.com/netbirdio/netbird/shared/management/status"
 )
 
-type relayUsageReporter interface {
+type estavelleUsageReporter interface {
 	Report(context.Context, string, time.Time, time.Time) (estavelleusage.Report, error)
 }
 
-// RegisterRelayUsageEndpoints mounts the customer relay report before the
+// RegisterEstavelleUsageEndpoints mounts the customer estavelle report before the
 // broad /karst/v1 router. Scope always comes from the authenticated account.
-func RegisterRelayUsageEndpoints(router *mux.Router, manager permissions.Manager, reporter relayUsageReporter, log auditReader) {
+func RegisterEstavelleUsageEndpoints(router *mux.Router, manager permissions.Manager, reporter estavelleUsageReporter, log auditReader) {
 	routes := router.PathPrefix("/karst/v1/usage").Subrouter()
 	routes.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +37,7 @@ func RegisterRelayUsageEndpoints(router *mux.Router, manager permissions.Manager
 			karstAuthorization(manager)(next).ServeHTTP(w, r)
 		})
 	})
-	routes.HandleFunc("/relays", func(w http.ResponseWriter, r *http.Request) {
+	routes.HandleFunc("/estavelles", func(w http.ResponseWriter, r *http.Request) {
 		user, err := nbcontext.GetUserAuthFromContext(r.Context())
 		if err != nil {
 			util.WriteError(r.Context(), err, w)
@@ -49,7 +49,7 @@ func RegisterRelayUsageEndpoints(router *mux.Router, manager permissions.Manager
 			return
 		}
 		if reporter == nil || log == nil {
-			util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay usage reporting or audit storage is not configured"), w)
+			util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "estavelle usage reporting or audit storage is not configured"), w)
 			return
 		}
 		query := r.URL.Query()
@@ -67,15 +67,15 @@ func RegisterRelayUsageEndpoints(router *mux.Router, manager permissions.Manager
 			case errors.Is(err, estavelleusage.ErrInvalidReport):
 				err = status.Errorf(status.InvalidArgument, "request a past, nonempty window of at most 93 days aligned to whole minutes")
 			case errors.Is(err, estavelleusage.ErrReportLimit):
-				err = status.Errorf(status.InvalidArgument, "too many relay usage records; request a shorter window")
+				err = status.Errorf(status.InvalidArgument, "too many estavelle usage records; request a shorter window")
 			default:
-				err = status.Errorf(status.Internal, "could not read relay usage report")
+				err = status.Errorf(status.Internal, "could not read estavelle usage report")
 			}
 			util.WriteError(ctx, err, w)
 			return
 		}
-		if _, err := log.Append(ctx, user.UserId, "karst.usage.relays.view", "usage/relays", ""); err != nil {
-			util.WriteError(ctx, status.Errorf(status.Internal, "could not audit relay usage report"), w)
+		if _, err := log.Append(ctx, user.UserId, "karst.usage.estavelles.view", "usage/estavelles", ""); err != nil {
+			util.WriteError(ctx, status.Errorf(status.Internal, "could not audit estavelle usage report"), w)
 			return
 		}
 		util.WriteJSONObject(ctx, w, report)

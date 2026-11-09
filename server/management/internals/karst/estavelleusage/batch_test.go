@@ -28,7 +28,7 @@ type signingVector struct {
 }
 
 func TestSharedRelayUsageSigningVector(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "..", "spec", "vectors", "relay-usage-batch-v1.json")
+	path := filepath.Join("..", "..", "..", "..", "..", "spec", "vectors", "estavelle-usage-batch-v1.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestParseAndVerifySignedBatch(t *testing.T) {
 	}
 	batch := Batch{Epoch: [16]byte{1, 2, 3}, Sequence: 7, Payload: emptyHeartbeat()}
 	batch.Digest = sha256.Sum256(batch.Payload)
-	signature, err := key.Sign([]byte(identity.RelayUsageContext), batch.SigningInput())
+	signature, err := key.Sign([]byte(identity.EstavelleUsageContext), batch.SigningInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestParseAndVerifySignedBatch(t *testing.T) {
 	if got.Epoch != batch.Epoch || got.Sequence != batch.Sequence || !bytes.Equal(got.Payload, batch.Payload) {
 		t.Fatalf("verified batch = %+v, want %+v", got, batch)
 	}
-	wrongContextSignature, err := key.Sign([]byte(identity.RelayTelemetryContext), batch.SigningInput())
+	wrongContextSignature, err := key.Sign([]byte(identity.EstavelleTelemetryContext), batch.SigningInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,18 +107,18 @@ func TestFreshUploadSignatureBindsRequestAndBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	signature, err := key.Sign([]byte(identity.RelayUsageUploadContext), input)
+	signature, err := key.Sign([]byte(identity.EstavelleUsageUploadContext), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !identity.Verify(key.Public(), []byte(identity.RelayUsageUploadContext), input, signature) {
+	if !identity.Verify(key.Public(), []byte(identity.EstavelleUsageUploadContext), input, signature) {
 		t.Fatal("valid upload signature rejected")
 	}
 	changedBody, err := UploadSigningInput("POST", UploadPath, 123456789, nonce, []byte("different batch"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.Verify(key.Public(), []byte(identity.RelayUsageUploadContext), changedBody, signature) {
+	if identity.Verify(key.Public(), []byte(identity.EstavelleUsageUploadContext), changedBody, signature) {
 		t.Fatal("signature accepted a different request body")
 	}
 	changedNonce := nonce
@@ -127,7 +127,7 @@ func TestFreshUploadSignatureBindsRequestAndBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.Verify(key.Public(), []byte(identity.RelayUsageUploadContext), changedRequest, signature) {
+	if identity.Verify(key.Public(), []byte(identity.EstavelleUsageUploadContext), changedRequest, signature) {
 		t.Fatal("signature accepted a reused signature with a changed nonce")
 	}
 	if _, err := UploadSigningInput("PUT", UploadPath, 123456789, nonce, body); err == nil {
@@ -136,7 +136,7 @@ func TestFreshUploadSignatureBindsRequestAndBody(t *testing.T) {
 }
 
 func TestSharedUsageUploadSigningVectorMatchesRust(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "..", "spec", "vectors", "relay-usage-upload-v1.json")
+	path := filepath.Join("..", "..", "..", "..", "..", "spec", "vectors", "estavelle-usage-upload-v1.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +211,7 @@ func TestParseRejectsMalformedOrTamperedBatches(t *testing.T) {
 	}
 	batch := Batch{Epoch: [16]byte{8}, Sequence: 12, Payload: emptyHeartbeat()}
 	batch.Digest = sha256.Sum256(batch.Payload)
-	signature, err := key.Sign([]byte(identity.RelayUsageContext), batch.SigningInput())
+	signature, err := key.Sign([]byte(identity.EstavelleUsageContext), batch.SigningInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestParseRejectsMalformedUsagePayload(t *testing.T) {
 			mutate(payload)
 			batch := Batch{Epoch: [16]byte{2}, Sequence: 1, Payload: payload}
 			batch.Digest = sha256.Sum256(payload)
-			signature, err := key.Sign([]byte(identity.RelayUsageContext), batch.SigningInput())
+			signature, err := key.Sign([]byte(identity.EstavelleUsageContext), batch.SigningInput())
 			if err != nil {
 				t.Fatal(err)
 			}

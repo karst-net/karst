@@ -21,39 +21,39 @@ import (
 	"github.com/netbirdio/netbird/shared/auth"
 )
 
-type relayUsageReportStub struct {
+type estavelleUsageReportStub struct {
 	account string
 	calls   int
 }
 
-type relayUsageAuditCapture struct {
+type estavelleUsageAuditCapture struct {
 	scanAudit
 	userID string
 	action string
 }
 
-func (a *relayUsageAuditCapture) Append(_ context.Context, userID, action, _, _ string) (*audit.Entry, error) {
+func (a *estavelleUsageAuditCapture) Append(_ context.Context, userID, action, _, _ string) (*audit.Entry, error) {
 	a.userID, a.action = userID, action
 	return &audit.Entry{}, nil
 }
 
-func (s *relayUsageReportStub) Report(_ context.Context, account string, start, end time.Time) (estavelleusage.Report, error) {
+func (s *estavelleUsageReportStub) Report(_ context.Context, account string, start, end time.Time) (estavelleusage.Report, error) {
 	s.account, s.calls = account, s.calls+1
 	return estavelleusage.Report{Start: start, End: end, AsOf: end, AuthorizationHistoryStart: start, Coverage: "authorized_producers", HistoryComplete: false, Complete: false,
 		ReportedBytes: "123", Days: []estavelleusage.ReportDay{{Date: "2026-10-01", ReportedBytes: "123", ReportedWindows: 1, GapReasons: []string{}}},
 		Limitations: []string{"producer coverage is not historized"}}, nil
 }
 
-const relayUsageReportURL = "/karst/v1/usage/relays?start=2026-10-01T00:00:00Z&end=2026-10-02T00:00:00Z"
+const estavelleUsageReportURL = "/karst/v1/usage/estavelles?start=2026-10-01T00:00:00Z&end=2026-10-02T00:00:00Z"
 
-func TestRelayUsageReportIsAccountScopedAndAudited(t *testing.T) {
+func TestEstavelleUsageReportIsAccountScopedAndAudited(t *testing.T) {
 	for _, role := range []types.UserRole{types.UserRoleOwner, types.UserRoleAdmin, types.UserRoleUser} {
 		t.Run(string(role), func(t *testing.T) {
-			reporter := &relayUsageReportStub{}
-			auditLog := &relayUsageAuditCapture{}
+			reporter := &estavelleUsageReportStub{}
+			auditLog := &estavelleUsageAuditCapture{}
 			router := mux.NewRouter()
-			RegisterRelayUsageEndpoints(router, scanPermissions{role: role}, reporter, auditLog)
-			req := httptest.NewRequest(http.MethodGet, relayUsageReportURL+"&account=other", nil)
+			RegisterEstavelleUsageEndpoints(router, scanPermissions{role: role}, reporter, auditLog)
+			req := httptest.NewRequest(http.MethodGet, estavelleUsageReportURL+"&account=other", nil)
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-1", UserId: "viewer"})
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, req)
@@ -62,13 +62,13 @@ func TestRelayUsageReportIsAccountScopedAndAudited(t *testing.T) {
 				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 				require.Equal(t, "account-1", reporter.account)
 				require.Equal(t, "viewer", auditLog.userID)
-				require.Equal(t, "karst.usage.relays.view", auditLog.action)
+				require.Equal(t, "karst.usage.estavelles.view", auditLog.action)
 				require.NotContains(t, response.Body.String(), "other")
-				require.NotContains(t, response.Body.String(), "missing_sequences", "producer-wide sequence holes could reveal cross-account relay activity")
+				require.NotContains(t, response.Body.String(), "missing_sequences", "producer-wide sequence holes could reveal cross-account estavelle activity")
 				var body map[string]any
 				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
 				spec := loadKarstOpenAPISchemas(t)
-				assertDeclaredResponseFields(t, spec, responseSchema(spec, "/usage/relays", "GET", "200"), body, "relay usage report")
+				assertDeclaredResponseFields(t, spec, responseSchema(spec, "/usage/estavelles", "GET", "200"), body, "estavelle usage report")
 			} else {
 				require.Equal(t, http.StatusForbidden, response.Code)
 				require.Zero(t, reporter.calls)
@@ -77,12 +77,12 @@ func TestRelayUsageReportIsAccountScopedAndAudited(t *testing.T) {
 	}
 }
 
-func TestRelayUsageReportRejectsInvalidQueryAndRequiresAudit(t *testing.T) {
+func TestEstavelleUsageReportRejectsInvalidQueryAndRequiresAudit(t *testing.T) {
 	for _, query := range []string{"", "?start=not-a-date&end=2026-10-02T00:00:00Z", "?start=2026-10-01T00:00:00Z&start=2026-10-02T00:00:00Z&end=2026-10-03T00:00:00Z"} {
-		reporter := &relayUsageReportStub{}
+		reporter := &estavelleUsageReportStub{}
 		router := mux.NewRouter()
-		RegisterRelayUsageEndpoints(router, scanPermissions{role: types.UserRoleOwner}, reporter, scanAudit{})
-		req := httptest.NewRequest(http.MethodGet, "/karst/v1/usage/relays"+query, nil)
+		RegisterEstavelleUsageEndpoints(router, scanPermissions{role: types.UserRoleOwner}, reporter, scanAudit{})
+		req := httptest.NewRequest(http.MethodGet, "/karst/v1/usage/estavelles"+query, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "a", UserId: "viewer"})
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
@@ -90,8 +90,8 @@ func TestRelayUsageReportRejectsInvalidQueryAndRequiresAudit(t *testing.T) {
 		require.Zero(t, reporter.calls)
 	}
 	router := mux.NewRouter()
-	RegisterRelayUsageEndpoints(router, scanPermissions{role: types.UserRoleOwner}, &relayUsageReportStub{}, failingUsageAudit{})
-	req := httptest.NewRequest(http.MethodGet, relayUsageReportURL, nil)
+	RegisterEstavelleUsageEndpoints(router, scanPermissions{role: types.UserRoleOwner}, &estavelleUsageReportStub{}, failingUsageAudit{})
+	req := httptest.NewRequest(http.MethodGet, estavelleUsageReportURL, nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "a", UserId: "viewer"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)

@@ -23,7 +23,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 )
 
-func ingestionFixture(t *testing.T) (*gorm.DB, *Store, *identity.Key, string, usage.RelayMapping) {
+func ingestionFixture(t *testing.T) (*gorm.DB, *Store, *identity.Key, string, usage.EstavelleMapping) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "estavelleusage.db")), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func ingestionFixture(t *testing.T) (*gorm.DB, *Store, *identity.Key, string, us
 	require.NoError(t, usage.Migrate(db))
 	store, err := NewStore(db)
 	require.NoError(t, err)
-	mapping, err := usage.PersistRelayMapping(context.Background(), db, "deployment-a", "aquifer-b", "account-1")
+	mapping, err := usage.PersistEstavelleMapping(context.Background(), db, "deployment-a", "aquifer-b", "account-1")
 	require.NoError(t, err)
 	key, err := identity.FromSeed(bytes.Repeat([]byte{9}, identity.SeedSize))
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestIngestRejectsUnapprovedMappingAndStaleRequest(t *testing.T) {
 	_, store, key, relayID, _ := ingestionFixture(t)
 	ctx := context.Background()
 	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
-	unapproved, err := usage.PersistRelayMapping(ctx, store.db, "deployment-a", "aquifer-other", "account-2")
+	unapproved, err := usage.PersistEstavelleMapping(ctx, store.db, "deployment-a", "aquifer-other", "account-2")
 	require.NoError(t, err)
 	body := makeSignedBatch(t, key, [16]byte{4}, 0, mappingPayload(unapproved, 25))
 	auth := makeUploadAuth(t, key, relayID, body, now, [32]byte{5})
@@ -151,11 +151,11 @@ func TestRevokedMappingStillAcceptsHistoricalBacklogOnly(t *testing.T) {
 	}
 }
 
-func mappingPayload(mapping usage.RelayMapping, bytes uint64) []byte {
+func mappingPayload(mapping usage.EstavelleMapping, bytes uint64) []byte {
 	return mappingPayloadAt(mapping, bytes, 0)
 }
 
-func mappingPayloadAt(mapping usage.RelayMapping, bytes, start uint64) []byte {
+func mappingPayloadAt(mapping usage.EstavelleMapping, bytes, start uint64) []byte {
 	out := make([]byte, 24)
 	copy(out[:4], "KRUM")
 	binary.BigEndian.PutUint16(out[4:6], 1)
@@ -174,7 +174,7 @@ func makeSignedBatch(t *testing.T, key *identity.Key, epoch [16]byte, sequence u
 	t.Helper()
 	batch := Batch{Epoch: epoch, Sequence: sequence, Payload: payload}
 	batch.Digest = sha256.Sum256(payload)
-	signature, err := key.Sign([]byte(identity.RelayUsageContext), batch.SigningInput())
+	signature, err := key.Sign([]byte(identity.EstavelleUsageContext), batch.SigningInput())
 	require.NoError(t, err)
 	return encodeForTest(batch, signature)
 }
@@ -184,7 +184,7 @@ func makeUploadAuth(t *testing.T, key *identity.Key, relayID string, body []byte
 	timestamp := uint64(now.UnixMicro())
 	transcript, err := UploadSigningInput("POST", UploadPath, timestamp, nonce, body)
 	require.NoError(t, err)
-	signature, err := key.Sign([]byte(identity.RelayUsageUploadContext), transcript)
+	signature, err := key.Sign([]byte(identity.EstavelleUsageUploadContext), transcript)
 	require.NoError(t, err)
 	return UploadAuthorization{RelayID: relayID, TimestampMicros: timestamp, Nonce: nonce, Signature: signature}
 }
@@ -239,11 +239,11 @@ func TestAuthorizationHistoryMigrationBaselinesExistingGrantsOnce(t *testing.T) 
 	require.NoError(t, usage.Migrate(db))
 	require.NoError(t, db.AutoMigrate(&ManagedProducer{}, &AllowedMapping{}))
 
-	mapping, err := usage.PersistRelayMapping(context.Background(), db, "deployment-a", "aquifer-b", "account-1")
+	mapping, err := usage.PersistEstavelleMapping(context.Background(), db, "deployment-a", "aquifer-b", "account-1")
 	require.NoError(t, err)
 	key, err := identity.FromSeed(bytes.Repeat([]byte{8}, identity.SeedSize))
 	require.NoError(t, err)
-	relayID := base64.RawURLEncoding.EncodeToString(estavellereg.RelayID(key.Public()))
+	relayID := base64.RawURLEncoding.EncodeToString(estavellereg.EstavelleID(key.Public()))
 	priorAuthorization := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Microsecond)
 	require.NoError(t, db.Create(&ManagedProducer{RelayID: relayID, DeploymentID: "deployment-a", IdentityKey: base64.StdEncoding.EncodeToString(key.Public()), Enabled: true, UpdatedAt: priorAuthorization}).Error)
 	require.NoError(t, db.Create(&AllowedMapping{RelayID: relayID, DeploymentID: mapping.DeploymentID, Version: mapping.Version, Enabled: true, AllowedAt: priorAuthorization}).Error)

@@ -205,7 +205,7 @@ func (s *Store) AuthorizeProducer(ctx context.Context, publicKey []byte, deploym
 	if len(publicKey) != identity.PublicKeySize || !validText(deployment, 128) {
 		return "", ErrProducerConflict
 	}
-	relayID := base64.RawURLEncoding.EncodeToString(estavellereg.RelayID(publicKey))
+	relayID := base64.RawURLEncoding.EncodeToString(estavellereg.EstavelleID(publicKey))
 	key := base64.StdEncoding.EncodeToString(publicKey)
 	var existing ManagedProducer
 	err := s.db.WithContext(ctx).Where("relay_id = ?", relayID).Take(&existing).Error
@@ -247,7 +247,7 @@ func (s *Store) AllowMapping(ctx context.Context, relayID, deployment, version s
 	if producer.DeploymentID != deployment {
 		return ErrMappingNotAllowed
 	}
-	mapping, err := usage.ResolveRelayMapping(ctx, s.db, deployment, version)
+	mapping, err := usage.ResolveEstavelleMapping(ctx, s.db, deployment, version)
 	if err != nil {
 		return err
 	}
@@ -312,7 +312,7 @@ func (s *Store) startEnabledMappingIntervals(ctx context.Context, relayID string
 		return err
 	}
 	for _, allowed := range mappings {
-		mapping, err := usage.ResolveRelayMapping(ctx, s.db, allowed.DeploymentID, allowed.Version)
+		mapping, err := usage.ResolveEstavelleMapping(ctx, s.db, allowed.DeploymentID, allowed.Version)
 		if err != nil {
 			return err
 		}
@@ -323,7 +323,7 @@ func (s *Store) startEnabledMappingIntervals(ctx context.Context, relayID string
 	return nil
 }
 
-func (s *Store) startMappingInterval(ctx context.Context, relayID string, mapping usage.RelayMapping, at time.Time) error {
+func (s *Store) startMappingInterval(ctx context.Context, relayID string, mapping usage.EstavelleMapping, at time.Time) error {
 	var active producerMappingInterval
 	err := s.db.WithContext(ctx).Where("relay_id = ? AND deployment_id = ? AND version = ? AND end_us IS NULL", relayID, mapping.DeploymentID, mapping.Version).Take(&active).Error
 	if err == nil {
@@ -404,13 +404,13 @@ func (s *Store) Ingest(ctx context.Context, method, path string, auth UploadAuth
 			return ErrProducerMissing
 		}
 		idBytes, err := base64.RawURLEncoding.DecodeString(auth.RelayID)
-		if err != nil || subtle.ConstantTimeCompare(idBytes, estavellereg.RelayID(publicKey)) != 1 {
+		if err != nil || subtle.ConstantTimeCompare(idBytes, estavellereg.EstavelleID(publicKey)) != 1 {
 			return ErrUnauthorized
 		}
-		if !identity.Verify(publicKey, []byte(identity.RelayUsageUploadContext), transcript, auth.Signature) {
+		if !identity.Verify(publicKey, []byte(identity.EstavelleUsageUploadContext), transcript, auth.Signature) {
 			return ErrUnauthorized
 		}
-		if !identity.Verify(publicKey, []byte(identity.RelayUsageContext), batch.SigningInput(), batch.Signature) {
+		if !identity.Verify(publicKey, []byte(identity.EstavelleUsageContext), batch.SigningInput(), batch.Signature) {
 			return ErrUnauthorized
 		}
 		var allMappings []AllowedMapping
@@ -420,7 +420,7 @@ func (s *Store) Ingest(ctx context.Context, method, path string, auth UploadAuth
 		if len(allMappings) > maxMappings {
 			return ErrMappingNotAllowed
 		}
-		resolvedScopes := make(map[string]usage.RelayMapping, len(allMappings))
+		resolvedScopes := make(map[string]usage.EstavelleMapping, len(allMappings))
 		accounts := make(map[string]struct{}, len(allMappings))
 		for _, allowed := range allMappings {
 			if allowed.DeploymentID != producer.DeploymentID {
@@ -429,7 +429,7 @@ func (s *Store) Ingest(ctx context.Context, method, path string, auth UploadAuth
 			if !allowed.Enabled && (allowed.RevokedAt == nil || batch.Window.EndMicros > uint64(allowed.RevokedAt.UnixMicro())) {
 				continue
 			}
-			resolved, err := usage.ResolveRelayMapping(ctx, tx, allowed.DeploymentID, allowed.Version)
+			resolved, err := usage.ResolveEstavelleMapping(ctx, tx, allowed.DeploymentID, allowed.Version)
 			if err != nil {
 				if errors.Is(err, usage.ErrMapping) {
 					return ErrMappingNotAllowed

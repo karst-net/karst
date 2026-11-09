@@ -7138,7 +7138,7 @@ mod probe_tests {
         use sha2::{Digest as _, Sha256};
         let identity_key = vec![tag; 2592];
         let mut h = Sha256::new();
-        h.update(b"karst-relay-id-v1");
+        h.update(b"karst-estavelle-id-v1");
         h.update(&identity_key);
         crate::netmap::Estavelle {
             address: format!("198.51.100.{tag}:443"),

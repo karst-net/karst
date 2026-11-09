@@ -251,7 +251,7 @@ func TestDeleteRemovesIdentityAndRelatedObservations(t *testing.T) {
 	if err := s.ReplaceSessionObservations(firstHandle, []node.SessionObservation{{PeerHandle: secondHandle, Path: "direct"}}); err != nil {
 		t.Fatalf("record first observation: %v", err)
 	}
-	if err := s.ReplaceSessionObservations(secondHandle, []node.SessionObservation{{PeerHandle: firstHandle, Path: "relay"}}); err != nil {
+	if err := s.ReplaceSessionObservations(secondHandle, []node.SessionObservation{{PeerHandle: firstHandle, Path: "estavelle"}}); err != nil {
 		t.Fatalf("record second observation: %v", err)
 	}
 

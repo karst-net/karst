@@ -20,31 +20,31 @@ import (
 	"github.com/netbirdio/netbird/shared/management/status"
 )
 
-type relayAlertBillingStore interface {
-	EvaluateAndRecordRelayAlerts(context.Context, estavelleusage.Report, *int64) ([]billing.RelayAlertCandidate, error)
-	RelayAlerts(context.Context, time.Time, time.Time) ([]billing.RelayAlertCandidate, error)
-	RelaySpendingCap(context.Context, time.Time, time.Time) (billing.RelaySpendingCap, error)
+type estavelleAlertBillingStore interface {
+	EvaluateAndRecordEstavelleAlerts(context.Context, estavelleusage.Report, *int64) ([]billing.EstavelleAlertCandidate, error)
+	EstavelleAlerts(context.Context, time.Time, time.Time) ([]billing.EstavelleAlertCandidate, error)
+	EstavelleSpendingCap(context.Context, time.Time, time.Time) (billing.EstavelleSpendingCap, error)
 }
 
-type relayAlertUsageReporter interface {
+type estavelleAlertUsageReporter interface {
 	Report(context.Context, string, time.Time, time.Time) (estavelleusage.Report, error)
 }
 
-type relayAlertFeed struct {
+type estavelleAlertFeed struct {
 	PeriodStart      time.Time                     `json:"period_start"`
 	PeriodEnd        time.Time                     `json:"period_end"`
 	AsOf             time.Time                     `json:"as_of"`
 	CoverageComplete bool                          `json:"coverage_complete"`
 	CoverageWarning  string                        `json:"coverage_warning,omitempty"`
-	Alerts           []billing.RelayAlertCandidate `json:"alerts"`
+	Alerts           []billing.EstavelleAlertCandidate `json:"alerts"`
 }
 
-// RegisterRelayAlertEndpoints exposes the persisted in-app alert feed to
+// RegisterEstavelleAlertEndpoints exposes the persisted in-app alert feed to
 // account owners and administrators. Reading the
 // current period reevaluates authorized usage and records any new threshold
 // crossings before returning the account-scoped feed.
-func RegisterRelayAlertEndpoints(router *mux.Router, manager permissions.Manager, usageStore relayAlertUsageReporter, billingStore relayAlertBillingStore, log auditReader) {
-	routes := router.PathPrefix("/karst/v1/usage/relay-alerts").Subrouter()
+func RegisterEstavelleAlertEndpoints(router *mux.Router, manager permissions.Manager, usageStore estavelleAlertUsageReporter, billingStore estavelleAlertBillingStore, log auditReader) {
+	routes := router.PathPrefix("/karst/v1/usage/estavelle-alerts").Subrouter()
 	routes.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
@@ -96,18 +96,18 @@ func RegisterRelayAlertEndpoints(router *mux.Router, manager permissions.Manager
 		if end.After(now) {
 			end = now.Truncate(time.Minute)
 		}
-		feed := relayAlertFeed{PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), AsOf: now, Alerts: []billing.RelayAlertCandidate{}}
+		feed := estavelleAlertFeed{PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), AsOf: now, Alerts: []billing.EstavelleAlertCandidate{}}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		accountCtx := billing.WithAccount(ctx, user.AccountId)
 		if end.After(start) {
 			var capMinor *int64
-			cap, capErr := billingStore.RelaySpendingCap(accountCtx, start, start.AddDate(0, 1, 0))
+			cap, capErr := billingStore.EstavelleSpendingCap(accountCtx, start, start.AddDate(0, 1, 0))
 			if capErr == nil {
 				minor := cap.OverageMinor
 				capMinor = &minor
-			} else if !errors.Is(capErr, billing.ErrRelayCapNotConfigured) {
-				util.WriteError(ctx, status.Errorf(status.Internal, "could not read relay spending cap"), w)
+			} else if !errors.Is(capErr, billing.ErrEstavelleCapNotConfigured) {
+				util.WriteError(ctx, status.Errorf(status.Internal, "could not read estavelle spending cap"), w)
 				return
 			}
 			report, err := usageStore.Report(ctx, user.AccountId, start, end)
@@ -116,9 +116,9 @@ func RegisterRelayAlertEndpoints(router *mux.Router, manager permissions.Manager
 				case errors.Is(err, estavelleusage.ErrInvalidReport):
 					err = status.Errorf(status.InvalidArgument, "period must be a past or current UTC calendar month")
 				case errors.Is(err, estavelleusage.ErrReportLimit):
-					err = status.Errorf(status.InvalidArgument, "relay usage report exceeds the supported window")
+					err = status.Errorf(status.InvalidArgument, "estavelle usage report exceeds the supported window")
 				default:
-					err = status.Errorf(status.Internal, "could not read relay usage report")
+					err = status.Errorf(status.Internal, "could not read estavelle usage report")
 				}
 				util.WriteError(ctx, err, w)
 				return
@@ -126,28 +126,28 @@ func RegisterRelayAlertEndpoints(router *mux.Router, manager permissions.Manager
 			feed.AsOf = report.AsOf
 			feed.CoverageComplete = report.Complete && report.Coverage == "authorized_producers"
 			if !feed.CoverageComplete {
-				feed.CoverageWarning = "Relay usage coverage is incomplete; threshold amounts are lower bounds."
+				feed.CoverageWarning = "Estavelle usage coverage is incomplete; threshold amounts are lower bounds."
 			}
-			if _, err := billingStore.EvaluateAndRecordRelayAlerts(accountCtx, report, capMinor); err != nil {
+			if _, err := billingStore.EvaluateAndRecordEstavelleAlerts(accountCtx, report, capMinor); err != nil {
 				if errors.Is(err, billing.ErrScheduleUnassigned) {
 					err = status.Errorf(status.PreconditionFailed, "no billing schedule is assigned for this period")
 				} else {
-					err = status.Errorf(status.Internal, "could not evaluate relay billing alerts")
+					err = status.Errorf(status.Internal, "could not evaluate estavelle billing alerts")
 				}
 				util.WriteError(ctx, err, w)
 				return
 			}
-			alerts, err := billingStore.RelayAlerts(accountCtx, start, start.AddDate(0, 1, 0))
+			alerts, err := billingStore.EstavelleAlerts(accountCtx, start, start.AddDate(0, 1, 0))
 			if err != nil {
-				util.WriteError(ctx, status.Errorf(status.Internal, "could not read relay billing alerts"), w)
+				util.WriteError(ctx, status.Errorf(status.Internal, "could not read estavelle billing alerts"), w)
 				return
 			}
 			feed.Alerts = alerts
 		} else {
-			feed.CoverageWarning = "Relay usage coverage is not yet available."
+			feed.CoverageWarning = "Estavelle usage coverage is not yet available."
 		}
-		if _, err := log.Append(ctx, user.UserId, "karst.billing.relay_alerts.view", "billing/relay-alerts", periods[0]); err != nil {
-			util.WriteError(ctx, status.Errorf(status.Internal, "could not audit relay billing alert access"), w)
+		if _, err := log.Append(ctx, user.UserId, "karst.billing.estavelle_alerts.view", "billing/estavelle-alerts", periods[0]); err != nil {
+			util.WriteError(ctx, status.Errorf(status.Internal, "could not audit estavelle billing alert access"), w)
 			return
 		}
 		util.WriteJSONObject(ctx, w, feed)

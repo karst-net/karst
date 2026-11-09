@@ -11,10 +11,10 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 )
 
-// RelayAlertCandidate is a deterministic threshold crossing. It is not sent or
+// EstavelleAlertCandidate is a deterministic threshold crossing. It is not sent or
 // persisted; callers must deduplicate on account, period, schedule, target,
 // and threshold before delivering it to billing administrators.
-type RelayAlertCandidate struct {
+type EstavelleAlertCandidate struct {
 	PeriodStart     time.Time `json:"period_start"`
 	PeriodEnd       time.Time `json:"period_end"`
 	ScheduleVersion string    `json:"schedule_version"`
@@ -26,10 +26,10 @@ type RelayAlertCandidate struct {
 	UsageComplete   bool      `json:"usage_complete"`
 }
 
-// MaxRelayBytesForOverage converts a nonnegative currency-minor-unit cap into
+// MaxEstavelleBytesForOverage converts a nonnegative currency-minor-unit cap into
 // the largest whole-byte managed-relay budget that cannot exceed it. The
 // included allowance is added separately and does not consume the cap.
-func MaxRelayBytesForOverage(schedule RateSchedule, overageMinor int64) (*big.Int, error) {
+func MaxEstavelleBytesForOverage(schedule RateSchedule, overageMinor int64) (*big.Int, error) {
 	if err := validateRateSchedule(schedule); err != nil {
 		return nil, err
 	}
@@ -41,12 +41,12 @@ func MaxRelayBytesForOverage(schedule RateSchedule, overageMinor int64) (*big.In
 	return new(big.Int).Add(new(big.Int).SetUint64(schedule.RelayIncludedBytes), overageBytes), nil
 }
 
-// EvaluateRelayAlerts finds approved 75%, 90%, and 100% threshold crossings
+// EvaluateEstavelleAlerts finds approved 75%, 90%, and 100% threshold crossings
 // for the included relay allowance and optional overage cap. It may return
 // lower-bound candidates for incomplete reports; UsageComplete makes that
 // limitation explicit for the eventual notification. No alert channel,
 // deduplication state, or customer preference is assumed here.
-func EvaluateRelayAlerts(report estavelleusage.Report, schedule RateSchedule, capOverageMinor *int64) ([]RelayAlertCandidate, error) {
+func EvaluateEstavelleAlerts(report estavelleusage.Report, schedule RateSchedule, capOverageMinor *int64) ([]EstavelleAlertCandidate, error) {
 	if err := validateRateSchedule(schedule); err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func EvaluateRelayAlerts(report estavelleusage.Report, schedule RateSchedule, ca
 		return nil, ErrInvalidRateSchedule
 	}
 	complete := relayReportComplete(report)
-	candidates := make([]RelayAlertCandidate, 0, 6)
+	candidates := make([]EstavelleAlertCandidate, 0, 6)
 	appendCrossings := func(target string, limit *big.Int) {
 		if limit.Sign() == 0 {
 			return
@@ -80,7 +80,7 @@ func EvaluateRelayAlerts(report estavelleusage.Report, schedule RateSchedule, ca
 			if bytes.Cmp(threshold) < 0 {
 				continue
 			}
-			candidates = append(candidates, RelayAlertCandidate{
+			candidates = append(candidates, EstavelleAlertCandidate{
 				PeriodStart: start, PeriodEnd: periodEnd, ScheduleVersion: schedule.Version,
 				Target: target, Threshold: pct, ReportedBytes: bytes.String(),
 				ThresholdBytes: threshold.String(), AsOf: report.AsOf.UTC(), UsageComplete: complete,
@@ -89,7 +89,7 @@ func EvaluateRelayAlerts(report estavelleusage.Report, schedule RateSchedule, ca
 	}
 	appendCrossings("included_allowance", new(big.Int).SetUint64(schedule.RelayIncludedBytes))
 	if capOverageMinor != nil {
-		capBytes, err := MaxRelayBytesForOverage(schedule, *capOverageMinor)
+		capBytes, err := MaxEstavelleBytesForOverage(schedule, *capOverageMinor)
 		if err != nil {
 			return nil, err
 		}
@@ -111,21 +111,21 @@ func relayReportComplete(report estavelleusage.Report) bool {
 	return true
 }
 
-func validateRelayAlertCandidate(candidate RelayAlertCandidate) error {
+func validateEstavelleAlertCandidate(candidate EstavelleAlertCandidate) error {
 	startUS, endUS, err := billingPeriodMicros(candidate.PeriodStart, candidate.PeriodEnd)
 	if err != nil || !isBillingCalendarMonth(startUS, endUS) || !validToken(candidate.ScheduleVersion) ||
 		(candidate.Target != "included_allowance" && candidate.Target != "spending_cap") ||
 		(candidate.Threshold != 75 && candidate.Threshold != 90 && candidate.Threshold != 100) ||
 		!validBillingTime(candidate.AsOf) || candidate.AsOf.Before(candidate.PeriodStart) || candidate.AsOf.After(candidate.PeriodEnd) {
-		return errInvalidRelayAlert
+		return errInvalidEstavelleAlert
 	}
 	reported, ok := new(big.Int).SetString(candidate.ReportedBytes, 10)
 	if !ok || reported.Sign() < 0 || reported.String() != candidate.ReportedBytes {
-		return errInvalidRelayAlert
+		return errInvalidEstavelleAlert
 	}
 	threshold, ok := new(big.Int).SetString(candidate.ThresholdBytes, 10)
 	if !ok || threshold.Sign() <= 0 || threshold.String() != candidate.ThresholdBytes || reported.Cmp(threshold) < 0 {
-		return errInvalidRelayAlert
+		return errInvalidEstavelleAlert
 	}
 	return nil
 }
@@ -139,4 +139,4 @@ func isBillingCalendarMonth(startUS, endUS int64) bool {
 	return end.Equal(start.AddDate(0, 1, 0))
 }
 
-var errInvalidRelayAlert = errors.New("billing: invalid relay alert candidate")
+var errInvalidEstavelleAlert = errors.New("billing: invalid relay alert candidate")

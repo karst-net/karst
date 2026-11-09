@@ -22,35 +22,35 @@ import (
 )
 
 type relayCapBillingStub struct {
-	cap      billing.RelaySpendingCap
+	cap      billing.EstavelleSpendingCap
 	readErr  error
 	writeErr error
 	setCalls int
 }
 
-func (s *relayCapBillingStub) RelaySpendingCap(ctx context.Context, _, _ time.Time) (billing.RelaySpendingCap, error) {
+func (s *relayCapBillingStub) EstavelleSpendingCap(ctx context.Context, _, _ time.Time) (billing.EstavelleSpendingCap, error) {
 	_ = ctx
 	return s.cap, s.readErr
 }
 
-func (s *relayCapBillingStub) SetRelaySpendingCap(ctx context.Context, start, end time.Time, limit int64, acknowledged bool, actor string) (billing.RelaySpendingCap, error) {
+func (s *relayCapBillingStub) SetEstavelleSpendingCap(ctx context.Context, start, end time.Time, limit int64, acknowledged bool, actor string) (billing.EstavelleSpendingCap, error) {
 	s.setCalls++
 	_ = ctx
 	if s.writeErr != nil {
-		return billing.RelaySpendingCap{}, s.writeErr
+		return billing.EstavelleSpendingCap{}, s.writeErr
 	}
-	s.cap = billing.RelaySpendingCap{PeriodStart: start, PeriodEnd: end, Currency: "USD", OverageMinor: limit, Acknowledged: acknowledged, UpdatedBy: actor, EffectiveAt: start}
+	s.cap = billing.EstavelleSpendingCap{PeriodStart: start, PeriodEnd: end, Currency: "USD", OverageMinor: limit, Acknowledged: acknowledged, UpdatedBy: actor, EffectiveAt: start}
 	return s.cap, nil
 }
 
 func TestRelayCapCustomerEndpoint(t *testing.T) {
-	start := currentRelayCapMonth(time.Now().UTC()).Format("2006-01")
-	store := &relayCapBillingStub{readErr: billing.ErrRelayCapNotConfigured}
+	start := currentEstavelleCapMonth(time.Now().UTC()).Format("2006-01")
+	store := &relayCapBillingStub{readErr: billing.ErrEstavelleCapNotConfigured}
 	router := mux.NewRouter()
-	RegisterRelayCapEndpoints(router, scanPermissions{role: types.UserRoleOwner}, store, scanAudit{})
+	RegisterEstavelleCapEndpoints(router, scanPermissions{role: types.UserRoleOwner}, store, scanAudit{})
 
 	request := func(method, body string) *httptest.ResponseRecorder {
-		url := "/karst/v1/billing/relay-cap"
+		url := "/karst/v1/billing/estavelle-cap"
 		if method == http.MethodGet {
 			url += "?period=" + start
 		}
@@ -83,7 +83,7 @@ func TestRelayCapCustomerEndpoint(t *testing.T) {
 func TestRelayCapCustomerEndpointRejectsUnauthorizedAndBadSchedule(t *testing.T) {
 	// Keep the request valid even after a calendar rollover so these cases
 	// exercise authorization and schedule rejection, not past-period validation.
-	period := currentRelayCapMonth(time.Now().UTC()).AddDate(0, 1, 0).Format("2006-01")
+	period := currentEstavelleCapMonth(time.Now().UTC()).AddDate(0, 1, 0).Format("2006-01")
 	body := `{"period":"` + period + `","overage_limit_minor":1,"acknowledge_interruption":true}`
 	for _, tc := range []struct {
 		name     string
@@ -97,8 +97,8 @@ func TestRelayCapCustomerEndpointRejectsUnauthorizedAndBadSchedule(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			store := &relayCapBillingStub{writeErr: tc.writeErr}
 			router := mux.NewRouter()
-			RegisterRelayCapEndpoints(router, scanPermissions{role: tc.role}, store, scanAudit{})
-			req := httptest.NewRequest(http.MethodPut, "/karst/v1/billing/relay-cap", strings.NewReader(tc.body))
+			RegisterEstavelleCapEndpoints(router, scanPermissions{role: tc.role}, store, scanAudit{})
+			req := httptest.NewRequest(http.MethodPut, "/karst/v1/billing/estavelle-cap", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-1", UserId: "user-1"})
 			response := httptest.NewRecorder()
@@ -116,8 +116,8 @@ func TestRelayCapCustomerEndpointRejectsUnauthorizedAndBadSchedule(t *testing.T)
 func TestRelayCapCustomerEndpointRequiresScheduleForGet(t *testing.T) {
 	store := &relayCapBillingStub{readErr: errors.New("database unavailable")}
 	router := mux.NewRouter()
-	RegisterRelayCapEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store, scanAudit{})
-	req := httptest.NewRequest(http.MethodGet, "/karst/v1/billing/relay-cap?period=2026-10", nil)
+	RegisterEstavelleCapEndpoints(router, scanPermissions{role: types.UserRoleAdmin}, store, scanAudit{})
+	req := httptest.NewRequest(http.MethodGet, "/karst/v1/billing/estavelle-cap?period=2026-10", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-1", UserId: "admin-1"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)

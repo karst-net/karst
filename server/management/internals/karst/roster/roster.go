@@ -208,7 +208,7 @@ func (r *Refresher) Once() error {
 	if err != nil {
 		return fmt.Errorf("roster: list identities: %w", err)
 	}
-	versions := make(map[string]usage.RelayMapping)
+	versions := make(map[string]usage.EstavelleMapping)
 	if r.cfg.Usage != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -219,7 +219,7 @@ func (r *Refresher) Once() error {
 			if _, ok := versions[entry.AccountID]; ok {
 				continue
 			}
-			mapping, err := usage.PersistRelayMapping(ctx, r.cfg.Usage.DB,
+			mapping, err := usage.PersistEstavelleMapping(ctx, r.cfg.Usage.DB,
 				r.cfg.Usage.DeploymentID, aquiferValue(r.cfg.AquiferPrefix, entry.AccountID), entry.AccountID)
 			if err != nil {
 				// Billing failure must not stop admission lease renewal. Publish
@@ -250,7 +250,7 @@ func Render(entries []Entry, aquiferPrefix string) []byte {
 	return render(entries, aquiferPrefix, nil)
 }
 
-func render(entries []Entry, aquiferPrefix string, versions map[string]usage.RelayMapping) []byte {
+func render(entries []Entry, aquiferPrefix string, versions map[string]usage.EstavelleMapping) []byte {
 	sorted := make([]Entry, len(entries))
 	copy(sorted, entries)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Handle < sorted[j].Handle })

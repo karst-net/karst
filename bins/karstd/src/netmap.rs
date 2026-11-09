@@ -441,7 +441,7 @@ impl Estavelle {
         // is decoded makes a malformed registry entry fail closed here rather
         // than later as an inexplicable handshake failure.
         let mut h = Sha256::new();
-        h.update(b"karst-relay-id-v1");
+        h.update(b"karst-estavelle-id-v1");
         h.update(&relay.identity_key);
         let derived: [u8; RELAY_ID_LEN] = h.finalize().into();
         if relay_id != derived {
@@ -1411,7 +1411,7 @@ mod tests {
     fn wire_relay(identity_byte: u8) -> pb::KarstRelay {
         let identity_key = vec![identity_byte; RELAY_IDENTITY_KEY_LEN];
         let mut h = Sha256::new();
-        h.update(b"karst-relay-id-v1");
+        h.update(b"karst-estavelle-id-v1");
         h.update(&identity_key);
         pb::KarstRelay {
             address: "127.0.0.1:443".to_owned(),

@@ -23,7 +23,7 @@ import (
 	"github.com/netbirdio/netbird/shared/management/status"
 )
 
-type relayAllocationStore interface {
+type estavelleAllocationStore interface {
 	Create(context.Context, estavellealloc.Allocation) (*estavellealloc.Allocation, error)
 	List(context.Context) ([]estavellealloc.Allocation, error)
 	Get(context.Context, string) (*estavellealloc.Allocation, error)
@@ -32,25 +32,25 @@ type relayAllocationStore interface {
 	Delete(ctx context.Context, id string, expectedRevision uint64) error
 }
 
-type relayAllocationRegistry interface {
+type estavelleAllocationRegistry interface {
 	FindByTLSServerName(context.Context, string) (*estavellereg.StoredEstavelle, error)
 }
 
-// relayAllocationGrantStore is estavelleservice.Store's own Create/Delete,
+// estavelleAllocationGrantStore is estavelleservice.Store's own Create/Delete,
 // reused directly rather than re-implemented -- ADR-0063 is explicit that
 // granting must call "that exact transactional path", not a second one.
 // Delete here only removes the association (estavelleservice.Store.Delete's
 // own doc comment); it never touches the backend's registry row.
-type relayAllocationGrantStore interface {
+type estavelleAllocationGrantStore interface {
 	Create(context.Context, estavelleservice.Service) (*estavelleservice.Service, error)
 	Delete(context.Context, string) error
 }
 
-type RelayAllocationOptions struct {
+type EstavelleAllocationOptions struct {
 	Audit auditReader
 }
 
-// relayAllocationsPendingPath and relayAllocationScalerActionPath are the
+// estavelleAllocationsPendingPath and estavelleAllocationScalerActionPath are the
 // hard-allowlist entries karstAuthorization (nodes.go) adds for
 // types.UserRoleScaler, alongside the pre-existing relayEnrollTokensPath/
 // relayDeenrollPath. Every allocation-driving action is a POST naming the
@@ -67,11 +67,11 @@ type RelayAllocationOptions struct {
 // old routes working rather than breaking an external consumer that might
 // already have built the now-removed `karst-scaler allocate` process
 // against this exact surface.
-const relayAllocationsPendingPath = "/karst/v1/relay-allocations/pending"
+const estavelleAllocationsPendingPath = "/karst/v1/estavelle-allocations/pending"
 
-var relayAllocationScalerActionPath = regexp.MustCompile(`^/karst/v1/relay-allocations/[^/]+/(provisioning|grant|revoke|deprovisioned|failed)$`)
+var estavelleAllocationScalerActionPath = regexp.MustCompile(`^/karst/v1/estavelle-allocations/[^/]+/(provisioning|grant|revoke|deprovisioned|failed)$`)
 
-// RegisterRelayAllocationEndpoints adds ADR-0063's admin-triggered relay
+// RegisterEstavelleAllocationEndpoints adds ADR-0063's admin-triggered relay
 // allocation workflow: console-facing create/list/deprovision/delete under
 // the normal KarstControl permission gate, plus a handful of narrow,
 // single-purpose actions (pending/provisioning/grant/revoke/deprovisioned/
@@ -81,12 +81,12 @@ var relayAllocationScalerActionPath = regexp.MustCompile(`^/karst/v1/relay-alloc
 // in-process: the Scaler role itself is never given relay-services access,
 // keeping its reach exactly as narrow as roles.Scaler's own doc comment
 // says it should be.
-func RegisterRelayAllocationEndpoints(router *mux.Router, manager permissions.Manager, store relayAllocationStore, registry relayAllocationRegistry, grants relayAllocationGrantStore, options ...RelayAllocationOptions) {
-	var config RelayAllocationOptions
+func RegisterEstavelleAllocationEndpoints(router *mux.Router, manager permissions.Manager, store estavelleAllocationStore, registry estavelleAllocationRegistry, grants estavelleAllocationGrantStore, options ...EstavelleAllocationOptions) {
+	var config EstavelleAllocationOptions
 	if len(options) > 0 {
 		config = options[0]
 	}
-	routes := router.PathPrefix("/karst/v1/relay-allocations").Subrouter()
+	routes := router.PathPrefix("/karst/v1/estavelle-allocations").Subrouter()
 	routes.Use((&handler{audit: config.Audit}).auditMutations)
 	routes.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,22 +114,22 @@ func RegisterRelayAllocationEndpoints(router *mux.Router, manager permissions.Ma
 		}
 		allocCtx := estavellealloc.WithAccount(r.Context(), user.AccountId)
 		switch mux.CurrentRoute(r).GetName() {
-		case "relay-allocations-pending":
+		case "estavelle-allocations-pending":
 			handleRelayAllocationsPending(w, r, allocCtx, store)
-		case "relay-allocation-provisioning":
+		case "estavelle-allocation-provisioning":
 			handleRelayAllocationProvisioning(w, r, allocCtx, store)
-		case "relay-allocation-grant":
+		case "estavelle-allocation-grant":
 			registryCtx := estavellereg.WithAccount(r.Context(), user.AccountId)
 			serviceCtx := estavelleservice.WithActor(estavelleservice.WithAccount(r.Context(), user.AccountId), user.UserId)
 			handleRelayAllocationGrant(w, r, allocCtx, registryCtx, serviceCtx, store, registry, grants)
-		case "relay-allocation-revoke":
+		case "estavelle-allocation-revoke":
 			serviceCtx := estavelleservice.WithActor(estavelleservice.WithAccount(r.Context(), user.AccountId), user.UserId)
 			handleRelayAllocationRevoke(w, r, allocCtx, serviceCtx, store, grants)
-		case "relay-allocation-deprovisioned":
+		case "estavelle-allocation-deprovisioned":
 			handleRelayAllocationDeprovisioned(w, r, allocCtx, store)
-		case "relay-allocation-failed":
+		case "estavelle-allocation-failed":
 			handleRelayAllocationFailed(w, r, allocCtx, store)
-		case "relay-allocation-deprovision":
+		case "estavelle-allocation-deprovision":
 			handleRelayAllocationDeprovision(w, r, allocCtx, store)
 		default:
 			switch r.Method {
@@ -143,14 +143,14 @@ func RegisterRelayAllocationEndpoints(router *mux.Router, manager permissions.Ma
 		}
 	}
 
-	routes.HandleFunc("/pending", handle).Methods(http.MethodPost).Name("relay-allocations-pending")
+	routes.HandleFunc("/pending", handle).Methods(http.MethodPost).Name("estavelle-allocations-pending")
 	routes.HandleFunc("", handle).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
-	routes.HandleFunc("/{id}/provisioning", handle).Methods(http.MethodPost).Name("relay-allocation-provisioning")
-	routes.HandleFunc("/{id}/grant", handle).Methods(http.MethodPost).Name("relay-allocation-grant")
-	routes.HandleFunc("/{id}/revoke", handle).Methods(http.MethodPost).Name("relay-allocation-revoke")
-	routes.HandleFunc("/{id}/deprovisioned", handle).Methods(http.MethodPost).Name("relay-allocation-deprovisioned")
-	routes.HandleFunc("/{id}/failed", handle).Methods(http.MethodPost).Name("relay-allocation-failed")
-	routes.HandleFunc("/{id}/deprovision", handle).Methods(http.MethodPost, http.MethodOptions).Name("relay-allocation-deprovision")
+	routes.HandleFunc("/{id}/provisioning", handle).Methods(http.MethodPost).Name("estavelle-allocation-provisioning")
+	routes.HandleFunc("/{id}/grant", handle).Methods(http.MethodPost).Name("estavelle-allocation-grant")
+	routes.HandleFunc("/{id}/revoke", handle).Methods(http.MethodPost).Name("estavelle-allocation-revoke")
+	routes.HandleFunc("/{id}/deprovisioned", handle).Methods(http.MethodPost).Name("estavelle-allocation-deprovisioned")
+	routes.HandleFunc("/{id}/failed", handle).Methods(http.MethodPost).Name("estavelle-allocation-failed")
+	routes.HandleFunc("/{id}/deprovision", handle).Methods(http.MethodPost, http.MethodOptions).Name("estavelle-allocation-deprovision")
 	routes.HandleFunc("/{id}", handle).Methods(http.MethodDelete, http.MethodOptions)
 }
 
@@ -172,7 +172,7 @@ func decodeRelayAllocationRequest(w http.ResponseWriter, r *http.Request, limit 
 	return true
 }
 
-func handleRelayAllocationsList(w http.ResponseWriter, _ *http.Request, ctx context.Context, store relayAllocationStore) {
+func handleRelayAllocationsList(w http.ResponseWriter, _ *http.Request, ctx context.Context, store estavelleAllocationStore) {
 	rows, err := store.List(ctx)
 	if err != nil {
 		relayAllocationError(ctx, w, err)
@@ -181,7 +181,7 @@ func handleRelayAllocationsList(w http.ResponseWriter, _ *http.Request, ctx cont
 	util.WriteJSONObject(ctx, w, rows)
 }
 
-func handleRelayAllocationsCreate(w http.ResponseWriter, r *http.Request, ctx context.Context, store relayAllocationStore) {
+func handleRelayAllocationsCreate(w http.ResponseWriter, r *http.Request, ctx context.Context, store estavelleAllocationStore) {
 	var draft estavellealloc.Allocation
 	if !decodeRelayAllocationRequest(w, r, 8192, &draft) {
 		return
@@ -200,7 +200,7 @@ func handleRelayAllocationsCreate(w http.ResponseWriter, r *http.Request, ctx co
 // agrees is safe to remove outright (StateRequested or StateDeprovisioned);
 // anything else is rejected with ErrInvalid, and the console is expected to
 // call /deprovision first.
-func handleRelayAllocationDelete(w http.ResponseWriter, r *http.Request, ctx context.Context, store relayAllocationStore) {
+func handleRelayAllocationDelete(w http.ResponseWriter, r *http.Request, ctx context.Context, store estavelleAllocationStore) {
 	revision, ok := parseRelayAllocationRevision(w, r)
 	if !ok {
 		return
@@ -225,7 +225,7 @@ func parseRelayAllocationRevision(w http.ResponseWriter, r *http.Request) (uint6
 // teardown -- ADR-0063's reversed order starts here, moving a ready or
 // failed allocation into StateRevoking. Mirrors relay-services' own
 // acknowledge+revision double opt-in on every mutating action.
-func handleRelayAllocationDeprovision(w http.ResponseWriter, r *http.Request, ctx context.Context, store relayAllocationStore) {
+func handleRelayAllocationDeprovision(w http.ResponseWriter, r *http.Request, ctx context.Context, store estavelleAllocationStore) {
 	var request struct {
 		ExpectedRevision *uint64 `json:"revision"`
 		Acknowledge      bool    `json:"acknowledge_deprovision"`
@@ -253,7 +253,7 @@ func handleRelayAllocationDeprovision(w http.ResponseWriter, r *http.Request, ct
 // every allocation it still has work to do on. StateReady, StateFailed
 // (unless an admin has since requested its deprovision) and
 // StateDeprovisioned need nothing further from the loop.
-func handleRelayAllocationsPending(w http.ResponseWriter, _ *http.Request, ctx context.Context, store relayAllocationStore) {
+func handleRelayAllocationsPending(w http.ResponseWriter, _ *http.Request, ctx context.Context, store estavelleAllocationStore) {
 	rows, err := store.List(ctx)
 	if err != nil {
 		relayAllocationError(ctx, w, err)
@@ -272,7 +272,7 @@ func handleRelayAllocationsPending(w http.ResponseWriter, _ *http.Request, ctx c
 // handleRelayAllocationProvisioning records the Driver::create result the
 // loop already has once Driver::create returns -- bookkeeping only, no
 // estavelleservice call here.
-func handleRelayAllocationProvisioning(w http.ResponseWriter, r *http.Request, ctx context.Context, store relayAllocationStore) {
+func handleRelayAllocationProvisioning(w http.ResponseWriter, r *http.Request, ctx context.Context, store estavelleAllocationStore) {
 	var request struct {
 		ExpectedRevision *uint64 `json:"expected_revision"`
 		InstanceID       string  `json:"instance_id"`
@@ -310,7 +310,7 @@ func handleRelayAllocationProvisioning(w http.ResponseWriter, r *http.Request, c
 // second one. A 404 here specifically means "not registered yet, keep
 // polling," distinct from every other error, which the loop should report
 // through /failed instead of retrying forever.
-func handleRelayAllocationGrant(w http.ResponseWriter, r *http.Request, allocCtx, registryCtx, serviceCtx context.Context, store relayAllocationStore, registry relayAllocationRegistry, grants relayAllocationGrantStore) {
+func handleRelayAllocationGrant(w http.ResponseWriter, r *http.Request, allocCtx, registryCtx, serviceCtx context.Context, store estavelleAllocationStore, registry estavelleAllocationRegistry, grants estavelleAllocationGrantStore) {
 	var request struct {
 		ExpectedRevision *uint64 `json:"expected_revision"`
 		TLSServerName    string  `json:"tls_server_name"`
@@ -391,7 +391,7 @@ func handleRelayAllocationGrant(w http.ResponseWriter, r *http.Request, allocCtx
 // ADR-0063's reversed order's first half. estavelleservice.ErrNotFound (never
 // granted, or already revoked by a previous attempt) is success, not a
 // failure, mirroring AwsDriver's own deenroll-404-is-success convention.
-func handleRelayAllocationRevoke(w http.ResponseWriter, r *http.Request, allocCtx, serviceCtx context.Context, store relayAllocationStore, grants relayAllocationGrantStore) {
+func handleRelayAllocationRevoke(w http.ResponseWriter, r *http.Request, allocCtx, serviceCtx context.Context, store estavelleAllocationStore, grants estavelleAllocationGrantStore) {
 	var request struct {
 		ExpectedRevision *uint64 `json:"expected_revision"`
 	}
@@ -440,7 +440,7 @@ func handleRelayAllocationRevoke(w http.ResponseWriter, r *http.Request, allocCt
 // handleRelayAllocationDeprovisioned records that Driver::drain/destroy
 // already completed -- bookkeeping only, no estavelleservice call here (the
 // grant was already withdrawn by /revoke, before compute teardown began).
-func handleRelayAllocationDeprovisioned(w http.ResponseWriter, r *http.Request, ctx context.Context, store relayAllocationStore) {
+func handleRelayAllocationDeprovisioned(w http.ResponseWriter, r *http.Request, ctx context.Context, store estavelleAllocationStore) {
 	var request struct {
 		ExpectedRevision *uint64 `json:"expected_revision"`
 	}
@@ -473,7 +473,7 @@ func handleRelayAllocationDeprovisioned(w http.ResponseWriter, r *http.Request, 
 // was on when a Driver call or an unrecoverable condition (not "not
 // registered yet" -- that is /grant's own 404) stopped it, infer the "from"
 // state from the row itself rather than trusting a caller-supplied one.
-func handleRelayAllocationFailed(w http.ResponseWriter, r *http.Request, ctx context.Context, store relayAllocationStore) {
+func handleRelayAllocationFailed(w http.ResponseWriter, r *http.Request, ctx context.Context, store estavelleAllocationStore) {
 	var request struct {
 		ExpectedRevision *uint64 `json:"expected_revision"`
 		Reason           string  `json:"reason"`

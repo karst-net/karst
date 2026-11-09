@@ -20,31 +20,31 @@ import (
 	"github.com/netbirdio/netbird/shared/management/status"
 )
 
-type relayServiceStore interface {
+type estavelleServiceStore interface {
 	Create(context.Context, estavelleservice.Service) (*estavelleservice.Service, error)
 	List(context.Context) ([]estavelleservice.View, error)
 	Delete(context.Context, string) error
 }
 
-type relayServicePublisher interface {
+type estavelleServicePublisher interface {
 	Publication(context.Context) (estavelleservice.Publication, error)
 	Preview(context.Context) ([]estavelleservice.Service, error)
 	SetPublication(context.Context, string) (estavelleservice.Publication, error)
 }
 
-type relayServiceModes interface {
+type estavelleServiceModes interface {
 	SetModes(context.Context, string, bool) (*estavelleservice.Service, error)
 }
 
-type RelayServiceOptions struct {
+type EstavelleServiceOptions struct {
 	Audit    auditReader
 	Accounts accountUpdater
 }
 
-// RegisterRelayServiceEndpoints adds the explicit association model without
+// RegisterEstavelleServiceEndpoints adds the explicit association model without
 // changing the legacy registries or granting control over external processes.
-func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manager, store relayServiceStore, options ...RelayServiceOptions) {
-	var config RelayServiceOptions
+func RegisterEstavelleServiceEndpoints(router *mux.Router, manager permissions.Manager, store estavelleServiceStore, options ...EstavelleServiceOptions) {
+	var config EstavelleServiceOptions
 	if len(options) > 0 {
 		config = options[0]
 	}
@@ -53,13 +53,13 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			config.Accounts.UpdateAccountPeers(ctx, account, types.UpdateReason{Resource: types.UpdateResourceService, Operation: types.UpdateOperationUpdate})
 		}
 	}
-	routes := router.PathPrefix("/karst/v1/relay-services").Subrouter()
+	routes := router.PathPrefix("/karst/v1/estavelle-services").Subrouter()
 	routes.Use((&handler{audit: config.Audit}).auditMutations)
 	routes.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			if manager == nil {
-				util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "Relay service authorization is not configured"), w)
+				util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "Estavelle service authorization is not configured"), w)
 				return
 			}
 			karstAuthorization(manager)(next).ServeHTTP(w, r)
@@ -72,16 +72,16 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			return
 		}
 		if store == nil {
-			util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay service storage is not configured"), w)
+			util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Estavelle service storage is not configured"), w)
 			return
 		}
 		ctx := estavelleservice.WithActor(estavelleservice.WithAccount(r.Context(), user.AccountId), user.UserId)
-		if mux.CurrentRoute(r).GetName() == "relay-access" {
+		if mux.CurrentRoute(r).GetName() == "estavelle-access" {
 			scoped, ok := store.(interface {
 				UpdateAccess(context.Context, string, estavelleservice.Service) (*estavelleservice.Service, error)
 			})
 			if !ok {
-				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay access storage unavailable"), w)
+				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Estavelle access storage unavailable"), w)
 				return
 			}
 			var request struct {
@@ -92,11 +92,11 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536))
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&request); err != nil {
-				util.WriteErrorResponse("invalid Relay access request", http.StatusBadRequest, w)
+				util.WriteErrorResponse("invalid Estavelle access request", http.StatusBadRequest, w)
 				return
 			}
 			if err := decoder.Decode(new(any)); err != io.EOF {
-				util.WriteErrorResponse("expected one Relay access request", http.StatusBadRequest, w)
+				util.WriteErrorResponse("expected one Estavelle access request", http.StatusBadRequest, w)
 				return
 			}
 			if request.ExpectedRevision == nil {
@@ -110,36 +110,36 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			}
 			service, err := scoped.UpdateAccess(ctx, mux.Vars(r)["serviceId"], request.Service)
 			if err != nil {
-				relayServiceError(w, r, err)
+				estavelleServiceError(w, r, err)
 				return
 			}
 			push(ctx, user.AccountId)
 			util.WriteJSONObject(ctx, w, service)
 			return
 		}
-		if mux.CurrentRoute(r).GetName() == "relay-admission-targets" {
+		if mux.CurrentRoute(r).GetName() == "estavelle-admission-targets" {
 			scoped, ok := store.(interface {
 				AdmissionTargets(context.Context) ([]estavelleservice.AdmissionLease, error)
 			})
 			if !ok {
-				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay admission capability unavailable"), w)
+				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Estavelle admission capability unavailable"), w)
 				return
 			}
 			targets, err := scoped.AdmissionTargets(ctx)
 			if err != nil {
-				relayServiceError(w, r, err)
+				estavelleServiceError(w, r, err)
 				return
 			}
 			util.WriteJSONObject(ctx, w, targets)
 			return
 		}
-		if mux.CurrentRoute(r).GetName() == "relay-modes" {
+		if mux.CurrentRoute(r).GetName() == "estavelle-modes" {
 			if r.Method == http.MethodOptions {
 				return
 			}
-			modes, ok := store.(relayServiceModes)
+			modes, ok := store.(estavelleServiceModes)
 			if !ok {
-				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay mode storage unavailable"), w)
+				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Estavelle mode storage unavailable"), w)
 				return
 			}
 			var request struct {
@@ -149,11 +149,11 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&request); err != nil {
-				util.WriteErrorResponse("invalid Relay mode request", http.StatusBadRequest, w)
+				util.WriteErrorResponse("invalid Estavelle mode request", http.StatusBadRequest, w)
 				return
 			}
 			if err := decoder.Decode(new(any)); err != io.EOF {
-				util.WriteErrorResponse("expected one Relay mode request", http.StatusBadRequest, w)
+				util.WriteErrorResponse("expected one Estavelle mode request", http.StatusBadRequest, w)
 				return
 			}
 			if request.PonorEnabled == nil || !request.Acknowledge {
@@ -162,17 +162,17 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			}
 			service, err := modes.SetModes(ctx, mux.Vars(r)["serviceId"], *request.PonorEnabled)
 			if err != nil {
-				relayServiceError(w, r, err)
+				estavelleServiceError(w, r, err)
 				return
 			}
 			push(ctx, user.AccountId)
 			util.WriteJSONObject(ctx, w, service)
 			return
 		}
-		if mux.CurrentRoute(r).GetName() == "relay-publication" || mux.CurrentRoute(r).GetName() == "relay-publication-preview" {
-			publisher, ok := store.(relayServicePublisher)
+		if mux.CurrentRoute(r).GetName() == "estavelle-publication" || mux.CurrentRoute(r).GetName() == "estavelle-publication-preview" {
+			publisher, ok := store.(estavelleServicePublisher)
 			if !ok {
-				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay publication storage unavailable"), w)
+				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Estavelle publication storage unavailable"), w)
 				return
 			}
 			if r.Method == http.MethodOptions {
@@ -181,16 +181,16 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			if r.Method == http.MethodGet {
 				value, err := publisher.Publication(ctx)
 				if err != nil {
-					relayServiceError(w, r, err)
+					estavelleServiceError(w, r, err)
 					return
 				}
 				util.WriteJSONObject(ctx, w, value)
 				return
 			}
-			if mux.CurrentRoute(r).GetName() == "relay-publication-preview" {
+			if mux.CurrentRoute(r).GetName() == "estavelle-publication-preview" {
 				services, err := publisher.Preview(ctx)
 				if err != nil {
-					relayServiceError(w, r, err)
+					estavelleServiceError(w, r, err)
 					return
 				}
 				util.WriteJSONObject(ctx, w, services)
@@ -216,7 +216,7 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			}
 			value, err := publisher.SetPublication(ctx, request.Mode)
 			if err != nil {
-				relayServiceError(w, r, err)
+				estavelleServiceError(w, r, err)
 				return
 			}
 			push(ctx, user.AccountId)
@@ -227,7 +227,7 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 		case http.MethodGet:
 			views, err := store.List(ctx)
 			if err != nil {
-				relayServiceError(w, r, err)
+				estavelleServiceError(w, r, err)
 				return
 			}
 			util.WriteJSONObject(ctx, w, views)
@@ -236,16 +236,16 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&service); err != nil {
-				util.WriteErrorResponse("invalid Relay service JSON", http.StatusBadRequest, w)
+				util.WriteErrorResponse("invalid Estavelle service JSON", http.StatusBadRequest, w)
 				return
 			}
 			if err := decoder.Decode(new(any)); err != io.EOF {
-				util.WriteErrorResponse("expected exactly one Relay service object", http.StatusBadRequest, w)
+				util.WriteErrorResponse("expected exactly one Estavelle service object", http.StatusBadRequest, w)
 				return
 			}
 			created, err := store.Create(ctx, service)
 			if err != nil {
-				relayServiceError(w, r, err)
+				estavelleServiceError(w, r, err)
 				return
 			}
 			push(ctx, user.AccountId)
@@ -254,33 +254,33 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			_ = json.NewEncoder(w).Encode(created)
 		case http.MethodDelete:
 			if err := store.Delete(ctx, mux.Vars(r)["serviceId"]); err != nil {
-				relayServiceError(w, r, err)
+				estavelleServiceError(w, r, err)
 				return
 			}
 			push(ctx, user.AccountId)
 			w.WriteHeader(http.StatusNoContent)
 		}
 	}
-	routes.HandleFunc("/admission-targets", handle).Methods(http.MethodGet).Name("relay-admission-targets")
+	routes.HandleFunc("/admission-targets", handle).Methods(http.MethodGet).Name("estavelle-admission-targets")
 	routes.HandleFunc("", handle).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
-	routes.HandleFunc("/publication", handle).Methods(http.MethodGet, http.MethodPut, http.MethodOptions).Name("relay-publication")
-	routes.HandleFunc("/publication/preview", handle).Methods(http.MethodPost, http.MethodOptions).Name("relay-publication-preview")
-	routes.HandleFunc("/{serviceId}/access", handle).Methods(http.MethodPut).Name("relay-access")
-	routes.HandleFunc("/{serviceId}/modes", handle).Methods(http.MethodPut, http.MethodOptions).Name("relay-modes")
+	routes.HandleFunc("/publication", handle).Methods(http.MethodGet, http.MethodPut, http.MethodOptions).Name("estavelle-publication")
+	routes.HandleFunc("/publication/preview", handle).Methods(http.MethodPost, http.MethodOptions).Name("estavelle-publication-preview")
+	routes.HandleFunc("/{serviceId}/access", handle).Methods(http.MethodPut).Name("estavelle-access")
+	routes.HandleFunc("/{serviceId}/modes", handle).Methods(http.MethodPut, http.MethodOptions).Name("estavelle-modes")
 	routes.HandleFunc("/{serviceId}", handle).Methods(http.MethodDelete, http.MethodOptions)
 }
 
-func relayServiceError(w http.ResponseWriter, r *http.Request, err error) {
+func estavelleServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, estavelleservice.ErrInvalid):
 		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
 	case errors.Is(err, estavelleservice.ErrExists), errors.Is(err, policy.ErrVersionConflict):
-		util.WriteError(r.Context(), status.Errorf(status.AlreadyExists, "Relay service already exists"), w)
+		util.WriteError(r.Context(), status.Errorf(status.AlreadyExists, "Estavelle service already exists"), w)
 	case errors.Is(err, estavelleservice.ErrNotFound):
-		util.WriteError(r.Context(), status.Errorf(status.NotFound, "Relay service not found"), w)
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "Estavelle service not found"), w)
 	case errors.Is(err, estavelleservice.ErrNoAccount):
 		util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "account scope required"), w)
 	default:
-		util.WriteError(r.Context(), status.Errorf(status.Internal, "Relay service storage failed"), w)
+		util.WriteError(r.Context(), status.Errorf(status.Internal, "Estavelle service storage failed"), w)
 	}
 }
