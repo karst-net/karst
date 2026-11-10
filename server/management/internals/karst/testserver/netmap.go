@@ -352,8 +352,8 @@ func (r *router) Handle(ctx context.Context, nodeID, identityPub, payload []byte
 // The flag may be repeated, and **order is meaningful**: a node with nothing
 // measured yet holds the first entry, so a test that wants two nodes to start
 // on the same relay lists that one first.
-func relayEntries() []*proto.KarstRelay {
-	var relays []*proto.KarstRelay
+func relayEntries() []*proto.KarstEstavelle {
+	var relays []*proto.KarstEstavelle
 
 	args := os.Args[1:]
 	for i, a := range args {
@@ -374,11 +374,11 @@ func relayEntries() []*proto.KarstRelay {
 	return relays
 }
 
-func relayRow(address string, key []byte) *proto.KarstRelay {
+func relayRow(address string, key []byte) *proto.KarstEstavelle {
 	h := sha256.New()
-	_, _ = h.Write([]byte("karst-relay-id-v1"))
+	_, _ = h.Write([]byte("karst-estavelle-id-v1"))
 	_, _ = h.Write(key)
-	return &proto.KarstRelay{
+	return &proto.KarstEstavelle{
 		Address:       address,
 		TlsServerName: "relay.test",
 		RelayId:       h.Sum(nil),

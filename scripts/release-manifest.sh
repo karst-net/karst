@@ -26,7 +26,7 @@
 # amd64 and arm64, and a user on an arm64 Fedora box needs to be offered the
 # one that will install.
 #
-# Only the *client* is listed. karst-relay and karst-control are operator
+# Only the *client* is listed. karst-estavelle and karst-control are operator
 # artifacts installed from the docs on a server, and offering them on an
 # end-user download page invites somebody to install a coordination server on
 # their laptop.

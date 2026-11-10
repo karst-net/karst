@@ -6,7 +6,7 @@
 # (docs/operations/macos-network-extension-ci.md). Installed root-owned at
 # /usr/local/libexec/karst-ne-lab and run with sudo by the runner account.
 #
-#   karst-ne-lab prepare --scenario direct|relay --env-file PATH [--route-churn] [--exit-route]
+#   karst-ne-lab prepare --scenario direct|estavelle --env-file PATH [--route-churn] [--exit-route]
 #   karst-ne-lab mutate --route subnet --state add|remove
 #   karst-ne-lab mutate --route exit --state active|withdrawn
 #   karst-ne-lab net-setup --mac-ip IP --labgw-ip IP --dns IP
@@ -59,7 +59,7 @@ prepare)
             *) echo "karst-ne-lab: unknown argument $1" >&2; exit 2 ;;
         esac
     done
-    case "$scenario" in direct|relay) ;; *) echo "karst-ne-lab: --scenario direct|relay" >&2; exit 2 ;; esac
+    case "$scenario" in direct|estavelle) ;; *) echo "karst-ne-lab: --scenario direct|estavelle" >&2; exit 2 ;; esac
     case "$env_file" in /*) ;; *) echo "karst-ne-lab: --env-file must be absolute" >&2; exit 2 ;; esac
 
     # Leftovers from an earlier run are spent invitations; remove them first.

@@ -14,8 +14,9 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
+	"github.com/netbirdio/netbird/management/server/migration"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -87,7 +88,7 @@ type invoiceRow struct {
 
 func (invoiceRow) TableName() string { return "karst_billing_invoices" }
 
-type relayAlertRow struct {
+type estavelleAlertRow struct {
 	AccountID       string    `gorm:"primaryKey;size:128"`
 	PeriodStartUS   int64     `gorm:"primaryKey"`
 	ScheduleVersion string    `gorm:"primaryKey;size:128"`
@@ -99,7 +100,7 @@ type relayAlertRow struct {
 	CreatedAt       time.Time `gorm:"not null"`
 }
 
-func (relayAlertRow) TableName() string { return "karst_billing_relay_alerts" }
+func (estavelleAlertRow) TableName() string { return "karst_billing_estavelle_alerts" }
 
 // Assignment identifies an immutable schedule snapshot for one explicit
 // account period. It does not imply that usage is complete or chargeable.
@@ -120,7 +121,25 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("billing: nil database")
 	}
-	if err := db.AutoMigrate(&rateScheduleRow{}, &rateAssignmentRow{}, &billingAccountLock{}, &invoiceRow{}, &relayAlertRow{}, &relayCapRow{}, &relayCapRevisionRow{}, &relayCreditGrantRow{}, &relayUncappedLeaseRow{}, &paymentOutboxRow{}, &paymentAttemptRow{}, &paymentHistoryRow{}, &paddleAccountRow{}, &webhookInboxRow{}); err != nil {
+	ctx := context.Background()
+	// ADR-0069's clean-break Relay->Estavelle rename: idempotent, no-op once
+	// the rename has happened.
+	if err := migration.RenameTable[estavelleAlertRow](ctx, db, "karst_billing_relay_alerts"); err != nil {
+		return nil, fmt.Errorf("billing: migrate karst_billing_relay_alerts: %w", err)
+	}
+	if err := migration.RenameTable[estavelleCapRow](ctx, db, "karst_billing_relay_caps"); err != nil {
+		return nil, fmt.Errorf("billing: migrate karst_billing_relay_caps: %w", err)
+	}
+	if err := migration.RenameTable[estavelleCapRevisionRow](ctx, db, "karst_billing_relay_cap_revisions"); err != nil {
+		return nil, fmt.Errorf("billing: migrate karst_billing_relay_cap_revisions: %w", err)
+	}
+	if err := migration.RenameTable[estavelleCreditGrantRow](ctx, db, "karst_billing_relay_credit_grants"); err != nil {
+		return nil, fmt.Errorf("billing: migrate karst_billing_relay_credit_grants: %w", err)
+	}
+	if err := migration.RenameTable[estavelleUncappedLeaseRow](ctx, db, "karst_billing_relay_uncapped_leases"); err != nil {
+		return nil, fmt.Errorf("billing: migrate karst_billing_relay_uncapped_leases: %w", err)
+	}
+	if err := db.AutoMigrate(&rateScheduleRow{}, &rateAssignmentRow{}, &billingAccountLock{}, &invoiceRow{}, &estavelleAlertRow{}, &estavelleCapRow{}, &estavelleCapRevisionRow{}, &estavelleCreditGrantRow{}, &estavelleUncappedLeaseRow{}, &paymentOutboxRow{}, &paymentAttemptRow{}, &paymentHistoryRow{}, &paddleAccountRow{}, &webhookInboxRow{}); err != nil {
 		return nil, fmt.Errorf("billing: migrate schedules: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -130,7 +149,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 // account period. It is safe to retry with identical inputs; later changes to
 // usage or estimates cannot replace a finalized snapshot. This records amounts
 // only and does not create a provider charge or payment.
-func (s *Store) FinalizeInvoice(ctx context.Context, deviceReport usage.DeviceReport, relayReport relayusage.Report) (FinalInvoice, error) {
+func (s *Store) FinalizeInvoice(ctx context.Context, deviceReport usage.DeviceReport, relayReport estavelleusage.Report) (FinalInvoice, error) {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
 		return FinalInvoice{}, err
@@ -319,7 +338,7 @@ func (s *Store) Invoice(ctx context.Context, start, end time.Time) (FinalInvoice
 // account-period-schedule-target-threshold. Repeated evaluations refresh the
 // stored lower-bound/freshness snapshot without creating another feed item.
 // No push notification transport is selected or invoked here.
-func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []RelayAlertCandidate) error {
+func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []EstavelleAlertCandidate) error {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
 		return err
@@ -329,7 +348,7 @@ func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []RelayAlertCa
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, candidate := range candidates {
-			if err := validateRelayAlertCandidate(candidate); err != nil {
+			if err := validateEstavelleAlertCandidate(candidate); err != nil {
 				return err
 			}
 			assignment, err := (&Store{db: tx}).Assignment(ctx, candidate.PeriodStart, candidate.PeriodEnd)
@@ -344,7 +363,7 @@ func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []RelayAlertCa
 				return fmt.Errorf("billing: encode relay alert: %w", err)
 			}
 			digest := sha256.Sum256(snapshot)
-			row := relayAlertRow{
+			row := estavelleAlertRow{
 				AccountID: accountID, PeriodStartUS: candidate.PeriodStart.UnixMicro(),
 				ScheduleVersion: candidate.ScheduleVersion, Target: candidate.Target, Threshold: candidate.Threshold,
 				PeriodEndUS: candidate.PeriodEnd.UnixMicro(), Digest: hex.EncodeToString(digest[:]),
@@ -361,11 +380,11 @@ func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []RelayAlertCa
 	})
 }
 
-// EvaluateAndRecordRelayAlerts builds current-period crossings from the
+// EvaluateAndRecordEstavelleAlerts builds current-period crossings from the
 // assigned immutable schedule and persists them by deduplicated threshold. A
 // caller must provide an authenticated account context and choose when reports
 // are reevaluated.
-func (s *Store) EvaluateAndRecordRelayAlerts(ctx context.Context, report relayusage.Report, capOverageMinor *int64) ([]RelayAlertCandidate, error) {
+func (s *Store) EvaluateAndRecordEstavelleAlerts(ctx context.Context, report estavelleusage.Report, capOverageMinor *int64) ([]EstavelleAlertCandidate, error) {
 	_, err := billingAccountFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -383,7 +402,7 @@ func (s *Store) EvaluateAndRecordRelayAlerts(ctx context.Context, report relayus
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := EvaluateRelayAlerts(report, schedule, capOverageMinor)
+	candidates, err := EvaluateEstavelleAlerts(report, schedule, capOverageMinor)
 	if err != nil {
 		return nil, err
 	}
@@ -393,10 +412,10 @@ func (s *Store) EvaluateAndRecordRelayAlerts(ctx context.Context, report relayus
 	return candidates, nil
 }
 
-// RelayAlerts returns the account's stored relay alert candidates for one
+// EstavelleAlerts returns the account's stored relay alert candidates for one
 // calendar period. Authorization belongs to the caller; account scope is
 // always read from context.
-func (s *Store) RelayAlerts(ctx context.Context, start, end time.Time) ([]RelayAlertCandidate, error) {
+func (s *Store) EstavelleAlerts(ctx context.Context, start, end time.Time) ([]EstavelleAlertCandidate, error) {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -405,12 +424,12 @@ func (s *Store) RelayAlerts(ctx context.Context, start, end time.Time) ([]RelayA
 	if err != nil || !isBillingCalendarMonth(startUS, endUS) {
 		return nil, ErrInvalidPeriod
 	}
-	var rows []relayAlertRow
+	var rows []estavelleAlertRow
 	if err := s.db.WithContext(ctx).Where("account_id = ? AND period_start_us = ?", accountID, startUS).
 		Order("schedule_version, target, threshold").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("billing: list relay alerts: %w", err)
 	}
-	alerts := make([]RelayAlertCandidate, 0, len(rows))
+	alerts := make([]EstavelleAlertCandidate, 0, len(rows))
 	for _, row := range rows {
 		if row.PeriodEndUS != endUS {
 			return nil, errors.New("billing: stored relay alert period is invalid")
@@ -419,11 +438,11 @@ func (s *Store) RelayAlerts(ctx context.Context, start, end time.Time) ([]RelayA
 		if hex.EncodeToString(digest[:]) != row.Digest {
 			return nil, errors.New("billing: relay alert snapshot digest mismatch")
 		}
-		var candidate RelayAlertCandidate
+		var candidate EstavelleAlertCandidate
 		if err := json.Unmarshal(row.Snapshot, &candidate); err != nil {
 			return nil, fmt.Errorf("billing: decode relay alert: %w", err)
 		}
-		if err := validateRelayAlertCandidate(candidate); err != nil || candidate.PeriodStart.UnixMicro() != startUS || candidate.PeriodEnd.UnixMicro() != endUS || candidate.ScheduleVersion != row.ScheduleVersion || candidate.Target != row.Target || candidate.Threshold != row.Threshold {
+		if err := validateEstavelleAlertCandidate(candidate); err != nil || candidate.PeriodStart.UnixMicro() != startUS || candidate.PeriodEnd.UnixMicro() != endUS || candidate.ScheduleVersion != row.ScheduleVersion || candidate.Target != row.Target || candidate.Threshold != row.Threshold {
 			return nil, errors.New("billing: stored relay alert snapshot is invalid")
 		}
 		alerts = append(alerts, candidate)
@@ -596,7 +615,7 @@ func (s *Store) AssignedSchedule(ctx context.Context, start, end time.Time) (Rat
 // Calculate estimates exact charges using only the rate schedule explicitly
 // assigned to the device report's account and period. It does not persist an
 // invoice or create a charge; unassigned periods return ErrScheduleUnassigned.
-func (s *Store) Calculate(ctx context.Context, deviceReport usage.DeviceReport, relayReport relayusage.Report) (Estimate, error) {
+func (s *Store) Calculate(ctx context.Context, deviceReport usage.DeviceReport, relayReport estavelleusage.Report) (Estimate, error) {
 	schedule, err := s.AssignedSchedule(ctx, deviceReport.Start, deviceReport.End)
 	if err != nil {
 		return Estimate{}, err

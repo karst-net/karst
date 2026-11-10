@@ -6,6 +6,10 @@
 - **Deciders:** Project owner (issue #503)
 - **Related:** [#503](https://github.com/karst-net/karst/issues/503), #439 (parent epic), #455, ADR-0056, ADR-0057, ADR-0062, ADR-0063
 
+> **Naming note (ADR-0069, 2026-11-08):** "Gateway" is now **Aven** and
+> "relay" is now **Estavelle** throughout this document; the decision below
+> is otherwise unaffected.
+
 ---
 
 ## Context

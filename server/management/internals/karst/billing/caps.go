@@ -14,28 +14,28 @@ import (
 	"strings"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 var (
-	ErrRelayCapNotConfigured = errors.New("billing: relay spending cap not configured")
-	ErrRelayCapConflict      = errors.New("billing: relay spending cap conflicts with stored settings")
-	ErrRelayCapDecrease      = errors.New("billing: relay spending cap cannot be safely decreased within this period")
-	ErrRelayCapExhausted     = errors.New("billing: relay spending cap has no remaining byte credits")
-	ErrCreditRequestConflict = errors.New("billing: relay credit request id reused with different inputs")
-	ErrCreditGrantNotFound   = errors.New("billing: relay credit grant not found")
-	ErrCreditGrantConflict   = errors.New("billing: relay credit grant conflicts with stored state")
-	ErrRelayCapPending       = errors.New("billing: relay spending cap activation is pending uncapped leases")
-	ErrRelayCapAlreadyActive = errors.New("billing: relay spending cap is already active")
+	ErrEstavelleCapNotConfigured = errors.New("billing: relay spending cap not configured")
+	ErrEstavelleCapConflict      = errors.New("billing: relay spending cap conflicts with stored settings")
+	ErrEstavelleCapDecrease      = errors.New("billing: relay spending cap cannot be safely decreased within this period")
+	ErrEstavelleCapExhausted     = errors.New("billing: relay spending cap has no remaining byte credits")
+	ErrCreditRequestConflict     = errors.New("billing: relay credit request id reused with different inputs")
+	ErrCreditGrantNotFound       = errors.New("billing: relay credit grant not found")
+	ErrCreditGrantConflict       = errors.New("billing: relay credit grant conflicts with stored state")
+	ErrEstavelleCapPending       = errors.New("billing: relay spending cap activation is pending uncapped leases")
+	ErrEstavelleCapAlreadyActive = errors.New("billing: relay spending cap is already active")
 )
 
-const RelayUncappedLeaseMillis int64 = 15_000
+const EstavelleUncappedLeaseMillis int64 = 15_000
 
-const relayUncappedLeaseDuration = time.Duration(RelayUncappedLeaseMillis) * time.Millisecond
+const estavelleUncappedLeaseDuration = time.Duration(EstavelleUncappedLeaseMillis) * time.Millisecond
 
-type relayCapRow struct {
+type estavelleCapRow struct {
 	AccountID       string    `gorm:"primaryKey;size:128"`
 	PeriodStartUS   int64     `gorm:"primaryKey"`
 	PeriodEndUS     int64     `gorm:"not null"`
@@ -48,9 +48,9 @@ type relayCapRow struct {
 	UpdatedAt       time.Time `gorm:"not null"`
 }
 
-func (relayCapRow) TableName() string { return "karst_billing_relay_caps" }
+func (estavelleCapRow) TableName() string { return "karst_billing_estavelle_caps" }
 
-type relayCapRevisionRow struct {
+type estavelleCapRevisionRow struct {
 	AccountID       string    `gorm:"primaryKey;size:128"`
 	PeriodStartUS   int64     `gorm:"primaryKey"`
 	Revision        uint64    `gorm:"primaryKey"`
@@ -63,9 +63,9 @@ type relayCapRevisionRow struct {
 	CreatedAt       time.Time `gorm:"not null"`
 }
 
-func (relayCapRevisionRow) TableName() string { return "karst_billing_relay_cap_revisions" }
+func (estavelleCapRevisionRow) TableName() string { return "karst_billing_estavelle_cap_revisions" }
 
-type relayCreditGrantRow struct {
+type estavelleCreditGrantRow struct {
 	GrantID         string    `gorm:"primaryKey;size:32"`
 	AccountID       string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
 	PeriodStartUS   int64     `gorm:"not null;uniqueIndex:idx_credit_request"`
@@ -84,12 +84,12 @@ type relayCreditGrantRow struct {
 	UpdatedAt       time.Time `gorm:"not null"`
 }
 
-func (relayCreditGrantRow) TableName() string { return "karst_billing_relay_credit_grants" }
+func (estavelleCreditGrantRow) TableName() string { return "karst_billing_estavelle_credit_grants" }
 
-// relayUncappedLeaseRow fences the transition from ordinary forwarding to
+// estavelleUncappedLeaseRow fences the transition from ordinary forwarding to
 // credit-gated forwarding. A cap cannot become effective before all leases
 // issued while no cap existed have expired.
-type relayUncappedLeaseRow struct {
+type estavelleUncappedLeaseRow struct {
 	AccountID      string `gorm:"primaryKey;size:128"`
 	PeriodStartUS  int64  `gorm:"primaryKey"`
 	RelayID        string `gorm:"primaryKey;size:64"`
@@ -98,12 +98,12 @@ type relayUncappedLeaseRow struct {
 	ExpiresAtUS    int64  `gorm:"not null;index"`
 }
 
-func (relayUncappedLeaseRow) TableName() string { return "karst_billing_relay_uncapped_leases" }
+func (estavelleUncappedLeaseRow) TableName() string { return "karst_billing_estavelle_uncapped_leases" }
 
-// RelaySpendingCap is an explicit, acknowledged account-period setting. It
+// EstavelleSpendingCap is an explicit, acknowledged account-period setting. It
 // limits managed-relay overage only; the schedule's included allowance remains
 // available without consuming this cap.
-type RelaySpendingCap struct {
+type EstavelleSpendingCap struct {
 	AccountID       string    `json:"account_id"`
 	PeriodStart     time.Time `json:"period_start"`
 	PeriodEnd       time.Time `json:"period_end"`
@@ -135,44 +135,44 @@ type RelayCreditGrant struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
-// SetRelaySpendingCap explicitly enables a managed-relay overage cap. Repeating
+// SetEstavelleSpendingCap explicitly enables a managed-relay overage cap. Repeating
 // the same request is idempotent. In-period increases create a durable revision.
 // A decrease is accepted only after all grants have been surrendered and
 // consumed bytes fit beneath the smaller cap; otherwise it is deferred to a
 // later period. No default cap is created.
-func (s *Store) SetRelaySpendingCap(ctx context.Context, start, end time.Time, overageMinor int64, acknowledged bool, actor string) (RelaySpendingCap, error) {
+func (s *Store) SetEstavelleSpendingCap(ctx context.Context, start, end time.Time, overageMinor int64, acknowledged bool, actor string) (EstavelleSpendingCap, error) {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
-		return RelaySpendingCap{}, err
+		return EstavelleSpendingCap{}, err
 	}
 	startUS, endUS, err := billingPeriodMicros(start, end)
 	if err != nil || !isRelayCapMonth(startUS, endUS) || overageMinor < 0 || !acknowledged || !validToken(actor) {
-		return RelaySpendingCap{}, ErrInvalidPeriod
+		return EstavelleSpendingCap{}, ErrInvalidPeriod
 	}
 	assignment, err := s.Assignment(ctx, start, end)
 	if err != nil {
-		return RelaySpendingCap{}, err
+		return EstavelleSpendingCap{}, err
 	}
 	schedule, err := s.Schedule(ctx, assignment.ScheduleVersion)
 	if err != nil {
-		return RelaySpendingCap{}, err
+		return EstavelleSpendingCap{}, err
 	}
 	if schedule.Currency != "USD" || schedule.RelayMinorPerUnit <= 0 {
-		return RelaySpendingCap{}, ErrInvalidRateSchedule
+		return EstavelleSpendingCap{}, ErrInvalidRateSchedule
 	}
-	returnCap := RelaySpendingCap{}
+	returnCap := EstavelleSpendingCap{}
 	err = runBillingTransaction(ctx, s.db, func(tx *gorm.DB) error {
 		if err := lockBillingAccount(tx, accountID); err != nil {
 			return err
 		}
-		var row relayCapRow
+		var row estavelleCapRow
 		err := tx.Where("account_id = ? AND period_start_us = ?", accountID, startUS).Take(&row).Error
 		now := time.Now().UTC()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			row = relayCapRow{AccountID: accountID, PeriodStartUS: startUS, PeriodEndUS: endUS,
+			row = estavelleCapRow{AccountID: accountID, PeriodStartUS: startUS, PeriodEndUS: endUS,
 				ScheduleVersion: schedule.Version, OverageMinor: overageMinor, Revision: 1,
 				Acknowledged: true, UpdatedBy: actor, UpdatedAt: now}
-			var latest relayUncappedLeaseRow
+			var latest estavelleUncappedLeaseRow
 			leaseErr := tx.Where("account_id = ? AND period_start_us = ?", accountID, startUS).
 				Order("expires_at_us DESC").Take(&latest).Error
 			if leaseErr != nil && !errors.Is(leaseErr, gorm.ErrRecordNotFound) {
@@ -185,31 +185,31 @@ func (s *Store) SetRelaySpendingCap(ctx context.Context, start, end time.Time, o
 			if err := tx.Create(&row).Error; err != nil {
 				return fmt.Errorf("billing: save relay spending cap: %w", err)
 			}
-			if err := addRelayCapRevision(tx, row, actor, now); err != nil {
+			if err := addEstavelleCapRevision(tx, row, actor, now); err != nil {
 				return err
 			}
-			returnCap = relayCapDTO(row)
+			returnCap = estavelleCapDTO(row)
 			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("billing: load relay spending cap: %w", err)
 		}
 		if row.PeriodEndUS != endUS || row.ScheduleVersion != schedule.Version || !row.Acknowledged {
-			return ErrRelayCapConflict
+			return ErrEstavelleCapConflict
 		}
 		if overageMinor < row.OverageMinor {
 			budget, err := maxRelayBytesForOverage(schedule, overageMinor)
 			if err != nil {
 				return err
 			}
-			var grants []relayCreditGrantRow
+			var grants []estavelleCreditGrantRow
 			if err := tx.Where("account_id = ? AND period_start_us = ?", accountID, startUS).Find(&grants).Error; err != nil {
 				return fmt.Errorf("billing: verify relay cap decrease: %w", err)
 			}
 			committed := new(big.Int)
 			for _, grant := range grants {
 				if grant.State != "surrendered" {
-					return ErrRelayCapDecrease
+					return ErrEstavelleCapDecrease
 				}
 				committed, err = addCanonicalBig(committed, grant.ConsumedBytes)
 				if err != nil {
@@ -217,11 +217,11 @@ func (s *Store) SetRelaySpendingCap(ctx context.Context, start, end time.Time, o
 				}
 			}
 			if committed.Cmp(budget) > 0 {
-				return ErrRelayCapDecrease
+				return ErrEstavelleCapDecrease
 			}
 		}
 		if overageMinor == row.OverageMinor {
-			returnCap = relayCapDTO(row)
+			returnCap = estavelleCapDTO(row)
 			return nil
 		}
 		row.OverageMinor = overageMinor
@@ -231,37 +231,37 @@ func (s *Store) SetRelaySpendingCap(ctx context.Context, start, end time.Time, o
 		if err := tx.Save(&row).Error; err != nil {
 			return fmt.Errorf("billing: increase relay spending cap: %w", err)
 		}
-		if err := addRelayCapRevision(tx, row, actor, now); err != nil {
+		if err := addEstavelleCapRevision(tx, row, actor, now); err != nil {
 			return err
 		}
-		returnCap = relayCapDTO(row)
+		returnCap = estavelleCapDTO(row)
 		return nil
 	})
 	return returnCap, err
 }
 
-// RelaySpendingCap reads only the explicit setting for the authenticated
+// EstavelleSpendingCap reads only the explicit setting for the authenticated
 // account and exact UTC calendar month.
-func (s *Store) RelaySpendingCap(ctx context.Context, start, end time.Time) (RelaySpendingCap, error) {
+func (s *Store) EstavelleSpendingCap(ctx context.Context, start, end time.Time) (EstavelleSpendingCap, error) {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
-		return RelaySpendingCap{}, err
+		return EstavelleSpendingCap{}, err
 	}
 	startUS, endUS, err := billingPeriodMicros(start, end)
 	if err != nil || !isRelayCapMonth(startUS, endUS) {
-		return RelaySpendingCap{}, ErrInvalidPeriod
+		return EstavelleSpendingCap{}, ErrInvalidPeriod
 	}
-	var row relayCapRow
+	var row estavelleCapRow
 	if err := s.db.WithContext(ctx).Where("account_id = ? AND period_start_us = ?", accountID, startUS).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return RelaySpendingCap{}, ErrRelayCapNotConfigured
+			return EstavelleSpendingCap{}, ErrEstavelleCapNotConfigured
 		}
-		return RelaySpendingCap{}, fmt.Errorf("billing: read relay spending cap: %w", err)
+		return EstavelleSpendingCap{}, fmt.Errorf("billing: read relay spending cap: %w", err)
 	}
 	if row.PeriodEndUS != endUS {
-		return RelaySpendingCap{}, ErrRelayCapNotConfigured
+		return EstavelleSpendingCap{}, ErrEstavelleCapNotConfigured
 	}
-	return relayCapDTO(row), nil
+	return estavelleCapDTO(row), nil
 }
 
 // ReserveRelayCredits atomically reserves at most requestedBytes from the
@@ -281,20 +281,20 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 		if err := lockBillingAccount(tx, accountID); err != nil {
 			return err
 		}
-		var cap relayCapRow
+		var cap estavelleCapRow
 		if err := tx.Where("account_id = ? AND period_start_us = ?", accountID, startUS).Take(&cap).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrRelayCapNotConfigured
+				return ErrEstavelleCapNotConfigured
 			}
 			return fmt.Errorf("billing: load relay spending cap: %w", err)
 		}
 		if cap.PeriodEndUS != endUS || !cap.Acknowledged {
-			return ErrRelayCapConflict
+			return ErrEstavelleCapConflict
 		}
 		if cap.EffectiveAtUS > time.Now().UTC().UnixMicro() {
-			return ErrRelayCapPending
+			return ErrEstavelleCapPending
 		}
-		var existing relayCreditGrantRow
+		var existing estavelleCreditGrantRow
 		err := tx.Where("account_id = ? AND period_start_us = ? AND relay_id = ? AND generation = ? AND request_id = ?", accountID, startUS, relayID, generation, requestID).Take(&existing).Error
 		if err == nil {
 			if existing.MappingVersion != mappingVersion || existing.RequestedBytes != new(big.Int).SetUint64(requestedBytes).String() || existing.ScheduleVersion != cap.ScheduleVersion {
@@ -318,7 +318,7 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 		if err != nil {
 			return err
 		}
-		var grants []relayCreditGrantRow
+		var grants []estavelleCreditGrantRow
 		if err := tx.Where("account_id = ? AND period_start_us = ?", accountID, startUS).Find(&grants).Error; err != nil {
 			return fmt.Errorf("billing: sum relay credit reservations: %w", err)
 		}
@@ -337,7 +337,7 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 		}
 		available := new(big.Int).Sub(budget, committed)
 		if available.Sign() <= 0 {
-			return ErrRelayCapExhausted
+			return ErrEstavelleCapExhausted
 		}
 		grantBytes := new(big.Int).SetUint64(requestedBytes)
 		if grantBytes.Cmp(available) > 0 {
@@ -348,7 +348,7 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 			return fmt.Errorf("billing: generate relay grant ID: %w", err)
 		}
 		now := time.Now().UTC()
-		row := relayCreditGrantRow{
+		row := estavelleCreditGrantRow{
 			GrantID: hex.EncodeToString(idBytes), AccountID: accountID, PeriodStartUS: startUS,
 			RelayID: relayID, Generation: generation, RequestID: requestID, MappingVersion: mappingVersion,
 			ScheduleVersion: schedule.Version, CapRevision: cap.Revision,
@@ -364,15 +364,15 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 	return returnGrant, err
 }
 
-// ReserveAuthorizedRelayCredits verifies the relay identity and its currently
+// ReserveAuthorizedEstavelleCredits verifies the relay identity and its currently
 // enabled operator mapping in the same outer transaction that reserves the
 // account-wide credits. A mapping revocation cannot race between validation
 // and issuance.
-func (s *Store) ReserveAuthorizedRelayCredits(ctx context.Context, relayStore *relayusage.Store, start, end time.Time, request relayusage.CreditRequest) (RelayCreditGrant, error) {
+func (s *Store) ReserveAuthorizedEstavelleCredits(ctx context.Context, relayStore *estavelleusage.Store, start, end time.Time, request estavelleusage.CreditRequest) (RelayCreditGrant, error) {
 	if relayStore == nil {
 		return RelayCreditGrant{}, ErrCreditGrantConflict
 	}
-	requestedBytes, err := relayusage.DecodeRequestedCreditBytes(request)
+	requestedBytes, err := estavelleusage.DecodeRequestedCreditBytes(request)
 	if err != nil {
 		return RelayCreditGrant{}, err
 	}
@@ -390,15 +390,15 @@ func (s *Store) ReserveAuthorizedRelayCredits(ctx context.Context, relayStore *r
 	return grant, err
 }
 
-// IssueAuthorizedRelayUncappedLease allows an opted-in relay to keep forwarding
+// IssueAuthorizedEstavelleUncappedLease allows an opted-in relay to keep forwarding
 // while the account has no spending cap. Leases are short, persisted and
 // serialized with cap changes; enabling a cap waits for the latest lease to
 // expire, after which the relay must refresh before forwarding again.
-func (s *Store) IssueAuthorizedRelayUncappedLease(ctx context.Context, relayStore *relayusage.Store, start, end time.Time, request relayusage.CreditRequest) (time.Time, error) {
+func (s *Store) IssueAuthorizedEstavelleUncappedLease(ctx context.Context, relayStore *estavelleusage.Store, start, end time.Time, request estavelleusage.CreditRequest) (time.Time, error) {
 	if relayStore == nil {
 		return time.Time{}, ErrCreditGrantConflict
 	}
-	if _, err := relayusage.DecodeRequestedCreditBytes(request); err != nil {
+	if _, err := estavelleusage.DecodeRequestedCreditBytes(request); err != nil {
 		return time.Time{}, err
 	}
 	startUS, endUS, err := billingPeriodMicros(start, end)
@@ -415,20 +415,20 @@ func (s *Store) IssueAuthorizedRelayUncappedLease(ctx context.Context, relayStor
 		if err := lockBillingAccount(tx, accountID); err != nil {
 			return err
 		}
-		var cap relayCapRow
+		var cap estavelleCapRow
 		err = tx.Where("account_id = ? AND period_start_us = ?", accountID, startUS).Take(&cap).Error
 		if err == nil {
 			if cap.EffectiveAtUS > time.Now().UTC().UnixMicro() {
-				return ErrRelayCapPending
+				return ErrEstavelleCapPending
 			}
-			return ErrRelayCapAlreadyActive
+			return ErrEstavelleCapAlreadyActive
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("billing: check cap before uncapped lease: %w", err)
 		}
 		now := time.Now().UTC()
-		expiresAt = now.Add(relayUncappedLeaseDuration).Truncate(time.Microsecond)
-		lease := relayUncappedLeaseRow{AccountID: accountID, PeriodStartUS: startUS,
+		expiresAt = now.Add(estavelleUncappedLeaseDuration).Truncate(time.Microsecond)
+		lease := estavelleUncappedLeaseRow{AccountID: accountID, PeriodStartUS: startUS,
 			RelayID: request.RelayID, Generation: request.Generation, MappingVersion: request.MappingVersion,
 			ExpiresAtUS: expiresAt.UnixMicro()}
 		if err := tx.Clauses(clause.OnConflict{
@@ -463,7 +463,7 @@ func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, gen
 		if err := lockBillingAccount(tx, accountID); err != nil {
 			return err
 		}
-		var row relayCreditGrantRow
+		var row estavelleCreditGrantRow
 		if err := tx.Where("grant_id = ? AND account_id = ?", grantID, accountID).Take(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrCreditGrantNotFound
@@ -481,7 +481,7 @@ func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, gen
 			if row.ConsumedBytes != consumedBytes || row.SurrenderDigest != surrenderDigest {
 				return ErrCreditGrantConflict
 			}
-			var cap relayCapRow
+			var cap estavelleCapRow
 			if err := tx.Where("account_id = ? AND period_start_us = ?", accountID, row.PeriodStartUS).Take(&cap).Error; err != nil {
 				return err
 			}
@@ -498,7 +498,7 @@ func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, gen
 		if err := tx.Save(&row).Error; err != nil {
 			return fmt.Errorf("billing: surrender relay credit grant: %w", err)
 		}
-		var cap relayCapRow
+		var cap estavelleCapRow
 		if err := tx.Where("account_id = ? AND period_start_us = ?", accountID, row.PeriodStartUS).Take(&cap).Error; err != nil {
 			return err
 		}
@@ -508,9 +508,9 @@ func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, gen
 	return output, err
 }
 
-// SurrenderAuthorizedRelayCredits atomically verifies the enabled producer,
+// SurrenderAuthorizedEstavelleCredits atomically verifies the enabled producer,
 // signed mapping, and immutable grant ownership before releasing unused bytes.
-func (s *Store) SurrenderAuthorizedRelayCredits(ctx context.Context, relayStore *relayusage.Store, request relayusage.CreditSurrender) (RelayCreditGrant, error) {
+func (s *Store) SurrenderAuthorizedEstavelleCredits(ctx context.Context, relayStore *estavelleusage.Store, request estavelleusage.CreditSurrender) (RelayCreditGrant, error) {
 	if relayStore == nil {
 		return RelayCreditGrant{}, ErrCreditGrantConflict
 	}
@@ -603,20 +603,20 @@ func addCanonicalBig(total *big.Int, decimal string) (*big.Int, error) {
 	return new(big.Int).Add(total, value), nil
 }
 
-func relayCapDTO(row relayCapRow) RelaySpendingCap {
-	return RelaySpendingCap{AccountID: row.AccountID, PeriodStart: time.UnixMicro(row.PeriodStartUS).UTC(), PeriodEnd: time.UnixMicro(row.PeriodEndUS).UTC(),
+func estavelleCapDTO(row estavelleCapRow) EstavelleSpendingCap {
+	return EstavelleSpendingCap{AccountID: row.AccountID, PeriodStart: time.UnixMicro(row.PeriodStartUS).UTC(), PeriodEnd: time.UnixMicro(row.PeriodEndUS).UTC(),
 		ScheduleVersion: row.ScheduleVersion, Currency: "USD", OverageMinor: row.OverageMinor, Revision: row.Revision,
 		Acknowledged: row.Acknowledged, UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt, EffectiveAt: time.UnixMicro(row.EffectiveAtUS).UTC()}
 }
 
-func relayGrantDTO(row relayCreditGrantRow, endUS int64) RelayCreditGrant {
+func relayGrantDTO(row estavelleCreditGrantRow, endUS int64) RelayCreditGrant {
 	return RelayCreditGrant{GrantID: row.GrantID, AccountID: row.AccountID, PeriodStart: time.UnixMicro(row.PeriodStartUS).UTC(), PeriodEnd: time.UnixMicro(endUS).UTC(),
 		RelayID: row.RelayID, Generation: row.Generation, MappingVersion: row.MappingVersion, ScheduleVersion: row.ScheduleVersion,
 		CapRevision: row.CapRevision, RequestedBytes: row.RequestedBytes, GrantedBytes: row.GrantedBytes, CreatedAt: row.CreatedAt}
 }
 
-func addRelayCapRevision(tx *gorm.DB, row relayCapRow, actor string, now time.Time) error {
-	revision := relayCapRevisionRow{AccountID: row.AccountID, PeriodStartUS: row.PeriodStartUS, Revision: row.Revision,
+func addEstavelleCapRevision(tx *gorm.DB, row estavelleCapRow, actor string, now time.Time) error {
+	revision := estavelleCapRevisionRow{AccountID: row.AccountID, PeriodStartUS: row.PeriodStartUS, Revision: row.Revision,
 		PeriodEndUS: row.PeriodEndUS, ScheduleVersion: row.ScheduleVersion, OverageMinor: row.OverageMinor,
 		Acknowledged: row.Acknowledged, EffectiveAtUS: row.EffectiveAtUS, Actor: actor, CreatedAt: now}
 	if err := tx.Create(&revision).Error; err != nil {

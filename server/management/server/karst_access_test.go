@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/stretchr/testify/require"
@@ -29,19 +29,19 @@ func (s karstDeletionStore) GetDB() *gorm.DB { return s.db }
 func TestKarstGroupDeletionDependencies(t *testing.T) {
 	tests := []struct {
 		name, document, resource string
-		service                  *relayservice.Service
-		backend                  *relayservice.BackendAccess
+		service                  *estavelleservice.Service
+		backend                  *estavelleservice.BackendAccess
 	}{
 		{name: "source", document: `{"grants":[{"id":"web","name":"Web","source_groups":["g"],"target_groups":["other"],"ports":"443"}]}`, resource: "access grant"},
 		{name: "target", document: `{"grants":[{"id":"web","name":"Web","source_groups":["other"],"target_groups":["g"],"ports":"443"}]}`, resource: "access grant"},
 		{name: "binding", document: `{"groups":{"group:legacy":["alice"]},"groupBindings":{"group:legacy":"g"}}`, resource: "legacy membership mapping"},
-		{name: "relay", resource: "relay", service: &relayservice.Service{AccountID: "a", ID: "Denver", AllowedGroups: []string{"g"}}},
-		{name: "disabled relay", resource: "relay", service: &relayservice.Service{AccountID: "a", ID: "Denver", PonorDisabled: true, AllowedGroups: []string{"g"}}},
-		{name: "retained admission", resource: "relay admission", backend: &relayservice.BackendAccess{AccountID: "a", RelayID: "backend", Groups: []string{"g"}}},
+		{name: "relay", resource: "relay", service: &estavelleservice.Service{AccountID: "a", ID: "Denver", AllowedGroups: []string{"g"}}},
+		{name: "disabled relay", resource: "relay", service: &estavelleservice.Service{AccountID: "a", ID: "Denver", PonorDisabled: true, AllowedGroups: []string{"g"}}},
+		{name: "retained admission", resource: "relay admission", backend: &estavelleservice.BackendAccess{AccountID: "a", RelayID: "backend", Groups: []string{"g"}}},
 		{name: "unbound legacy group is not a registry reference", document: `{"groups":{"group:g":["alice"]},"acls":[{"action":"accept","src":["group:g"],"dst":["*:443"]}]}`},
 		{name: "unrelated grant", document: `{"grants":[{"id":"web","name":"Web","source_groups":["other"],"target_groups":["elsewhere"],"ports":"443"}]}`},
-		{name: "other tenant relay", service: &relayservice.Service{AccountID: "b", ID: "Denver", AllowedGroups: []string{"g"}}},
-		{name: "empty deny admission", backend: &relayservice.BackendAccess{AccountID: "a", RelayID: "backend"}},
+		{name: "other tenant relay", service: &estavelleservice.Service{AccountID: "b", ID: "Denver", AllowedGroups: []string{"g"}}},
+		{name: "empty deny admission", backend: &estavelleservice.BackendAccess{AccountID: "a", RelayID: "backend"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -50,7 +50,7 @@ func TestKarstGroupDeletionDependencies(t *testing.T) {
 			raw, err := db.DB()
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, raw.Close()) })
-			require.NoError(t, db.AutoMigrate(&policy.Version{}, &relayservice.Service{}, &relayservice.BackendAccess{}))
+			require.NoError(t, db.AutoMigrate(&policy.Version{}, &estavelleservice.Service{}, &estavelleservice.BackendAccess{}))
 			if test.document != "" {
 				require.NoError(t, db.Create(&policy.Version{AccountID: "a", Version: 1, Document: test.document}).Error)
 			}
@@ -131,8 +131,8 @@ func TestKarstGroupDeletionDependencyReadFailure(t *testing.T) {
 	raw, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, raw.Close()) })
-	require.NoError(t, db.AutoMigrate(&relayservice.Service{}))
-	require.NoError(t, db.Migrator().DropColumn(&relayservice.Service{}, "allowed_groups"))
+	require.NoError(t, db.AutoMigrate(&estavelleservice.Service{}))
+	require.NoError(t, db.Migrator().DropColumn(&estavelleservice.Service{}, "allowed_groups"))
 	s := karstDeletionStore{db: db}
 	g := &types.Group{AccountID: "a", ID: "g"}
 	require.ErrorContains(t, validateKarstGroupDeletion(context.Background(), s, g), "cannot check relay group dependencies")

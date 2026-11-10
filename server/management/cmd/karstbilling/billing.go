@@ -17,7 +17,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/billing"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -214,7 +214,7 @@ func newFinalizeCommand(opener StoreOpener) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				relayUsageStore, err := relayusage.NewStore(sql.GetDB())
+				relayUsageStore, err := estavelleusage.NewStore(sql.GetDB())
 				if err != nil {
 					return err
 				}

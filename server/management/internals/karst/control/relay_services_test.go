@@ -9,9 +9,9 @@ import (
 	"encoding/base64"
 	"testing"
 
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	"github.com/netbirdio/netbird/shared/management/proto"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -35,21 +35,21 @@ func TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback(t *test
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	ponor, err := relayreg.NewStore(db)
+	ponor, err := estavellereg.NewStore(db)
 	require.NoError(t, err)
-	services, err := relayservice.NewStore(db)
+	services, err := estavelleservice.NewStore(db)
 	require.NoError(t, err)
 	services.LifecycleAgents = compatibleLifecycleAgents{}
-	entry := relayreg.Entry{Address: "203.0.113.2:443", TLSServerName: "relay.example.com", IdentityKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, relayreg.IdentityKeySize)), Region: "eu", Location: &relayreg.Location{Lat: 40, Lon: 10, Label: "declared"}}
-	p, err := ponor.Create(relayreg.WithAccount(context.Background(), "acct"), entry)
+	entry := estavellereg.Entry{Address: "203.0.113.2:443", TLSServerName: "relay.example.com", IdentityKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, estavellereg.IdentityKeySize)), Region: "eu", Location: &estavellereg.Location{Lat: 40, Lon: 10, Label: "declared"}}
+	p, err := ponor.Create(estavellereg.WithAccount(context.Background(), "acct"), entry)
 	require.NoError(t, err)
-	ctx := relayservice.WithAccount(context.Background(), "acct")
+	ctx := estavelleservice.WithAccount(context.Background(), "acct")
 	// A pre-existing unmanaged association, grandfathered rather than
 	// created through Create, which now always requires managed access
 	// (issue #530); this test is about publication authority, not that.
-	require.NoError(t, db.Create(&relayservice.Service{AccountID: "acct", ID: "primary", PonorID: p.ID, Revision: 1}).Error)
+	require.NoError(t, db.Create(&estavelleservice.Service{AccountID: "acct", ID: "primary", PonorID: p.ID, Revision: 1}).Error)
 	f.handler.RelayServices = services
-	f.handler.Relays = []*proto.KarstRelay{{Address: "203.0.113.9:443"}}
+	f.handler.Relays = []*proto.KarstEstavelle{{Address: "203.0.113.9:443"}}
 	lifecycleRequest := func(known uint64) *proto.KarstNetmapResponse {
 		payload, err := pb.Marshal(&proto.KarstNetmapRequest{KnownVersion: known, RelayLifecycleSchema: 1})
 		require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback(t *test
 	managed := lifecycleRequest(legacy.Version)
 	require.NotEqual(t, legacy.Version, managed.Version)
 	require.Len(t, managed.Relays, 1)
-	want, err := relayreg.Compile(entry)
+	want, err := estavellereg.Compile(entry)
 	require.NoError(t, err)
 	require.True(t, pb.Equal(want, managed.Relays[0]), "identity, region, TLS name and declared location must be preserved")
 	_, err = services.SetModes(ctx, "primary", false)

@@ -145,7 +145,7 @@ func TestCreatePropagatesACreateFailure(t *testing.T) {
 
 func TestTLSServerNameOfAnUnknownPodIsNotAnError(t *testing.T) {
 	d := testDriver(newFakePods())
-	name, err := d.TLSServerName(context.Background(), "karst-relay-unknown")
+	name, err := d.TLSServerName(context.Background(), "karst-estavelle-unknown")
 	if err != nil {
 		t.Fatalf("got error %v, want nil (not-yet-discoverable is not a failure)", err)
 	}

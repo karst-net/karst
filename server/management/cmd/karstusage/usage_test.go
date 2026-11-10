@@ -20,7 +20,7 @@ import (
 	"github.com/netbirdio/netbird/management/cmd/karstusage"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/store"
@@ -171,9 +171,9 @@ func TestManagedRelayAuthorizationIsExplicitAuditedAndRevocable(t *testing.T) {
 	s := fixture(t)
 	key, err := identity.FromSeed(bytes.Repeat([]byte{8}, identity.SeedSize))
 	require.NoError(t, err)
-	mapping, err := usage.PersistRelayMapping(context.Background(), s.GetDB(), "deployment-a", "aquifer-a", "a")
+	mapping, err := usage.PersistEstavelleMapping(context.Background(), s.GetDB(), "deployment-a", "aquifer-a", "a")
 	require.NoError(t, err)
-	_, err = relayusage.NewStore(s.GetDB())
+	_, err = estavelleusage.NewStore(s.GetDB())
 	require.NoError(t, err)
 
 	output, err := executeRaw(s, "relays", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(key.Public()), "--deployment-id", "deployment-a", "--actor", "operator-one")
@@ -228,9 +228,9 @@ func TestManagedRelayAuditFailureRollsBackAuthorizationInterval(t *testing.T) {
 	s := fixture(t)
 	key, err := identity.FromSeed(bytes.Repeat([]byte{7}, identity.SeedSize))
 	require.NoError(t, err)
-	mapping, err := usage.PersistRelayMapping(context.Background(), s.GetDB(), "deployment-a", "aquifer-a", "a")
+	mapping, err := usage.PersistEstavelleMapping(context.Background(), s.GetDB(), "deployment-a", "aquifer-a", "a")
 	require.NoError(t, err)
-	_, err = relayusage.NewStore(s.GetDB())
+	_, err = estavelleusage.NewStore(s.GetDB())
 	require.NoError(t, err)
 	output, err := executeRaw(s, "relays", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(key.Public()), "--deployment-id", "deployment-a", "--actor", "operator")
 	require.NoError(t, err)

@@ -26,12 +26,12 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/compliance"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/server/account"
@@ -341,45 +341,47 @@ func (s *spyAccountUpdater) UpdateAccountPeers(_ context.Context, accountID stri
 
 type scanRelays struct{}
 
-func (scanRelays) List(context.Context) ([]relayreg.StoredRelay, error) { return nil, nil }
-func (scanRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
-	return &relayreg.StoredRelay{}, nil
+func (scanRelays) List(context.Context) ([]estavellereg.StoredEstavelle, error) { return nil, nil }
+func (scanRelays) Create(context.Context, estavellereg.Entry) (*estavellereg.StoredEstavelle, error) {
+	return &estavellereg.StoredEstavelle{}, nil
 }
 func (scanRelays) Delete(context.Context, string) error                { return nil }
 func (scanRelays) DeleteByAddress(context.Context, string) error       { return nil }
 func (scanRelays) DeleteByTLSServerName(context.Context, string) error { return nil }
-func (scanRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
+func (scanRelays) LatestTelemetry(context.Context, string) (*estavellereg.EstavelleTelemetryRecord, error) {
 	return nil, nil
 }
-func (scanRelays) DemandByRegion(context.Context) ([]relayreg.RegionDemand, error) { return nil, nil }
-func (scanRelays) DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error) {
+func (scanRelays) DemandByRegion(context.Context) ([]estavellereg.RegionDemand, error) {
+	return nil, nil
+}
+func (scanRelays) DemandHistory(context.Context, time.Time, time.Time) ([]estavellereg.RegionDemandSample, error) {
 	return nil, nil
 }
 
 // scanRelaysExists reports every Create as a duplicate — the
-// relaysEnroll/relaysCreate "relay already exists" path.
+// estavellesEnroll/estavellesCreate "relay already exists" path.
 type scanRelaysExists struct{ scanRelays }
 
-func (scanRelaysExists) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
-	return nil, relayreg.ErrExists
+func (scanRelaysExists) Create(context.Context, estavellereg.Entry) (*estavellereg.StoredEstavelle, error) {
+	return nil, estavellereg.ErrExists
 }
 
 // scanRelaysMissing reports every DeleteByAddress/DeleteByTLSServerName as
-// not-found — the relayDeenroll "no relay registered under that key" path
+// not-found — the estavelleDeenroll "no relay registered under that key" path
 // (#319/#329).
 type scanRelaysMissing struct{ scanRelays }
 
 func (scanRelaysMissing) DeleteByAddress(context.Context, string) error {
-	return relayreg.ErrNotFound
+	return estavellereg.ErrNotFound
 }
 
 func (scanRelaysMissing) DeleteByTLSServerName(context.Context, string) error {
-	return relayreg.ErrNotFound
+	return estavellereg.ErrNotFound
 }
 
 // scanRelayEnrollAccounts fakes the two ADR-0045 §7 Phase 2 methods
-// relayEnrollTokensCreate/relaysEnroll type-assert for (MintRelayEnrollKey,
-// ConsumeRelayEnrollKey), plus the accountUpdater method every other
+// estavelleEnrollTokensCreate/estavellesEnroll type-assert for (MintEstavelleEnrollKey,
+// ConsumeEstavelleEnrollKey), plus the accountUpdater method every other
 // RegisterEndpoints test fixture here already has to implement.
 type scanRelayEnrollAccounts struct {
 	mintToken string
@@ -392,36 +394,36 @@ type scanRelayEnrollAccounts struct {
 
 func (scanRelayEnrollAccounts) UpdateAccountPeers(context.Context, string, types.UpdateReason) {}
 
-func (s scanRelayEnrollAccounts) MintRelayEnrollKey(context.Context, string, string, time.Duration) (string, error) {
+func (s scanRelayEnrollAccounts) MintEstavelleEnrollKey(context.Context, string, string, time.Duration) (string, error) {
 	if s.mintErr != nil {
 		return "", s.mintErr
 	}
 	return s.mintToken, nil
 }
 
-func (s scanRelayEnrollAccounts) ConsumeRelayEnrollKey(context.Context, string) (string, string, error) {
+func (s scanRelayEnrollAccounts) ConsumeEstavelleEnrollKey(context.Context, string) (string, string, error) {
 	if s.consumeErr != nil {
 		return "", "", s.consumeErr
 	}
 	return s.consumeAccountID, s.consumeKeyID, nil
 }
 
-type fixedRelays []relayreg.StoredRelay
+type fixedRelays []estavellereg.StoredEstavelle
 
-func (f fixedRelays) List(context.Context) ([]relayreg.StoredRelay, error) { return f, nil }
-func (f fixedRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
+func (f fixedRelays) List(context.Context) ([]estavellereg.StoredEstavelle, error) { return f, nil }
+func (f fixedRelays) Create(context.Context, estavellereg.Entry) (*estavellereg.StoredEstavelle, error) {
 	return &f[0], nil
 }
 func (fixedRelays) Delete(context.Context, string) error                { return nil }
 func (fixedRelays) DeleteByAddress(context.Context, string) error       { return nil }
 func (fixedRelays) DeleteByTLSServerName(context.Context, string) error { return nil }
-func (fixedRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
+func (fixedRelays) LatestTelemetry(context.Context, string) (*estavellereg.EstavelleTelemetryRecord, error) {
 	return nil, nil
 }
-func (fixedRelays) DemandByRegion(context.Context) ([]relayreg.RegionDemand, error) {
+func (fixedRelays) DemandByRegion(context.Context) ([]estavellereg.RegionDemand, error) {
 	return nil, nil
 }
-func (fixedRelays) DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error) {
+func (fixedRelays) DemandHistory(context.Context, time.Time, time.Time) ([]estavellereg.RegionDemandSample, error) {
 	return nil, nil
 }
 
@@ -430,10 +432,10 @@ func (fixedRelays) DemandHistory(context.Context, time.Time, time.Time) ([]relay
 // (ADR-0048), which fixedRelays' own always-nil LatestTelemetry cannot.
 type relaysWithTelemetry struct {
 	fixedRelays
-	telemetry *relayreg.RelayTelemetryRecord
+	telemetry *estavellereg.EstavelleTelemetryRecord
 }
 
-func (r relaysWithTelemetry) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
+func (r relaysWithTelemetry) LatestTelemetry(context.Context, string) (*estavellereg.EstavelleTelemetryRecord, error) {
 	return r.telemetry, nil
 }
 
@@ -545,7 +547,7 @@ func TestUserRoleIsDeniedByKarstAuthorization(t *testing.T) {
 
 // ADR-0045 §7 Phase 2: the Scaler role may mint relay-enroll tokens, and
 // Admin/Owner (who already hold Create on KarstControl) may too — the same
-// relationship relaysCreate already has with those roles.
+// relationship estavellesCreate already has with those roles.
 func TestRelayEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot(t *testing.T) {
 	for _, tc := range []struct {
 		role     types.UserRole
@@ -561,7 +563,7 @@ func TestRelayEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot(t *testing.T
 			router := mux.NewRouter()
 			accounts := scanRelayEnrollAccounts{mintToken: "RELAY-ENROLL-SECRET"}
 			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, accounts, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-			req := httptest.NewRequest(http.MethodPost, relayEnrollTokensPath, strings.NewReader(`{"pool_id":"aws-use1"}`))
+			req := httptest.NewRequest(http.MethodPost, estavelleEnrollTokensPath, strings.NewReader(`{"pool_id":"aws-use1"}`))
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, req)
@@ -569,7 +571,7 @@ func TestRelayEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot(t *testing.T
 			if tc.wantCode != http.StatusCreated {
 				return
 			}
-			var decoded relayEnrollTokenResponse
+			var decoded estavelleEnrollTokenResponse
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &decoded))
 			require.Equal(t, "RELAY-ENROLL-SECRET", decoded.Token)
 		})
@@ -584,14 +586,14 @@ func TestScalerRoleCannotReachAnyOtherKarstRoute(t *testing.T) {
 	router := mux.NewRouter()
 	accounts := scanRelayEnrollAccounts{mintToken: "irrelevant"}
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, accounts, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/karst/v1/estavelles", strings.NewReader(`{}`))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 }
 
-// ADR-0045 §6: relaysEnroll authenticates by bearer token alone, with no
+// ADR-0045 §6: estavellesEnroll authenticates by bearer token alone, with no
 // session at all — the exact gap a scaled-up relay with nothing but its
 // minted token needs bridged.
 func TestRelaysEnroll(t *testing.T) {
@@ -600,7 +602,7 @@ func TestRelaysEnroll(t *testing.T) {
 	t.Run("no bearer token is unauthenticated", func(t *testing.T) {
 		router := mux.NewRouter()
 		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, scanRelayEnrollAccounts{}, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/estavelles/enroll", strings.NewReader(entryBody))
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
 		require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
@@ -610,7 +612,7 @@ func TestRelaysEnroll(t *testing.T) {
 		router := mux.NewRouter()
 		accounts := scanRelayEnrollAccounts{consumeErr: status.Errorf(status.PermissionDenied, "relay enroll key is invalid")}
 		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/estavelles/enroll", strings.NewReader(entryBody))
 		req.Header.Set("Authorization", "Bearer wrong-secret")
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
@@ -621,18 +623,18 @@ func TestRelaysEnroll(t *testing.T) {
 		router := mux.NewRouter()
 		accounts := scanRelayEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
 		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/estavelles/enroll", strings.NewReader(entryBody))
 		req.Header.Set("Authorization", "Bearer the-real-secret")
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
 		require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
 	})
 
-	t.Run("an already-registered relay is a precondition failure, same as relaysCreate", func(t *testing.T) {
+	t.Run("an already-registered relay is a precondition failure, same as estavellesCreate", func(t *testing.T) {
 		router := mux.NewRouter()
 		accounts := scanRelayEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
 		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysExists{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/estavelles/enroll", strings.NewReader(entryBody))
 		req.Header.Set("Authorization", "Bearer the-real-secret")
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
@@ -654,7 +656,7 @@ func TestRelayDeenroll_ScalerAndAdminCanRemoveAdvisorCannot(t *testing.T) {
 		t.Run(string(tc.role), func(t *testing.T) {
 			router := mux.NewRouter()
 			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-			req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(`{"address":"203.0.113.9:443"}`))
+			req := httptest.NewRequest(http.MethodPost, estavelleDeenrollPath, strings.NewReader(`{"address":"203.0.113.9:443"}`))
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, req)
@@ -663,13 +665,13 @@ func TestRelayDeenroll_ScalerAndAdminCanRemoveAdvisorCannot(t *testing.T) {
 	}
 }
 
-// Confirms relayDeenroll passes relayreg.ErrNotFound through as 404, the
-// same contract relaysDelete already has, rather than masking it as a
+// Confirms estavelleDeenroll passes estavellereg.ErrNotFound through as 404, the
+// same contract estavellesDelete already has, rather than masking it as a
 // generic error.
 func TestRelayDeenroll_UnknownAddressIsNotFound(t *testing.T) {
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysMissing{}, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(`{"address":"203.0.113.99:443"}`))
+	req := httptest.NewRequest(http.MethodPost, estavelleDeenrollPath, strings.NewReader(`{"address":"203.0.113.99:443"}`))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
@@ -677,19 +679,19 @@ func TestRelayDeenroll_UnknownAddressIsNotFound(t *testing.T) {
 }
 
 // Mirrors TestRelayDeenroll_UnknownAddressIsNotFound for the AWS driver's
-// own key (#329): relayDeenroll must dispatch to DeleteByTLSServerName,
+// own key (#329): estavelleDeenroll must dispatch to DeleteByTLSServerName,
 // not just DeleteByAddress, when that's the field the request carries.
 func TestRelayDeenroll_UnknownTLSServerNameIsNotFound(t *testing.T) {
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysMissing{}, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(`{"tls_server_name":"pool-never-registered.aws.karst.internal"}`))
+	req := httptest.NewRequest(http.MethodPost, estavelleDeenrollPath, strings.NewReader(`{"tls_server_name":"pool-never-registered.aws.karst.internal"}`))
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
 }
 
-// relayDeenroll must refuse a request naming both keys, or neither --
+// estavelleDeenroll must refuse a request naming both keys, or neither --
 // exactly one driver-known key is meaningful per call, never a choice
 // the handler should silently make on the caller's behalf.
 func TestRelayDeenroll_RequiresExactlyOneOfAddressOrTLSServerName(t *testing.T) {
@@ -703,7 +705,7 @@ func TestRelayDeenroll_RequiresExactlyOneOfAddressOrTLSServerName(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			router := mux.NewRouter()
 			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-			req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(tc.body))
+			req := httptest.NewRequest(http.MethodPost, estavelleDeenrollPath, strings.NewReader(tc.body))
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, req)
@@ -714,11 +716,11 @@ func TestRelayDeenroll_RequiresExactlyOneOfAddressOrTLSServerName(t *testing.T) 
 
 // The Scaler role's own narrow allowlist must still refuse the ordinary
 // admin route for the exact same underlying resource -- gaining
-// relayDeenroll must not have widened reach to relaysDelete too.
+// estavelleDeenroll must not have widened reach to estavellesDelete too.
 func TestScalerRoleCannotReachRelaysDeleteEvenThoughItCanReachRelayDeenroll(t *testing.T) {
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/relays/some-id", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/estavelles/some-id", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
@@ -744,7 +746,7 @@ func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
 		if strings.HasPrefix(template, "/karst/v1/domains") || strings.HasPrefix(template, "/karst/v1/invitations") {
 			return nil
 		}
-		// relaysEnroll (ADR-0045 §6) is bearer-token-gated, not
+		// estavellesEnroll (ADR-0045 §6) is bearer-token-gated, not
 		// session-gated -- it deliberately sits outside karstAuthorization
 		// (see its own doc comment), so a member's session cannot reach
 		// KarstControl's permission check to be denied by in the first
@@ -752,7 +754,7 @@ func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
 		// (401, checked by TestRelaysEnroll below) -- this walk's own
 		// "every admin route denies a session-bearing member" shape just
 		// does not apply to a route with no session-based gate at all.
-		if template == "/karst/v1/relays/enroll" {
+		if template == "/karst/v1/estavelles/enroll" {
 			return nil
 		}
 		methods, err := route.GetMethods()
@@ -1592,9 +1594,9 @@ func TestNOCRoleReachesComponentsAndDrilldownButNotWrites(t *testing.T) {
 		want         int
 	}{
 		{http.MethodGet, "/karst/v1/noc/components", http.StatusOK},
-		{http.MethodGet, "/karst/v1/noc/relays/relay-id", http.StatusOK},
-		{http.MethodPost, "/karst/v1/relays", http.StatusForbidden},
-		{http.MethodDelete, "/karst/v1/relays/relay-id", http.StatusForbidden},
+		{http.MethodGet, "/karst/v1/noc/estavelles/relay-id", http.StatusOK},
+		{http.MethodPost, "/karst/v1/estavelles", http.StatusForbidden},
+		{http.MethodDelete, "/karst/v1/estavelles/relay-id", http.StatusForbidden},
 	} {
 		request := httptest.NewRequest(tc.method, tc.path, nil)
 		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "noc-viewer"})
@@ -1617,7 +1619,7 @@ func TestNOCViewAndDrilldownAreAuditLoggedOnGET(t *testing.T) {
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 
-	for _, path := range []string{"/karst/v1/noc/components", "/karst/v1/noc/relays/relay-id"} {
+	for _, path := range []string{"/karst/v1/noc/components", "/karst/v1/noc/estavelles/relay-id"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "noc-viewer"})
 		response := httptest.NewRecorder()
@@ -1627,7 +1629,7 @@ func TestNOCViewAndDrilldownAreAuditLoggedOnGET(t *testing.T) {
 
 	// auditMutations (nodes.go) only fires on a non-GET, non-2xx-excluded
 	// mutation -- these are both GETs, so these entries exist only because
-	// nocComponents/nocRelay call audit.Append explicitly. List is
+	// nocComponents/nocEstavelle call audit.Append explicitly. List is
 	// newest-first (audit.go's ListFiltered, "ORDER BY seq DESC").
 	entries, err := auditLog.List(context.Background(), 0, 10)
 	require.NoError(t, err)
@@ -1663,8 +1665,8 @@ func TestAdvisorRoleReachesDemandEndpointsButNotWrites(t *testing.T) {
 	}{
 		{http.MethodGet, "/karst/v1/demand/regions", http.StatusOK},
 		{http.MethodGet, "/karst/v1/demand/anchors", http.StatusOK},
-		{http.MethodPost, "/karst/v1/relays", http.StatusForbidden},
-		{http.MethodDelete, "/karst/v1/relays/relay-id", http.StatusForbidden},
+		{http.MethodPost, "/karst/v1/estavelles", http.StatusForbidden},
+		{http.MethodDelete, "/karst/v1/estavelles/relay-id", http.StatusForbidden},
 	} {
 		request := httptest.NewRequest(tc.method, tc.path, nil)
 		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
@@ -1706,14 +1708,14 @@ func TestOnlyAdvisorRoleReachesDemandEndpoints(t *testing.T) {
 }
 
 // fixedDemandHistory answers DemandHistory with a fixed set of samples,
-// embedding fixedRelays for every other relayReader method this doesn't
+// embedding fixedRelays for every other estavelleReader method this doesn't
 // need to customize.
 type fixedDemandHistory struct {
 	fixedRelays
-	samples []relayreg.RegionDemandSample
+	samples []estavellereg.RegionDemandSample
 }
 
-func (f fixedDemandHistory) DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error) {
+func (f fixedDemandHistory) DemandHistory(context.Context, time.Time, time.Time) ([]estavellereg.RegionDemandSample, error) {
 	return f.samples, nil
 }
 
@@ -1722,7 +1724,7 @@ func (f fixedDemandHistory) DemandHistory(context.Context, time.Time, time.Time)
 // TestDemandRegionsResponseShape already holds demandRegions to.
 func TestDemandRegionsHistoryResponseShape(t *testing.T) {
 	sampledAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	relays := fixedDemandHistory{samples: []relayreg.RegionDemandSample{
+	relays := fixedDemandHistory{samples: []estavellereg.RegionDemandSample{
 		{Region: "eu", AccountID: "account-a", SampledAt: sampledAt, RTTUnder20ms: 5, RTT20To50ms: 1, RTT50To100ms: 2, RTTOver100ms: 3},
 	}}
 	router := mux.NewRouter()
@@ -1761,7 +1763,7 @@ func TestDemandRegionsHistoryRequiresSinceAndUntil(t *testing.T) {
 }
 
 // TestDemandRegionsResponseShape confirms the wire response uses the
-// openapi.yml field spelling (snake_case), not relayreg.RegionDemand's bare
+// openapi.yml field spelling (snake_case), not estavellereg.RegionDemand's bare
 // Go field names.
 func TestDemandRegionsResponseShape(t *testing.T) {
 	relays := fixedRelays{{AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu"}}
@@ -1870,7 +1872,7 @@ func TestRoleGateOnScalerRecommendations(t *testing.T) {
 // TestScalerRecommendationsIsPreconditionFailedWhenUnconfigured covers a
 // deployment that has not set KARST_SCALER_ADVISOR_URL: RegisterEndpoints'
 // own doc comment promises precondition-failed, not a 404 -- the same
-// "optional capability, not a missing route" posture h.relays/h.anchors
+// "optional capability, not a missing route" posture h.estavelles/h.anchors
 // being nil already has.
 func TestScalerRecommendationsIsPreconditionFailedWhenUnconfigured(t *testing.T) {
 	router := mux.NewRouter()
@@ -2098,7 +2100,7 @@ func TestRelayResponsesUseContractFieldsAndHealth(t *testing.T) {
 	}}
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	request := httptest.NewRequest(http.MethodGet, "/karst/v1/relays", nil)
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/estavelles", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
@@ -2117,11 +2119,11 @@ func TestDetectedLocationOverridesDeclared(t *testing.T) {
 			AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu",
 			LocationLat: &declaredLat, LocationLon: &declaredLon, LocationLabel: "Denver",
 		}},
-		telemetry: &relayreg.RelayTelemetryRecord{DetectedLat: &lat, DetectedLon: &lon},
+		telemetry: &estavellereg.EstavelleTelemetryRecord{DetectedLat: &lat, DetectedLon: &lon},
 	}
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	request := httptest.NewRequest(http.MethodGet, "/karst/v1/relays", nil)
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/estavelles", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
@@ -2151,7 +2153,7 @@ func TestDeclaredLocationSurvivesWithNoTelemetry(t *testing.T) {
 	}}
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
-	request := httptest.NewRequest(http.MethodGet, "/karst/v1/relays", nil)
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/estavelles", nil)
 	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)

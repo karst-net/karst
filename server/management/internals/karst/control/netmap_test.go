@@ -23,11 +23,11 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
@@ -430,7 +430,7 @@ func TestVersionChangesWithContent(t *testing.T) {
 	t.Run("relay registry changed", func(t *testing.T) {
 		saved := f.handler.Relays
 		defer func() { f.handler.Relays = saved }()
-		f.handler.Relays = []*proto.KarstRelay{{
+		f.handler.Relays = []*proto.KarstEstavelle{{
 			Address:       "127.0.0.1:443",
 			TlsServerName: "relay.test",
 			RelayId:       bytes.Repeat([]byte{0x91}, 32),
@@ -1565,14 +1565,14 @@ func TestNetmapCarriesRelaysFromTheStore(t *testing.T) {
 	if err := db.Exec("DROP TABLE IF EXISTS karst_relays").Error; err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	store, err := relayreg.NewStore(db)
+	store, err := estavellereg.NewStore(db)
 	if err != nil {
 		t.Fatalf("relay store: %v", err)
 	}
-	if _, err := store.Create(relayreg.WithAccount(context.Background(), "acct"), relayreg.Entry{
+	if _, err := store.Create(estavellereg.WithAccount(context.Background(), "acct"), estavellereg.Entry{
 		Address:       "203.0.113.7:443",
 		TLSServerName: "relay.store.example.com",
-		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, relayreg.IdentityKeySize)),
+		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, estavellereg.IdentityKeySize)),
 		Region:        "eu",
 	}); err != nil {
 		t.Fatalf("create: %v", err)
@@ -1581,11 +1581,11 @@ func TestNetmapCarriesRelaysFromTheStore(t *testing.T) {
 	// Relays is deliberately left populated with something else, so the test
 	// also proves the store takes priority rather than merely working when
 	// the static field is empty.
-	f.handler.Relays = []*proto.KarstRelay{{
+	f.handler.Relays = []*proto.KarstEstavelle{{
 		Address:       "127.0.0.1:443",
 		TlsServerName: "relay.static.example.com",
 		RelayId:       bytes.Repeat([]byte{0x91}, 32),
-		IdentityKey:   bytes.Repeat([]byte{0x92}, relayreg.IdentityKeySize),
+		IdentityKey:   bytes.Repeat([]byte{0x92}, estavellereg.IdentityKeySize),
 		Region:        "us",
 	}}
 	f.handler.RelayStore = store
@@ -1623,16 +1623,16 @@ func TestNetmapFallsBackToStaticRelaysWhenStoreIsEmpty(t *testing.T) {
 	if err := db.Exec("DROP TABLE IF EXISTS karst_relays").Error; err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	store, err := relayreg.NewStore(db)
+	store, err := estavellereg.NewStore(db)
 	if err != nil {
 		t.Fatalf("relay store: %v", err)
 	}
 
-	f.handler.Relays = []*proto.KarstRelay{{
+	f.handler.Relays = []*proto.KarstEstavelle{{
 		Address:       "127.0.0.1:443",
 		TlsServerName: "relay.static.example.com",
 		RelayId:       bytes.Repeat([]byte{0x91}, 32),
-		IdentityKey:   bytes.Repeat([]byte{0x92}, relayreg.IdentityKeySize),
+		IdentityKey:   bytes.Repeat([]byte{0x92}, estavellereg.IdentityKeySize),
 		Region:        "us",
 	}}
 	f.handler.RelayStore = store

@@ -21,7 +21,7 @@ import (
 func TestSoftwareVersionsRolesAndSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "versions.json")
 	t.Setenv("KARST_COMPONENT_VERSIONS_FILE", path)
-	require.NoError(t, os.WriteFile(path, []byte(`{"observed_at":"2026-10-20T12:00:00Z","components":[{"name":"relay","image":"relay:v1","image_id":"sha256:abc","tags":["relay:v1"],"state":"running","version":"v0.1.0-rc.31","revision":"observed-commit","secret":"never expose"}]}`), 0600))
+	require.NoError(t, os.WriteFile(path, []byte(`{"observed_at":"2026-10-20T12:00:00Z","components":[{"name":"estavelle","image":"estavelle:v1","image_id":"sha256:abc","tags":["estavelle:v1"],"state":"running","version":"v0.1.0-rc.31","revision":"observed-commit","secret":"never expose"}]}`), 0600))
 	for _, role := range []string{"owner", "admin", "network_admin", "auditor", "noc", "user", ""} {
 		t.Run(role, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/karst/v1/versions", nil)

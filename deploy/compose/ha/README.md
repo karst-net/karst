@@ -44,27 +44,27 @@ denied` on every WAL segment and no base backup ever becomes recoverable past
 the last completed checkpoint.
 
 Account state is meant to live in Postgres (once `Engine` above is actually
-`"postgres"`). `roster.toml` remains a relay input and is meant to have one
-intentional writer, moved explicitly during a host failure. It needs its own
-writable mount, separate from the read-only bootstrap input
-(`relays.json`/`policy.json`) both replicas share via `KARST_SHARED_STATE_DIR`
-— a directory `karst-control` can write and the relay can read cannot also be
+`"postgres"`). `roster.toml` remains an estavelle input and is meant to have
+one intentional writer, moved explicitly during a host failure. It needs its
+own writable mount, separate from the read-only bootstrap input
+(`estavelles.json`/`policy.json`) both replicas share via `KARST_SHARED_STATE_DIR`
+— a directory `karst-control` can write and the estavelle can read cannot also be
 the directory that must stay fixed bootstrap input (confirmed live: pointing
-`KARST_RELAY_ROSTER_FILE` inside `KARST_SHARED_STATE_DIR`, mounted `:ro`,
+`KARST_ESTAVELLE_ROSTER_FILE` inside `KARST_SHARED_STATE_DIR`, mounted `:ro`,
 fails every 25s with `roster: create temp: ...: read-only file system` on
-every replica, and the relay's roster lease expires at 90s and falls back to
-admitting nobody — #219). Set `KARST_ROSTER_DIR` on both hosts to the same
-physical location (a path the relay's own host also has, e.g. shared over
-NFS, or the relay's local disk if it runs on one of the two replica hosts) —
+every replica, and the estavelle's roster lease expires at 90s and falls back
+to admitting nobody — #219). Set `KARST_ROSTER_DIR` on both hosts to the same
+physical location (a path the estavelle's own host also has, e.g. shared over
+NFS, or the estavelle's local disk if it runs on one of the two replica hosts) —
 whichever replica holds the one-writer duty writes `roster.toml` there and
-the relay reads it from the same path.
+the estavelle reads it from the same path.
 
 Without an identity provider, set `KARST_BOOTSTRAP_SETUP_KEY_FILE` in the
 `.env` of whichever host starts first (only) — see the checked-in comment in
 `docker-compose.yml`. `/var/lib/karst` is read-only in this overlay, so the
 path must be under `/var/lib/netbird` (e.g.
 `/var/lib/netbird/bootstrap.key`); read it back the same way as
-[Getting started §5](../../../docs/GETTING-STARTED.md#5-path-b-a-coordination-server-and-a-relay-with-containers)'s
+[Getting started §5](../../../docs/GETTING-STARTED.md#5-path-b-a-coordination-server-and-an-estavelle-with-containers)'s
 single-host `cat state/bootstrap.key`, from that host's own `./state/netbird/`.
 
 Fence the old primary, update both replicas' DSNs, then promote on the standby:

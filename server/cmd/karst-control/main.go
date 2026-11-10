@@ -39,9 +39,9 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/bootstrap"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
@@ -65,7 +65,7 @@ const karstPolicyEnv = "KARST_POLICY_FILE"
 // membership changed, because the relay's admission lease is refreshed by the
 // file's modification time and expires after ninety seconds.
 const (
-	karstRosterFileEnv = "KARST_RELAY_ROSTER_FILE"
+	karstRosterFileEnv = "KARST_ESTAVELLE_ROSTER_FILE"
 	// karstRosterAquiferEnv is an optional deployment-wide prefix, not a
 	// required fixed aquifer value — ADR-0033. Each node's real aquifer is
 	// derived from its own account (roster.NodeSource), which is what scopes
@@ -73,16 +73,16 @@ const (
 	// a shared relay only ever serves one account. Unset is fine and common:
 	// bare account IDs are already unique per deployment.
 	karstRosterAquiferEnv  = "KARST_AQUIFER"
-	karstRosterIntervalEnv = "KARST_RELAY_ROSTER_INTERVAL"
+	karstRosterIntervalEnv = "KARST_ESTAVELLE_ROSTER_INTERVAL"
 )
 
-// karstRelayRegistryEnv names the relay registry published to every node.
+// karstEstavelleRegistryEnv names the relay registry published to every node.
 //
 // The counterpart of the roster and easily confused with it: the roster tells a
-// relay which nodes to admit, and the registry tells nodes which relays exist.
+// relay which nodes to admit, and the registry tells nodes which estavelles exist.
 // A deployment needs both, and having only one is silent — the relay admits
 // nobody who ever arrives, because nobody was told to arrive.
-const karstRelayRegistryEnv = "KARST_RELAY_REGISTRY_FILE"
+const karstEstavelleRegistryEnv = "KARST_ESTAVELLE_REGISTRY_FILE"
 
 // karstTenancyGrantsEnv names ADR-0037's operator-granted cross-tenant
 // access file. Unset means what it always has: BaseServer.IsValidChildAccount
@@ -121,7 +121,7 @@ const karstEphemeralAnchorsEnv = "KARST_EPHEMERAL_ANCHORS_FILE"
 // no document to reconcile at boot, only an address to dial per request.
 const karstScalerAdvisorURLEnv = "KARST_SCALER_ADVISOR_URL"
 
-// karstRelayAllocateControlAPIBaseEnv is this server's own
+// karstEstavelleAllocateControlAPIBaseEnv is this server's own
 // externally-reachable API base (e.g. "https://control.example.test/api"),
 // embedded in every relay allocation's launched instance's own enroll
 // bundle so karst-relay enroll knows where to call back -- ADR-0045's
@@ -129,16 +129,16 @@ const karstScalerAdvisorURLEnv = "KARST_SCALER_ADVISOR_URL"
 // Rust process's own AllocateConfig.control_api_base TOML field. Unset
 // means every ADR-0063 relay allocation fails closed with a clear reason
 // instead of launching an instance that can never enroll.
-const karstRelayAllocateControlAPIBaseEnv = "KARST_RELAY_ALLOCATE_CONTROL_API_BASE"
+const karstEstavelleAllocateControlAPIBaseEnv = "KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE"
 
-// karstRelayAllocateMaxConcurrentEnv is the per-account ceiling on
+// karstEstavelleAllocateMaxConcurrentEnv is the per-account ceiling on
 // non-terminal (not yet fully deprovisioned) relay allocations --
 // ADR-0045 §6 bullet 4's "hard ceilings... are mandatory configuration,
 // with no 'unlimited' value," applied a second time by that ADR's
 // 2026-11-04 addendum now that this actuation runs in-process. Unset (or
 // non-positive) means every allocation request is refused, not
-// "unlimited" -- see relayalloc.Store.Create's own doc comment.
-const karstRelayAllocateMaxConcurrentEnv = "KARST_RELAY_ALLOCATE_MAX_CONCURRENT"
+// "unlimited" -- see estavellealloc.Store.Create's own doc comment.
+const karstEstavelleAllocateMaxConcurrentEnv = "KARST_ESTAVELLE_ALLOCATE_MAX_CONCURRENT"
 
 // karstDemandHistoryIntervalEnv/karstDemandHistoryRetentionEnv configure
 // ADR-0045 §8 (Phase 3)'s demand-history retention worker. Unset means the
@@ -213,7 +213,7 @@ func main() {
 	// An installer probes the exact image without credentials, volumes or booting
 	// management. Older images reject the option instead of silently ignoring
 	// an environment variable that carries a new enforcement requirement.
-	if len(os.Args) == 2 && os.Args[1] == "--relay-installation-capabilities" {
+	if len(os.Args) == 2 && os.Args[1] == "--estavelle-installation-capabilities" {
 		fmt.Println("managed-roster-v1")
 		return
 	}
@@ -222,7 +222,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
 		os.Exit(1)
 	}
-	relays, err := loadRelays()
+	estavelles, err := loadEstavelles()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
 		os.Exit(1)
@@ -243,14 +243,14 @@ func main() {
 		os.Exit(1)
 	}
 	scalerAdvisorURL := strings.TrimSuffix(os.Getenv(karstScalerAdvisorURLEnv), "/")
-	relayAllocateControlAPIBase := strings.TrimSuffix(os.Getenv(karstRelayAllocateControlAPIBaseEnv), "/")
+	estavelleAllocateControlAPIBase := strings.TrimSuffix(os.Getenv(karstEstavelleAllocateControlAPIBaseEnv), "/")
 
-	relayAllocateMaxConcurrent, warnRefuseAll, err := parseRelayAllocateMaxConcurrent(os.Getenv(karstRelayAllocateMaxConcurrentEnv))
+	estavelleAllocateMaxConcurrent, warnRefuseAll, err := parseEstavelleAllocateMaxConcurrent(os.Getenv(karstEstavelleAllocateMaxConcurrentEnv))
 	if err != nil {
-		log.Fatalf("karst: %s=%v", karstRelayAllocateMaxConcurrentEnv, err)
+		log.Fatalf("karst: %s=%v", karstEstavelleAllocateMaxConcurrentEnv, err)
 	}
 	if warnRefuseAll {
-		log.Printf("karst: %s -- every relay allocation request will be refused (ADR-0045 §6)", karstRelayAllocateMaxConcurrentEnv)
+		log.Printf("karst: %s -- every relay allocation request will be refused (ADR-0045 §6)", karstEstavelleAllocateMaxConcurrentEnv)
 	}
 
 	demandHistoryInterval := karstDemandHistoryDefaultInterval
@@ -297,7 +297,7 @@ func main() {
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, relays, tenancyGrants, allowedRegions, ephemeralAnchors, scalerAdvisorURL, demandHistoryInterval, demandHistoryRetention, relayAllocateControlAPIBase, relayAllocateMaxConcurrent)
+		k, err := bootstrap.Install(s, pol, estavelles, tenancyGrants, allowedRegions, ephemeralAnchors, scalerAdvisorURL, demandHistoryInterval, demandHistoryRetention, estavelleAllocateControlAPIBase, estavelleAllocateMaxConcurrent)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no
@@ -324,10 +324,10 @@ func main() {
 // diagnose from the relay's end. An operator who set nothing gets nothing.
 func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
 	requireManaged := false
-	if raw := os.Getenv("KARST_RELAY_REQUIRE_MANAGED"); raw != "" {
+	if raw := os.Getenv("KARST_ESTAVELLE_REQUIRE_MANAGED"); raw != "" {
 		parsed, err := strconv.ParseBool(raw)
 		if err != nil {
-			log.Fatalf("karst: KARST_RELAY_REQUIRE_MANAGED must be a boolean")
+			log.Fatalf("karst: KARST_ESTAVELLE_REQUIRE_MANAGED must be a boolean")
 		}
 		requireManaged = parsed
 	}
@@ -348,25 +348,25 @@ func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
 	}
 	var source roster.Source = roster.NodeSource{Nodes: k.Nodes}
 	var refreshed func() error
-	relayID := os.Getenv("KARST_RELAY_ROSTER_ID")
-	if file := os.Getenv("KARST_RELAY_ROSTER_ID_FILE"); relayID == "" && file != "" {
+	estavelleID := os.Getenv("KARST_ESTAVELLE_ROSTER_ID")
+	if file := os.Getenv("KARST_ESTAVELLE_ROSTER_ID_FILE"); estavelleID == "" && file != "" {
 		raw, err := os.ReadFile(file)
 		if err == nil {
 			decoded, decodeErr := hex.DecodeString(strings.TrimSpace(string(raw)))
 			if decodeErr != nil || len(decoded) != 32 {
 				log.Fatalf("karst: invalid relay roster identity file")
 			}
-			relayID = base64.RawURLEncoding.EncodeToString(decoded)
+			estavelleID = base64.RawURLEncoding.EncodeToString(decoded)
 		} else if !os.IsNotExist(err) {
 			log.Fatalf("karst: relay roster identity: %v", err)
 		}
 	}
-	if requireManaged && relayID == "" {
+	if requireManaged && estavelleID == "" {
 		log.Fatalf("karst: managed-only admission requires an explicit relay identity")
 	}
-	if relayID != "" {
-		source = scopedRelayRoster{source: source, store: k.RelayServices, relayID: relayID, requireManaged: requireManaged}
-		refreshed = func() error { return k.RelayServices.RefreshAdmissionLease(relayID) }
+	if estavelleID != "" {
+		source = scopedEstavelleRoster{source: source, store: k.RelayServices, estavelleID: estavelleID, requireManaged: requireManaged}
+		refreshed = func() error { return k.RelayServices.RefreshAdmissionLease(estavelleID) }
 	}
 	r, err := roster.New(source, roster.Config{
 		AfterWrite:    refreshed,
@@ -500,17 +500,17 @@ func startBedrockAnchorScheduler(ctx context.Context, k *bootstrap.Karst) {
 // A registry that is set and unreadable is fatal, for the reason a bad policy
 // is: karstd fails the *entire* netmap over one malformed entry, so a typo here
 // takes the whole deployment down with a symptom that points nowhere near it.
-func loadRelays() ([]*proto.KarstRelay, error) {
-	path := os.Getenv(karstRelayRegistryEnv)
+func loadEstavelles() ([]*proto.KarstEstavelle, error) {
+	path := os.Getenv(karstEstavelleRegistryEnv)
 	if path == "" {
 		return nil, nil
 	}
-	relays, err := relayreg.Load(path)
+	estavelles, err := estavellereg.Load(path)
 	if err != nil {
 		return nil, err
 	}
-	log.Infof("karst: loaded %d relays from %s", len(relays), path)
-	return relays, nil
+	log.Infof("karst: loaded %d estavelles from %s", len(estavelles), path)
+	return estavelles, nil
 }
 
 // loadTenancyGrants reads ADR-0037's operator-granted cross-tenant access
@@ -617,16 +617,16 @@ func checkLegacyTurnConfig(cfg *nbserver.Config) error {
 		turn.TimeBasedCredentials, len(turn.Turns))
 }
 
-// parseRelayAllocateMaxConcurrent is main's testable half for
-// karstRelayAllocateMaxConcurrentEnv. Unset (raw == "") returns 0 with no
+// parseEstavelleAllocateMaxConcurrent is main's testable half for
+// karstEstavelleAllocateMaxConcurrentEnv. Unset (raw == "") returns 0 with no
 // warning -- the in-process default. A non-integer raw value is a genuine
 // misconfiguration and comes back as err. A successfully parsed non-positive
 // value comes back as 0 with warn=true rather than err: this const's own doc
-// comment and relayalloc.Store.Create's both treat non-positive as "refuse
+// comment and estavellealloc.Store.Create's both treat non-positive as "refuse
 // every allocation request," not a startup failure -- it is this
 // deployment's documented default, not a typo the way a non-numeric value
 // above is.
-func parseRelayAllocateMaxConcurrent(raw string) (value int, warn bool, err error) {
+func parseEstavelleAllocateMaxConcurrent(raw string) (value int, warn bool, err error) {
 	if raw == "" {
 		return 0, false, nil
 	}
@@ -662,18 +662,18 @@ func loadPolicy() (*policy.Document, error) {
 	return doc, nil
 }
 
-// scopedRelayRoster binds one operator-installed writer to one relay identity.
+// scopedEstavelleRoster binds one operator-installed writer to one relay identity.
 // The refreshed roster is the authorization boundary, not endpoint discovery.
-type scopedRelayRoster struct {
+type scopedEstavelleRoster struct {
 	source roster.Source
 	store  interface {
 		AllowedOnRelay(context.Context, string, string, string) (bool, error)
 	}
-	relayID        string
+	estavelleID    string
 	requireManaged bool
 }
 
-func (s scopedRelayRoster) All() ([]roster.Entry, error) {
+func (s scopedEstavelleRoster) All() ([]roster.Entry, error) {
 	entries, err := s.source.All()
 	if err != nil {
 		return nil, err
@@ -691,9 +691,9 @@ func (s scopedRelayRoster) All() ([]roster.Entry, error) {
 			if !supported {
 				return nil, fmt.Errorf("managed-only admission is unsupported")
 			}
-			ok, err = managed.AllowedOnManagedRelay(context.Background(), s.relayID, entry.AccountID, entry.Handle)
+			ok, err = managed.AllowedOnManagedRelay(context.Background(), s.estavelleID, entry.AccountID, entry.Handle)
 		} else {
-			ok, err = s.store.AllowedOnRelay(context.Background(), s.relayID, entry.AccountID, entry.Handle)
+			ok, err = s.store.AllowedOnRelay(context.Background(), s.estavelleID, entry.AccountID, entry.Handle)
 		}
 		if err != nil {
 			return nil, err

@@ -162,9 +162,9 @@ const NAT64_POOL: &str = "192.168.255.0/24";
 const RELAY_PORT: u16 = 8443;
 /// A second relay on the same segment, for `ponor-v1.md` §9.1's two rules.
 const RELAY_PORT_2: u16 = 8444;
-/// The relay's AVEN reflector — `aven-v1.md` §7.6. Its own **UDP** socket,
+/// The relay's Resurgence reflector — `resurgence-v1.md` §7.6. Its own **UDP** socket,
 /// because a NAT maps TCP and UDP separately and the Ponor connection's
-/// mapping is not the one AVEN needs.
+/// mapping is not the one Resurgence needs.
 const REFLECT_PORT: u16 = 3478;
 const SERVER_PORT: u16 = 9443;
 /// The fixture's out-of-band control surface. Only the revocation row uses it:
@@ -537,7 +537,7 @@ enum Shape {
     /// Neither reflexive address predicts the mapping the other side needs,
     /// because a symmetric NAT allocates per destination and neither node has
     /// ever sent to the other. Port prediction is the piece that would close
-    /// it (PLAN.md §6, `aven-v1.md` §12.4) and it is unbuilt, so the honest
+    /// it (PLAN.md §6, `resurgence-v1.md` §12.4) and it is unbuilt, so the honest
     /// expectation today is a permanent relay path.
     ///
     /// **The row is here while it still fails to go direct**, because the
@@ -563,12 +563,12 @@ enum Shape {
     /// obvious path does *not* work: both nodes learn a reflexive address from
     /// the relay, both advertise it, and both then probe **the NAT's own outer
     /// address**, which Linux does not loop back.
-    /// `crates/karst-disco/tests/nat_matrix.rs` pins that separately —
+    /// `crates/karst-resurgence/tests/nat_matrix.rs` pins that separately —
     /// `a_masquerading_nat_does_not_hairpin`.
     ///
     /// So this row goes direct over the **private** addresses, and that is what
     /// it asserts: each node must end up holding the other's `10.98.1.x`
-    /// address, not the NAT's. It is the row that makes `aven-v1.md` §7.2's
+    /// address, not the NAT's. It is the row that makes `resurgence-v1.md` §7.2's
     /// interface-address tier load-bearing rather than decorative — on this
     /// topology it is the only tier that works, and a node advertising only
     /// reflexive addresses would relay two machines on the same desk through
@@ -577,7 +577,7 @@ enum Shape {
     /// Node A behind a NAT that forwards **no UDP at all**; node B public.
     ///
     /// The corporate-firewall case, and the only row that tests the second exit
-    /// criterion on its own terms: AVEN cannot work, so the relay is not a
+    /// criterion on its own terms: Resurgence cannot work, so the relay is not a
     /// fallback that discovery happens to lose out to — it is the only path
     /// there is, and traffic has to cross it losslessly and stay there.
     UdpBlocked,
@@ -628,7 +628,7 @@ enum Shape {
     /// through — after which B adopts the source it arrived from, which is A's
     /// symmetric mapping toward B specifically, the one allocation that works.
     ///
-    /// So the fourth candidate tier (`aven-v1.md` §7.2) is **not** the operative
+    /// So the fourth candidate tier (`resurgence-v1.md` §7.2) is **not** the operative
     /// part here, which is the opposite of [`Shape::SymmetricAndMapped`]. Both
     /// rows need a mapping and they need it for different reasons; a summary
     /// that said "explicit port mapping fixes both" would be right by accident.
@@ -637,7 +637,7 @@ enum Shape {
     /// carrier's — with node B public.
     ///
     /// The exit criterion names double NAT by name, and until now it existed
-    /// only in `crates/karst-disco/tests/nat_matrix.rs`, which pins how such a
+    /// only in `crates/karst-resurgence/tests/nat_matrix.rs`, which pins how such a
     /// path treats a *datagram* and says nothing about what a node does on one.
     /// Every other row with a NAT has exactly one translation, so nothing in
     /// this tree had ever run a daemon behind a second.
@@ -689,8 +689,8 @@ enum Shape {
 
 /// How a NAT allocates external ports, and what it lets back through.
 ///
-/// The distinction that matters to AVEN is whether one external port is reused
-/// across destinations. `crates/karst-disco/tests/nat_matrix.rs` pins each of
+/// The distinction that matters to Resurgence is whether one external port is reused
+/// across destinations. `crates/karst-resurgence/tests/nat_matrix.rs` pins each of
 /// these behaviors with a negative assertion before any of them is used to
 /// draw a conclusion about the product — finding 23 is what that discipline
 /// costs when it is skipped.
@@ -1180,7 +1180,7 @@ fn build_double_nat(net: &mut Aquifer) -> (&'static str, &'static str) {
 /// Attach a namespace directly to the public bridge.
 /// An IPv6-only node behind a NAT64 translator, and a public IPv4 peer.
 ///
-/// Built the way `crates/karst-disco/tests/nat_matrix.rs` builds its instrument
+/// Built the way `crates/karst-resurgence/tests/nat_matrix.rs` builds its instrument
 /// row, and deliberately so: `tayga` does the protocol translation and an
 /// **ordinary masquerade** behind it does the port sharing, so the NAT
 /// semantics this row runs a daemon on are the ones that file has already
@@ -1579,7 +1579,7 @@ fn address_restricted(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str) {
 fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str, flavor: Flavor) {
     // Linux conntrack's default masquerade: one external port reused across
     // destinations, return traffic accepted per flow — a port-restricted cone,
-    // which `karst-disco`'s NAT matrix pins as behaving the way that name says.
+    // which `karst-resurgence`'s NAT matrix pins as behaving the way that name says.
     // `fully-random` is the one word that turns it symmetric, and the matrix
     // pins that too, with an assertion that fails if the ports come out equal.
     must(&nsr(nat_ns, &["nft", "add", "table", "ip", "karst"]));
@@ -1637,7 +1637,7 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str,
 
     // The firewall that forwards TCP and nothing else. Dropping UDP in the
     // **forward** hook rather than on one interface is deliberate: it blocks
-    // the datapath socket in both directions, so AVEN cannot probe, cannot be
+    // the datapath socket in both directions, so Resurgence cannot probe, cannot be
     // probed, and cannot reach the reflector either. That is the whole point of
     // the row — the relay has to be the answer, not merely the current best.
     if flavor == Flavor::UdpBlocked {
@@ -1677,7 +1677,7 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str,
     //
     // A DROP here runs at filter priority 0, well before conntrack's confirm
     // hook, so the entry is never confirmed and the tuple is never taken. That
-    // is also what a real NAT does, and `crates/karst-disco/tests/nat_matrix.rs`
+    // is also what a real NAT does, and `crates/karst-resurgence/tests/nat_matrix.rs`
     // already pins the forwarded half of the same rule.
     must(&nsr(
         nat_ns,
@@ -1836,7 +1836,7 @@ struct Pins {
 /// TLS material for the relays, written once and shared by all of them.
 ///
 /// **One certificate, however many relays.** A node trusts a single
-/// `relay_ca_file`, and what §4.2 pins is the relay's ML-DSA-65 identity rather
+/// `estavelle_ca_file`, and what §4.2 pins is the relay's ML-DSA-65 identity rather
 /// than its certificate — the TLS hop underneath is an ordinary validated one.
 /// Two self-signed certificates would need the node to trust two anchors, which
 /// tests the CA file rather than anything in the protocol.
@@ -1908,7 +1908,7 @@ fn filetime_now(path: &Path) -> std::io::Result<()> {
 /// Start one relay on the public segment, and return its ML-DSA-65 public key
 /// in hex — which the coordination server publishes in its registry.
 ///
-/// `reflect` gives it AVEN's §7.7 reflector. Only the first relay needs one:
+/// `reflect` gives it Resurgence's §7.7 reflector. Only the first relay needs one:
 /// a second relay exists here to be *chosen* rather than to be discovered
 /// through, and a reflector on it would be a second vantage point the tests
 /// that use two relays do not exercise.
@@ -1941,11 +1941,12 @@ fn spawn_relay(net: &mut Aquifer, tag: &str, port: u16, reflect: bool) -> String
 
     // Created here so the server can advertise it. The registry entry names the
     // key and the id is *derived* from it (§5.2), so the two cannot disagree.
-    let identity = karst_relay::sign::Identity::load_or_create(&relay_key).expect("relay identity");
+    let identity =
+        karst_estavelle::sign::Identity::load_or_create(&relay_key).expect("relay identity");
     let relay_pk = hex(identity.public_key());
 
     let executable =
-        std::env::var("KARST_AQUIFER_RELAY_BIN").unwrap_or_else(|_| bin("karst-relay"));
+        std::env::var("KARST_AQUIFER_RELAY_BIN").unwrap_or_else(|_| bin("karst-estavelle"));
     net.spawn_service(
         NS_PUB,
         &executable,
@@ -2138,7 +2139,7 @@ fn write_node_config(
              identity_key_file = \"{}\"\n\
              setup_key = \"fixture\"\n\
              cache_file = \"{}\"\n\
-             relay_ca_file = \"{}\"\n\
+             estavelle_ca_file = \"{}\"\n\
              {extra}",
             d.join("private.key").display(),
             // Under `net.dir`, never the host's real
@@ -2249,7 +2250,7 @@ fn wait_for(net: &Aquifer, what: &str, timeout: Duration, mut f: impl FnMut() ->
 /// clock.
 ///
 /// #516 traced a recurring "timed out waiting to reach the destination"
-/// flake to exactly this: `exit_route_active`/`gateway_forwarding` can read
+/// flake to exactly this: `exit_route_active`/`aven_forwarding` can read
 /// green while a control-plane hiccup has left the two sides transiently
 /// out of key agreement, so the gateway counts real, sustained
 /// `decrypt_failures` for a window that can outlast a flat 15-30s bound
@@ -2387,7 +2388,7 @@ fn route_field(status: &str, route_id: &str, key: &str) -> Option<String> {
 /// **The Phase 4 deliverable, end to end.**
 ///
 /// Enrollment, a netmap carrying disco keys and a relay registry, a Ponor
-/// connection over TLS, a PHREATIC handshake **through the relay**, an AVEN
+/// connection over TLS, a PHREATIC handshake **through the relay**, a Resurgence
 /// rendezvous over it, probes on the shared UDP socket, the upgrade to a direct
 /// path, and a TCP conversation under a port-scoped ACL.
 #[test]
@@ -2460,7 +2461,7 @@ fn an_offline_ceremony_excludes_an_uncovered_peer_from_a_running_aquifer() {
 /// **The same thing with a NAT in the way**, which is what §6 measures.
 ///
 /// Node A is behind a port-restricted cone. Every address it can name is
-/// private, so the direct path can only come from the sequence AVEN exists for:
+/// private, so the direct path can only come from the sequence Resurgence exists for:
 /// B advertises a reachable address, A probes it through the NAT, and B learns
 /// A's *mapped* address from the probe that arrives — the rule finding 20 added.
 #[test]
@@ -2534,7 +2535,7 @@ fn a_symmetric_nat_with_an_explicit_mapping_reaches_another_symmetric_nat_direct
 ///
 /// Both nodes are behind symmetric NATs, so each reflexive address predicts a
 /// mapping toward the reflector and neither predicts the mapping toward the
-/// other. Port prediction is the piece that closes this (`aven-v1.md` §12.4)
+/// other. Port prediction is the piece that closes this (`resurgence-v1.md` §12.4)
 /// and it is unbuilt, so the pair stays on the relay.
 ///
 /// **The failure mode being guarded against is not "no direct path".** It is a
@@ -2554,7 +2555,7 @@ fn two_symmetric_nats_stay_on_the_relay_until_port_prediction_lands() {
 
 /// **The second exit criterion, on its own terms: no UDP at all.**
 ///
-/// Every other row lets AVEN work and watches the relay lose to it. Here the
+/// Every other row lets Resurgence work and watches the relay lose to it. Here the
 /// NAT in front of A forwards TCP and drops every UDP datagram in both
 /// directions, so there is no discovery to lose to: no probe leaves, no probe
 /// arrives, and the reflector is unreachable, which also means A never learns a
@@ -2632,7 +2633,7 @@ fn a_symmetric_nat_reaches_a_port_restricted_peer_that_can_map_a_port() {
 /// **A subscriber behind carrier-grade NAT — two translations, not one.**
 ///
 /// The exit criterion names double NAT, and every other row with a NAT has a
-/// single stage. `crates/karst-disco/tests/nat_matrix.rs` already pins what two
+/// single stage. `crates/karst-resurgence/tests/nat_matrix.rs` already pins what two
 /// stages do to a datagram; this is the first thing in the tree that runs a
 /// *daemon* behind one, which is a different question: an instrument row can
 /// say the source address changes twice, and only a whole aquifer can say which
@@ -2644,7 +2645,7 @@ fn a_symmetric_nat_reaches_a_port_restricted_peer_that_can_map_a_port() {
 /// unroutable from anywhere but that carrier. The right outcome is no mapping
 /// and a reason, and both are asserted, because a node that advertised one
 /// would put an address no peer can reach at the top of every peer's probe
-/// queue (`aven-v1.md` §7.2).
+/// queue (`resurgence-v1.md` §7.2).
 #[test]
 #[ignore = "needs root, network namespaces and a Go toolchain"]
 fn a_subscriber_behind_carrier_grade_nat_reaches_a_public_peer() {
@@ -2661,7 +2662,7 @@ fn a_subscriber_behind_carrier_grade_nat_reaches_a_public_peer() {
 ///
 /// The pair goes direct anyway, over the private segment, and the assertion is
 /// that each node holds the other's `10.98.1.x` address. That makes
-/// `aven-v1.md` §7.2's interface-address tier load-bearing rather than
+/// `resurgence-v1.md` §7.2's interface-address tier load-bearing rather than
 /// decorative: on this topology it is the **only** tier that works, so a node
 /// advertising reflexive addresses alone — the tempting simplification once
 /// §7.6 exists, since they work on every other row — would relay two machines
@@ -3013,7 +3014,7 @@ fn wait_for_endpoint(net: &Aquifer, tag: &str, ns: &str, want: &str) -> String {
 /// **Behind a NAT that is not the address the peer advertised**: A's candidates
 /// are all private, so B must be pointing at the mapped address the NAT
 /// assigned — which is what hole punching produces, and the assertion that
-/// would still pass if AVEN had merely copied what it was told.
+/// would still pass if Resurgence had merely copied what it was told.
 fn assert_endpoints(net: &Aquifer, shape: Shape) {
     for (tag, ns) in [("a", NS_A), ("b", NS_B)] {
         let s = status(net, tag, ns);
@@ -3460,7 +3461,7 @@ fn exchange_tcp_under_the_acl(net: &mut Aquifer) {
 /// relay on demand, and carry a TCP conversation over it.
 ///
 /// The topology is [`Shape::UdpBlocked`] so that the pair *stays* relayed:
-/// on any shape where AVEN can work the direct path would displace the relay
+/// on any shape where Resurgence can work the direct path would displace the relay
 /// within seconds, and this row would stop testing the thing it is here for.
 #[test]
 #[ignore = "needs root, network namespaces and a Go toolchain"]
@@ -3688,7 +3689,7 @@ fn a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget() {
     //
     // `run.rs`'s control loop syncs early whenever this node's home relay
     // changes — "a move is published at once rather than on the timer" — and a
-    // node that has just started changes it several times while AVEN and the
+    // node that has just started changes it several times while Resurgence and the
     // relay reflector settle. Revoking during that window measures relay churn
     // rather than revocation: the first run of this row reported 4.1s, and the
     // removal had been picked up by an early sync that would not have happened
@@ -4243,7 +4244,7 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
             "exec",
             NS_B,
             &bin("karst"),
-            "gateway",
+            "aven",
             "exit",
             "use",
             "internet",
@@ -4659,7 +4660,7 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
     // moment, and "dest-lan" is still A's until it is explicitly re-pointed
     // below — so node C necessarily glimpses itself as a plain *recipient*
     // of its own future prefix first. Attaching the destination LAN only
-    // once that has settled to `role = "gateway"` (below) means the window
+    // once that has settled to `role = "aven"` (below) means the window
     // is harmless: nothing yet claims 10.99.0.0/24 on node C's kernel for
     // the transient recipient-side tunnel route to collide with — see
     // `Routes::wanted`'s own doc comment on the collision this sidesteps.
@@ -4703,7 +4704,7 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
         &net,
         "node C's own netmap to reflect its new role as gateway",
         Duration::from_secs(30),
-        || field(&status(&net, "c", NS_C), "role").as_deref() == Some("gateway"),
+        || field(&status(&net, "c", NS_C), "role").as_deref() == Some("aven"),
     );
 
     attach_destination_lan_to(NS_C, NS_DEST_C, "ktn-c-dest", "ktn-dest-c");
@@ -5315,15 +5316,7 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
     let socket = net.dir.join("run").join("b.sock");
     let consent = |action: &str| {
         let mut command = Command::new("ip");
-        command.args([
-            "netns",
-            "exec",
-            NS_B,
-            &bin("karst"),
-            "gateway",
-            "exit",
-            action,
-        ]);
+        command.args(["netns", "exec", NS_B, &bin("karst"), "aven", "exit", action]);
         if action == "use" {
             command.arg("internet");
         }
@@ -5371,7 +5364,7 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
     net.stop_node("a", NS_A);
     let config_path = net.dir.join("a/karstd.toml");
     let mut config = std::fs::read_to_string(&config_path).expect("Gateway config");
-    config.push_str("\n[gateway]\nforwarding = false\n");
+    config.push_str("\n[aven]\nforwarding = false\n");
     std::fs::write(&config_path, config).expect("disable local forwarding");
     start_node(&mut net, "a", NS_A);
     wait_for(
@@ -5380,7 +5373,7 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
         Duration::from_secs(30),
         || {
             let report = status(&net, "a", NS_A);
-            field(&report, "gateway_forwarding").as_deref() == Some("false")
+            field(&report, "aven_forwarding").as_deref() == Some("false")
                 && field(&report, "state").as_deref() == Some("established")
         },
     );
@@ -5417,18 +5410,10 @@ fn attach_ipv6_gateway_lan() {
     ));
 }
 
-fn gateway_exit_action(net: &Aquifer, action: &str, route_id: Option<&str>) {
+fn aven_exit_action(net: &Aquifer, action: &str, route_id: Option<&str>) {
     let socket = net.dir.join("run/b.sock");
     let mut command = Command::new("ip");
-    command.args([
-        "netns",
-        "exec",
-        NS_B,
-        &bin("karst"),
-        "gateway",
-        "exit",
-        action,
-    ]);
+    command.args(["netns", "exec", NS_B, &bin("karst"), "aven", "exit", action]);
     if let Some(id) = route_id {
         command.arg(id);
     }
@@ -5488,14 +5473,14 @@ fn ipv6_gateway_forwards_specific_and_default_prefixes_with_independent_consent(
         ipv6_gateway_probe("fd99::3").is_none(),
         "specific-prefix access must not activate IPv6 default egress"
     );
-    gateway_exit_action(&net, "use", Some("exit-v6"));
+    aven_exit_action(&net, "use", Some("exit-v6"));
     wait_for(
         &net,
         "IPv6 default egress after consent",
         Duration::from_secs(20),
         || ipv6_gateway_probe("fd99::3").as_deref() == Some("fd99::1"),
     );
-    gateway_exit_action(&net, "disable", None);
+    aven_exit_action(&net, "disable", None);
     wait_for(
         &net,
         "IPv6 default withdrawal",
@@ -5622,7 +5607,7 @@ fn ipv6_gateway_dns_upstream_requires_consent_and_stops_after_withdrawal() {
         !gateway_dns_probe(false),
         "DNS must not reach the exit-only upstream before consent"
     );
-    gateway_exit_action(&net, "use", Some("dns-exit-v6"));
+    aven_exit_action(&net, "use", Some("dns-exit-v6"));
     wait_for(
         &net,
         "UDP stub query through IPv6 Gateway DNS upstream",
@@ -5633,7 +5618,7 @@ fn ipv6_gateway_dns_upstream_requires_consent_and_stops_after_withdrawal() {
         gateway_dns_probe(true),
         "TCP stub queries must use the same Gateway DNS path"
     );
-    gateway_exit_action(&net, "disable", None);
+    aven_exit_action(&net, "disable", None);
     wait_for(
         &net,
         "IPv6 DNS exit withdrawal",

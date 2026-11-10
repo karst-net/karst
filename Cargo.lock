@@ -2020,17 +2020,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "karst-disco"
-version = "0.0.0"
-dependencies = [
- "hmac",
- "karst-proto",
- "sha2",
- "subtle",
- "zeroize",
-]
-
-[[package]]
 name = "karst-dns"
 version = "0.0.0"
 dependencies = [
@@ -2053,7 +2042,7 @@ version = "0.0.0"
 dependencies = [
  "base64ct",
  "karst-control-client",
- "karst-relay",
+ "karst-estavelle",
  "karst-tun",
  "karstd",
  "rcgen",
@@ -2067,6 +2056,39 @@ name = "karst-embed-capi"
 version = "0.0.0"
 dependencies = [
  "karst-embed",
+]
+
+[[package]]
+name = "karst-estavelle"
+version = "0.0.0"
+dependencies = [
+ "base64ct",
+ "getrandom 0.3.4",
+ "hex",
+ "karst-estavelle-proto",
+ "karst-resurgence",
+ "ml-dsa",
+ "quinn",
+ "rand_core 0.10.1",
+ "rcgen",
+ "rustix",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-rustls",
+ "toml 0.9.12+spec-1.1.0",
+ "ureq",
+]
+
+[[package]]
+name = "karst-estavelle-proto"
+version = "0.0.0"
+dependencies = [
+ "sha2",
 ]
 
 [[package]]
@@ -2125,36 +2147,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "karst-relay"
+name = "karst-resurgence"
 version = "0.0.0"
 dependencies = [
- "base64ct",
- "getrandom 0.3.4",
- "hex",
- "karst-disco",
- "karst-relay-proto",
- "ml-dsa",
- "quinn",
- "rand_core 0.10.1",
- "rcgen",
- "rustix",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
- "serde",
- "serde_json",
+ "hmac",
+ "karst-proto",
  "sha2",
- "tokio",
- "tokio-rustls",
- "toml 0.9.12+spec-1.1.0",
- "ureq",
-]
-
-[[package]]
-name = "karst-relay-proto"
-version = "0.0.0"
-dependencies = [
- "sha2",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -2260,15 +2260,15 @@ dependencies = [
  "karst-bedrock",
  "karst-control-client",
  "karst-crypto",
- "karst-disco",
  "karst-dns",
+ "karst-estavelle",
+ "karst-estavelle-proto",
  "karst-ipc",
  "karst-node",
  "karst-noise",
  "karst-portmap",
  "karst-proto",
- "karst-relay",
- "karst-relay-proto",
+ "karst-resurgence",
  "karst-secure-storage",
  "karst-transport",
  "karst-tun",

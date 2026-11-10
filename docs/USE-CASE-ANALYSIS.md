@@ -9,9 +9,9 @@ intended operating model and calls out features that are presently planned or
 partially implemented. It is not a claim that every use case is production
 ready; the project is beta ([README](../README.md)).
 
-A **Gateway** is an enrolled node agent with forwarding enabled for approved
+A **Aven** is an enrolled node agent with forwarding enabled for approved
 prefixes. Specific-prefix routing provides subnet access; default-route
-routing provides exit behavior with local recipient consent. A **Relay**
+routing provides exit behavior with local recipient consent. A **Estavelle**
 forwards encrypted overlay frames using Ponor; it does not terminate the peer
 tunnel.
 
@@ -21,14 +21,14 @@ tunnel.
 
 | Family | Runs where | Primary responsibility | Principal interactions |
 |---|---|---|---|
-| Node agent | Linux, macOS or Windows endpoint; supported forwarding host for Gateway | Identity, sessions, local policy, AVEN path selection, KarstDNS, routing and optional Gateway forwarding | Receives control netmaps, independently verifies Bedrock, uses direct or relayed peer paths |
-| Transport infrastructure | Publicly reachable Relay host | One Relay with Ponor presence/bootstrap, reflector and forwarding | Control publishes endpoints/admission/credentials; clients exchange ciphertext |
+| Node agent | Linux, macOS or Windows endpoint; supported forwarding host for Aven | Identity, sessions, local policy, Resurgence path selection, KarstDNS, routing and optional Aven forwarding | Receives control netmaps, independently verifies Bedrock, uses direct or relayed peer paths |
+| Transport infrastructure | Publicly reachable Estavelle host | One Estavelle with Ponor presence/bootstrap, reflector and forwarding | Control publishes endpoints/admission/credentials; clients exchange ciphertext |
 | Control services | Coordination hosts and browser console/portal | Enrollment, users/groups, policy, route/DNS and transport distribution, administration/audit | Integrates IdP/SCIM and SIEM; distributes configuration and signed Bedrock state |
 | Trust tooling | Offline authority devices, optional online anchor host, verifiers in consumers | Bedrock membership signatures, revocation, chain verification and audit anchors | Authorities sign reviewed requests; control transports state; enforcing clients verify |
 
-The family model is accepted; combined Relay/Gateway configuration and UI are
+The family model is accepted; combined Estavelle/Aven configuration and UI are
 pending [#404](https://github.com/karst-net/karst/issues/404). ADR-0056's
-addendum dropped standalone TURN support in favor of Relay-only transport
+addendum dropped standalone TURN support in favor of Estavelle-only transport
 fallback. Endpoint support does not imply forwarding host support; see
 [architecture and platform limits](COMPONENT-ARCHITECTURE.md).
 
@@ -38,13 +38,13 @@ fallback. Endpoint support does not imply forwarding host support; see
 flowchart TD
     Trust["Trust tooling: Bedrock authorities"] -->|signed chain| Control["Control services: server, console, portal"]
     Control -->|netmap: policy, peers, routes, DNS| Clients["Node agents with local verification"]
-    Control -->|admission and backend configuration| Relay["Transport infrastructure: Relay"]
-    Clients <-->|Ponor ciphertext| Relay
+    Control -->|admission and backend configuration| Estavelle["Transport infrastructure: Estavelle"]
+    Clients <-->|Ponor ciphertext| Estavelle
     Clients <-->|direct encrypted peer path| Peers["Other node agents"]
-    Clients -->|Gateway forwards inner packets| Network["Approved LAN, VPC or Internet"]
+    Clients -->|Aven forwards inner packets| Network["Approved LAN, VPC or Internet"]
 ```
 
-KarstDNS and Gateway are node capabilities, not extra families. Trust tooling
+KarstDNS and Aven are node capabilities, not extra families. Trust tooling
 verification executes locally; the control server cannot substitute for it.
 
 ## Actors and identities
@@ -57,14 +57,14 @@ can have several non-human operators over its lifetime.
 | Actor | Goal | Identity used | Authority boundary |
 | --- | --- | --- | --- |
 | Client user | Use private connectivity and manage their own devices. | IdP subject/session for portal; node identity for each device. | May enroll, name, view, and revoke only their own devices; receives only access granted by policy. |
-| Administrator | Operate the organization’s Karst account. | IdP subject and administrator role; optionally a scoped API token for automation. | Manages users, groups, access policy, relays, DNS, routes, settings, and lifecycle actions. Actions must be audited. |
+| Administrator | Operate the organization’s Karst account. | IdP subject and administrator role; optionally a scoped API token for automation. | Manages users, groups, access policy, estavelles, DNS, routes, settings, and lifecycle actions. Actions must be audited. |
 | Auditor / security reviewer | Establish what happened and whether controls are effective. | Distinct IdP subject with read/verify/export permission, not an admin credential. | Reads audit, posture, policy history, and permitted topology data; cannot change live configuration. |
 | Platform / client installer | Put a supported client on an endpoint. | Local OS administrator privilege; after enrollment, the device’s node identity. | Installs software and grants only the host privileges needed for networking and DNS integration. |
-| Relay operator | Provide fallback connectivity without joining the protected data plane. | Relay ML-DSA identity, pinned by clients; OS/service identity on the relay host. | Operates the relay and observes relay metadata, but has no policy-administration authority and no plaintext access. |
+| Estavelle operator | Provide fallback connectivity without joining the protected data plane. | Estavelle ML-DSA identity, pinned by clients; OS/service identity on the estavelle host. | Operates the estavelle and observes estavelle metadata, but has no policy-administration authority and no plaintext access. |
 | Bedrock root or authority operator | Independently authorize membership-related changes. | Offline Bedrock root/authority signing key; separate human custody and approval process. | Signs only reviewed request bundles. It does not administer policy or run the online control plane. |
 | Control service | Admit nodes and distribute the account configuration. | Pinned static ML-KEM public key and ML-DSA-87 server identity. | Authoritative for account configuration, but Bedrock can prevent it from silently authorizing an uncovered node. |
 | Node / device | Participate in the mesh. | Locally generated, sealed ML-DSA-87 node identity; opaque node handle derived from its public identity. | Possesses only its own private material and its delivered netmap; it must not receive arbitrary account-wide secrets. |
-| Relay service | Forward eligible encrypted frames. | ML-DSA relay identity and derived relay ID. | Authenticated by the client through its pinned registry identity; separate from TLS server-name validation. |
+| Estavelle service | Forward eligible encrypted frames. | ML-DSA estavelle identity and derived estavelle ID. | Authenticated by the client through its pinned registry identity; separate from TLS server-name validation. |
 
 ### Identity lifecycle and trust anchors
 
@@ -76,7 +76,7 @@ can have several non-human operators over its lifetime.
    public halves of the control-service identity. The node generates and seals
    its own identity key locally.
 4. Control registers the node under its opaque handle and sends an encrypted
-   netmap containing only the peers, policy, DNS, routes, and relay entries the
+   netmap containing only the peers, policy, DNS, routes, and estavelle entries the
    node needs.
 5. When Bedrock is enforcing, the node additionally requires coverage by the
    signed Bedrock chain. The node’s local configured mode is a floor: an online
@@ -111,7 +111,7 @@ platform-specific package, driver, service, secure-store, and DNS integration.
 3. The daemon starts, creates the overlay interface (or explicitly selected
    userspace stack), seals its node identity in platform-appropriate storage,
    and attempts enrollment.
-4. The daemon applies the resulting policy, routes, relay registry, and DNS
+4. The daemon applies the resulting policy, routes, estavelle registry, and DNS
    configuration. The user verifies peer and DNS status.
 
 **Success:** the device has a node handle, an active authenticated control
@@ -121,33 +121,33 @@ enrollment; failure to configure host DNS must not leave the host without its
 previous resolvers. Userspace mode must not claim host DNS integration it
 cannot provide.
 
-### UC-02 — Bootstrap the control plane and relay
+### UC-02 — Bootstrap the control plane and estavelle
 
 **Primary actor:** infrastructure administrator.  
-**Supporting actors:** relay operator, DNS/TLS administrator.
+**Supporting actors:** estavelle operator, DNS/TLS administrator.
 
 **Goal:** deploy a usable self-hosted coordination service and at least one
-fallback relay.
+fallback estavelle.
 
 **Main flow:**
 
 1. The administrator installs and hardens `karst-control`, configures storage,
    the public endpoint, its static KEM and signing identity, and the IdP.
-2. The administrator installs `karst-relay` on a public host, protects its
-   generated relay identity key, and obtains a certificate whose name matches
+2. The administrator installs `karst-estavelle` on a public host, protects its
+   generated estavelle identity key, and obtains a certificate whose name matches
    the configured TLS server name.
-3. The administrator records the relay’s numeric `IP:port`, TLS server name,
-   public identity key, and region in the relay registry.
-4. Control publishes the Relay to clients and refreshes Ponor admission
+3. The administrator records the estavelle’s numeric `IP:port`, TLS server name,
+   public identity key, and region in the estavelle registry.
+4. Control publishes the Estavelle to clients and refreshes Ponor admission
    rosters; monitor readiness, capacity and admission. The unified service
    adapter is pending #404; current deployment steps remain in the Compose guide.
 
-**Success:** a newly enrolled node learns the relay and can authenticate it;
-the relay admits it using the current roster.  
-**Failure / control:** a DNS name in the relay `address` field invalidates the
+**Success:** a newly enrolled node learns the estavelle and can authenticate it;
+the estavelle admits it using the current roster.  
+**Failure / control:** a DNS name in the estavelle `address` field invalidates the
 netmap, so the address must be an IP address and port; DNS belongs only in the
 TLS server-name field. A registry entry without a matching current roster
-causes the relay to deny clients. Relay health should be treated as a
+causes the estavelle to deny clients. Estavelle health should be treated as a
 connectivity signal, not as evidence that payloads are readable.
 
 ### UC-03 — Add, invite, and deprovision a user
@@ -214,7 +214,7 @@ groups, protocols, and ports.
 **Main flow:**
 
 1. The administrator defines groups that express ownership or function (for
-   example, engineering, production, and gateways).
+   example, engineering, production, and avens).
 2. The administrator writes an explicit default-deny access policy that grants
    named flows, then validates, previews, and tests it.
 3. Control versions the policy and compiles/distributes the result in client
@@ -258,54 +258,54 @@ are a separate privacy decision.
 
 <a id="uc-07--configure-a-subnet-router-or-exit-node"></a>
 
-### UC-07 — Configure a Gateway for subnet access or exit egress
+### UC-07 — Configure an Aven for subnet access or exit egress
 
 **Primary actor:** administrator.  
-**Supporting actors:** gateway client operator, client users.
+**Supporting actors:** aven client operator, client users.
 
 **Goal:** make an approved non-mesh subnet or default route reachable through
-one or more enrolled gateway clients.
+one or more enrolled aven clients.
 
 **Main flow:**
 
-1. The gateway operator installs and enrolls a client on a host that can reach
+1. The aven operator installs and enrolls a client on a host that can reach
    the target LAN, VPC, or Internet egress and enables forwarding according to
    the host platform’s security model.
-2. The administrator places gateway nodes in a routing group, defines the
+2. The administrator places aven nodes in a routing group, defines the
    target CIDR and route metric, and distributes that route only to authorized
    recipient groups.
-3. Specific-prefix and default-route offers use the same Gateway capability;
+3. Specific-prefix and default-route offers use the same Aven capability;
    one node may serve both. For default routes (`0.0.0.0/0` and/or `::/0`),
    control may distribute an offer, but only the recipient's durable local
    selection/consent activates it. Preserve more-specific routes and underlay
    escape paths; review mesh/split and Internet DNS configuration explicitly.
-4. The gateway forwards traffic; masquerading is enabled unless the target
+4. The aven forwards traffic; masquerading is enabled unless the target
    network has return routes to the overlay. Access policy still governs which
-   mesh clients may reach the gateway and destination.
+   mesh clients may reach the aven and destination.
 
 **Success:** only selected clients can reach the selected destination through
-the gateway, with a usable return path.  
-**Control:** a Gateway terminates the overlay session for forwarded traffic
-and sees destination metadata and any unencrypted payload. Relay carries
+the aven, with a usable return path.  
+**Control:** an Aven terminates the overlay session for forwarded traffic
+and sees destination metadata and any unencrypted payload. Estavelle carries
 ciphertext. Control distributes approved route candidates; local agents
 select/enforce them. Current HA, NAT/return-route requirements and platform
-limits are in [Gateway operations](subnet-routers-and-exit-nodes.md); a family
+limits are in [Aven operations](subnet-routers-and-exit-nodes.md); a family
 rename does not imply new forwarding support or faster failover.
 
 ### UC-08 — Establish and maintain peer connectivity
 
 **Primary actors:** two enrolled clients.  
-**Supporting actors:** control services, client AVEN discovery, combined Relay.
+**Supporting actors:** control services, client Resurgence discovery, combined Estavelle.
 
 **Goal:** carry policy-authorized traffic over the best viable encrypted path.
 
 **Main flow:**
 
 1. Each client authenticates to control and receives the other’s identity,
-   route/policy information, pairwise material, and relay options in its
+   route/policy information, pairwise material, and estavelle options in its
    encrypted netmap.
-2. The clients attempt AVEN discovery and a direct PHREATIC path.
-3. If direct connectivity is not available, clients use the Relay's Ponor
+2. The clients attempt Resurgence discovery and a direct PHREATIC path.
+3. If direct connectivity is not available, clients use the Estavelle's Ponor
    mode, with protocol-specific admission and credentials. They keep probing
    and upgrade to direct connectivity when a safe candidate succeeds. Unified
    mode discovery/health is pending #404.
@@ -314,7 +314,7 @@ rename does not imply new forwarding support or faster failover.
 
 **Success:** traffic is encrypted end-to-end and passes only when policy
 allows it; a direct path is preferred but not required.  
-**Control:** relay operators can learn peer identifiers, timing, and volume,
+**Control:** estavelle operators can learn peer identifiers, timing, and volume,
 but not overlay plaintext. Some NAT pairs remain correctly relayed.
 
 ### UC-09 — Govern Bedrock network membership
@@ -352,7 +352,7 @@ does not replace ordinary user authorization or packet policy.
 
 **Primary actors:** auditor, security administrator.  
 **Supporting systems:** control-service audit log, trust-tooling anchors,
-optional SIEM/audit sink, and node/Relay posture and path telemetry.
+optional SIEM/audit sink, and node/Estavelle posture and path telemetry.
 
 **Goal:** answer who changed what, assess mesh health and cryptographic
 posture, and detect or investigate abnormal activity without turning observers
@@ -364,11 +364,11 @@ into administrators.
    action, verifies its chain, and exports it or forwards events to an approved
    sink.
 2. The auditor examines policy history, Bedrock-log verification, node posture,
-   session posture, Gateway route readiness, Relay mode/admission freshness,
+   session posture, Aven route readiness, Estavelle mode/admission freshness,
    and last-known path observations. Unified mode health presentation is a
    #404 target, not an existing endpoint.
 3. A security administrator uses that evidence to block a user, deprovision a
-   node, remove a relay, or roll back a policy under the appropriate change
+   node, remove an estavelle, or roll back a policy under the appropriate change
    process.
 4. The auditor records the evidence and confirms that the remediation action
    itself appears in the audit trail.
@@ -381,13 +381,13 @@ authorized administrator from making a harmful change.
 
 ## Authorization model summary
 
-| Capability | Client user | Administrator | Auditor | Relay operator | Bedrock authority |
+| Capability | Client user | Administrator | Auditor | Estavelle operator | Bedrock authority |
 | --- | --- | --- | --- | --- | --- |
 | Use policy-granted mesh connectivity | Yes | Yes, if also a user/client | No need | No | No |
 | Enroll/manage own device | Yes | May do so | No | No | No |
-| Manage all users, groups, policy, DNS, routes, relays | No | Yes | No | Only relay host itself | No |
-| Read/verify/export audit and posture | Own session/access only | As permitted | Yes | Relay-local metrics only | Bedrock artifacts only |
-| Operate fallback relay | No | Can register it | No | Yes | No |
+| Manage all users, groups, policy, DNS, routes, estavelles | No | Yes | No | Only estavelle host itself | No |
+| Read/verify/export audit and posture | Own session/access only | As permitted | Yes | Estavelle-local metrics only | Bedrock artifacts only |
+| Operate fallback estavelle | No | Can register it | No | Yes | No |
 | Sign Bedrock authorization | No | Exports/imports only | May review | No | Yes, offline |
 
 ## Operational acceptance criteria
@@ -398,15 +398,15 @@ authorized administrator from making a harmful change.
   and Windows should not be represented as equivalent until these are tested.
 - A node never enrolls on a setup key alone: it must have both pinned control
   public keys, and a local node identity must be protected at rest.
-- User ownership, administrator authority, node identity, relay identity, and
+- User ownership, administrator authority, node identity, estavelle identity, and
   Bedrock signing authority remain distinct in data model, UI, and audit.
 - Every reachability expansion—user group, access policy, route, exit route,
-  DNS group, relay registry, or Bedrock-mode change—has a reviewable,
+  DNS group, estavelle registry, or Bedrock-mode change—has a reviewable,
   versioned/audited change path and a safe rollback or removal path.
-- Monitoring preserves the stated trust boundary: relay and path telemetry is
+- Monitoring preserves the stated trust boundary: estavelle and path telemetry is
   operationally useful but not a claim of payload inspection or real-time
   truth. See the [threat model](THREAT-MODEL.md) for the full disclosure of
-  relay metadata and administrator-risk limits.
+  estavelle metadata and administrator-risk limits.
 
 
 ## Form-managed group and infrastructure access (#439)
@@ -420,14 +420,14 @@ Existing rules can be revoked through reviewed removal actions; legacy group
 membership can be explicitly mapped to current device groups without writing a
 policy document.
 
-For registered running infrastructure, the administrator opens Relays → Configure
-a relay, chooses a backend with live admission management, selects permitted
+For registered running infrastructure, the administrator opens Estavelles → Configure
+an estavelle, chooses a backend with live admission management, selects permitted
 groups, and optionally enables IPv4/IPv6 internet service on a named enrolled
-Linux Gateway. The final review discloses the required Gateway machine access.
+Linux Aven. The final review discloses the required Aven machine access.
 The association, routes and policy commit together. The result is configured,
 not a claim that forwarding is ready or that a cloud workload was provisioned.
-Group or service revocation reaches actual relay admission, including cached
+Group or service revocation reaches actual estavelle admission, including cached
 endpoints and active connections, on the roster refresh cycle.
 
-See ADR-0058 for legacy migration, downgrade, Gateway ingress and deployment
+See ADR-0058 for legacy migration, downgrade, Aven ingress and deployment
 capability boundaries.

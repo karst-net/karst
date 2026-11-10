@@ -12,7 +12,7 @@
 //!
 //! So this drives **miniupnpd**, an independent implementation of both
 //! protocols with a nftables backend, in a network namespace. It is the same
-//! argument `crates/karst-disco/tests/nat_matrix.rs` makes about NAT
+//! argument `crates/karst-resurgence/tests/nat_matrix.rs` makes about NAT
 //! behavior, one layer up: an instrument that only agrees with itself is not
 //! an instrument.
 //!
@@ -307,7 +307,7 @@ fn hex_decode(s: &str) -> Vec<u8> {
 /// One request/response exchange, with the socket created inside `NS_IN`.
 ///
 /// The socket must be *created* in the client namespace — one bound in another
-/// namespace is on the wrong stack, which is the same mistake `aven-v1.md`
+/// namespace is on the wrong stack, which is the same mistake `resurgence-v1.md`
 /// §7.6 warns about for reflections. Hence a helper process under
 /// `ip netns exec` rather than a thread: the codec stays here, where a failure
 /// is an assertion rather than a hex dump.

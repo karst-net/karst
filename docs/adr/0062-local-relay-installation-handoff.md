@@ -5,6 +5,9 @@
 - **Date:** 2026-10-25
 - **Related:** #439, ADR-0058, ADR-0059
 
+> **Naming note (ADR-0069, 2026-11-08):** "Relay" throughout this document is
+> now **Estavelle**; the decision below is otherwise unaffected.
+
 ## Context
 
 The console configures registered backends but previously required an operator

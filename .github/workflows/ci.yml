@@ -258,7 +258,7 @@ jobs:
           # package, which `cargo test -p karstd` alone would not build.
           cargo build --workspace
           # The NAT matrix drives this as a helper inside each namespace.
-          cargo build -p karst-disco --example natprobe
+          cargo build -p karst-resurgence --example natprobe
           # And PREF64 discovery is driven the same way: a test process cannot
           # enter a namespace without `setns`, so the thing under test is a
           # small program `ip netns exec` can launch there.
@@ -269,7 +269,7 @@ jobs:
           }
           tun=$(find_bin karst-tun device)
           two=$(find_bin karstd two_nodes)
-          nat=$(find_bin karst-disco nat_matrix)
+          nat=$(find_bin karst-resurgence nat_matrix)
           pref64=$(find_bin karst-transport pref64)
           for b in "$tun" "$two" "$nat" "$pref64"; do
             [ -n "$b" ] || { echo "::error::could not locate a test binary"; exit 1; }
@@ -539,7 +539,7 @@ jobs:
           path: |
             target/debug/karst
             target/debug/karstd
-            target/debug/karst-relay
+            target/debug/karst-estavelle
             ${{ steps.build.outputs.aquifer_bin }}
             ${{ steps.build.outputs.userspace_bin }}
             ${{ steps.build.outputs.gateway_bin }}
@@ -635,7 +635,7 @@ jobs:
           name: aquifer-fixtures-${{ github.sha }}
           path: target/debug
       - name: Artifact upload does not guarantee the executable bit
-        run: chmod +x target/debug/karst target/debug/karstd target/debug/karst-relay "$AQUIFER_BIN"
+        run: chmod +x target/debug/karst target/debug/karstd target/debug/karst-estavelle "$AQUIFER_BIN"
       # `miniupnpd` serves PCP for the two rows that turn on an explicit port
       # mapping. Masked first: the package's post-install starts the service,
       # which has nothing sensible to bind to on a runner and would fail the
@@ -715,7 +715,7 @@ jobs:
           path: target/debug
       - name: Artifact upload does not guarantee the executable bit
         run: |
-          chmod +x target/debug/karst target/debug/karstd target/debug/karst-relay \
+          chmod +x target/debug/karst target/debug/karstd target/debug/karst-estavelle \
             target/debug/examples/pmprobe "$USERSPACE_BIN" "$GATEWAY_BIN"
       # The NAT-PMP and PCP codecs against `miniupnpd`, an implementation we did
       # not write. Rows 8b and 9 of `aquifer`'s matrix rest on these bytes being
@@ -895,8 +895,8 @@ jobs:
       - name: The relay roster the server renders is the one the relay parses
         run: |
           cd server && go test -count=1 -run TestRosterVector ./management/internals/karst/roster/
-      - name: The relay reads it back
-        run: cargo test -p karst-relay --test roster_vector
+      - name: The estavelle reads it back
+        run: cargo test -p karst-estavelle --test roster_vector
       # Vectors prove the two implementations agree on every derivation and
       # framing function. They cannot prove the two ends actually talk: that
       # needs sockets, HTTP/2, protobuf on the wire, and a real ML-KEM
@@ -912,7 +912,7 @@ jobs:
       # GitHub issue #214 / docs/adr/0044-embedded-library-mode.md: the
       # embeddable library's own real, no-root, no-namespace proof — two
       # karst-embed nodes (NetworkMode::Userspace, no karstd process) and a
-      # real karst-relay, built here just like the fixture above.
+      # real karst-estavelle, built here just like the fixture above.
       - name: Two embedded nodes exchange TCP with no karstd process
         timeout-minutes: 8
         run: cargo test -p karst-embed --test two_nodes -- --ignored --test-threads=1 --nocapture
@@ -1066,7 +1066,7 @@ jobs:
       - name: The journal for all three units, however it ended
         if: always()
         run: |
-          for unit in karst-relay karst-control karstd; do
+          for unit in karst-estavelle karst-control karstd; do
             echo "── $unit ───────────────────────────────"
             sudo journalctl -u "$unit" --no-pager --lines=200 || true
           done
@@ -1083,20 +1083,20 @@ jobs:
           python-version: '3.12'
       - name: Observed Compose image identities
         run: python3 -m unittest discover -s scripts -p test_compose_versions.py -v
-      - name: Relay deployment adapter and isolated process lifecycle
+      - name: Estavelle deployment adapter and isolated process lifecycle
         env:
           KARST_COMPOSE_LIFECYCLE_TEST: '1'
         run: |
           docker pull alpine:latest
-          python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
-          python3 -m unittest discover -s deploy/compose -p test_relay_installation.py -v
+          python3 -m unittest discover -s deploy/compose -p test_estavelle_service.py -v
+          python3 -m unittest discover -s deploy/compose -p test_estavelle_installation.py -v
       # ubuntu-latest runners are full VMs with systemd as PID 1 (see the
       # walkthrough-c job above), so the lifecycle test's transient unit is
       # real systemd, not a stand-in for it.
-      - name: Relay systemd deployment adapter and isolated process lifecycle
+      - name: Estavelle systemd deployment adapter and isolated process lifecycle
         env:
           KARST_SYSTEMD_LIFECYCLE_TEST: '1'
-        run: sudo -E python3 -m unittest discover -s deploy/systemd -p test_relay_service.py -v
+        run: sudo -E python3 -m unittest discover -s deploy/systemd -p test_estavelle_service.py -v
       - name: bootstrap.sh parses, and is executable
         run: |
           sh -n deploy/compose/bootstrap.sh
@@ -1113,7 +1113,7 @@ jobs:
           # deployment without it comes up perfectly and can enroll nothing,
           # because a setup key needs an account and an account needs an
           # identity provider (§8.1).
-          for var in KARST_RELAY_ROSTER_FILE KARST_RELAY_REGISTRY_FILE KARST_AQUIFER \
+          for var in KARST_ESTAVELLE_ROSTER_FILE KARST_ESTAVELLE_REGISTRY_FILE KARST_AQUIFER \
                      KARST_BOOTSTRAP_SETUP_KEY_FILE; do
             grep -q "$var" deploy/compose/docker-compose.yml \
               || { echo "::error::docker-compose.yml no longer sets $var"; fail=1; }
@@ -1139,7 +1139,7 @@ jobs:
           # bootstrap.key is a standing enrollment credential for the whole
           # deployment (§8.1) and is generated into this directory on first
           # boot, so it belongs in this list beside the TLS key.
-          for f in tls/relay.key management.json relay.toml bootstrap.key; do
+          for f in tls/estavelle.key management.json estavelle.toml bootstrap.key; do
             git check-ignore -q "deploy/compose/state/$f" \
               || { echo "::error::deploy/compose/state/$f is not gitignored"; fail=1; }
           done
@@ -1319,7 +1319,7 @@ jobs:
           ./spec/models/check-proverif.sh spec/models/phreatic.pv 1500 4
           ./spec/models/check-proverif.sh spec/models/karst-control.pv 600 4
           ./spec/models/check-proverif.sh spec/models/ponor.pv 600 4
-          ./spec/models/check-proverif.sh spec/models/aven.pv 600 4
+          ./spec/models/check-proverif.sh spec/models/resurgence.pv 600 4
       # These are only useful while they still FAIL. A change that quietly
       # stopped them failing would turn the demonstration into a decoration,
       # so the expected number of false queries is asserted rather than the
@@ -1335,7 +1335,7 @@ jobs:
           ./spec/models/check-proverif.sh spec/models/ponor-norelayid.pv 600 2 2
           # MAC over the header only: an attacker rewrites tx_id on a captured
           # Pong and confirms a path the peer never answered from.
-          ./spec/models/check-proverif.sh spec/models/aven-headeronly.pv 600 2 2
+          ./spec/models/check-proverif.sh spec/models/resurgence-headeronly.pv 600 2 2
       # The only previously gated broken primitive (DH) was retired by
       # ADR-0018. KEM-broken remains an explicit `just verify-slow` analysis,
       # without a completed proof; see spec/models/README.md.

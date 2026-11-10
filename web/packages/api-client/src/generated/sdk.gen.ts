@@ -4,7 +4,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CommitRootRenameData, CommitRootRenameErrors, CommitRootRenameResponses, CompleteFirstRunData, CompleteFirstRunErrors, CompleteFirstRunResponses, ConfirmRelayAllocationDeprovisionedData, ConfirmRelayAllocationDeprovisionedErrors, ConfirmRelayAllocationDeprovisionedResponses, CreateAllowedRegionData, CreateAllowedRegionErrors, CreateAllowedRegionResponses, CreateAuditSinkData, CreateAuditSinkErrors, CreateAuditSinkResponses, CreateCloudAccountData, CreateCloudAccountErrors, CreateCloudAccountResponses, CreateDeviceInvitationData, CreateDeviceInvitationErrors, CreateDeviceInvitationResponses, CreateInfrastructureConnectionData, CreateInfrastructureConnectionErrors, CreateInfrastructureConnectionResponses, CreateLocationData, CreateLocationErrors, CreateLocationResponses, CreateRelayAllocationData, CreateRelayAllocationErrors, CreateRelayAllocationResponses, CreateRelayData, CreateRelayErrors, CreateRelayResponses, CreateRelayServiceData, CreateRelayServiceErrors, CreateRelayServiceResponses, CreateRolloutData, CreateRolloutErrors, CreateRolloutResponses, DeleteAllowedRegionData, DeleteAllowedRegionErrors, DeleteAllowedRegionResponses, DeleteAuditSinkData, DeleteAuditSinkErrors, DeleteAuditSinkResponses, DeleteCloudAccountData, DeleteCloudAccountErrors, DeleteCloudAccountResponses, DeleteGroupLocationData, DeleteGroupLocationErrors, DeleteGroupLocationResponses, DeleteInfrastructureConnectionData, DeleteInfrastructureConnectionErrors, DeleteInfrastructureConnectionResponses, DeleteLocationData, DeleteLocationErrors, DeleteLocationResponses, DeleteRelayAllocationData, DeleteRelayAllocationErrors, DeleteRelayAllocationResponses, DeleteRelayData, DeleteRelayErrors, DeleteRelayResponses, DeleteRelayServiceData, DeleteRelayServiceErrors, DeleteRelayServiceResponses, DeleteRolloutData, DeleteRolloutErrors, DeleteRolloutResponses, DemandAnchorsData, DemandAnchorsErrors, DemandAnchorsResponses, DemandRegionsData, DemandRegionsErrors, DemandRegionsResponses, DeprovisionNodeData, DeprovisionNodeErrors, DeprovisionNodeResponses, DeprovisionRelayAllocationData, DeprovisionRelayAllocationErrors, DeprovisionRelayAllocationResponses, EnableCloudAccountRegionData, EnableCloudAccountRegionErrors, EnableCloudAccountRegionResponses, EnrollMyDeviceData, EnrollMyDeviceErrors, EnrollMyDeviceResponses, ExportAuditData, ExportAuditErrors, ExportAuditResponses, ExportBedrockAuditAnchorData, ExportBedrockAuditAnchorErrors, ExportBedrockAuditAnchorResponses, ExportBedrockRequestsData, ExportBedrockRequestsErrors, ExportBedrockRequestsResponses, GatewayInventoryData, GatewayInventoryErrors, GatewayInventoryResponses, GetAuditHeadData, GetAuditHeadErrors, GetAuditHeadResponses, GetBedrockData, GetBedrockErrors, GetBedrockResponses, GetBillingPaymentData, GetBillingPaymentErrors, GetBillingPaymentNoticesData, GetBillingPaymentNoticesErrors, GetBillingPaymentNoticesResponses, GetBillingPaymentResponses, GetComplianceDraftData, GetComplianceDraftErrors, GetComplianceDraftResponses, GetComplianceDraftVersionData, GetComplianceDraftVersionErrors, GetComplianceDraftVersionResponses, GetControlPlaneLocationData, GetControlPlaneLocationErrors, GetControlPlaneLocationResponses, GetDeviceUsageData, GetDeviceUsageErrors, GetDeviceUsageResponses, GetFirstRunStateData, GetFirstRunStateErrors, GetFirstRunStateResponses, GetMeshDomainData, GetMeshDomainErrors, GetMeshDomainResponses, GetMyAccessData, GetMyAccessErrors, GetMyAccessResponses, GetMyEnrollmentSettingsData, GetMyEnrollmentSettingsErrors, GetMyEnrollmentSettingsResponses, GetNodeComplianceData, GetNodeComplianceErrors, GetNodeComplianceResponses, GetNodeData, GetNodeErrors, GetNodePathsData, GetNodePathsErrors, GetNodePathsResponses, GetNodePostureData, GetNodePostureErrors, GetNodePostureResponses, GetNodeResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetPolicySchemaData, GetPolicySchemaErrors, GetPolicySchemaResponses, GetPolicyVersionData, GetPolicyVersionErrors, GetPolicyVersionResponses, GetPostureData, GetPostureErrors, GetPostureResponses, GetRelayBillingAlertsData, GetRelayBillingAlertsErrors, GetRelayBillingAlertsResponses, GetRelayHealthData, GetRelayHealthErrors, GetRelayHealthResponses, GetRelayPublicationData, GetRelayPublicationErrors, GetRelayPublicationResponses, GetRelaySpendingCapData, GetRelaySpendingCapErrors, GetRelaySpendingCapResponses, GetRelayUsageData, GetRelayUsageErrors, GetRelayUsageResponses, GetRolloutData, GetRolloutErrors, GetRolloutResponses, GetScalingModeData, GetScalingModeErrors, GetScalingModeResponses, GetTutorialModeData, GetTutorialModeErrors, GetTutorialModeResponses, GrantRelayAllocationData, GrantRelayAllocationErrors, GrantRelayAllocationResponses, ImportBedrockBootstrapData, ImportBedrockBootstrapErrors, ImportBedrockBootstrapResponses, ImportBedrockResponsesData, ImportBedrockResponsesErrors, ImportBedrockResponsesResponses, ListAllowedRegionsData, ListAllowedRegionsErrors, ListAllowedRegionsResponses, ListAuditEntriesData, ListAuditEntriesErrors, ListAuditEntriesResponses, ListAuditSinksData, ListAuditSinksErrors, ListAuditSinksResponses, ListBedrockLogData, ListBedrockLogErrors, ListBedrockLogResponses, ListBedrockRequestsData, ListBedrockRequestsErrors, ListBedrockRequestsResponses, ListCloudAccountRegionsData, ListCloudAccountRegionsErrors, ListCloudAccountRegionsResponses, ListCloudAccountsData, ListCloudAccountsErrors, ListCloudAccountsResponses, ListComplianceDraftVersionsData, ListComplianceDraftVersionsErrors, ListComplianceDraftVersionsResponses, ListDeviceInvitationsData, ListDeviceInvitationsErrors, ListDeviceInvitationsResponses, ListGroupLocationsData, ListGroupLocationsErrors, ListGroupLocationsResponses, ListInfrastructureConnectionResourcesData, ListInfrastructureConnectionResourcesErrors, ListInfrastructureConnectionResourcesResponses, ListInfrastructureConnectionsData, ListInfrastructureConnectionsErrors, ListInfrastructureConnectionsResponses, ListLocationsData, ListLocationsErrors, ListLocationsResponses, ListMeshDomainsData, ListMeshDomainsErrors, ListMeshDomainsResponses, ListMyDevicesData, ListMyDevicesErrors, ListMyDevicesResponses, ListMySessionsData, ListMySessionsErrors, ListMySessionsResponses, ListNodesData, ListNodesErrors, ListNodesResponses, ListPolicyVersionsData, ListPolicyVersionsErrors, ListPolicyVersionsResponses, ListPostureSessionsData, ListPostureSessionsErrors, ListPostureSessionsResponses, ListRelayAdmissionTargetsData, ListRelayAdmissionTargetsResponses, ListRelayAllocationsData, ListRelayAllocationsErrors, ListRelayAllocationsResponses, ListRelaysData, ListRelaysErrors, ListRelayServicesData, ListRelayServicesErrors, ListRelayServicesResponses, ListRelaysResponses, ListRolloutsData, ListRolloutsErrors, ListRolloutsResponses, MarkRolloutComponentAppliedData, MarkRolloutComponentAppliedErrors, MarkRolloutComponentAppliedResponses, MarkRolloutComponentFailedData, MarkRolloutComponentFailedErrors, MarkRolloutComponentFailedResponses, NocComponentsData, NocComponentsErrors, NocComponentsResponses, NocRelayData, NocRelayErrors, NocRelayResponses, PollPendingRelayAllocationsData, PollPendingRelayAllocationsErrors, PollPendingRelayAllocationsResponses, PreviewComplianceDraftData, PreviewComplianceDraftErrors, PreviewComplianceDraftResponses, PreviewPolicyData, PreviewPolicyErrors, PreviewPolicyResponses, PreviewRelayPublicationData, PreviewRelayPublicationErrors, PreviewRelayPublicationResponses, PreviewRootRenameData, PreviewRootRenameErrors, PreviewRootRenameResponses, QueueBillingPaymentData, QueueBillingPaymentErrors, QueueBillingPaymentResponses, RecordRelayAllocationProvisioningData, RecordRelayAllocationProvisioningErrors, RecordRelayAllocationProvisioningResponses, RenameMyDeviceData, RenameMyDeviceErrors, RenameMyDeviceResponses, ReportRelayAllocationFailedData, ReportRelayAllocationFailedErrors, ReportRelayAllocationFailedResponses, RequestRelayCreditsData, RequestRelayCreditsErrors, RequestRelayCreditsResponses, RevokeDeviceInvitationData, RevokeDeviceInvitationErrors, RevokeDeviceInvitationResponses, RevokeMyDeviceData, RevokeMyDeviceErrors, RevokeMyDeviceResponses, RevokeRelayAllocationData, RevokeRelayAllocationErrors, RevokeRelayAllocationResponses, RollbackComplianceDraftData, RollbackComplianceDraftErrors, RollbackComplianceDraftResponses, RollbackPolicyData, RollbackPolicyErrors, RollbackPolicyResponses, RollBackRolloutData, RollBackRolloutErrors, RollBackRolloutResponses, ScalerRecommendationsData, ScalerRecommendationsErrors, ScalerRecommendationsResponses, ScalerSuggestionsData, ScalerSuggestionsErrors, ScalerSuggestionsResponses, SetBedrockLocationData, SetBedrockLocationErrors, SetBedrockLocationResponses, SetBedrockModeData, SetBedrockModeErrors, SetBedrockModeResponses, SetControlPlaneLocationData, SetControlPlaneLocationErrors, SetControlPlaneLocationResponses, SetGroupLocationData, SetGroupLocationErrors, SetGroupLocationResponses, SetRelayPublicationData, SetRelayPublicationErrors, SetRelayPublicationResponses, SetRelayServiceModesData, SetRelayServiceModesErrors, SetRelayServiceModesResponses, SetRelaySpendingCapData, SetRelaySpendingCapErrors, SetRelaySpendingCapResponses, SetScalingModeData, SetScalingModeErrors, SetScalingModeResponses, SetTutorialModeData, SetTutorialModeErrors, SetTutorialModeResponses, SoftwareVersionsData, SoftwareVersionsErrors, SoftwareVersionsResponses, StartRolloutData, StartRolloutErrors, StartRolloutResponses, SurrenderRelayCreditsData, SurrenderRelayCreditsErrors, SurrenderRelayCreditsResponses, TestComplianceDraftData, TestComplianceDraftErrors, TestComplianceDraftResponses, TestPolicyData, TestPolicyErrors, TestPolicyResponses, UpdateInfrastructureConnectionKubernetesLaunchDefaultsData, UpdateInfrastructureConnectionKubernetesLaunchDefaultsErrors, UpdateInfrastructureConnectionKubernetesLaunchDefaultsResponses, UpdateInfrastructureConnectionLaunchDefaultsData, UpdateInfrastructureConnectionLaunchDefaultsErrors, UpdateInfrastructureConnectionLaunchDefaultsResponses, UpdateInfrastructureConnectionNomadLaunchDefaultsData, UpdateInfrastructureConnectionNomadLaunchDefaultsErrors, UpdateInfrastructureConnectionNomadLaunchDefaultsResponses, UpdateNodeData, UpdateNodeErrors, UpdateNodeResponses, UpdateRelayServiceAccessData, UpdateRelayServiceAccessErrors, UpdateRelayServiceAccessResponses, ValidateComplianceDraftData, ValidateComplianceDraftErrors, ValidateComplianceDraftResponses, ValidatePolicyData, ValidatePolicyErrors, ValidatePolicyResponses, VerifyAuditData, VerifyAuditErrors, VerifyAuditResponses, VerifyBedrockLogData, VerifyBedrockLogErrors, VerifyBedrockLogResponses, WriteComplianceDraftData, WriteComplianceDraftErrors, WriteComplianceDraftResponses, WritePolicyData, WritePolicyErrors, WritePolicyResponses } from './types.gen';
+import type { AvenInventoryData, AvenInventoryErrors, AvenInventoryResponses, CommitRootRenameData, CommitRootRenameErrors, CommitRootRenameResponses, CompleteFirstRunData, CompleteFirstRunErrors, CompleteFirstRunResponses, ConfirmEstavelleAllocationDeprovisionedData, ConfirmEstavelleAllocationDeprovisionedErrors, ConfirmEstavelleAllocationDeprovisionedResponses, CreateAllowedRegionData, CreateAllowedRegionErrors, CreateAllowedRegionResponses, CreateAuditSinkData, CreateAuditSinkErrors, CreateAuditSinkResponses, CreateCloudAccountData, CreateCloudAccountErrors, CreateCloudAccountResponses, CreateDeviceInvitationData, CreateDeviceInvitationErrors, CreateDeviceInvitationResponses, CreateEstavelleAllocationData, CreateEstavelleAllocationErrors, CreateEstavelleAllocationResponses, CreateEstavelleData, CreateEstavelleErrors, CreateEstavelleResponses, CreateEstavelleServiceData, CreateEstavelleServiceErrors, CreateEstavelleServiceResponses, CreateInfrastructureConnectionData, CreateInfrastructureConnectionErrors, CreateInfrastructureConnectionResponses, CreateLocationData, CreateLocationErrors, CreateLocationResponses, CreateRolloutData, CreateRolloutErrors, CreateRolloutResponses, DeleteAllowedRegionData, DeleteAllowedRegionErrors, DeleteAllowedRegionResponses, DeleteAuditSinkData, DeleteAuditSinkErrors, DeleteAuditSinkResponses, DeleteCloudAccountData, DeleteCloudAccountErrors, DeleteCloudAccountResponses, DeleteEstavelleAllocationData, DeleteEstavelleAllocationErrors, DeleteEstavelleAllocationResponses, DeleteEstavelleData, DeleteEstavelleErrors, DeleteEstavelleResponses, DeleteEstavelleServiceData, DeleteEstavelleServiceErrors, DeleteEstavelleServiceResponses, DeleteGroupLocationData, DeleteGroupLocationErrors, DeleteGroupLocationResponses, DeleteInfrastructureConnectionData, DeleteInfrastructureConnectionErrors, DeleteInfrastructureConnectionResponses, DeleteLocationData, DeleteLocationErrors, DeleteLocationResponses, DeleteRolloutData, DeleteRolloutErrors, DeleteRolloutResponses, DemandAnchorsData, DemandAnchorsErrors, DemandAnchorsResponses, DemandRegionsData, DemandRegionsErrors, DemandRegionsResponses, DeprovisionEstavelleAllocationData, DeprovisionEstavelleAllocationErrors, DeprovisionEstavelleAllocationResponses, DeprovisionNodeData, DeprovisionNodeErrors, DeprovisionNodeResponses, EnableCloudAccountRegionData, EnableCloudAccountRegionErrors, EnableCloudAccountRegionResponses, EnrollMyDeviceData, EnrollMyDeviceErrors, EnrollMyDeviceResponses, ExportAuditData, ExportAuditErrors, ExportAuditResponses, ExportBedrockAuditAnchorData, ExportBedrockAuditAnchorErrors, ExportBedrockAuditAnchorResponses, ExportBedrockRequestsData, ExportBedrockRequestsErrors, ExportBedrockRequestsResponses, GetAuditHeadData, GetAuditHeadErrors, GetAuditHeadResponses, GetBedrockData, GetBedrockErrors, GetBedrockResponses, GetBillingPaymentData, GetBillingPaymentErrors, GetBillingPaymentNoticesData, GetBillingPaymentNoticesErrors, GetBillingPaymentNoticesResponses, GetBillingPaymentResponses, GetComplianceDraftData, GetComplianceDraftErrors, GetComplianceDraftResponses, GetComplianceDraftVersionData, GetComplianceDraftVersionErrors, GetComplianceDraftVersionResponses, GetControlPlaneLocationData, GetControlPlaneLocationErrors, GetControlPlaneLocationResponses, GetDeviceUsageData, GetDeviceUsageErrors, GetDeviceUsageResponses, GetEstavelleBillingAlertsData, GetEstavelleBillingAlertsErrors, GetEstavelleBillingAlertsResponses, GetEstavelleHealthData, GetEstavelleHealthErrors, GetEstavelleHealthResponses, GetEstavellePublicationData, GetEstavellePublicationErrors, GetEstavellePublicationResponses, GetEstavelleSpendingCapData, GetEstavelleSpendingCapErrors, GetEstavelleSpendingCapResponses, GetEstavelleUsageData, GetEstavelleUsageErrors, GetEstavelleUsageResponses, GetFirstRunStateData, GetFirstRunStateErrors, GetFirstRunStateResponses, GetMeshDomainData, GetMeshDomainErrors, GetMeshDomainResponses, GetMyAccessData, GetMyAccessErrors, GetMyAccessResponses, GetMyEnrollmentSettingsData, GetMyEnrollmentSettingsErrors, GetMyEnrollmentSettingsResponses, GetNodeComplianceData, GetNodeComplianceErrors, GetNodeComplianceResponses, GetNodeData, GetNodeErrors, GetNodePathsData, GetNodePathsErrors, GetNodePathsResponses, GetNodePostureData, GetNodePostureErrors, GetNodePostureResponses, GetNodeResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetPolicySchemaData, GetPolicySchemaErrors, GetPolicySchemaResponses, GetPolicyVersionData, GetPolicyVersionErrors, GetPolicyVersionResponses, GetPostureData, GetPostureErrors, GetPostureResponses, GetRolloutData, GetRolloutErrors, GetRolloutResponses, GetScalingModeData, GetScalingModeErrors, GetScalingModeResponses, GetTutorialModeData, GetTutorialModeErrors, GetTutorialModeResponses, GrantEstavelleAllocationData, GrantEstavelleAllocationErrors, GrantEstavelleAllocationResponses, ImportBedrockBootstrapData, ImportBedrockBootstrapErrors, ImportBedrockBootstrapResponses, ImportBedrockResponsesData, ImportBedrockResponsesErrors, ImportBedrockResponsesResponses, ListAllowedRegionsData, ListAllowedRegionsErrors, ListAllowedRegionsResponses, ListAuditEntriesData, ListAuditEntriesErrors, ListAuditEntriesResponses, ListAuditSinksData, ListAuditSinksErrors, ListAuditSinksResponses, ListBedrockLogData, ListBedrockLogErrors, ListBedrockLogResponses, ListBedrockRequestsData, ListBedrockRequestsErrors, ListBedrockRequestsResponses, ListCloudAccountRegionsData, ListCloudAccountRegionsErrors, ListCloudAccountRegionsResponses, ListCloudAccountsData, ListCloudAccountsErrors, ListCloudAccountsResponses, ListComplianceDraftVersionsData, ListComplianceDraftVersionsErrors, ListComplianceDraftVersionsResponses, ListDeviceInvitationsData, ListDeviceInvitationsErrors, ListDeviceInvitationsResponses, ListEstavelleAdmissionTargetsData, ListEstavelleAdmissionTargetsResponses, ListEstavelleAllocationsData, ListEstavelleAllocationsErrors, ListEstavelleAllocationsResponses, ListEstavellesData, ListEstavellesErrors, ListEstavelleServicesData, ListEstavelleServicesErrors, ListEstavelleServicesResponses, ListEstavellesResponses, ListGroupLocationsData, ListGroupLocationsErrors, ListGroupLocationsResponses, ListInfrastructureConnectionResourcesData, ListInfrastructureConnectionResourcesErrors, ListInfrastructureConnectionResourcesResponses, ListInfrastructureConnectionsData, ListInfrastructureConnectionsErrors, ListInfrastructureConnectionsResponses, ListLocationsData, ListLocationsErrors, ListLocationsResponses, ListMeshDomainsData, ListMeshDomainsErrors, ListMeshDomainsResponses, ListMyDevicesData, ListMyDevicesErrors, ListMyDevicesResponses, ListMySessionsData, ListMySessionsErrors, ListMySessionsResponses, ListNodesData, ListNodesErrors, ListNodesResponses, ListPolicyVersionsData, ListPolicyVersionsErrors, ListPolicyVersionsResponses, ListPostureSessionsData, ListPostureSessionsErrors, ListPostureSessionsResponses, ListRolloutsData, ListRolloutsErrors, ListRolloutsResponses, MarkRolloutComponentAppliedData, MarkRolloutComponentAppliedErrors, MarkRolloutComponentAppliedResponses, MarkRolloutComponentFailedData, MarkRolloutComponentFailedErrors, MarkRolloutComponentFailedResponses, NocComponentsData, NocComponentsErrors, NocComponentsResponses, NocEstavelleData, NocEstavelleErrors, NocEstavelleResponses, PollPendingEstavelleAllocationsData, PollPendingEstavelleAllocationsErrors, PollPendingEstavelleAllocationsResponses, PreviewComplianceDraftData, PreviewComplianceDraftErrors, PreviewComplianceDraftResponses, PreviewEstavellePublicationData, PreviewEstavellePublicationErrors, PreviewEstavellePublicationResponses, PreviewPolicyData, PreviewPolicyErrors, PreviewPolicyResponses, PreviewRootRenameData, PreviewRootRenameErrors, PreviewRootRenameResponses, QueueBillingPaymentData, QueueBillingPaymentErrors, QueueBillingPaymentResponses, RecordEstavelleAllocationProvisioningData, RecordEstavelleAllocationProvisioningErrors, RecordEstavelleAllocationProvisioningResponses, RenameMyDeviceData, RenameMyDeviceErrors, RenameMyDeviceResponses, ReportEstavelleAllocationFailedData, ReportEstavelleAllocationFailedErrors, ReportEstavelleAllocationFailedResponses, RequestEstavelleCreditsData, RequestEstavelleCreditsErrors, RequestEstavelleCreditsResponses, RevokeDeviceInvitationData, RevokeDeviceInvitationErrors, RevokeDeviceInvitationResponses, RevokeEstavelleAllocationData, RevokeEstavelleAllocationErrors, RevokeEstavelleAllocationResponses, RevokeMyDeviceData, RevokeMyDeviceErrors, RevokeMyDeviceResponses, RollbackComplianceDraftData, RollbackComplianceDraftErrors, RollbackComplianceDraftResponses, RollbackPolicyData, RollbackPolicyErrors, RollbackPolicyResponses, RollBackRolloutData, RollBackRolloutErrors, RollBackRolloutResponses, ScalerRecommendationsData, ScalerRecommendationsErrors, ScalerRecommendationsResponses, ScalerSuggestionsData, ScalerSuggestionsErrors, ScalerSuggestionsResponses, SetBedrockLocationData, SetBedrockLocationErrors, SetBedrockLocationResponses, SetBedrockModeData, SetBedrockModeErrors, SetBedrockModeResponses, SetControlPlaneLocationData, SetControlPlaneLocationErrors, SetControlPlaneLocationResponses, SetEstavellePublicationData, SetEstavellePublicationErrors, SetEstavellePublicationResponses, SetEstavelleServiceModesData, SetEstavelleServiceModesErrors, SetEstavelleServiceModesResponses, SetEstavelleSpendingCapData, SetEstavelleSpendingCapErrors, SetEstavelleSpendingCapResponses, SetGroupLocationData, SetGroupLocationErrors, SetGroupLocationResponses, SetScalingModeData, SetScalingModeErrors, SetScalingModeResponses, SetTutorialModeData, SetTutorialModeErrors, SetTutorialModeResponses, SoftwareVersionsData, SoftwareVersionsErrors, SoftwareVersionsResponses, StartRolloutData, StartRolloutErrors, StartRolloutResponses, SurrenderEstavelleCreditsData, SurrenderEstavelleCreditsErrors, SurrenderEstavelleCreditsResponses, TestComplianceDraftData, TestComplianceDraftErrors, TestComplianceDraftResponses, TestPolicyData, TestPolicyErrors, TestPolicyResponses, UpdateEstavelleServiceAccessData, UpdateEstavelleServiceAccessErrors, UpdateEstavelleServiceAccessResponses, UpdateInfrastructureConnectionKubernetesLaunchDefaultsData, UpdateInfrastructureConnectionKubernetesLaunchDefaultsErrors, UpdateInfrastructureConnectionKubernetesLaunchDefaultsResponses, UpdateInfrastructureConnectionLaunchDefaultsData, UpdateInfrastructureConnectionLaunchDefaultsErrors, UpdateInfrastructureConnectionLaunchDefaultsResponses, UpdateInfrastructureConnectionNomadLaunchDefaultsData, UpdateInfrastructureConnectionNomadLaunchDefaultsErrors, UpdateInfrastructureConnectionNomadLaunchDefaultsResponses, UpdateNodeData, UpdateNodeErrors, UpdateNodeResponses, ValidateComplianceDraftData, ValidateComplianceDraftErrors, ValidateComplianceDraftResponses, ValidatePolicyData, ValidatePolicyErrors, ValidatePolicyResponses, VerifyAuditData, VerifyAuditErrors, VerifyAuditResponses, VerifyBedrockLogData, VerifyBedrockLogErrors, VerifyBedrockLogResponses, WriteComplianceDraftData, WriteComplianceDraftErrors, WriteComplianceDraftResponses, WritePolicyData, WritePolicyErrors, WritePolicyResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -21,11 +21,11 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 };
 
 /**
- * Account-scoped configured Gateway capabilities resolved through visible route, group and administrative peer records. Control connectivity does not establish forwarding readiness. No consent or route writes.
+ * Account-scoped configured Aven capabilities resolved through visible route, group and administrative peer records. Control connectivity does not establish forwarding readiness. No consent or route writes.
  */
-export const gatewayInventory = <ThrowOnError extends boolean = false>(options?: Options<GatewayInventoryData, ThrowOnError>): RequestResult<GatewayInventoryResponses, GatewayInventoryErrors, ThrowOnError> => (options?.client ?? client).get<GatewayInventoryResponses, GatewayInventoryErrors, ThrowOnError>({
+export const avenInventory = <ThrowOnError extends boolean = false>(options?: Options<AvenInventoryData, ThrowOnError>): RequestResult<AvenInventoryResponses, AvenInventoryErrors, ThrowOnError> => (options?.client ?? client).get<AvenInventoryResponses, AvenInventoryErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/gateways',
+    url: '/avens',
     ...options
 });
 
@@ -108,7 +108,7 @@ export const getDeviceUsage = <ThrowOnError extends boolean = false>(options: Op
 });
 
 /**
- * Account-owner/admin report of received relay usage batches. Account
+ * Account-owner/admin report of received estavelle usage batches. Account
  * scope comes from authenticated authorization; every read is audited.
  * Request a past, nonempty interval of at most 93 days aligned to whole
  * minutes. This is not an invoice. Completeness compares received windows
@@ -116,41 +116,41 @@ export const getDeviceUsage = <ThrowOnError extends boolean = false>(options: Op
  * producers; periods before the history cutover remain unknown.
  *
  */
-export const getRelayUsage = <ThrowOnError extends boolean = false>(options: Options<GetRelayUsageData, ThrowOnError>): RequestResult<GetRelayUsageResponses, GetRelayUsageErrors, ThrowOnError> => (options.client ?? client).get<GetRelayUsageResponses, GetRelayUsageErrors, ThrowOnError>({
+export const getEstavelleUsage = <ThrowOnError extends boolean = false>(options: Options<GetEstavelleUsageData, ThrowOnError>): RequestResult<GetEstavelleUsageResponses, GetEstavelleUsageErrors, ThrowOnError> => (options.client ?? client).get<GetEstavelleUsageResponses, GetEstavelleUsageErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/usage/relays',
+    url: '/usage/estavelles',
     ...options
 });
 
 /**
- * Account-owner/admin in-app relay usage alert feed. The current period is
+ * Account-owner/admin in-app estavelle usage alert feed. The current period is
  * reevaluated when read; newly crossed 75%, 90%, and 100% thresholds are
  * persisted once per period. Account scope comes from authenticated
  * authorization and every read is audited. An incomplete report includes
  * a coverage warning, and its reported amounts are lower bounds.
  *
  */
-export const getRelayBillingAlerts = <ThrowOnError extends boolean = false>(options: Options<GetRelayBillingAlertsData, ThrowOnError>): RequestResult<GetRelayBillingAlertsResponses, GetRelayBillingAlertsErrors, ThrowOnError> => (options.client ?? client).get<GetRelayBillingAlertsResponses, GetRelayBillingAlertsErrors, ThrowOnError>({
+export const getEstavelleBillingAlerts = <ThrowOnError extends boolean = false>(options: Options<GetEstavelleBillingAlertsData, ThrowOnError>): RequestResult<GetEstavelleBillingAlertsResponses, GetEstavelleBillingAlertsErrors, ThrowOnError> => (options.client ?? client).get<GetEstavelleBillingAlertsResponses, GetEstavelleBillingAlertsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/usage/relay-alerts',
+    url: '/usage/estavelle-alerts',
     ...options
 });
 
 /**
- * Account-owner/admin view of the optional organization-wide managed relay cap for one UTC calendar month. Every read is audited. An unset cap is returned as enabled=false.
+ * Account-owner/admin view of the optional organization-wide managed estavelle cap for one UTC calendar month. Every read is audited. An unset cap is returned as enabled=false.
  */
-export const getRelaySpendingCap = <ThrowOnError extends boolean = false>(options: Options<GetRelaySpendingCapData, ThrowOnError>): RequestResult<GetRelaySpendingCapResponses, GetRelaySpendingCapErrors, ThrowOnError> => (options.client ?? client).get<GetRelaySpendingCapResponses, GetRelaySpendingCapErrors, ThrowOnError>({
+export const getEstavelleSpendingCap = <ThrowOnError extends boolean = false>(options: Options<GetEstavelleSpendingCapData, ThrowOnError>): RequestResult<GetEstavelleSpendingCapResponses, GetEstavelleSpendingCapErrors, ThrowOnError> => (options.client ?? client).get<GetEstavelleSpendingCapResponses, GetEstavelleSpendingCapErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/billing/relay-cap',
+    url: '/billing/estavelle-cap',
     ...options
 });
 
 /**
- * Set the monthly USD managed-relay overage limit. Requires acknowledging that capped relay forwarding can pause at the limit. Only current and future assigned months are accepted. Decreases require all issued relay grants to be surrendered and consumed usage to fit below the new limit. Relays surrender unused credits during clean shutdown; credits from an uncleanly stopped or unreachable relay remain reserved for the period. Increases remain available.
+ * Set the monthly USD managed-estavelle overage limit. Requires acknowledging that capped estavelle forwarding can pause at the limit. Only current and future assigned months are accepted. Decreases require all issued estavelle grants to be surrendered and consumed usage to fit below the new limit. Estavelles surrender unused credits during clean shutdown; credits from an uncleanly stopped or unreachable estavelle remain reserved for the period. Increases remain available.
  */
-export const setRelaySpendingCap = <ThrowOnError extends boolean = false>(options: Options<SetRelaySpendingCapData, ThrowOnError>): RequestResult<SetRelaySpendingCapResponses, SetRelaySpendingCapErrors, ThrowOnError> => (options.client ?? client).put<SetRelaySpendingCapResponses, SetRelaySpendingCapErrors, ThrowOnError>({
+export const setEstavelleSpendingCap = <ThrowOnError extends boolean = false>(options: Options<SetEstavelleSpendingCapData, ThrowOnError>): RequestResult<SetEstavelleSpendingCapResponses, SetEstavelleSpendingCapErrors, ThrowOnError> => (options.client ?? client).put<SetEstavelleSpendingCapResponses, SetEstavelleSpendingCapErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/billing/relay-cap',
+    url: '/billing/estavelle-cap',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -159,10 +159,10 @@ export const setRelaySpendingCap = <ThrowOnError extends boolean = false>(option
 });
 
 /**
- * Relay-only signed ML-DSA request. The control plane resolves account ownership from the currently enabled producer and exact allowed mapping; relay-supplied account identifiers are never trusted. When no cap is configured, returns a short uncapped lease. This endpoint is independent of packet forwarding.
+ * Estavelle-only signed ML-DSA request. The control plane resolves account ownership from the currently enabled producer and exact allowed mapping; estavelle-supplied account identifiers are never trusted. When no cap is configured, returns a short uncapped lease. This endpoint is independent of packet forwarding.
  */
-export const requestRelayCredits = <ThrowOnError extends boolean = false>(options: Options<RequestRelayCreditsData, ThrowOnError>): RequestResult<RequestRelayCreditsResponses, RequestRelayCreditsErrors, ThrowOnError> => (options.client ?? client).post<RequestRelayCreditsResponses, RequestRelayCreditsErrors, ThrowOnError>({
-    url: '/billing/relay-credits',
+export const requestEstavelleCredits = <ThrowOnError extends boolean = false>(options: Options<RequestEstavelleCreditsData, ThrowOnError>): RequestResult<RequestEstavelleCreditsResponses, RequestEstavelleCreditsErrors, ThrowOnError> => (options.client ?? client).post<RequestEstavelleCreditsResponses, RequestEstavelleCreditsErrors, ThrowOnError>({
+    url: '/billing/estavelle-credits',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -171,10 +171,10 @@ export const requestRelayCredits = <ThrowOnError extends boolean = false>(option
 });
 
 /**
- * Relay-only signed final report after the local forwarding gate has stopped spending this grant. Consumed bytes include every payload reserved before queueing a destination write, including ambiguous writes. Identical retries are idempotent; a different consumed count conflicts. A crashed relay does not surrender grants, so their full reservation remains until period end.
+ * Estavelle-only signed final report after the local forwarding gate has stopped spending this grant. Consumed bytes include every payload reserved before queueing a destination write, including ambiguous writes. Identical retries are idempotent; a different consumed count conflicts. A crashed estavelle does not surrender grants, so their full reservation remains until period end.
  */
-export const surrenderRelayCredits = <ThrowOnError extends boolean = false>(options: Options<SurrenderRelayCreditsData, ThrowOnError>): RequestResult<SurrenderRelayCreditsResponses, SurrenderRelayCreditsErrors, ThrowOnError> => (options.client ?? client).post<SurrenderRelayCreditsResponses, SurrenderRelayCreditsErrors, ThrowOnError>({
-    url: '/billing/relay-credits/{grant_id}/surrender',
+export const surrenderEstavelleCredits = <ThrowOnError extends boolean = false>(options: Options<SurrenderEstavelleCreditsData, ThrowOnError>): RequestResult<SurrenderEstavelleCreditsResponses, SurrenderEstavelleCreditsErrors, ThrowOnError> => (options.client ?? client).post<SurrenderEstavelleCreditsResponses, SurrenderEstavelleCreditsErrors, ThrowOnError>({
+    url: '/billing/estavelle-credits/{grant_id}/surrender',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -466,18 +466,18 @@ export const testComplianceDraft = <ThrowOnError extends boolean = false>(option
 /**
  * Explicit account-scoped Ponor associations. Presence means registry availability, not runtime health.
  */
-export const listRelayServices = <ThrowOnError extends boolean = false>(options?: Options<ListRelayServicesData, ThrowOnError>): RequestResult<ListRelayServicesResponses, ListRelayServicesErrors, ThrowOnError> => (options?.client ?? client).get<ListRelayServicesResponses, ListRelayServicesErrors, ThrowOnError>({
+export const listEstavelleServices = <ThrowOnError extends boolean = false>(options?: Options<ListEstavelleServicesData, ThrowOnError>): RequestResult<ListEstavelleServicesResponses, ListEstavelleServicesErrors, ThrowOnError> => (options?.client ?? client).get<ListEstavelleServicesResponses, ListEstavelleServicesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-services',
+    url: '/estavelle-services',
     ...options
 });
 
 /**
  * Associate existing account-local registry records. Service publication mode updates client endpoints; credentials and backend processes remain separate.
  */
-export const createRelayService = <ThrowOnError extends boolean = false>(options: Options<CreateRelayServiceData, ThrowOnError>): RequestResult<CreateRelayServiceResponses, CreateRelayServiceErrors, ThrowOnError> => (options.client ?? client).post<CreateRelayServiceResponses, CreateRelayServiceErrors, ThrowOnError>({
+export const createEstavelleService = <ThrowOnError extends boolean = false>(options: Options<CreateEstavelleServiceData, ThrowOnError>): RequestResult<CreateEstavelleServiceResponses, CreateEstavelleServiceErrors, ThrowOnError> => (options.client ?? client).post<CreateEstavelleServiceResponses, CreateEstavelleServiceErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-services',
+    url: '/estavelle-services',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -485,18 +485,18 @@ export const createRelayService = <ThrowOnError extends boolean = false>(options
     }
 });
 
-export const getRelayPublication = <ThrowOnError extends boolean = false>(options?: Options<GetRelayPublicationData, ThrowOnError>): RequestResult<GetRelayPublicationResponses, GetRelayPublicationErrors, ThrowOnError> => (options?.client ?? client).get<GetRelayPublicationResponses, GetRelayPublicationErrors, ThrowOnError>({
+export const getEstavellePublication = <ThrowOnError extends boolean = false>(options?: Options<GetEstavellePublicationData, ThrowOnError>): RequestResult<GetEstavellePublicationResponses, GetEstavellePublicationErrors, ThrowOnError> => (options?.client ?? client).get<GetEstavellePublicationResponses, GetEstavellePublicationErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-services/publication',
+    url: '/estavelle-services/publication',
     ...options
 });
 
 /**
- * Explicitly select legacy registries or validated service publication and notify connected clients. Empty service publication withdraws all Relay endpoints without falling back to legacy registries.
+ * Explicitly select legacy registries or validated service publication and notify connected clients. Empty service publication withdraws all Estavelle endpoints without falling back to legacy registries.
  */
-export const setRelayPublication = <ThrowOnError extends boolean = false>(options: Options<SetRelayPublicationData, ThrowOnError>): RequestResult<SetRelayPublicationResponses, SetRelayPublicationErrors, ThrowOnError> => (options.client ?? client).put<SetRelayPublicationResponses, SetRelayPublicationErrors, ThrowOnError>({
+export const setEstavellePublication = <ThrowOnError extends boolean = false>(options: Options<SetEstavellePublicationData, ThrowOnError>): RequestResult<SetEstavellePublicationResponses, SetEstavellePublicationErrors, ThrowOnError> => (options.client ?? client).put<SetEstavellePublicationResponses, SetEstavellePublicationErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-services/publication',
+    url: '/estavelle-services/publication',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -507,30 +507,30 @@ export const setRelayPublication = <ThrowOnError extends boolean = false>(option
 /**
  * Validate the service projection and return its explicit backend associations without changing publication.
  */
-export const previewRelayPublication = <ThrowOnError extends boolean = false>(options?: Options<PreviewRelayPublicationData, ThrowOnError>): RequestResult<PreviewRelayPublicationResponses, PreviewRelayPublicationErrors, ThrowOnError> => (options?.client ?? client).post<PreviewRelayPublicationResponses, PreviewRelayPublicationErrors, ThrowOnError>({
+export const previewEstavellePublication = <ThrowOnError extends boolean = false>(options?: Options<PreviewEstavellePublicationData, ThrowOnError>): RequestResult<PreviewEstavellePublicationResponses, PreviewEstavellePublicationErrors, ThrowOnError> => (options?.client ?? client).post<PreviewEstavellePublicationResponses, PreviewEstavellePublicationErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-services/publication/preview',
+    url: '/estavelle-services/publication/preview',
     ...options
 });
 
 /**
  * Remove the association. Service publication mode withdraws endpoints no other service uses; registry records and external processes remain independently managed.
  */
-export const deleteRelayService = <ThrowOnError extends boolean = false>(options: Options<DeleteRelayServiceData, ThrowOnError>): RequestResult<DeleteRelayServiceResponses, DeleteRelayServiceErrors, ThrowOnError> => (options.client ?? client).delete<DeleteRelayServiceResponses, DeleteRelayServiceErrors, ThrowOnError>({
+export const deleteEstavelleService = <ThrowOnError extends boolean = false>(options: Options<DeleteEstavelleServiceData, ThrowOnError>): RequestResult<DeleteEstavelleServiceResponses, DeleteEstavelleServiceErrors, ThrowOnError> => (options.client ?? client).delete<DeleteEstavelleServiceResponses, DeleteEstavelleServiceErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-services/{serviceId}',
+    url: '/estavelle-services/{serviceId}',
     ...options
 });
 
-export const listRelayAdmissionTargets = <ThrowOnError extends boolean = false>(options?: Options<ListRelayAdmissionTargetsData, ThrowOnError>): RequestResult<ListRelayAdmissionTargetsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListRelayAdmissionTargetsResponses, unknown, ThrowOnError>({
+export const listEstavelleAdmissionTargets = <ThrowOnError extends boolean = false>(options?: Options<ListEstavelleAdmissionTargetsData, ThrowOnError>): RequestResult<ListEstavelleAdmissionTargetsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListEstavelleAdmissionTargetsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-services/admission-targets',
+    url: '/estavelle-services/admission-targets',
     ...options
 });
 
-export const updateRelayServiceAccess = <ThrowOnError extends boolean = false>(options: Options<UpdateRelayServiceAccessData, ThrowOnError>): RequestResult<UpdateRelayServiceAccessResponses, UpdateRelayServiceAccessErrors, ThrowOnError> => (options.client ?? client).put<UpdateRelayServiceAccessResponses, UpdateRelayServiceAccessErrors, ThrowOnError>({
+export const updateEstavelleServiceAccess = <ThrowOnError extends boolean = false>(options: Options<UpdateEstavelleServiceAccessData, ThrowOnError>): RequestResult<UpdateEstavelleServiceAccessResponses, UpdateEstavelleServiceAccessErrors, ThrowOnError> => (options.client ?? client).put<UpdateEstavelleServiceAccessResponses, UpdateEstavelleServiceAccessErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-services/{serviceId}/access',
+    url: '/estavelle-services/{serviceId}/access',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -541,9 +541,9 @@ export const updateRelayServiceAccess = <ThrowOnError extends boolean = false>(o
 /**
  * Explicitly enable or withdraw the service mode. Changes affect service publication; backend processes and registry records are retained.
  */
-export const setRelayServiceModes = <ThrowOnError extends boolean = false>(options: Options<SetRelayServiceModesData, ThrowOnError>): RequestResult<SetRelayServiceModesResponses, SetRelayServiceModesErrors, ThrowOnError> => (options.client ?? client).put<SetRelayServiceModesResponses, SetRelayServiceModesErrors, ThrowOnError>({
+export const setEstavelleServiceModes = <ThrowOnError extends boolean = false>(options: Options<SetEstavelleServiceModesData, ThrowOnError>): RequestResult<SetEstavelleServiceModesResponses, SetEstavelleServiceModesErrors, ThrowOnError> => (options.client ?? client).put<SetEstavelleServiceModesResponses, SetEstavelleServiceModesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-services/{serviceId}/modes',
+    url: '/estavelle-services/{serviceId}/modes',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -552,20 +552,20 @@ export const setRelayServiceModes = <ThrowOnError extends boolean = false>(optio
 });
 
 /**
- * ADR-0063 admin-triggered relay allocation records, in every lifecycle state.
+ * ADR-0063 admin-triggered estavelle allocation records, in every lifecycle state.
  */
-export const listRelayAllocations = <ThrowOnError extends boolean = false>(options?: Options<ListRelayAllocationsData, ThrowOnError>): RequestResult<ListRelayAllocationsResponses, ListRelayAllocationsErrors, ThrowOnError> => (options?.client ?? client).get<ListRelayAllocationsResponses, ListRelayAllocationsErrors, ThrowOnError>({
+export const listEstavelleAllocations = <ThrowOnError extends boolean = false>(options?: Options<ListEstavelleAllocationsData, ThrowOnError>): RequestResult<ListEstavelleAllocationsResponses, ListEstavelleAllocationsErrors, ThrowOnError> => (options?.client ?? client).get<ListEstavelleAllocationsResponses, ListEstavelleAllocationsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations',
+    url: '/estavelle-allocations',
     ...options
 });
 
 /**
  * Persist the request as requested, with no provider call inside the transaction. A reconciliation loop drives it forward.
  */
-export const createRelayAllocation = <ThrowOnError extends boolean = false>(options: Options<CreateRelayAllocationData, ThrowOnError>): RequestResult<CreateRelayAllocationResponses, CreateRelayAllocationErrors, ThrowOnError> => (options.client ?? client).post<CreateRelayAllocationResponses, CreateRelayAllocationErrors, ThrowOnError>({
+export const createEstavelleAllocation = <ThrowOnError extends boolean = false>(options: Options<CreateEstavelleAllocationData, ThrowOnError>): RequestResult<CreateEstavelleAllocationResponses, CreateEstavelleAllocationErrors, ThrowOnError> => (options.client ?? client).post<CreateEstavelleAllocationResponses, CreateEstavelleAllocationErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations',
+    url: '/estavelle-allocations',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -576,18 +576,18 @@ export const createRelayAllocation = <ThrowOnError extends boolean = false>(opti
 /**
  * Remove the row outright. Only legal once nothing was ever provisioned (requested) or everything was already torn down (deprovisioned); any other state must go through /deprovision first.
  */
-export const deleteRelayAllocation = <ThrowOnError extends boolean = false>(options: Options<DeleteRelayAllocationData, ThrowOnError>): RequestResult<DeleteRelayAllocationResponses, DeleteRelayAllocationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteRelayAllocationResponses, DeleteRelayAllocationErrors, ThrowOnError>({
+export const deleteEstavelleAllocation = <ThrowOnError extends boolean = false>(options: Options<DeleteEstavelleAllocationData, ThrowOnError>): RequestResult<DeleteEstavelleAllocationResponses, DeleteEstavelleAllocationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteEstavelleAllocationResponses, DeleteEstavelleAllocationErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations/{id}',
+    url: '/estavelle-allocations/{id}',
     ...options
 });
 
 /**
  * Move a ready or failed allocation into revoking -- the console's own entry point into ADR-0063's reversed teardown order.
  */
-export const deprovisionRelayAllocation = <ThrowOnError extends boolean = false>(options: Options<DeprovisionRelayAllocationData, ThrowOnError>): RequestResult<DeprovisionRelayAllocationResponses, DeprovisionRelayAllocationErrors, ThrowOnError> => (options.client ?? client).post<DeprovisionRelayAllocationResponses, DeprovisionRelayAllocationErrors, ThrowOnError>({
+export const deprovisionEstavelleAllocation = <ThrowOnError extends boolean = false>(options: Options<DeprovisionEstavelleAllocationData, ThrowOnError>): RequestResult<DeprovisionEstavelleAllocationResponses, DeprovisionEstavelleAllocationErrors, ThrowOnError> => (options.client ?? client).post<DeprovisionEstavelleAllocationResponses, DeprovisionEstavelleAllocationErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations/{id}/deprovision',
+    url: '/estavelle-allocations/{id}/deprovision',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -596,24 +596,24 @@ export const deprovisionRelayAllocation = <ThrowOnError extends boolean = false>
 });
 
 /**
- * Scaler-role only (karstAuthorization's own hard allowlist). Every allocation the reconciliation loop still has work to do on. Deprecated by ADR-0045's 2026-11-04 addendum -- relay allocation is now driven in-process by the management server itself; kept, working, for any external consumer that already built against this poll loop.
+ * Scaler-role only (karstAuthorization's own hard allowlist). Every allocation the reconciliation loop still has work to do on. Deprecated by ADR-0045's 2026-11-04 addendum -- estavelle allocation is now driven in-process by the management server itself; kept, working, for any external consumer that already built against this poll loop.
  *
  * @deprecated
  */
-export const pollPendingRelayAllocations = <ThrowOnError extends boolean = false>(options?: Options<PollPendingRelayAllocationsData, ThrowOnError>): RequestResult<PollPendingRelayAllocationsResponses, PollPendingRelayAllocationsErrors, ThrowOnError> => (options?.client ?? client).post<PollPendingRelayAllocationsResponses, PollPendingRelayAllocationsErrors, ThrowOnError>({
+export const pollPendingEstavelleAllocations = <ThrowOnError extends boolean = false>(options?: Options<PollPendingEstavelleAllocationsData, ThrowOnError>): RequestResult<PollPendingEstavelleAllocationsResponses, PollPendingEstavelleAllocationsErrors, ThrowOnError> => (options?.client ?? client).post<PollPendingEstavelleAllocationsResponses, PollPendingEstavelleAllocationsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations/pending',
+    url: '/estavelle-allocations/pending',
     ...options
 });
 
 /**
- * Scaler-role only. Records a Driver::create result -- bookkeeping only, no grant call. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+ * Scaler-role only. Records a Driver::create result -- bookkeeping only, no grant call. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
  *
  * @deprecated
  */
-export const recordRelayAllocationProvisioning = <ThrowOnError extends boolean = false>(options: Options<RecordRelayAllocationProvisioningData, ThrowOnError>): RequestResult<RecordRelayAllocationProvisioningResponses, RecordRelayAllocationProvisioningErrors, ThrowOnError> => (options.client ?? client).post<RecordRelayAllocationProvisioningResponses, RecordRelayAllocationProvisioningErrors, ThrowOnError>({
+export const recordEstavelleAllocationProvisioning = <ThrowOnError extends boolean = false>(options: Options<RecordEstavelleAllocationProvisioningData, ThrowOnError>): RequestResult<RecordEstavelleAllocationProvisioningResponses, RecordEstavelleAllocationProvisioningErrors, ThrowOnError> => (options.client ?? client).post<RecordEstavelleAllocationProvisioningResponses, RecordEstavelleAllocationProvisioningErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations/{id}/provisioning',
+    url: '/estavelle-allocations/{id}/provisioning',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -622,13 +622,13 @@ export const recordRelayAllocationProvisioning = <ThrowOnError extends boolean =
 });
 
 /**
- * Scaler-role only. Looks up the now-registered relay by tls_server_name and calls relayservice.Create in-process. 404 specifically means not registered yet -- keep polling. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+ * Scaler-role only. Looks up the now-registered estavelle by tls_server_name and calls estavelleservice.Create in-process. 404 specifically means not registered yet -- keep polling. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
  *
  * @deprecated
  */
-export const grantRelayAllocation = <ThrowOnError extends boolean = false>(options: Options<GrantRelayAllocationData, ThrowOnError>): RequestResult<GrantRelayAllocationResponses, GrantRelayAllocationErrors, ThrowOnError> => (options.client ?? client).post<GrantRelayAllocationResponses, GrantRelayAllocationErrors, ThrowOnError>({
+export const grantEstavelleAllocation = <ThrowOnError extends boolean = false>(options: Options<GrantEstavelleAllocationData, ThrowOnError>): RequestResult<GrantEstavelleAllocationResponses, GrantEstavelleAllocationErrors, ThrowOnError> => (options.client ?? client).post<GrantEstavelleAllocationResponses, GrantEstavelleAllocationErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations/{id}/grant',
+    url: '/estavelle-allocations/{id}/grant',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -637,13 +637,13 @@ export const grantRelayAllocation = <ThrowOnError extends boolean = false>(optio
 });
 
 /**
- * Scaler-role only. Withdraws the grant via relayservice.Delete in-process before compute teardown begins -- ADR-0063's reversed order. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+ * Scaler-role only. Withdraws the grant via estavelleservice.Delete in-process before compute teardown begins -- ADR-0063's reversed order. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
  *
  * @deprecated
  */
-export const revokeRelayAllocation = <ThrowOnError extends boolean = false>(options: Options<RevokeRelayAllocationData, ThrowOnError>): RequestResult<RevokeRelayAllocationResponses, RevokeRelayAllocationErrors, ThrowOnError> => (options.client ?? client).post<RevokeRelayAllocationResponses, RevokeRelayAllocationErrors, ThrowOnError>({
+export const revokeEstavelleAllocation = <ThrowOnError extends boolean = false>(options: Options<RevokeEstavelleAllocationData, ThrowOnError>): RequestResult<RevokeEstavelleAllocationResponses, RevokeEstavelleAllocationErrors, ThrowOnError> => (options.client ?? client).post<RevokeEstavelleAllocationResponses, RevokeEstavelleAllocationErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations/{id}/revoke',
+    url: '/estavelle-allocations/{id}/revoke',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -652,13 +652,13 @@ export const revokeRelayAllocation = <ThrowOnError extends boolean = false>(opti
 });
 
 /**
- * Scaler-role only. Records that Driver::drain/destroy already completed -- bookkeeping only. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+ * Scaler-role only. Records that Driver::drain/destroy already completed -- bookkeeping only. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
  *
  * @deprecated
  */
-export const confirmRelayAllocationDeprovisioned = <ThrowOnError extends boolean = false>(options: Options<ConfirmRelayAllocationDeprovisionedData, ThrowOnError>): RequestResult<ConfirmRelayAllocationDeprovisionedResponses, ConfirmRelayAllocationDeprovisionedErrors, ThrowOnError> => (options.client ?? client).post<ConfirmRelayAllocationDeprovisionedResponses, ConfirmRelayAllocationDeprovisionedErrors, ThrowOnError>({
+export const confirmEstavelleAllocationDeprovisioned = <ThrowOnError extends boolean = false>(options: Options<ConfirmEstavelleAllocationDeprovisionedData, ThrowOnError>): RequestResult<ConfirmEstavelleAllocationDeprovisionedResponses, ConfirmEstavelleAllocationDeprovisionedErrors, ThrowOnError> => (options.client ?? client).post<ConfirmEstavelleAllocationDeprovisionedResponses, ConfirmEstavelleAllocationDeprovisionedErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations/{id}/deprovisioned',
+    url: '/estavelle-allocations/{id}/deprovisioned',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -667,13 +667,13 @@ export const confirmRelayAllocationDeprovisioned = <ThrowOnError extends boolean
 });
 
 /**
- * Scaler-role only. Reports failure of whichever step the allocation was on; the "from" state is read from the row itself, not accepted from the caller. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+ * Scaler-role only. Reports failure of whichever step the allocation was on; the "from" state is read from the row itself, not accepted from the caller. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
  *
  * @deprecated
  */
-export const reportRelayAllocationFailed = <ThrowOnError extends boolean = false>(options: Options<ReportRelayAllocationFailedData, ThrowOnError>): RequestResult<ReportRelayAllocationFailedResponses, ReportRelayAllocationFailedErrors, ThrowOnError> => (options.client ?? client).post<ReportRelayAllocationFailedResponses, ReportRelayAllocationFailedErrors, ThrowOnError>({
+export const reportEstavelleAllocationFailed = <ThrowOnError extends boolean = false>(options: Options<ReportEstavelleAllocationFailedData, ThrowOnError>): RequestResult<ReportEstavelleAllocationFailedResponses, ReportEstavelleAllocationFailedErrors, ThrowOnError> => (options.client ?? client).post<ReportEstavelleAllocationFailedResponses, ReportEstavelleAllocationFailedErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relay-allocations/{id}/failed',
+    url: '/estavelle-allocations/{id}/failed',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -773,15 +773,15 @@ export const rollBackRollout = <ThrowOnError extends boolean = false>(options: O
     }
 });
 
-export const listRelays = <ThrowOnError extends boolean = false>(options?: Options<ListRelaysData, ThrowOnError>): RequestResult<ListRelaysResponses, ListRelaysErrors, ThrowOnError> => (options?.client ?? client).get<ListRelaysResponses, ListRelaysErrors, ThrowOnError>({
+export const listEstavelles = <ThrowOnError extends boolean = false>(options?: Options<ListEstavellesData, ThrowOnError>): RequestResult<ListEstavellesResponses, ListEstavellesErrors, ThrowOnError> => (options?.client ?? client).get<ListEstavellesResponses, ListEstavellesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relays',
+    url: '/estavelles',
     ...options
 });
 
-export const createRelay = <ThrowOnError extends boolean = false>(options: Options<CreateRelayData, ThrowOnError>): RequestResult<CreateRelayResponses, CreateRelayErrors, ThrowOnError> => (options.client ?? client).post<CreateRelayResponses, CreateRelayErrors, ThrowOnError>({
+export const createEstavelle = <ThrowOnError extends boolean = false>(options: Options<CreateEstavelleData, ThrowOnError>): RequestResult<CreateEstavelleResponses, CreateEstavelleErrors, ThrowOnError> => (options.client ?? client).post<CreateEstavelleResponses, CreateEstavelleErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relays',
+    url: '/estavelles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -789,15 +789,15 @@ export const createRelay = <ThrowOnError extends boolean = false>(options: Optio
     }
 });
 
-export const deleteRelay = <ThrowOnError extends boolean = false>(options: Options<DeleteRelayData, ThrowOnError>): RequestResult<DeleteRelayResponses, DeleteRelayErrors, ThrowOnError> => (options.client ?? client).delete<DeleteRelayResponses, DeleteRelayErrors, ThrowOnError>({
+export const deleteEstavelle = <ThrowOnError extends boolean = false>(options: Options<DeleteEstavelleData, ThrowOnError>): RequestResult<DeleteEstavelleResponses, DeleteEstavelleErrors, ThrowOnError> => (options.client ?? client).delete<DeleteEstavelleResponses, DeleteEstavelleErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relays/{relayId}',
+    url: '/estavelles/{estavelleId}',
     ...options
 });
 
-export const getRelayHealth = <ThrowOnError extends boolean = false>(options: Options<GetRelayHealthData, ThrowOnError>): RequestResult<GetRelayHealthResponses, GetRelayHealthErrors, ThrowOnError> => (options.client ?? client).get<GetRelayHealthResponses, GetRelayHealthErrors, ThrowOnError>({
+export const getEstavelleHealth = <ThrowOnError extends boolean = false>(options: Options<GetEstavelleHealthData, ThrowOnError>): RequestResult<GetEstavelleHealthResponses, GetEstavelleHealthErrors, ThrowOnError> => (options.client ?? client).get<GetEstavelleHealthResponses, GetEstavelleHealthErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/relays/{relayId}/health',
+    url: '/estavelles/{estavelleId}/health',
     ...options
 });
 
@@ -881,11 +881,11 @@ export const setBedrockLocation = <ThrowOnError extends boolean = false>(options
 });
 
 /**
- * The NOC map's marker-click drill-down for one relay. Audit-logged as karst.noc.drilldown.
+ * The NOC map's marker-click drill-down for one estavelle. Audit-logged as karst.noc.drilldown.
  */
-export const nocRelay = <ThrowOnError extends boolean = false>(options: Options<NocRelayData, ThrowOnError>): RequestResult<NocRelayResponses, NocRelayErrors, ThrowOnError> => (options.client ?? client).get<NocRelayResponses, NocRelayErrors, ThrowOnError>({
+export const nocEstavelle = <ThrowOnError extends boolean = false>(options: Options<NocEstavelleData, ThrowOnError>): RequestResult<NocEstavelleResponses, NocEstavelleErrors, ThrowOnError> => (options.client ?? client).get<NocEstavelleResponses, NocEstavelleErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/noc/relays/{relayId}',
+    url: '/noc/estavelles/{estavelleId}',
     ...options
 });
 

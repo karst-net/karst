@@ -13,21 +13,21 @@ servers:
 security:
   - bearerAuth: []
 paths:
-  /gateways:
+  /avens:
     get:
-      operationId: gatewayInventory
-      description: Account-scoped configured Gateway capabilities resolved through visible route, group and administrative peer records. Control connectivity does not establish forwarding readiness. No consent or route writes.
+      operationId: avenInventory
+      description: Account-scoped configured Aven capabilities resolved through visible route, group and administrative peer records. Control connectivity does not establish forwarding readiness. No consent or route writes.
       responses:
         '200':
           description: Unified subnet and default-route offers per enrolled node
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GatewayInventory'
+                $ref: '#/components/schemas/AvenInventory'
         '403':
           description: Caller lacks source permissions
         '412':
-          description: Gateway inventory sources unavailable
+          description: Aven inventory sources unavailable
   /versions:
     get:
       operationId: softwareVersions
@@ -176,12 +176,12 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/DeviceUsageReport'}
         default: {$ref: '#/components/responses/Error'}
-  /usage/relays:
+  /usage/estavelles:
     get:
-      operationId: getRelayUsage
+      operationId: getEstavelleUsage
       tags: [usage]
       description: |
-        Account-owner/admin report of received relay usage batches. Account
+        Account-owner/admin report of received estavelle usage batches. Account
         scope comes from authenticated authorization; every read is audited.
         Request a past, nonempty interval of at most 93 days aligned to whole
         minutes. This is not an invoice. Completeness compares received windows
@@ -192,19 +192,19 @@ paths:
         - {name: end, in: query, required: true, schema: {type: string, format: date-time}}
       responses:
         '200':
-          description: Received relay usage snapshot with explicit coverage limitations
+          description: Received estavelle usage snapshot with explicit coverage limitations
           headers:
             Cache-Control: {schema: {type: string}, description: no-store}
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/RelayUsageReport'}
+              schema: {$ref: '#/components/schemas/EstavelleUsageReport'}
         default: {$ref: '#/components/responses/Error'}
-  /usage/relay-alerts:
+  /usage/estavelle-alerts:
     get:
-      operationId: getRelayBillingAlerts
+      operationId: getEstavelleBillingAlerts
       tags: [usage]
       description: |
-        Account-owner/admin in-app relay usage alert feed. The current period is
+        Account-owner/admin in-app estavelle usage alert feed. The current period is
         reevaluated when read; newly crossed 75%, 90%, and 100% thresholds are
         persisted once per period. Account scope comes from authenticated
         authorization and every read is audited. An incomplete report includes
@@ -218,51 +218,51 @@ paths:
             Cache-Control: {schema: {type: string}, description: no-store}
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/RelayAlertFeed'}
+              schema: {$ref: '#/components/schemas/EstavelleAlertFeed'}
         default: {$ref: '#/components/responses/Error'}
-  /billing/relay-cap:
+  /billing/estavelle-cap:
     get:
-      operationId: getRelaySpendingCap
+      operationId: getEstavelleSpendingCap
       tags: [billing]
-      description: Account-owner/admin view of the optional organization-wide managed relay cap for one UTC calendar month. Every read is audited. An unset cap is returned as enabled=false.
+      description: Account-owner/admin view of the optional organization-wide managed estavelle cap for one UTC calendar month. Every read is audited. An unset cap is returned as enabled=false.
       parameters:
         - {name: period, in: query, required: true, schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}}
       responses:
-        '200': {description: Current cap setting, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCap'}}}}
+        '200': {description: Current cap setting, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleCap'}}}}
         default: {$ref: '#/components/responses/Error'}
     put:
-      operationId: setRelaySpendingCap
+      operationId: setEstavelleSpendingCap
       tags: [billing]
-      description: Set the monthly USD managed-relay overage limit. Requires acknowledging that capped relay forwarding can pause at the limit. Only current and future assigned months are accepted. Decreases require all issued relay grants to be surrendered and consumed usage to fit below the new limit. Relays surrender unused credits during clean shutdown; credits from an uncleanly stopped or unreachable relay remain reserved for the period. Increases remain available.
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCapDraft'}}}}
+      description: Set the monthly USD managed-estavelle overage limit. Requires acknowledging that capped estavelle forwarding can pause at the limit. Only current and future assigned months are accepted. Decreases require all issued estavelle grants to be surrendered and consumed usage to fit below the new limit. Estavelles surrender unused credits during clean shutdown; credits from an uncleanly stopped or unreachable estavelle remain reserved for the period. Increases remain available.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleCapDraft'}}}}
       responses:
-        '200': {description: Saved cap setting, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCap'}}}}
+        '200': {description: Saved cap setting, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleCap'}}}}
         default: {$ref: '#/components/responses/Error'}
-  /billing/relay-credits:
+  /billing/estavelle-credits:
     post:
-      operationId: requestRelayCredits
+      operationId: requestEstavelleCredits
       tags: [billing]
       security: []
-      description: Relay-only signed ML-DSA request. The control plane resolves account ownership from the currently enabled producer and exact allowed mapping; relay-supplied account identifiers are never trusted. When no cap is configured, returns a short uncapped lease. This endpoint is independent of packet forwarding.
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCreditRequest'}}}}
+      description: Estavelle-only signed ML-DSA request. The control plane resolves account ownership from the currently enabled producer and exact allowed mapping; estavelle-supplied account identifiers are never trusted. When no cap is configured, returns a short uncapped lease. This endpoint is independent of packet forwarding.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleCreditRequest'}}}}
       responses:
-        '200': {description: Account-wide reservation, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCreditGrant'}}}}
-        '204': {description: Short uncapped lease, headers: {X-Karst-Relay-Cap-Mode: {schema: {type: string, enum: [uncapped]}}, X-Karst-Relay-Cap-Lease-Millis: {schema: {type: integer, minimum: 1}}}}
+        '200': {description: Account-wide reservation, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleCreditGrant'}}}}
+        '204': {description: Short uncapped lease, headers: {X-Karst-Estavelle-Cap-Mode: {schema: {type: string, enum: [uncapped]}}, X-Karst-Estavelle-Cap-Lease-Millis: {schema: {type: integer, minimum: 1}}}}
         '425': {description: Cap activation is waiting for existing uncapped leases}
-        '429': {description: Account-wide relay byte budget is exhausted}
+        '429': {description: Account-wide estavelle byte budget is exhausted}
         default: {$ref: '#/components/responses/Error'}
-  /billing/relay-credits/{grant_id}/surrender:
+  /billing/estavelle-credits/{grant_id}/surrender:
     parameters:
       - {name: grant_id, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{32}$'}}
     post:
-      operationId: surrenderRelayCredits
+      operationId: surrenderEstavelleCredits
       tags: [billing]
       security: []
-      description: Relay-only signed final report after the local forwarding gate has stopped spending this grant. Consumed bytes include every payload reserved before queueing a destination write, including ambiguous writes. Identical retries are idempotent; a different consumed count conflicts. A crashed relay does not surrender grants, so their full reservation remains until period end.
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCreditSurrender'}}}}
+      description: Estavelle-only signed final report after the local forwarding gate has stopped spending this grant. Consumed bytes include every payload reserved before queueing a destination write, including ambiguous writes. Identical retries are idempotent; a different consumed count conflicts. A crashed estavelle does not surrender grants, so their full reservation remains until period end.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleCreditSurrender'}}}}
       responses:
         '204': {description: Grant surrendered; only unused bytes are released}
-        '404': {description: Grant is unknown or does not belong to this relay generation}
+        '404': {description: Grant is unknown or does not belong to this estavelle generation}
         '409': {description: Surrender conflicts with the previously accepted final report}
   /billing/payments:
     get:
@@ -576,34 +576,34 @@ paths:
       responses:
         '200': {description: Compliance draft test results, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyTestResult'}}}}
         default: {$ref: '#/components/responses/Error'}
-  /relay-services:
+  /estavelle-services:
     get:
-      operationId: listRelayServices
-      tags: [relays]
+      operationId: listEstavelleServices
+      tags: [estavelles]
       description: Explicit account-scoped Ponor associations. Presence means registry availability, not runtime health.
       responses:
-        '200': {description: Relay services, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayServiceView'}}}}}
+        '200': {description: Estavelle services, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/EstavelleServiceView'}}}}}
         default: {$ref: '#/components/responses/Error'}
     post:
-      operationId: createRelayService
-      tags: [relays]
+      operationId: createEstavelleService
+      tags: [estavelles]
       description: Associate existing account-local registry records. Service publication mode updates client endpoints; credentials and backend processes remain separate.
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleService'}}}}
       responses:
-        '201': {description: Association created, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
+        '201': {description: Association created, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleService'}}}}
         '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
-  /relay-services/publication:
+  /estavelle-services/publication:
     get:
-      operationId: getRelayPublication
-      tags: [relays]
+      operationId: getEstavellePublication
+      tags: [estavelles]
       responses:
-        '200': {description: Active publication authority, content: {application/json: {schema: {$ref: '#/components/schemas/RelayPublication'}}}}
+        '200': {description: Active publication authority, content: {application/json: {schema: {$ref: '#/components/schemas/EstavellePublication'}}}}
         default: {$ref: '#/components/responses/Error'}
     put:
-      operationId: setRelayPublication
-      tags: [relays]
-      description: Explicitly select legacy registries or validated service publication and notify connected clients. Empty service publication withdraws all Relay endpoints without falling back to legacy registries.
+      operationId: setEstavellePublication
+      tags: [estavelles]
+      description: Explicitly select legacy registries or validated service publication and notify connected clients. Empty service publication withdraws all Estavelle endpoints without falling back to legacy registries.
       requestBody:
         required: true
         content:
@@ -616,29 +616,29 @@ paths:
                 mode: {type: string, enum: [legacy, services]}
                 acknowledge_connectivity_change: {type: boolean, enum: [true]}
       responses:
-        '200': {description: Publication authority changed, content: {application/json: {schema: {$ref: '#/components/schemas/RelayPublication'}}}}
+        '200': {description: Publication authority changed, content: {application/json: {schema: {$ref: '#/components/schemas/EstavellePublication'}}}}
         default: {$ref: '#/components/responses/Error'}
-  /relay-services/publication/preview:
+  /estavelle-services/publication/preview:
     post:
-      operationId: previewRelayPublication
-      tags: [relays]
+      operationId: previewEstavellePublication
+      tags: [estavelles]
       description: Validate the service projection and return its explicit backend associations without changing publication.
       responses:
-        '200': {description: Validated service projection, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayService'}}}}}
+        '200': {description: Validated service projection, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/EstavelleService'}}}}}
         default: {$ref: '#/components/responses/Error'}
-  /relay-services/{serviceId}:
+  /estavelle-services/{serviceId}:
     parameters:
       - {name: serviceId, in: path, required: true, schema: {type: string}}
     delete:
-      operationId: deleteRelayService
-      tags: [relays]
+      operationId: deleteEstavelleService
+      tags: [estavelles]
       description: Remove the association. Service publication mode withdraws endpoints no other service uses; registry records and external processes remain independently managed.
       responses:
         '204': {description: Association removed}
         default: {$ref: '#/components/responses/Error'}
-  /relay-services/admission-targets:
+  /estavelle-services/admission-targets:
     get:
-      operationId: listRelayAdmissionTargets
+      operationId: listEstavelleAdmissionTargets
       responses:
         '200':
           description: Registered backends with a live identity-bound admission writer.
@@ -652,11 +652,11 @@ paths:
                   properties:
                     relay_id: {type: string}
                     refreshed_at: {type: string, format: date-time}
-  /relay-services/{serviceId}/access:
+  /estavelle-services/{serviceId}/access:
     parameters:
       - {name: serviceId, in: path, required: true, schema: {type: string}}
     put:
-      operationId: updateRelayServiceAccess
+      operationId: updateEstavelleServiceAccess
       requestBody:
         required: true
         content:
@@ -681,15 +681,15 @@ paths:
           description: Access and optional exit configuration committed atomically.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/RelayService'}
+              schema: {$ref: '#/components/schemas/EstavelleService'}
         '409': {description: Service revision changed; reload before reapplying edits.}
-        '422': {description: Invalid group, Gateway identity, or missing live admission capability.}
-  /relay-services/{serviceId}/modes:
+        '422': {description: Invalid group, Aven identity, or missing live admission capability.}
+  /estavelle-services/{serviceId}/modes:
     parameters:
       - {name: serviceId, in: path, required: true, schema: {type: string}}
     put:
-      operationId: setRelayServiceModes
-      tags: [relays]
+      operationId: setEstavelleServiceModes
+      tags: [estavelles]
       description: Explicitly enable or withdraw the service mode. Changes affect service publication; backend processes and registry records are retained.
       requestBody:
         required: true
@@ -703,43 +703,43 @@ paths:
                 ponor_enabled: {type: boolean}
                 acknowledge_connectivity_change: {type: boolean, enum: [true]}
       responses:
-        '200': {description: Updated mode configuration, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
+        '200': {description: Updated mode configuration, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleService'}}}}
         default: {$ref: '#/components/responses/Error'}
-  /relay-allocations:
+  /estavelle-allocations:
     get:
-      operationId: listRelayAllocations
-      tags: [relays]
-      description: ADR-0063 admin-triggered relay allocation records, in every lifecycle state.
+      operationId: listEstavelleAllocations
+      tags: [estavelles]
+      description: ADR-0063 admin-triggered estavelle allocation records, in every lifecycle state.
       responses:
-        '200': {description: Relay allocations, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayAllocation'}}}}}
+        '200': {description: Estavelle allocations, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/EstavelleAllocation'}}}}}
         default: {$ref: '#/components/responses/Error'}
     post:
-      operationId: createRelayAllocation
-      tags: [relays]
+      operationId: createEstavelleAllocation
+      tags: [estavelles]
       description: Persist the request as requested, with no provider call inside the transaction. A reconciliation loop drives it forward.
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleAllocation'}}}}
       responses:
-        '201': {description: Allocation requested, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        '201': {description: Allocation requested, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleAllocation'}}}}
         '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
-  /relay-allocations/{id}:
+  /estavelle-allocations/{id}:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
       - {name: revision, in: query, required: true, schema: {type: integer, minimum: 0}}
     delete:
-      operationId: deleteRelayAllocation
-      tags: [relays]
+      operationId: deleteEstavelleAllocation
+      tags: [estavelles]
       description: Remove the row outright. Only legal once nothing was ever provisioned (requested) or everything was already torn down (deprovisioned); any other state must go through /deprovision first.
       responses:
         '204': {description: Allocation removed}
         '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
-  /relay-allocations/{id}/deprovision:
+  /estavelle-allocations/{id}/deprovision:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
     post:
-      operationId: deprovisionRelayAllocation
-      tags: [relays]
+      operationId: deprovisionEstavelleAllocation
+      tags: [estavelles]
       description: Move a ready or failed allocation into revoking -- the console's own entry point into ADR-0063's reversed teardown order.
       requestBody:
         required: true
@@ -753,26 +753,26 @@ paths:
                 revision: {type: integer, minimum: 0}
                 acknowledge_deprovision: {type: boolean, enum: [true]}
       responses:
-        '200': {description: Deprovision requested, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        '200': {description: Deprovision requested, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleAllocation'}}}}
         '409': {description: Allocation revision changed, or it is still in progress.}
         default: {$ref: '#/components/responses/Error'}
-  /relay-allocations/pending:
+  /estavelle-allocations/pending:
     post:
-      operationId: pollPendingRelayAllocations
-      tags: [relays]
+      operationId: pollPendingEstavelleAllocations
+      tags: [estavelles]
       deprecated: true
-      description: Scaler-role only (karstAuthorization's own hard allowlist). Every allocation the reconciliation loop still has work to do on. Deprecated by ADR-0045's 2026-11-04 addendum -- relay allocation is now driven in-process by the management server itself; kept, working, for any external consumer that already built against this poll loop.
+      description: Scaler-role only (karstAuthorization's own hard allowlist). Every allocation the reconciliation loop still has work to do on. Deprecated by ADR-0045's 2026-11-04 addendum -- estavelle allocation is now driven in-process by the management server itself; kept, working, for any external consumer that already built against this poll loop.
       responses:
-        '200': {description: Pending allocations, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayAllocation'}}}}}
+        '200': {description: Pending allocations, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/EstavelleAllocation'}}}}}
         default: {$ref: '#/components/responses/Error'}
-  /relay-allocations/{id}/provisioning:
+  /estavelle-allocations/{id}/provisioning:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
     post:
-      operationId: recordRelayAllocationProvisioning
-      tags: [relays]
+      operationId: recordEstavelleAllocationProvisioning
+      tags: [estavelles]
       deprecated: true
-      description: Scaler-role only. Records a Driver::create result -- bookkeeping only, no grant call. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+      description: Scaler-role only. Records a Driver::create result -- bookkeeping only, no grant call. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
       requestBody:
         required: true
         content:
@@ -785,16 +785,16 @@ paths:
                 expected_revision: {type: integer, minimum: 0}
                 instance_id: {type: string, minLength: 1}
       responses:
-        '200': {description: Provisioning recorded, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        '200': {description: Provisioning recorded, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleAllocation'}}}}
         default: {$ref: '#/components/responses/Error'}
-  /relay-allocations/{id}/grant:
+  /estavelle-allocations/{id}/grant:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
     post:
-      operationId: grantRelayAllocation
-      tags: [relays]
+      operationId: grantEstavelleAllocation
+      tags: [estavelles]
       deprecated: true
-      description: Scaler-role only. Looks up the now-registered relay by tls_server_name and calls relayservice.Create in-process. 404 specifically means not registered yet -- keep polling. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+      description: Scaler-role only. Looks up the now-registered estavelle by tls_server_name and calls estavelleservice.Create in-process. 404 specifically means not registered yet -- keep polling. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
       requestBody:
         required: true
         content:
@@ -807,49 +807,49 @@ paths:
                 expected_revision: {type: integer, minimum: 0}
                 tls_server_name: {type: string, minLength: 1}
       responses:
-        '200': {description: Granted (or already ready/granting -- idempotent retry), content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
-        '404': {description: Relay has not registered yet; retry later.}
+        '200': {description: Granted (or already ready/granting -- idempotent retry), content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleAllocation'}}}}
+        '404': {description: Estavelle has not registered yet; retry later.}
         default: {$ref: '#/components/responses/Error'}
-  /relay-allocations/{id}/revoke:
+  /estavelle-allocations/{id}/revoke:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
     post:
-      operationId: revokeRelayAllocation
-      tags: [relays]
+      operationId: revokeEstavelleAllocation
+      tags: [estavelles]
       deprecated: true
-      description: Scaler-role only. Withdraws the grant via relayservice.Delete in-process before compute teardown begins -- ADR-0063's reversed order. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+      description: Scaler-role only. Withdraws the grant via estavelleservice.Delete in-process before compute teardown begins -- ADR-0063's reversed order. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
       requestBody:
         required: true
         content:
           application/json:
             schema: {type: object, additionalProperties: false, required: [expected_revision], properties: {expected_revision: {type: integer, minimum: 0}}}
       responses:
-        '200': {description: Revoked (or already deprovisioning/deprovisioned -- idempotent retry), content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        '200': {description: Revoked (or already deprovisioning/deprovisioned -- idempotent retry), content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleAllocation'}}}}
         default: {$ref: '#/components/responses/Error'}
-  /relay-allocations/{id}/deprovisioned:
+  /estavelle-allocations/{id}/deprovisioned:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
     post:
-      operationId: confirmRelayAllocationDeprovisioned
-      tags: [relays]
+      operationId: confirmEstavelleAllocationDeprovisioned
+      tags: [estavelles]
       deprecated: true
-      description: Scaler-role only. Records that Driver::drain/destroy already completed -- bookkeeping only. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+      description: Scaler-role only. Records that Driver::drain/destroy already completed -- bookkeeping only. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
       requestBody:
         required: true
         content:
           application/json:
             schema: {type: object, additionalProperties: false, required: [expected_revision], properties: {expected_revision: {type: integer, minimum: 0}}}
       responses:
-        '200': {description: Deprovisioned, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        '200': {description: Deprovisioned, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleAllocation'}}}}
         default: {$ref: '#/components/responses/Error'}
-  /relay-allocations/{id}/failed:
+  /estavelle-allocations/{id}/failed:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
     post:
-      operationId: reportRelayAllocationFailed
-      tags: [relays]
+      operationId: reportEstavelleAllocationFailed
+      tags: [estavelles]
       deprecated: true
-      description: Scaler-role only. Reports failure of whichever step the allocation was on; the "from" state is read from the row itself, not accepted from the caller. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingRelayAllocations.
+      description: Scaler-role only. Reports failure of whichever step the allocation was on; the "from" state is read from the row itself, not accepted from the caller. Deprecated by ADR-0045's 2026-11-04 addendum -- see pollPendingEstavelleAllocations.
       requestBody:
         required: true
         content:
@@ -862,7 +862,7 @@ paths:
                 expected_revision: {type: integer, minimum: 0}
                 reason: {type: string, minLength: 1}
       responses:
-        '200': {description: Failure recorded, content: {application/json: {schema: {$ref: '#/components/schemas/RelayAllocation'}}}}
+        '200': {description: Failure recorded, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleAllocation'}}}}
         default: {$ref: '#/components/responses/Error'}
   /rollouts:
     get:
@@ -999,36 +999,36 @@ paths:
         '200': {description: Rolled back, content: {application/json: {schema: {$ref: '#/components/schemas/RolloutPlan'}}}}
         '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
-  /relays:
+  /estavelles:
     get:
-      operationId: listRelays
-      tags: [relays]
+      operationId: listEstavelles
+      tags: [estavelles]
       responses:
-        '200': {description: Relay registry, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Relay'}}}}}
+        '200': {description: Estavelle registry, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Estavelle'}}}}}
         default: {$ref: '#/components/responses/Error'}
     post:
-      operationId: createRelay
-      tags: [relays]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCreate'}}}}
+      operationId: createEstavelle
+      tags: [estavelles]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleCreate'}}}}
       responses:
-        '201': {description: Onboarded relay, content: {application/json: {schema: {$ref: '#/components/schemas/Relay'}}}}
+        '201': {description: Onboarded estavelle, content: {application/json: {schema: {$ref: '#/components/schemas/Estavelle'}}}}
         '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
-  /relays/{relayId}:
-    parameters: [{$ref: '#/components/parameters/relayId'}]
+  /estavelles/{estavelleId}:
+    parameters: [{$ref: '#/components/parameters/estavelleId'}]
     delete:
-      operationId: deleteRelay
-      tags: [relays]
+      operationId: deleteEstavelle
+      tags: [estavelles]
       responses:
-        '204': {description: Relay removed}
+        '204': {description: Estavelle removed}
         default: {$ref: '#/components/responses/Error'}
-  /relays/{relayId}/health:
-    parameters: [{$ref: '#/components/parameters/relayId'}]
+  /estavelles/{estavelleId}/health:
+    parameters: [{$ref: '#/components/parameters/estavelleId'}]
     get:
-      operationId: getRelayHealth
-      tags: [relays]
+      operationId: getEstavelleHealth
+      tags: [estavelles]
       responses:
-        '200': {description: Relay health derived from the roster, content: {application/json: {schema: {$ref: '#/components/schemas/RelayHealth'}}}}
+        '200': {description: Estavelle health derived from the roster, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleHealth'}}}}
         default: {$ref: '#/components/responses/Error'}
   /noc/components:
     get:
@@ -1095,34 +1095,34 @@ paths:
       operationId: getControlPlaneLocation
       tags: [noc]
       responses:
-        '200': {description: Declared control-plane location, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+        '200': {description: Declared control-plane location, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleLocation'}}}}
         '204': {description: No location declared yet}
         default: {$ref: '#/components/responses/Error'}
     put:
       operationId: setControlPlaneLocation
       tags: [noc]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleLocation'}}}}
       responses:
-        '200': {description: Declared control-plane location, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+        '200': {description: Declared control-plane location, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleLocation'}}}}
         '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
   /bedrock/location:
     put:
       operationId: setBedrockLocation
       tags: [noc, bedrock]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleLocation'}}}}
       responses:
-        '200': {description: Declared Bedrock location, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+        '200': {description: Declared Bedrock location, content: {application/json: {schema: {$ref: '#/components/schemas/EstavelleLocation'}}}}
         '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
-  /noc/relays/{relayId}:
-    parameters: [{$ref: '#/components/parameters/relayId'}]
+  /noc/estavelles/{estavelleId}:
+    parameters: [{$ref: '#/components/parameters/estavelleId'}]
     get:
-      operationId: nocRelay
+      operationId: nocEstavelle
       tags: [noc]
-      description: The NOC map's marker-click drill-down for one relay. Audit-logged as karst.noc.drilldown.
+      description: The NOC map's marker-click drill-down for one estavelle. Audit-logged as karst.noc.drilldown.
       responses:
-        '200': {description: One relay, content: {application/json: {schema: {$ref: '#/components/schemas/Relay'}}}}
+        '200': {description: One estavelle, content: {application/json: {schema: {$ref: '#/components/schemas/Estavelle'}}}}
         default: {$ref: '#/components/responses/Error'}
   /demand/regions:
     get:
@@ -1577,7 +1577,7 @@ components:
     bearerAuth: {type: http, scheme: bearer}
   parameters:
     handle: {name: handle, in: path, required: true, schema: {type: string, minLength: 44, maxLength: 44}}
-    relayId: {name: relayId, in: path, required: true, schema: {type: string, readOnly: true}}
+    estavelleId: {name: estavelleId, in: path, required: true, schema: {type: string, readOnly: true}}
     sinkId: {name: sinkId, in: path, required: true, schema: {type: string, readOnly: true}}
     version: {name: version, in: path, required: true, schema: {type: integer, minimum: 1}}
     cursor: {name: cursor, in: query, schema: {type: string}}
@@ -1597,7 +1597,7 @@ components:
     VersionConflict: {description: The supplied policy version is no longer current, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     AcknowledgmentMismatch: {description: Enforcing acknowledgment does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgmentMismatch'}}}}
   schemas:
-    GatewayOffer:
+    AvenOffer:
       type: object
       required: [id, network_id, prefix, kind, enabled, masquerade, metric, requires_client_consent, forwarding_readiness, egress_drift]
       properties:
@@ -1609,11 +1609,11 @@ components:
         masquerade: { type: boolean }
         metric: { type: integer }
         requires_client_consent: { type: boolean }
-        forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone. }
+        forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: Self-reported by this offer's aven over the authenticated control channel; never inferred from connectivity or traffic alone. }
         pinned_egress_ip: { type: string, description: "ADR-0068's operator-declared address for this candidate, if any. Absent for an ordinary, unpinned offer." }
         observed_egress_ip: { type: string, description: "Issue #554: this candidate's own self-reported outbound address toward the route. Absent when the route has no pinned_egress_ip or no report has arrived yet." }
         egress_drift: { type: boolean, description: "True only on a confident, comparable mismatch between pinned_egress_ip and observed_egress_ip. False covers both \"confirmed matching\" and \"not enough information yet\" -- it is never a confirmation by itself." }
-    GatewayNode:
+    AvenNode:
       type: object
       required: [node_id, name, control_connected, forwarding_readiness, offers]
       properties:
@@ -1626,22 +1626,22 @@ components:
         forwarding_readiness: { type: string, enum: [unreported, ready, degraded], description: "Aggregated across this node's own offers, degraded-first." }
         offers:
           type: array
-          items: { $ref: '#/components/schemas/GatewayOffer' }
-    GatewayInventory:
+          items: { $ref: '#/components/schemas/AvenOffer' }
+    AvenInventory:
       type: object
-      required: [schema_version, gateways, unresolved_routes, unsupported_routes]
+      required: [schema_version, avens, unresolved_routes, unsupported_routes]
       properties:
         schema_version: { type: integer, enum: [1] }
-        gateways:
+        avens:
           type: array
-          items: { $ref: '#/components/schemas/GatewayNode' }
+          items: { $ref: '#/components/schemas/AvenNode' }
         unresolved_routes:
           type: array
           description: Configured routes without a visible eligible node, including empty or missing routing groups.
           items: { type: string }
         unsupported_routes:
           type: array
-          description: Non-CIDR route declarations that cannot be projected as Karst Gateway offers.
+          description: Non-CIDR route declarations that cannot be projected as Karst Aven offers.
           items: { type: string }
     MeshDomainView:
       type: object
@@ -1700,7 +1700,7 @@ components:
         end: {type: string, format: date-time}
         coverage: {type: string, enum: [complete, incomplete, uncollected]}
         devices: {type: integer, format: int64, minimum: 0, nullable: true, description: Eligible enrolled devices in this half-open interval; null outside complete coverage.}
-    RelayUsageReport:
+    EstavelleUsageReport:
       type: object
       additionalProperties: false
       required: [start, end, as_of, authorization_history_start, coverage, history_complete, complete, expected_windows, missing_windows, unexpected_windows, first_received_window_start, last_received_at, reported_bytes, days, limitations]
@@ -1718,7 +1718,7 @@ components:
         missing_windows: {type: integer, format: int64, minimum: 0, description: Expected minute windows for which no producer batch was received.}
         unexpected_windows: {type: integer, format: int64, minimum: 0, description: Received account windows outside retained authorization periods.}
         reported_bytes: {type: string, pattern: '^[0-9]+$', description: Exact decimal bytes reported in received batches only.}
-        days: {type: array, maxItems: 94, items: {$ref: '#/components/schemas/RelayUsageDay'}}
+        days: {type: array, maxItems: 94, items: {$ref: '#/components/schemas/EstavelleUsageDay'}}
         limitations: {type: array, items: {type: string}}
     BillingPayment:
       type: object
@@ -1748,7 +1748,7 @@ components:
         period_start: {type: string, format: date-time}
         period_end: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
-    RelayUsageDay:
+    EstavelleUsageDay:
       type: object
       additionalProperties: false
       required: [date, reported_bytes, reported_windows, gap_windows, expected_windows, missing_windows, unexpected_windows, gap_reasons]
@@ -1761,7 +1761,7 @@ components:
         missing_windows: {type: integer, format: int64, minimum: 0}
         unexpected_windows: {type: integer, format: int64, minimum: 0}
         gap_reasons: {type: array, items: {type: string, enum: [unresolved_mapping, capacity, overflow, clock, observation_lost]}}
-    RelayAlertFeed:
+    EstavelleAlertFeed:
       type: object
       additionalProperties: false
       required: [period_start, period_end, as_of, coverage_complete, alerts]
@@ -1771,8 +1771,8 @@ components:
         as_of: {type: string, format: date-time}
         coverage_complete: {type: boolean, description: False means amounts are lower bounds and must not be treated as final usage.}
         coverage_warning: {type: string, description: Present when usage coverage is incomplete.}
-        alerts: {type: array, items: {$ref: '#/components/schemas/RelayAlertCandidate'}}
-    RelayAlertCandidate:
+        alerts: {type: array, items: {$ref: '#/components/schemas/EstavelleAlertCandidate'}}
+    EstavelleAlertCandidate:
       type: object
       additionalProperties: false
       required: [period_start, period_end, schedule_version, target, threshold_percent, reported_bytes, threshold_bytes, as_of, usage_complete]
@@ -1786,7 +1786,7 @@ components:
         threshold_bytes: {type: string, pattern: '^[0-9]+$'}
         as_of: {type: string, format: date-time}
         usage_complete: {type: boolean, description: False means this event was evaluated from lower-bound usage coverage.}
-    RelayCapDraft:
+    EstavelleCapDraft:
       type: object
       additionalProperties: false
       required: [period, overage_limit_minor, acknowledge_interruption]
@@ -1794,7 +1794,7 @@ components:
         period: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}
         overage_limit_minor: {type: integer, format: int64, minimum: 0, description: USD cents; byte budgets truncate down.}
         acknowledge_interruption: {type: boolean, enum: [true]}
-    RelayCreditRequest:
+    EstavelleCreditRequest:
       type: object
       additionalProperties: false
       required: [relay_id, deployment_id, mapping_version, generation, request_id, requested_bytes, signature]
@@ -1806,7 +1806,7 @@ components:
         request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
         requested_bytes: {type: string, pattern: '^[1-9][0-9]*$'}
         signature: {type: string, format: byte}
-    RelayCreditGrant:
+    EstavelleCreditGrant:
       type: object
       required: [grant_id, account_id, period_start, period_end, relay_id, generation, mapping_version, schedule_version, cap_revision, requested_bytes, granted_bytes, created_at]
       properties:
@@ -1822,7 +1822,7 @@ components:
         requested_bytes: {type: string, pattern: '^[1-9][0-9]*$'}
         granted_bytes: {type: string, pattern: '^[1-9][0-9]*$'}
         created_at: {type: string, format: date-time}
-    RelayCreditSurrender:
+    EstavelleCreditSurrender:
       type: object
       additionalProperties: false
       required: [grant_id, relay_id, deployment_id, mapping_version, generation, consumed_bytes, signature]
@@ -1834,7 +1834,7 @@ components:
         generation: {type: string, pattern: '^[0-9a-f]{32}$'}
         consumed_bytes: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
         signature: {type: string, format: byte}
-    RelayCap:
+    EstavelleCap:
       type: object
       additionalProperties: false
       required: [enabled, period_start, period_end, currency, acknowledged_interruption]
@@ -2066,36 +2066,36 @@ components:
         protocol: {type: string, enum: [tcp, udp, '*']}
         ports: {type: object, required: [first, last], properties: {first: {type: integer}, last: {type: integer}}}
         sources: {type: array, items: {type: object, required: [handle, valid_until], properties: {handle: {type: string}, valid_until: {type: string, format: date-time}}}}
-    RelayPublication:
+    EstavellePublication:
       type: object
       required: [mode]
       additionalProperties: false
       properties:
         mode: {type: string, enum: [legacy, services]}
         schema_version: {type: integer, enum: [2, 3], description: Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.}
-    RelayService:
+    EstavelleService:
       type: object
       required: [id, ponor_id]
       additionalProperties: false
       properties:
         id: {type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}
         ponor_id: {type: string, minLength: 1, description: Existing account-local Ponor registry ID.}
-        access_managed: {type: boolean, default: false, description: Use live registry-group membership for relay admission. Requires a live identity-bound roster writer. POST /relay-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.}
-        allowed_groups: {type: array, items: {type: string}, description: Stable account group IDs permitted to use this backend. POST /relay-services requires at least one entry.}
+        access_managed: {type: boolean, default: false, description: Use live registry-group membership for estavelle admission. Requires a live identity-bound roster writer. POST /estavelle-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.}
+        allowed_groups: {type: array, items: {type: string}, description: Stable account group IDs permitted to use this backend. POST /estavelle-services requires at least one entry.}
         gateway_handle: {type: string, description: Explicitly selected enrolled Linux machine providing internet egress.}
         exit_ipv4: {type: boolean, default: false}
         exit_ipv6: {type: boolean, default: false}
         metric: {type: integer, minimum: 1, maximum: 9999}
         revision: {type: integer, minimum: 0, description: Expected service revision when updating access.}
         ponor_disabled: {type: boolean, default: false, description: Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.}
-    RelayServiceView:
+    EstavelleServiceView:
       allOf:
-        - {$ref: '#/components/schemas/RelayService'}
+        - {$ref: '#/components/schemas/EstavelleService'}
         - type: object
           required: [ponor_present]
           properties:
             ponor_present: {type: boolean, description: Referenced Ponor registry entry exists in this account; not a health result.}
-    RelayAllocation:
+    EstavelleAllocation:
       type: object
       required: [name, infra_connection_id, location, permitted_groups]
       additionalProperties: false
@@ -2162,20 +2162,20 @@ components:
         incompatible_peer_count: {type: integer, minimum: 0}
         blocking: {type: boolean}
         message: {type: string}
-    RelayCreate:
+    EstavelleCreate:
       type: object
       required: [address, identity_key, region]
       additionalProperties: false
-      properties: {address: {type: string}, identity_key: {type: string, format: byte}, region: {type: string}, tls_server_name: {type: string}, location: {$ref: '#/components/schemas/RelayLocation'}}
-    Relay:
-      allOf: [{$ref: '#/components/schemas/RelayCreate'}, {type: object, required: [id, health], properties: {id: {type: string, readOnly: true, description: Derived from identity_key; never accepted from callers.}, health: {$ref: '#/components/schemas/RelayHealth'}, location_source: {type: string, readOnly: true, enum: [declared, detected], description: 'Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on RelayCreate.'}}}]
-    RelayHealth:
+      properties: {address: {type: string}, identity_key: {type: string, format: byte}, region: {type: string}, tls_server_name: {type: string}, location: {$ref: '#/components/schemas/EstavelleLocation'}}
+    Estavelle:
+      allOf: [{$ref: '#/components/schemas/EstavelleCreate'}, {type: object, required: [id, health], properties: {id: {type: string, readOnly: true, description: Derived from identity_key; never accepted from callers.}, health: {$ref: '#/components/schemas/EstavelleHealth'}, location_source: {type: string, readOnly: true, enum: [declared, detected], description: 'Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on EstavelleCreate.'}}}]
+    EstavelleHealth:
       type: object
       required: [source, last_confirmed_at, admission_state]
       properties: {source: {type: string, enum: [roster_mtime, relay_telemetry]}, last_confirmed_at: {type: string, nullable: true, format: date-time}, sessions: {type: integer, nullable: true, minimum: 0}, bytes: {type: integer, nullable: true, minimum: 0}, admission_state: {type: string, enum: [confirmed, stale, unknown]}}
     # Operator-declared NOC-map position (ADR-0046 §1) -- never GeoIP, never
-    # inferred from Relay.address. Absent on a Relay means "location unknown."
-    RelayLocation:
+    # inferred from Estavelle.address. Absent on an Estavelle means "location unknown."
+    EstavelleLocation:
       type: object
       required: [lat, lon]
       additionalProperties: false
@@ -2432,11 +2432,11 @@ components:
       type: object
       required: [kind, id, label]
       properties:
-        kind: {type: string, enum: [relay, route, control_plane, bedrock]}
+        kind: {type: string, enum: [estavelle, route, control_plane, bedrock]}
         id: {type: string}
         label: {type: string}
         health: {type: string, enum: [confirmed, stale, unknown]}
-        location: {$ref: '#/components/schemas/RelayLocation'}
+        location: {$ref: '#/components/schemas/EstavelleLocation'}
         # bytes/packets/ingress_bytes/ingress_packets: issues #281, #371,
         # #372. Aggregate egress and ingress throughput, populated only
         # for kind: route (summed across every route the group serves).
@@ -2454,7 +2454,7 @@ components:
       # A client that computes its own list from node liveness gets a 409:
       # coverage is a property of the signed log, not of whether a node is up.
       # The fields below zone are present only once a log has been verified.
-      properties: {mode: {type: string, enum: [off, advisory, enforcing]}, quorum: {type: integer, minimum: 1}, roots: {type: array, items: {$ref: '#/components/schemas/Authority'}}, authorities: {type: array, items: {$ref: '#/components/schemas/Authority'}}, uncovered_handles: {type: array, items: {type: string}, uniqueItems: true}, zone: {type: string}, head: {type: string}, head_seq: {type: integer, minimum: 0}, disabled: {type: boolean}, covered_count: {type: integer, minimum: 0}, location: {$ref: '#/components/schemas/RelayLocation'}}
+      properties: {mode: {type: string, enum: [off, advisory, enforcing]}, quorum: {type: integer, minimum: 1}, roots: {type: array, items: {$ref: '#/components/schemas/Authority'}}, authorities: {type: array, items: {$ref: '#/components/schemas/Authority'}}, uncovered_handles: {type: array, items: {type: string}, uniqueItems: true}, zone: {type: string}, head: {type: string}, head_seq: {type: integer, minimum: 0}, disabled: {type: boolean}, covered_count: {type: integer, minimum: 0}, location: {$ref: '#/components/schemas/EstavelleLocation'}}
     Authority:
       type: object
       required: [id, name, status]

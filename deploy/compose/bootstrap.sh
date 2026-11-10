@@ -3,13 +3,13 @@
 # Copyright the Karst contributors.
 #
 # Generates everything the co-located deployment needs and cannot invent for
-# itself: a relay identity, a TLS certificate, the relay registry nodes are told
-# about, and a starting roster.
+# itself: an estavelle identity, a TLS certificate, the estavelle registry
+# nodes are told about, and a starting roster.
 #
 # Idempotent. Every step skips if its output exists, so re-running after a
 # partial failure finishes the job rather than replacing the keys that already
-# work — regenerating a relay identity silently invalidates the registry every
-# node has pinned.
+# work — regenerating an estavelle identity silently invalidates the registry
+# every node has pinned.
 #
 # Run it once, then `docker compose up -d`.
 
@@ -18,11 +18,11 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 state="$here/state"
 
-relay_image=${KARST_RELAY_IMAGE:-ghcr.io/karst-net/karst-relay:dev}
+estavelle_image=${KARST_ESTAVELLE_IMAGE:-ghcr.io/karst-net/karst-estavelle:dev}
 aquifer=${KARST_AQUIFER:-default}
 region=${KARST_REGION:-default}
-server_name=${KARST_RELAY_SERVER_NAME:-relay.karst.local}
-relay_port=${KARST_RELAY_PORT:-443}
+server_name=${KARST_ESTAVELLE_SERVER_NAME:-estavelle.karst.local}
+estavelle_port=${KARST_ESTAVELLE_PORT:-443}
 
 if [ "$#" -gt 0 ]; then
     echo "bootstrap: unrecognized argument: $1" >&2
@@ -31,22 +31,22 @@ fi
 
 # The address nodes will dial. **IP:port, not a name**: karstd parses this with
 # Rust's SocketAddr, which does not resolve, and a name here produces a netmap
-# every node rejects in full rather than one relay they skip. The name lives in
-# tls_server_name, which is a separate field for exactly this reason.
-if [ -z "${KARST_RELAY_IP:-}" ]; then
+# every node rejects in full rather than one estavelle they skip. The name
+# lives in tls_server_name, which is a separate field for exactly this reason.
+if [ -z "${KARST_ESTAVELLE_IP:-}" ]; then
     cat >&2 <<EOF
-KARST_RELAY_IP is not set.
+KARST_ESTAVELLE_IP is not set.
 
-It must be the address nodes dial to reach this relay, as an IP address — the
-host's public IP for a real deployment, or 127.0.0.1 to try this on one machine.
-It is not resolved, so a DNS name will not work here; put the name in
-KARST_RELAY_SERVER_NAME instead, which is what the certificate is issued for.
+It must be the address nodes dial to reach this estavelle, as an IP address —
+the host's public IP for a real deployment, or 127.0.0.1 to try this on one
+machine. It is not resolved, so a DNS name will not work here; put the name in
+KARST_ESTAVELLE_SERVER_NAME instead, which is what the certificate is issued for.
 
-    KARST_RELAY_IP=203.0.113.7 ./bootstrap.sh
+    KARST_ESTAVELLE_IP=203.0.113.7 ./bootstrap.sh
 EOF
     exit 1
 fi
-relay_address="$KARST_RELAY_IP:$relay_port"
+estavelle_address="$KARST_ESTAVELLE_IP:$estavelle_port"
 
 need() {
     command -v "$1" >/dev/null 2>&1 || { echo "bootstrap: $1 is required but not installed" >&2; exit 1; }
@@ -57,76 +57,76 @@ need openssl
 mkdir -p "$state/tls" "$state/netbird"
 
 # ---------------------------------------------------------------------------
-# 1. The relay's TLS certificate.
+# 1. The estavelle's TLS certificate.
 #
 # Self-signed is not a compromise here. ponor-v1.md §4.2 declines to trust
-# certificates for relay identity at all — a node authenticates a relay by the
-# ML-DSA-65 key pinned in its netmap — so this certificate only has to get a TLS
-# session established. Replace it with a CA-issued one if you like; it changes
-# nothing about who the relay is proved to be.
+# certificates for estavelle identity at all — a node authenticates an
+# estavelle by the ML-DSA-65 key pinned in its netmap — so this certificate
+# only has to get a TLS session established. Replace it with a CA-issued one
+# if you like; it changes nothing about who the estavelle is proved to be.
 # ---------------------------------------------------------------------------
-if [ ! -f "$state/tls/relay.crt" ]; then
+if [ ! -f "$state/tls/estavelle.crt" ]; then
     echo "bootstrap: issuing a self-signed certificate for $server_name"
     # `openssl req -x509` defaults to a CA certificate (basicConstraints
     # CA:TRUE) unless told otherwise — fine for a root CA, fatal here: rustls
-    # (karstd's relay TLS client) refuses a CA:TRUE certificate presented as
-    # a leaf, failing every connection with "invalid peer certificate:
+    # (karstd's estavelle TLS client) refuses a CA:TRUE certificate presented
+    # as a leaf, failing every connection with "invalid peer certificate:
     # CaUsedAsEndEntity". This has to be an end-entity certificate.
     openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes \
-        -keyout "$state/tls/relay.key" -out "$state/tls/relay.crt" \
+        -keyout "$state/tls/estavelle.key" -out "$state/tls/estavelle.crt" \
         -subj "/CN=$server_name" \
-        -addext "subjectAltName=DNS:$server_name,IP:$KARST_RELAY_IP" \
+        -addext "subjectAltName=DNS:$server_name,IP:$KARST_ESTAVELLE_IP" \
         -addext "basicConstraints=critical,CA:FALSE" \
         -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
         -addext "extendedKeyUsage=serverAuth" >/dev/null 2>&1
-    chmod 600 "$state/tls/relay.key"
+    chmod 600 "$state/tls/estavelle.key"
 else
     echo "bootstrap: keeping the existing certificate"
 fi
 
 # ---------------------------------------------------------------------------
-# 2. The relay's configuration.
+# 2. The estavelle's configuration.
 # ---------------------------------------------------------------------------
-if [ ! -f "$state/relay.toml" ]; then
-    cat > "$state/relay.toml" <<EOF
+if [ ! -f "$state/estavelle.toml" ]; then
+    cat > "$state/estavelle.toml" <<EOF
 # Generated by bootstrap.sh. Safe to edit; it is not rewritten.
 listen = "0.0.0.0:443"
-identity_key = "/var/lib/karst/relay.key"
+identity_key = "/var/lib/karst/estavelle.key"
 roster = "/var/lib/karst/roster.toml"
-tls_cert = "/var/lib/karst/tls/relay.crt"
-tls_key = "/var/lib/karst/tls/relay.key"
+tls_cert = "/var/lib/karst/tls/estavelle.crt"
+tls_key = "/var/lib/karst/tls/estavelle.key"
 region = "$region"
 EOF
 fi
 
-# A roster the relay can start on. Empty is a legitimate state — it admits
+# A roster the estavelle can start on. Empty is a legitimate state — it admits
 # nobody — and the coordination server replaces it within 25 seconds. Without
-# some file here the relay would exit at startup rather than wait.
+# some file here the estavelle would exit at startup rather than wait.
 if [ ! -f "$state/roster.toml" ]; then
     printf '# Placeholder. karst-control overwrites this every 25s.\n' > "$state/roster.toml"
 fi
 
 # ---------------------------------------------------------------------------
-# 3. The relay's identity, and the registry built from it.
+# 3. The estavelle's identity, and the registry built from it.
 #
 # `pubkey` creates the seed on first run and prints the public half. The
-# registry is derived from what the relay actually holds rather than typed
-# twice: a node pins the key the registry names, so a mismatch is a relay
-# nobody can authenticate.
+# registry is derived from what the estavelle actually holds rather than
+# typed twice: a node pins the key the registry names, so a mismatch is an
+# estavelle nobody can authenticate.
 # ---------------------------------------------------------------------------
-if [ ! -f "$state/relays.json" ]; then
-    echo "bootstrap: creating the relay identity"
-    identity=$(docker run --rm -v "$state:/var/lib/karst" "$relay_image" \
-        pubkey --config /var/lib/karst/relay.toml | awk '/^identity_pk/ { print $2 }')
+if [ ! -f "$state/estavelles.json" ]; then
+    echo "bootstrap: creating the estavelle identity"
+    identity=$(docker run --rm -v "$state:/var/lib/karst" "$estavelle_image" \
+        pubkey --config /var/lib/karst/estavelle.toml | awk '/^identity_pk/ { print $2 }')
     if [ -z "$identity" ]; then
-        echo "bootstrap: karst-relay did not print an identity key" >&2
+        echo "bootstrap: karst-estavelle did not print an identity key" >&2
         exit 1
     fi
-    cat > "$state/relays.json" <<EOF
+    cat > "$state/estavelles.json" <<EOF
 {
   "relays": [
     {
-      "address": "$relay_address",
+      "address": "$estavelle_address",
       "tls_server_name": "$server_name",
       "identity_key": "$identity",
       "region": "$region"
@@ -134,20 +134,20 @@ if [ ! -f "$state/relays.json" ]; then
   ]
 }
 EOF
-    echo "bootstrap: registry written for $relay_address"
+    echo "bootstrap: registry written for $estavelle_address"
 else
-    echo "bootstrap: keeping the existing relay identity and registry"
+    echo "bootstrap: keeping the existing estavelle identity and registry"
 fi
 
-# Bind the admission writer to the actual local relay identity. The admin UI
-# can then configure group access without editing deployment configuration.
-relay_id=$(docker run --rm -v "$state:/var/lib/karst" "$relay_image" \
-    pubkey --config /var/lib/karst/relay.toml | awk '/^relay_id/ { print $2 }')
+# Bind the admission writer to the actual local estavelle identity. The admin
+# UI can then configure group access without editing deployment configuration.
+relay_id=$(docker run --rm -v "$state:/var/lib/karst" "$estavelle_image" \
+    pubkey --config /var/lib/karst/estavelle.toml | awk '/^relay_id/ { print $2 }')
 if [ -z "$relay_id" ]; then
-    echo "bootstrap: relay did not print its public identity" >&2
+    echo "bootstrap: estavelle did not print its public identity" >&2
     exit 1
 fi
-printf '%s\n' "$relay_id" > "$state/relay-roster.id"
+printf '%s\n' "$relay_id" > "$state/estavelle-roster.id"
 
 
 # ---------------------------------------------------------------------------
@@ -202,9 +202,9 @@ puts in [control] server_kem_pin and server_verify_pin. Both are required:
 karst-control-v1.md §9 explains why a node given only the first loses forward
 secrecy rather than failing.
 
-Nodes also need the relay's certificate, since it is self-signed:
+Nodes also need the estavelle's certificate, since it is self-signed:
 
-    $state/tls/relay.crt   ->  [control] relay_ca_file
+    $state/tls/estavelle.crt   ->  [control] estavelle_ca_file
 
 And an enrollment key. The server mints one on first boot, because a setup key
 would otherwise need an account and an account would need an identity provider:

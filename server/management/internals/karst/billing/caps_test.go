@@ -23,16 +23,16 @@ func TestRelayCapRequiresExplicitAssignmentAndAcknowledgment(t *testing.T) {
 	store := testBillingStore(t)
 	ctx := WithAccount(context.Background(), "org-cap")
 	start, end := testCapPeriod()
-	if _, err := store.SetRelaySpendingCap(ctx, start, end, 200, true, "owner-1"); !errors.Is(err, ErrScheduleUnassigned) {
+	if _, err := store.SetEstavelleSpendingCap(ctx, start, end, 200, true, "owner-1"); !errors.Is(err, ErrScheduleUnassigned) {
 		t.Fatalf("cap without assigned rate schedule = %v, want ErrScheduleUnassigned", err)
 	}
 	require.NoError(t, store.PutSchedule(ctx, testSchedule()))
 	require.NoError(t, store.AssignSchedule(ctx, start, end, testSchedule().Version))
-	if _, err := store.SetRelaySpendingCap(ctx, start, end, 200, false, "owner-1"); !errors.Is(err, ErrInvalidPeriod) {
+	if _, err := store.SetEstavelleSpendingCap(ctx, start, end, 200, false, "owner-1"); !errors.Is(err, ErrInvalidPeriod) {
 		t.Fatalf("unacknowledged cap = %v, want ErrInvalidPeriod", err)
 	}
-	if _, err := store.RelaySpendingCap(ctx, start, end); !errors.Is(err, ErrRelayCapNotConfigured) {
-		t.Fatalf("unset cap = %v, want ErrRelayCapNotConfigured", err)
+	if _, err := store.EstavelleSpendingCap(ctx, start, end); !errors.Is(err, ErrEstavelleCapNotConfigured) {
+		t.Fatalf("unset cap = %v, want ErrEstavelleCapNotConfigured", err)
 	}
 }
 
@@ -44,18 +44,18 @@ func TestRelayCapRevisionsAndCrossRelayReservationsShareOneBudget(t *testing.T) 
 	require.NoError(t, store.PutSchedule(ctx, schedule))
 	require.NoError(t, store.AssignSchedule(ctx, start, end, schedule.Version))
 
-	cap, err := store.SetRelaySpendingCap(ctx, start, end, 200, true, "owner-1")
+	cap, err := store.SetEstavelleSpendingCap(ctx, start, end, 200, true, "owner-1")
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), cap.Revision)
 	require.Equal(t, int64(200), cap.OverageMinor)
-	capAgain, err := store.SetRelaySpendingCap(ctx, start, end, 200, true, "owner-1")
+	capAgain, err := store.SetEstavelleSpendingCap(ctx, start, end, 200, true, "owner-1")
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), capAgain.Revision)
-	cap, err = store.SetRelaySpendingCap(ctx, start, end, 400, true, "owner-2")
+	cap, err = store.SetEstavelleSpendingCap(ctx, start, end, 400, true, "owner-2")
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), cap.Revision)
 	var revisions int64
-	require.NoError(t, store.db.Model(&relayCapRevisionRow{}).Where("account_id = ? AND period_start_us = ?", "org-cap", start.UnixMicro()).Count(&revisions).Error)
+	require.NoError(t, store.db.Model(&estavelleCapRevisionRow{}).Where("account_id = ? AND period_start_us = ?", "org-cap", start.UnixMicro()).Count(&revisions).Error)
 	require.EqualValues(t, 2, revisions)
 
 	// The $4.00 cap allows 30 GB total. Concurrent relay requests contend on
@@ -73,11 +73,11 @@ func TestRelayCapRevisionsAndCrossRelayReservationsShareOneBudget(t *testing.T) 
 	second, err := store.ReserveRelayCredits(ctx, start, end, "relay-b", "epoch-b", "map-v1", "req-b", 20_000_000_000)
 	require.NoError(t, err)
 	require.Equal(t, "10000000000", second.GrantedBytes)
-	if _, err := store.SetRelaySpendingCap(ctx, start, end, 100, true, "owner-1"); !errors.Is(err, ErrRelayCapDecrease) {
-		t.Fatalf("decrease with outstanding relay grants = %v, want ErrRelayCapDecrease", err)
+	if _, err := store.SetEstavelleSpendingCap(ctx, start, end, 100, true, "owner-1"); !errors.Is(err, ErrEstavelleCapDecrease) {
+		t.Fatalf("decrease with outstanding relay grants = %v, want ErrEstavelleCapDecrease", err)
 	}
-	if _, err := store.ReserveRelayCredits(ctx, start, end, "relay-c", "epoch-c", "map-v1", "req-c", 1); !errors.Is(err, ErrRelayCapExhausted) {
-		t.Fatalf("grant beyond shared budget = %v, want ErrRelayCapExhausted", err)
+	if _, err := store.ReserveRelayCredits(ctx, start, end, "relay-c", "epoch-c", "map-v1", "req-c", 1); !errors.Is(err, ErrEstavelleCapExhausted) {
+		t.Fatalf("grant beyond shared budget = %v, want ErrEstavelleCapExhausted", err)
 	}
 
 	// Credits return only after the signed relay's durable surrender/fence has
@@ -91,26 +91,26 @@ func TestRelayCapRevisionsAndCrossRelayReservationsShareOneBudget(t *testing.T) 
 	if _, err := store.SurrenderRelayCredits(ctx, first.GrantID, "relay-a", "epoch-a", "map-v1", "6000000000", fmt.Sprintf("%064x", 2)); !errors.Is(err, ErrCreditGrantConflict) {
 		t.Fatalf("conflicting surrender replay = %v, want ErrCreditGrantConflict", err)
 	}
-	if _, err := store.SetRelaySpendingCap(ctx, start, end, 100, true, "owner-1"); !errors.Is(err, ErrRelayCapDecrease) {
-		t.Fatalf("decrease with outstanding grants = %v, want ErrRelayCapDecrease", err)
+	if _, err := store.SetEstavelleSpendingCap(ctx, start, end, 100, true, "owner-1"); !errors.Is(err, ErrEstavelleCapDecrease) {
+		t.Fatalf("decrease with outstanding grants = %v, want ErrEstavelleCapDecrease", err)
 	}
 	_, err = store.SurrenderRelayCredits(ctx, second.GrantID, "relay-b", "epoch-b", "map-v1", "10000000000", fmt.Sprintf("%064x", 3))
 	require.NoError(t, err)
 	_, err = store.SurrenderRelayCredits(ctx, returned.GrantID, "relay-c", "epoch-c", "map-v1", "0", fmt.Sprintf("%064x", 4))
 	require.NoError(t, err)
-	cap, err = store.SetRelaySpendingCap(ctx, start, end, 100, true, "owner-1")
+	cap, err = store.SetEstavelleSpendingCap(ctx, start, end, 100, true, "owner-1")
 	require.NoError(t, err)
 	require.Equal(t, uint64(3), cap.Revision)
 	require.EqualValues(t, 3, revisionsCount(t, store, "org-cap", start))
-	if _, err := store.SetRelaySpendingCap(ctx, start, end, 50, true, "owner-1"); !errors.Is(err, ErrRelayCapDecrease) {
-		t.Fatalf("decrease below already consumed credits = %v, want ErrRelayCapDecrease", err)
+	if _, err := store.SetEstavelleSpendingCap(ctx, start, end, 50, true, "owner-1"); !errors.Is(err, ErrEstavelleCapDecrease) {
+		t.Fatalf("decrease below already consumed credits = %v, want ErrEstavelleCapDecrease", err)
 	}
 }
 
 func revisionsCount(t *testing.T, store *Store, account string, start time.Time) int64 {
 	t.Helper()
 	var count int64
-	require.NoError(t, store.db.Model(&relayCapRevisionRow{}).Where("account_id = ? AND period_start_us = ?", account, start.UnixMicro()).Count(&count).Error)
+	require.NoError(t, store.db.Model(&estavelleCapRevisionRow{}).Where("account_id = ? AND period_start_us = ?", account, start.UnixMicro()).Count(&count).Error)
 	return count
 }
 
@@ -121,14 +121,14 @@ func TestRelayCapAndGrantsAreAccountScopedAndPersisted(t *testing.T) {
 	schedule := testSchedule()
 	require.NoError(t, store.PutSchedule(ctx, schedule))
 	require.NoError(t, store.AssignSchedule(ctx, start, end, schedule.Version))
-	_, err := store.SetRelaySpendingCap(ctx, start, end, 100, true, "owner-1")
+	_, err := store.SetEstavelleSpendingCap(ctx, start, end, 100, true, "owner-1")
 	require.NoError(t, err)
 	grant, err := store.ReserveRelayCredits(ctx, start, end, "relay-a", "epoch-a", "map-v1", "req-a", 1_000_000_000)
 	require.NoError(t, err)
 
 	other := WithAccount(context.Background(), "org-other")
-	if _, err := store.RelaySpendingCap(other, start, end); !errors.Is(err, ErrRelayCapNotConfigured) {
-		t.Fatalf("other account read cap = %v, want ErrRelayCapNotConfigured", err)
+	if _, err := store.EstavelleSpendingCap(other, start, end); !errors.Is(err, ErrEstavelleCapNotConfigured) {
+		t.Fatalf("other account read cap = %v, want ErrEstavelleCapNotConfigured", err)
 	}
 	if _, err := store.SurrenderRelayCredits(other, grant.GrantID, "relay-a", "epoch-a", "map-v1", "0", fmt.Sprintf("%064x", 1)); !errors.Is(err, ErrCreditGrantNotFound) {
 		t.Fatalf("other account returned grant = %v, want ErrCreditGrantNotFound", err)
@@ -152,14 +152,14 @@ func TestRelayCapAndCreditGrantSurviveStoreRestart(t *testing.T) {
 	schedule := testSchedule()
 	require.NoError(t, first.PutSchedule(ctx, schedule))
 	require.NoError(t, first.AssignSchedule(ctx, start, end, schedule.Version))
-	cap, err := first.SetRelaySpendingCap(ctx, start, end, 200, true, "owner-1")
+	cap, err := first.SetEstavelleSpendingCap(ctx, start, end, 200, true, "owner-1")
 	require.NoError(t, err)
 	grant, err := first.ReserveRelayCredits(ctx, start, end, "relay-a", "epoch-a", "map-v1", "req-a", 3_000_000_000)
 	require.NoError(t, err)
 
 	second, err := NewStore(open())
 	require.NoError(t, err)
-	loadedCap, err := second.RelaySpendingCap(ctx, start, end)
+	loadedCap, err := second.EstavelleSpendingCap(ctx, start, end)
 	require.NoError(t, err)
 	require.Equal(t, cap, loadedCap)
 	loadedGrant, err := second.ReserveRelayCredits(ctx, start, end, "relay-a", "epoch-a", "map-v1", "req-a", 3_000_000_000)
@@ -174,7 +174,7 @@ func TestRelayCreditReservationsAreSerializedAcrossConcurrentRelays(t *testing.T
 	schedule := testSchedule()
 	require.NoError(t, store.PutSchedule(ctx, schedule))
 	require.NoError(t, store.AssignSchedule(ctx, start, end, schedule.Version))
-	_, err := store.SetRelaySpendingCap(ctx, start, end, 200, true, "owner-1") // 20 GB total.
+	_, err := store.SetEstavelleSpendingCap(ctx, start, end, 200, true, "owner-1") // 20 GB total.
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup

@@ -41,13 +41,13 @@ test("control and retained deployment observations age while settings stays open
 test("agent reports and actual compatibility checks age without changing the recorded rejection", async ({ page }) => {
   await page.clock.install({ time: new Date(observed) });
   await page.route("**/api/karst/v1/versions", route => route.fulfill({ json: { observed_at: observed, control: { version: "v1", revision: "commit" }, deployment_status: "not_configured" } }));
-  await page.route("**/api/karst/v1/gateways", route => route.fulfill({ json: { schema_version: 1, unresolved_routes: [], unsupported_routes: [], gateways: [
+  await page.route("**/api/karst/v1/avens", route => route.fulfill({ json: { schema_version: 1, unresolved_routes: [], unsupported_routes: [], avens: [
     { node_id: "aging-gateway", node_handle: "aging-handle", name: "Aging gateway", control_connected: true, forwarding_readiness: "unreported", offers: [],
       software: { version: "v1", revision: "agent-commit", observed_at: observed },
       control_check: { status: "incompatible", capability: "gateway_ingress_schema", required_schema: 1, reported_schema: 0, observed_at: observed } },
   ] } }));
-  await page.goto("/#/gateways/metrics");
-  await page.getByRole("region", { name: "Configured Gateway nodes" }).locator("summary").click();
+  await page.goto("/#/avens/metrics");
+  await page.getByRole("region", { name: "Configured Aven nodes" }).locator("summary").click();
   const agent = page.getByRole("region", { name: "Agent software version" });
   const compatibility = page.getByRole("region", { name: "Control compatibility check" });
   await expect(agent.locator(":scope > p").first()).toContainText("Observation status: Current");
@@ -56,5 +56,5 @@ test("agent reports and actual compatibility checks age without changing the rec
   await expect(agent.locator(":scope > p").first()).toContainText("Observation status: Stale");
   await expect(compatibility).toContainText("Observation status: Stale");
   await expect(compatibility).toContainText("Last control check: Incompatible");
-  await expect(compatibility).toContainText("Upgrade the gateway agent");
+  await expect(compatibility).toContainText("Upgrade the aven agent");
 });

@@ -87,7 +87,7 @@ var (
 	// ErrUnsupportedType means ActuationDriver was asked to actuate a
 	// connection whose Type has no infraprovision.Driver implementation
 	// registered yet -- see SupportsActuation and ADR-0067. Distinct from
-	// ErrInvalid so a caller (relayalloc.Store.Create) can give a clearer,
+	// ErrInvalid so a caller (estavellealloc.Store.Create) can give a clearer,
 	// type-naming message than ErrInvalid's generic one.
 	ErrUnsupportedType = errors.New("cloud accounts: this connection type does not support relay allocation yet")
 )
@@ -120,7 +120,7 @@ func (t Type) Valid() bool {
 
 // SupportsActuation reports whether t has a registered
 // infraprovision.Driver implementation at all -- a static, credential-
-// free fact, never an API call, so relayalloc.Store.Create can check it
+// free fact, never an API call, so estavellealloc.Store.Create can check it
 // inside its own transaction without violating ADR-0058's "no provider
 // call inside a transaction" rule (ADR-0067). TypeAzure/TypeGCP/TypeLXD
 // have no driver yet; see ActuationDriver and ADR-0067's "v1 driver scope"
@@ -245,7 +245,7 @@ func (Account) TableName() string { return "karst_cloud_accounts" }
 
 // AllocationReferenceChecker lets Delete refuse to remove a connection a
 // live ADR-0063 relay allocation still depends on, without this package
-// importing relayalloc -- relayalloc already imports infraconnections the
+// importing estavellealloc -- estavellealloc already imports infraconnections the
 // other way, for its own Create's reverse validation, so the dependency
 // has to run through a narrow interface instead. nil (the default) means
 // "nothing wired yet": Delete behaves exactly as it did before this
@@ -254,7 +254,7 @@ type AllocationReferenceChecker interface {
 	// HasNonTerminalAllocations reports whether accountID has any
 	// relay allocation referencing connectionID that is not yet fully
 	// deprovisioned. accountID is passed explicitly rather than carried on
-	// ctx: relayalloc's own WithAccount uses a different, unexported
+	// ctx: estavellealloc's own WithAccount uses a different, unexported
 	// context key than this package's, so ctx alone cannot carry it across
 	// the package boundary.
 	HasNonTerminalAllocations(ctx context.Context, accountID, connectionID string) (bool, error)
@@ -385,7 +385,7 @@ type Store struct {
 // SetAllocationReferenceChecker wires Delete's cross-package reference
 // check (see AllocationReferenceChecker's own doc comment). Called once,
 // at boot (internals/karst/bootstrap), after both this Store and
-// relayalloc's own Store exist -- never from NewStore itself, so adding
+// estavellealloc's own Store exist -- never from NewStore itself, so adding
 // this dependency needed no change to NewStore's signature or any of its
 // existing callers.
 func (s *Store) SetAllocationReferenceChecker(checker AllocationReferenceChecker) {

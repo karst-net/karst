@@ -101,7 +101,7 @@ message KarstNetmapRequest {
   // its relay must be able to say so, or peers keep being told to reach it
   // somewhere nothing is listening.
   //
-  // 32 bytes, the SHA-256 relay handle of KarstRelay.relay_id.
+  // 32 bytes, the SHA-256 relay handle of KarstEstavelle.relay_id.
   bytes home_relay = 3;
 
   // Last session facts measured by this node. These are observations, never
@@ -380,10 +380,10 @@ message KarstNetmapPeer {
   repeated string candidates = 11;
 }
 
-// KarstRelay is an authenticated Ponor relay registry entry. The node pins the
-// ML-DSA key and checks the derived relay id during the Ponor handshake; TLS
-// alone is deliberately not relay authentication (ponor-v1.md §4.2).
-message KarstRelay {
+// KarstEstavelle is an authenticated Ponor relay registry entry. The node pins
+// the ML-DSA key and checks the derived relay id during the Ponor handshake;
+// TLS alone is deliberately not relay authentication (ponor-v1.md §4.2).
+message KarstEstavelle {
   string address = 1;
   bytes relay_id = 2;       // SHA-256 relay handle, 32 B
   bytes identity_key = 3;   // ML-DSA-87 public key, 2592 B
@@ -395,14 +395,14 @@ message KarstRelay {
   string tls_server_name = 5;
   // Operator-declared location for the NOC view's map (ADR-0046 §1). Absent
   // means "location unknown" — never inferred from an address via GeoIP.
-  RelayLocation location = 6;
+  EstavelleLocation location = 6;
 }
 
-// RelayLocation is an operator-declared point on the NOC map (ADR-0046 §1).
-// It is configuration, the same trust level as `KarstRelay.region` — never
-// derived from `KarstRelay.address` by a GeoIP lookup, which ADR-0039's
+// EstavelleLocation is an operator-declared point on the NOC map (ADR-0046 §1).
+// It is configuration, the same trust level as `KarstEstavelle.region` — never
+// derived from `KarstEstavelle.address` by a GeoIP lookup, which ADR-0039's
 // air-gapped bar and ADR-0046's no-inference rule both rule out.
-message RelayLocation {
+message EstavelleLocation {
   double lat = 1;
   double lon = 2;
   string label = 3;
@@ -648,7 +648,7 @@ enum KarstRouteKind {
 enum KarstRouteRole {
   KARST_ROUTE_ROLE_UNSPECIFIED = 0;
   KARST_ROUTE_ROLE_RECIPIENT = 1;
-  KARST_ROUTE_ROLE_GATEWAY = 2;
+  KARST_ROUTE_ROLE_AVEN = 2;
 }
 
 message KarstNetmapResponse {
@@ -720,7 +720,7 @@ message KarstNetmapResponse {
 
   // Authenticated relay choices for this node. Replaced wholesale on every
   // non-unchanged response, just like packet_filter.
-  repeated KarstRelay relays = 13;
+  repeated KarstEstavelle relays = 13;
 
   // CIDR offers for a recipient, or forwarding grants for a gateway. Replaced
   // wholesale on every non-unchanged response. A recipient MUST require local

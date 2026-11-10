@@ -248,8 +248,8 @@ fn section_with_floor(
     ControlSection {
         bedrock_mode: floor.map(ToOwned::to_owned),
         control_minimum_version: None,
-        relay_ca_file: None,
-        prefer_quic_relay: false,
+        estavelle_ca_file: None,
+        prefer_quic_estavelle: false,
         server: format!("http://{}", server.address),
         server_kem_pin: server.kem_pin.clone(),
         server_verify_pin: server.verify_pin.clone(),
@@ -265,10 +265,10 @@ fn keys(seed: u8) -> Arc<karst_noise::handshake::StaticKeys> {
 
 fn local(seed: u8) -> LocalSettings {
     LocalSettings {
-        relay_ca_file: None,
-        prefer_quic_relay: false,
+        estavelle_ca_file: None,
+        prefer_quic_estavelle: false,
         exit_node_state_file: None,
-        gateway_forwarding: true,
+        aven_forwarding: true,
         keys: keys(seed),
         listen: "0.0.0.0:51820".parse().expect("addr"),
         port_mapping: true,
@@ -962,7 +962,10 @@ fn pasted_invitation_enrolls_without_a_credential_file() {
     // The invitation's relay anchors land in the state directory, named by
     // the config, and are exactly what relay TLS then loads.
     let anchors = state.join("relay-ca.pem");
-    assert_eq!(section.relay_ca_file.as_deref(), Some(anchors.as_path()));
+    assert_eq!(
+        section.estavelle_ca_file.as_deref(),
+        Some(anchors.as_path())
+    );
     assert_eq!(std::fs::read_to_string(&anchors).unwrap(), relay_ca);
     karstd::relay_tls::client_config(Some(&anchors)).expect("anchors usable for relay TLS");
     let mut client = Client::new(&section, &state, &keys).unwrap();

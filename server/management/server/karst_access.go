@@ -10,7 +10,7 @@ import (
 	"slices"
 
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"
 	"gorm.io/gorm"
@@ -73,8 +73,8 @@ func validateKarstGroupDeletion(ctx context.Context, transaction store.Store, gr
 			}
 		}
 	}
-	if slices.Contains(tables, (relayservice.Service{}).TableName()) {
-		var services []relayservice.Service
+	if slices.Contains(tables, (estavelleservice.Service{}).TableName()) {
+		var services []estavelleservice.Service
 		if err := db.Select([]string{"id", "allowed_groups"}).Where("account_id = ?", group.AccountID).Find(&services).Error; err != nil {
 			return fmt.Errorf("cannot check relay group dependencies: %w", err)
 		}
@@ -86,8 +86,8 @@ func validateKarstGroupDeletion(ctx context.Context, transaction store.Store, gr
 	}
 	// Admission records can outlive their association. Do not ignore an
 	// independently retained restriction even when the service row is absent.
-	if slices.Contains(tables, (relayservice.BackendAccess{}).TableName()) {
-		var access []relayservice.BackendAccess
+	if slices.Contains(tables, (estavelleservice.BackendAccess{}).TableName()) {
+		var access []estavelleservice.BackendAccess
 		if err := db.Select([]string{"relay_id", "groups"}).Where("account_id = ?", group.AccountID).Find(&access).Error; err != nil {
 			return fmt.Errorf("cannot check relay admission dependencies: %w", err)
 		}

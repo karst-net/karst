@@ -68,7 +68,7 @@ fn config_for(
     let config = Config {
         route_offers: Vec::new(),
         exit_node_state_file: None,
-        gateway_forwarding: true,
+        aven_forwarding: true,
         keys: keys(own),
         listen: "0.0.0.0:0".parse().expect("listen"),
         port_mapping: true,
@@ -83,8 +83,8 @@ fn config_for(
         psk_epoch: 1,
         node_id: Vec::new(),
         relays: Vec::new(),
-        relay_ca_file: None,
-        prefer_quic_relay: false,
+        estavelle_ca_file: None,
+        prefer_quic_estavelle: false,
         metrics_listen: None,
         tracing_collector: None,
         peers: vec![Peer {
@@ -102,7 +102,7 @@ fn config_for(
             psk_is_fallback: false,
             psk_previous: None,
             disco_key: None,
-            home_relay: None,
+            home_estavelle: None,
             candidates: Vec::new(),
         }],
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
@@ -376,7 +376,7 @@ mod compliance_gate {
                 guardrail_id: "guardrail-1".into(),
                 // A_IP, the literal destination every test packet in this
                 // module carries -- not the fixture's own interface address,
-                // which only the (irrelevant here) gateway_forwarding/
+                // which only the (irrelevant here) aven_forwarding/
                 // local-delivery check at the top of `permit` cares about.
                 destination_cidrs: vec!["100.64.0.2/32".into()],
                 protocol: WireProtocol::Tcp as i32,
@@ -466,7 +466,7 @@ fn disabled_gateway_refuses_transit_but_preserves_local_mesh_and_client_replies(
     );
     Arc::get_mut(&mut cfg)
         .expect("unique config")
-        .gateway_forwarding = false;
+        .aven_forwarding = false;
     let engine = Engine::new(&cfg);
     assert!(engine.permits_for_test(Direction::In, 0, &tcp(B_IP, EPHEMERAL, A_IP, 443), 0));
     for destination in [[10, 99, 0, 2], [1, 1, 1, 1], [100, 64, 0, 9]] {

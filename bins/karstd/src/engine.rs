@@ -42,7 +42,7 @@ use crate::routing::PeerIndex;
 /// How a datagram reaches its peer.
 ///
 /// **The engine names a destination rather than an address**, because a peer
-/// with no working direct path is not unreachable — `aven-v1.md` §8.3 makes the
+/// with no working direct path is not unreachable — `resurgence-v1.md` §8.3 makes the
 /// relay a path like any other, and the last resort rather than a failure
 /// state. The two arms are the two transports a node has, and which one a peer
 /// gets is decided in exactly one place ([`Engine::via`]).
@@ -63,9 +63,9 @@ pub enum Via {
         /// `Some` names the peer's **published** home relay, §9.1's second
         /// rule: a relay this node did not choose and holds a connection to
         /// only for as long as there is traffic for it.
-        relay: Option<[u8; karst_relay_proto::consts::ID_LEN]>,
+        relay: Option<[u8; karst_estavelle_proto::consts::ID_LEN]>,
         /// The peer, as the relay knows it.
-        destination: [u8; karst_relay_proto::consts::ID_LEN],
+        destination: [u8; karst_estavelle_proto::consts::ID_LEN],
     },
 }
 
@@ -90,8 +90,9 @@ const COOKIE_ROTATION_MS: u64 = 120_000;
 /// Asserted rather than assumed: `PAYLOAD_MAX` was sized from
 /// `TRANSPORT_DATAGRAM_MAX` and the two live in different crates, so nothing
 /// but this would notice if either moved.
-const _: () =
-    assert!(karst_proto::consts::TRANSPORT_DATAGRAM_MAX <= karst_relay_proto::consts::PAYLOAD_MAX);
+const _: () = assert!(
+    karst_proto::consts::TRANSPORT_DATAGRAM_MAX <= karst_estavelle_proto::consts::PAYLOAD_MAX
+);
 
 /// How a peer's traffic currently leaves this node, for `karst status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +100,7 @@ pub enum Transport {
     /// Straight to the peer.
     Direct,
     /// Through the relay: working, slower, and visible to a third party.
-    Relay,
+    Estavelle,
     /// Nowhere. No address is known and no relay is configured, so the peer is
     /// known about and cannot be sent to.
     Unreachable,
@@ -109,7 +110,7 @@ impl std::fmt::Display for Transport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Direct => "direct",
-            Self::Relay => "relay",
+            Self::Estavelle => "relay",
             Self::Unreachable => "none",
         })
     }
@@ -362,10 +363,10 @@ struct Roster {
     /// Each peer's Ponor node id, when it has one. `None` for a static TOML
     /// roster, which carries no server-assigned handles and therefore has no
     /// relay path — the peer is direct-only or it is nothing.
-    relay_ids: Vec<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
+    relay_ids: Vec<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
     /// The reverse mapping, for attributing a relay-delivered datagram to the
     /// peer the relay says sent it.
-    by_relay_id: HashMap<[u8; karst_relay_proto::consts::ID_LEN], PeerIndex>,
+    by_relay_id: HashMap<[u8; karst_estavelle_proto::consts::ID_LEN], PeerIndex>,
     /// Each peer's published home relay — §9.1 — **filtered to relays this node
     /// could actually dial**, which means present in the netmap's registry.
     ///
@@ -374,7 +375,7 @@ struct Roster {
     /// three come from the registry. Filtering here rather than at the point of
     /// use means the routing decision cannot produce a destination the
     /// transport will silently drop.
-    home_relays: Vec<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
+    home_relays: Vec<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
     /// Whether this node has a relay to send through at all. Without one a
     /// peer's node id names a destination nothing can reach.
     relay_configured: bool,
@@ -446,7 +447,7 @@ pub struct Engine {
     /// belongs to `home::Selector`, and a second place computing it is a second
     /// place that can disagree — at which point this node would route a peer
     /// onto an on-demand connection to the relay it is already sitting on.
-    home_relay: RwLock<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
+    home_relay: RwLock<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
     /// Resolved file transfers, most recent last — GitHub issue #212. Local
     /// audit trail, in the same spirit as
     /// `server/management/internals/karst/node/node.go`'s
@@ -501,7 +502,7 @@ impl Engine {
     /// Routing needs it to tell the two rules apart: a peer whose published
     /// home is the relay this node is already connected to is reached on that
     /// connection, not on a second one dialed to the same address.
-    pub fn set_home_relay(&self, relay_id: Option<[u8; karst_relay_proto::consts::ID_LEN]>) {
+    pub fn set_home_relay(&self, relay_id: Option<[u8; karst_estavelle_proto::consts::ID_LEN]>) {
         *self
             .home_relay
             .write()
@@ -516,8 +517,8 @@ impl Engine {
     #[must_use]
     pub fn relay(
         &self,
-        relay_id: [u8; karst_relay_proto::consts::ID_LEN],
-    ) -> Option<crate::netmap::Relay> {
+        relay_id: [u8; karst_estavelle_proto::consts::ID_LEN],
+    ) -> Option<crate::netmap::Estavelle> {
         self.roster()
             .config
             .relays
@@ -533,13 +534,13 @@ impl Engine {
     /// alternatives against a registry that has been withdrawn would be dialing
     /// relays its peers are no longer told about.
     #[must_use]
-    pub fn relays(&self) -> Vec<crate::netmap::Relay> {
+    pub fn relays(&self) -> Vec<crate::netmap::Estavelle> {
         self.roster().config.relays.clone()
     }
 
     /// The relay this node holds — §9.1.
     #[must_use]
-    pub fn home_relay(&self) -> Option<[u8; karst_relay_proto::consts::ID_LEN]> {
+    pub fn home_relay(&self) -> Option<[u8; karst_estavelle_proto::consts::ID_LEN]> {
         *self
             .home_relay
             .read()
@@ -560,7 +561,7 @@ impl Engine {
     ///
     /// Cheap on the datapath: a relaxed load, and a store only when a mark is
     /// actually in force.
-    pub fn seen_on_home_relay(&self, peer_id: [u8; karst_relay_proto::consts::ID_LEN]) {
+    pub fn seen_on_home_relay(&self, peer_id: [u8; karst_estavelle_proto::consts::ID_LEN]) {
         let roster = self.roster();
         let Some(&peer) = roster.by_relay_id.get(&peer_id) else {
             return;
@@ -583,7 +584,7 @@ impl Engine {
     /// that same relay when it returns.
     pub fn relay_unreachable(
         &self,
-        peer_id: [u8; karst_relay_proto::consts::ID_LEN],
+        peer_id: [u8; karst_estavelle_proto::consts::ID_LEN],
         now_ms: u64,
     ) -> bool {
         let roster = self.roster();
@@ -781,7 +782,7 @@ impl Engine {
     /// **This is the whole of the relay→direct upgrade, and it is a two-line
     /// rule on purpose.** A direct endpoint wins whenever there is one; the
     /// relay carries the traffic whenever there is not. Nothing else has to
-    /// coordinate, because AVEN owns whether a direct endpoint exists at all:
+    /// coordinate, because Resurgence owns whether a direct endpoint exists at all:
     /// it installs one on a confirmed path and withdraws it once it has given
     /// up on every path ([`Self::set_endpoint`], [`Self::release_endpoint`]).
     /// The upgrade and the fallback are the same decision read at different
@@ -792,7 +793,7 @@ impl Engine {
     /// address that has gone stale from pre-empting the relay forever — it did,
     /// and it was GitHub issue [#20](https://github.com/karst-net/karst/issues/20). A peer with no disco key is untouched
     /// by any of this and keeps its configured endpoint, which is correct: no
-    /// key means no discovery, ever (`aven-v1.md` §5.1), so there is nothing to
+    /// key means no discovery, ever (`resurgence-v1.md` §5.1), so there is nothing to
     /// learn from and nothing that could responsibly take it away.
     ///
     /// Deciding it here rather than at each call site is what keeps that true.
@@ -844,15 +845,15 @@ impl Engine {
     /// Which relay carries traffic for the peer the relay knows as `peer_id`.
     ///
     /// The same decision [`Self::via`] makes, for the callers that hold a node
-    /// id rather than a roster index — AVEN's rendezvous, whose advertisements
+    /// id rather than a roster index — Resurgence's rendezvous, whose advertisements
     /// must reach the peer by the same route its data does. A peer with a
     /// direct path still answers here: an advertisement is what *creates* the
-    /// direct path, so it goes over the relay regardless (`aven-v1.md` §7.3).
+    /// direct path, so it goes over the relay regardless (`resurgence-v1.md` §7.3).
     #[must_use]
     pub fn relay_for(
         &self,
-        peer_id: [u8; karst_relay_proto::consts::ID_LEN],
-    ) -> Option<[u8; karst_relay_proto::consts::ID_LEN]> {
+        peer_id: [u8; karst_estavelle_proto::consts::ID_LEN],
+    ) -> Option<[u8; karst_estavelle_proto::consts::ID_LEN]> {
         let roster = self.roster();
         let &peer = roster.by_relay_id.get(&peer_id)?;
         let refused = roster
@@ -870,7 +871,7 @@ impl Engine {
             .filter(|&home| Some(home) != self.home_relay())
     }
 
-    /// Install an authenticated AVEN-selected endpoint for a roster peer.
+    /// Install an authenticated Resurgence-selected endpoint for a roster peer.
     ///
     /// Unconditional: a probed and confirmed direct path is better evidence
     /// than an address learned from a handshake, and displacing the second with
@@ -1604,7 +1605,7 @@ impl Engine {
     pub fn inbound_from_relay(
         &self,
         reasm: &mut Reassembler,
-        source_id: [u8; karst_relay_proto::consts::ID_LEN],
+        source_id: [u8; karst_estavelle_proto::consts::ID_LEN],
         datagram: &[u8],
         now_ms: u64,
         rand: &ResponderRandomness,
@@ -2005,7 +2006,7 @@ impl Engine {
         // or a crashed daemon left nftables rules behind. Apply before the
         // flow table too, so an established transit flow cannot bypass it.
         if dir == Direction::In
-            && (!roster.config.gateway_forwarding || !roster.config.filter.scoped_ready())
+            && (!roster.config.aven_forwarding || !roster.config.filter.scoped_ready())
             && ip::destination(packet).is_some_and(|destination| {
                 !roster
                     .config
@@ -2229,7 +2230,7 @@ impl Engine {
                 suite: karst_crypto::SUITE_NAME.to_owned(),
                 transport: match self.via(&roster, index) {
                     Some(Via::Direct(_)) => Transport::Direct,
-                    Some(Via::Relay { .. }) => Transport::Relay,
+                    Some(Via::Relay { .. }) => Transport::Estavelle,
                     None => Transport::Unreachable,
                 },
                 tx_bytes: roster
@@ -2699,7 +2700,9 @@ pub struct Reconfigured {
 /// encoding produces means a relayed stream and a direct stream from the same
 /// peer cannot land in the same reassembly slot — which matters exactly during
 /// an upgrade, when both are briefly in flight.
-fn relay_source_key(id: &[u8; karst_relay_proto::consts::ID_LEN]) -> karst_transport::SourceKey {
+fn relay_source_key(
+    id: &[u8; karst_estavelle_proto::consts::ID_LEN],
+) -> karst_transport::SourceKey {
     let mut key = [0u8; 18];
     // 0xFF cannot begin a source key: an IPv6 address starting FF00::/8 is
     // multicast, which is not a source address a datagram can arrive from.
@@ -2735,7 +2738,7 @@ fn build_roster(config: &Arc<Config>, carried: &HashMap<[u8; 32], Arc<PeerSlot>>
         // relay it has no address, TLS name or pinned key for — so it is
         // dropped here, where the peer still has every other route, rather
         // than surfacing as a destination the transport quietly discards.
-        home_relays.push(peer.home_relay.filter(|id| {
+        home_relays.push(peer.home_estavelle.filter(|id| {
             config
                 .relays
                 .iter()
@@ -2809,7 +2812,7 @@ pub struct PeerStatus {
     ///
     /// **Not decoration, and not a bool.** A relayed peer works, and works more
     /// slowly, by more hops, and through a third party that sees the timing and
-    /// volume of the traffic (`aven-v1.md` §9) — an operator asking "why is
+    /// volume of the traffic (`resurgence-v1.md` §9) — an operator asking "why is
     /// this slow" cannot tell that from the outside. Neither can they tell it
     /// from a peer with *no* path at all, which is a different problem with a
     /// different fix, and which a `relayed: false` would have quietly merged

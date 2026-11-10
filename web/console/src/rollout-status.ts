@@ -4,7 +4,7 @@
 import type { StatusState } from "@karst-net/ui";
 import type { RolloutPlan } from "@karst-net/api-client";
 
-/** ADR-0066's state machine, rendered the same way relay-allocation-status.ts
+/** ADR-0066's state machine, rendered the same way estavelle-allocation-status.ts
  * renders its own — a plain label, not a progress bar: in_progress spans
  * however long the operator takes to run the documented cosign/nomad steps
  * by hand, not a bounded wait control itself is driving. */

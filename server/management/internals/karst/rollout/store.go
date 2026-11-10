@@ -8,7 +8,7 @@
 // and a state machine (planned -> in_progress -> completed, or -> failed
 // from any step; completed/failed -> rolled_back on teardown). Create
 // persists the plan and its components as planned in one local transaction
-// with no external call inside it -- the same discipline relayalloc.Create
+// with no external call inside it -- the same discipline estavellealloc.Create
 // already follows, for the same reason: this package makes no external
 // call at all (ADR-0066's trust-boundary decision), so there is nothing to
 // keep out of the transaction, but the convention is kept for consistency.
@@ -120,7 +120,7 @@ const (
 )
 
 // PlanHistory is the append-only transition audit trail -- mirrors
-// relayalloc's AllocationHistory, itself modeled on billing's
+// estavellealloc's AllocationHistory, itself modeled on billing's
 // paymentHistoryRow, the established precedent for a multi-step state
 // machine in this codebase.
 type PlanHistory struct {
@@ -164,7 +164,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 }
 
 // validPlanTransition is the explicit transition-graph allow-list ADR-0066
-// specifies, mirroring relayalloc's validAllocationTransition. Retrying a
+// specifies, mirroring estavellealloc's validAllocationTransition. Retrying a
 // failed plan forward is deliberately not offered: an administrator retries
 // by creating a new plan, not resuming this one in place.
 func validPlanTransition(from, to string) bool {
@@ -314,7 +314,7 @@ func (s *Store) List(ctx context.Context) ([]Plan, error) {
 
 // Start applies the compare-and-set planned -> in_progress transition.
 // acknowledge must be true -- the console's own double opt-in convention,
-// matching relayalloc's deprovision request. overrideIncompatibility must
+// matching estavellealloc's deprovision request. overrideIncompatibility must
 // also be true if the caller's own live compatibility preview (computed by
 // the caller via Preview, not cached on the row -- fleet state drifts)
 // still reports a blocking capability, so a stale UI state can never

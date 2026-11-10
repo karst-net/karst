@@ -5,7 +5,7 @@
 # shape as ../../compose/prod/docker-compose.yml: the console and Keycloak
 # share one externally-forwarded port, karst-control is not published to the
 # host at all (only reachable from Caddy over a private network), and
-# control/relay/console are pinned by image digest to a cosign-verified release
+# control/estavelle/console are pinned by image digest to a cosign-verified release
 # rather than a mutable tag. See that compose file's own header comment for
 # why this shape exists (ADR pentest / real production posture, not
 # disposable test infra) -- unchanged by running it under Nomad instead of
@@ -18,7 +18,7 @@
 #     compose's bridge network + service-name DNS. No ports published to the
 #     host at all -- control is genuinely unreachable except from Caddy, and
 #     keycloak likewise.
-#   - relay: network_mode = "host". It needs the real host port 443 and has
+#   - estavelle: network_mode = "host". It needs the real host port 443 and has
 #     no service-to-service dependency on the others (it only reads shared
 #     state files), so there's nothing it needs the `karst` network for.
 #   - caddy: on the `karst` network (to resolve control/keycloak/console by name,
@@ -51,7 +51,7 @@ variable "repo_root" {
 variable "shared_state_dir" {
   type        = string
   default     = "/home/adrian/code/karst/deploy/compose/state"
-  description = "The state directory compose's control+relay services share (bootstrap.sh's output: roster.toml, relays.json, policy.json, bootstrap.key, tls/, netbird/, management.json) -- deploy/compose/prod/docker-compose.yml's own `../state`."
+  description = "The state directory compose's control+estavelle services share (bootstrap.sh's output: roster.toml, estavelles.json, policy.json, bootstrap.key, tls/, netbird/, management.json) -- deploy/compose/prod/docker-compose.yml's own `../state`."
 }
 
 variable "prod_dir" {
@@ -78,7 +78,7 @@ variable "control_image_digest" {
   description = "cosign-verified against deliverables.yml -- see docs/OPERATIONS.md §7 before changing this."
 }
 
-variable "relay_image_digest" {
+variable "estavelle_image_digest" {
   type    = string
   default = "sha256:45a72850a7f3864c5200f3d147998f8e291c0ceb8aaa5f81e045a3eba93c1404"
 }
@@ -107,16 +107,16 @@ variable "kc_master_admin_password" {
   description = "Pass with -var, never commit a real value here."
 }
 
-variable "relay_allocate_control_api_base" {
+variable "estavelle_allocate_control_api_base" {
   type        = string
   default     = ""
-  description = "ADR-0045's 2026-11-04 addendum (ADR-0063): this deployment's own externally-reachable control API base, embedded in a relay allocation's launched instance's own enroll bundle. Sets KARST_RELAY_ALLOCATE_CONTROL_API_BASE on the control task -- the in-process allocate worker always runs, but every allocation fails closed with a clear reason while this is empty. See docs/OPERATIONS.md's Scaler section."
+  description = "ADR-0045's 2026-11-04 addendum (ADR-0063): this deployment's own externally-reachable control API base, embedded in an estavelle allocation's launched instance's own enroll bundle. Sets KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE on the control task -- the in-process allocate worker always runs, but every allocation fails closed with a clear reason while this is empty. See docs/OPERATIONS.md's Scaler section."
 }
 
-variable "relay_allocate_max_concurrent" {
+variable "estavelle_allocate_max_concurrent" {
   type        = number
   default     = 0
-  description = "ADR-0045 §6 bullet 4's mandatory per-account concurrency ceiling on non-terminal relay allocations, applied to this in-process actuator by that ADR's 2026-11-04 addendum -- no \"unlimited\" value. Sets KARST_RELAY_ALLOCATE_MAX_CONCURRENT; 0 (the default) means every allocation request is refused, not unlimited."
+  description = "ADR-0045 §6 bullet 4's mandatory per-account concurrency ceiling on non-terminal estavelle allocations, applied to this in-process actuator by that ADR's 2026-11-04 addendum -- no \"unlimited\" value. Sets KARST_ESTAVELLE_ALLOCATE_MAX_CONCURRENT; 0 (the default) means every allocation request is refused, not unlimited."
 }
 
 job "karst" {
@@ -148,19 +148,19 @@ job "karst" {
 
       env {
         NB_DISABLE_GEOLOCATION         = "true"
-        KARST_RELAY_ROSTER_FILE        = "/var/lib/karst/roster.toml"
+        KARST_ESTAVELLE_ROSTER_FILE    = "/var/lib/karst/roster.toml"
         KARST_AQUIFER                  = var.karst_aquifer
-        KARST_RELAY_REGISTRY_FILE      = "/var/lib/karst/relays.json"
+        KARST_ESTAVELLE_REGISTRY_FILE  = "/var/lib/karst/estavelles.json"
         KARST_POLICY_FILE              = "/var/lib/karst/policy.json"
         KARST_BOOTSTRAP_SETUP_KEY_FILE = "/var/lib/karst/bootstrap.key"
         KARST_COMPONENT_VERSIONS_FILE  = "/run/karst-versions/components.json"
-        # ADR-0045's 2026-11-04 addendum (ADR-0063): the in-process relay-
+        # ADR-0045's 2026-11-04 addendum (ADR-0063): the in-process estavelle-
         # allocation allocate worker always runs inside this task; these two
         # just configure it. Empty/0 (the defaults) mean every allocation
         # fails closed with a clear reason -- no separate task, binary, or
         # opt-in flag the way the now-removed scaler-allocate group needed.
-        KARST_RELAY_ALLOCATE_CONTROL_API_BASE = var.relay_allocate_control_api_base
-        KARST_RELAY_ALLOCATE_MAX_CONCURRENT   = var.relay_allocate_max_concurrent
+        KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE = var.estavelle_allocate_control_api_base
+        KARST_ESTAVELLE_ALLOCATE_MAX_CONCURRENT   = var.estavelle_allocate_max_concurrent
       }
 
       resources {
@@ -170,7 +170,7 @@ job "karst" {
     }
   }
 
-  group "relay" {
+  group "estavelle" {
     count = 1
 
     constraint {
@@ -178,13 +178,13 @@ job "karst" {
       value     = var.node_name
     }
 
-    task "relay" {
+    task "estavelle" {
       driver = "docker"
 
       config {
-        image        = "ghcr.io/karst-net/karst-relay@${var.relay_image_digest}"
+        image        = "ghcr.io/karst-net/karst-estavelle@${var.estavelle_image_digest}"
         network_mode = "host"
-        args         = ["--config", "/var/lib/karst/relay.toml"]
+        args         = ["--config", "/var/lib/karst/estavelle.toml"]
         volumes = [
           "${var.shared_state_dir}:/var/lib/karst",
         ]
@@ -303,12 +303,12 @@ job "karst" {
     }
   }
 
-  # ADR-0063's admin-triggered relay allocation is driven in-process by the
-  # control task above (ADR-0045's 2026-11-04 addendum) -- there used to be
-  # a separate, opt-in "scaler-allocate" raw_exec group here (ADR-0063/#525)
+  # ADR-0063's admin-triggered estavelle allocation is driven in-process by
+  # the control task above (ADR-0045's 2026-11-04 addendum) -- there used to
+  # be a separate, opt-in "scaler-allocate" raw_exec group here (ADR-0063/#525)
   # that ran an external `karst-scaler allocate` binary; that process, its
   # opt-in flag, and its hand-written TOML config are gone. Nothing to
-  # deploy here now beyond the two KARST_RELAY_ALLOCATE_* env vars on
+  # deploy here now beyond the two KARST_ESTAVELLE_ALLOCATE_* env vars on
   # control, and the AWS launch defaults an operator sets once in the
   # console's Settings page.
 }

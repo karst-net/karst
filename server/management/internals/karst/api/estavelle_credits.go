@@ -1,0 +1,177 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright the Karst contributors.
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gorilla/mux"
+
+	"github.com/netbirdio/netbird/management/internals/karst/billing"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
+)
+
+// RegisterEstavelleCreditEndpoint mounts the relay-only, ML-DSA-authenticated
+// credit reservation endpoint. It does not use customer session auth because
+// the managed relay identity and signed mapping request are its authority.
+func RegisterEstavelleCreditEndpoint(router *mux.Router, relayStore *estavelleusage.Store, billingStore *billing.Store) {
+	router.Handle(estavelleusage.CreditRequestPath, &estavelleCreditHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
+	router.Handle(estavelleusage.CreditSurrenderPath+"{grant_id}/surrender", &estavelleCreditSurrenderHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
+}
+
+type estavelleCreditSurrenderHandler struct {
+	relays  *estavelleusage.Store
+	billing *billing.Store
+}
+
+func (h *estavelleCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	grantID := mux.Vars(r)["grant_id"]
+	expectedPath := estavelleusage.CreditSurrenderPath + grantID + "/surrender"
+	if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.EscapedPath() != expectedPath || h.relays == nil || h.billing == nil {
+		http.Error(w, "invalid relay cap credit surrender", http.StatusBadRequest)
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		http.Error(w, "unsupported relay cap surrender content type", http.StatusUnsupportedMediaType)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8192))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "relay cap surrender too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "could not read relay cap surrender", http.StatusBadRequest)
+		}
+		return
+	}
+	request, err := estavelleusage.ParseCreditSurrender(body)
+	if err != nil || request.GrantID != grantID {
+		http.Error(w, "invalid relay cap surrender", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	_, err = h.billing.SurrenderAuthorizedEstavelleCredits(ctx, h.relays, request)
+	if err != nil {
+		switch {
+		case errors.Is(err, estavelleusage.ErrInvalidCreditRequest):
+			http.Error(w, "invalid relay cap surrender", http.StatusBadRequest)
+		case errors.Is(err, estavelleusage.ErrUnauthorized), errors.Is(err, estavelleusage.ErrProducerMissing), errors.Is(err, estavelleusage.ErrMappingNotAllowed):
+			http.Error(w, "relay cap surrender rejected", http.StatusForbidden)
+		case errors.Is(err, billing.ErrCreditGrantNotFound):
+			http.Error(w, "relay cap grant not found", http.StatusNotFound)
+		case errors.Is(err, billing.ErrCreditGrantConflict):
+			http.Error(w, "relay cap surrender conflicts with prior state", http.StatusConflict)
+		default:
+			http.Error(w, "could not surrender relay cap credits", http.StatusInternalServerError)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type estavelleCreditHandler struct {
+	relays  *estavelleusage.Store
+	billing *billing.Store
+}
+
+func (h *estavelleCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.EscapedPath() != estavelleusage.CreditRequestPath {
+		http.Error(w, "invalid relay cap credit request", http.StatusBadRequest)
+		return
+	}
+	if h.relays == nil || h.billing == nil {
+		http.Error(w, "relay cap credits are not configured", http.StatusServiceUnavailable)
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		http.Error(w, "unsupported relay cap content type", http.StatusUnsupportedMediaType)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8192))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "relay cap request too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "could not read relay cap request", http.StatusBadRequest)
+		}
+		return
+	}
+	request, err := estavelleusage.ParseCreditRequest(body)
+	if err != nil {
+		http.Error(w, "invalid relay cap request", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	now := time.Now().UTC()
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	grant, err := h.billing.ReserveAuthorizedEstavelleCredits(ctx, h.relays, start, end, request)
+	if errors.Is(err, billing.ErrEstavelleCapNotConfigured) {
+		until, leaseErr := h.billing.IssueAuthorizedEstavelleUncappedLease(ctx, h.relays, start, end, request)
+		if errors.Is(leaseErr, billing.ErrEstavelleCapAlreadyActive) {
+			grant, err = h.billing.ReserveAuthorizedEstavelleCredits(ctx, h.relays, start, end, request)
+		} else if leaseErr == nil {
+			w.Header().Set("X-Karst-Estavelle-Cap-Mode", "uncapped")
+			w.Header().Set("X-Karst-Estavelle-Cap-Lease-Millis", strconv.FormatInt(billing.EstavelleUncappedLeaseMillis, 10))
+			w.Header().Set("X-Karst-Estavelle-Cap-Until", strconv.FormatInt(until.UnixMicro(), 10))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		} else {
+			err = leaseErr
+		}
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, estavelleusage.ErrInvalidCreditRequest):
+			http.Error(w, "invalid relay cap request", http.StatusBadRequest)
+		case errors.Is(err, estavelleusage.ErrUnauthorized), errors.Is(err, estavelleusage.ErrProducerMissing), errors.Is(err, estavelleusage.ErrMappingNotAllowed):
+			http.Error(w, "relay cap request rejected", http.StatusForbidden)
+		case errors.Is(err, billing.ErrEstavelleCapPending):
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "relay cap activation is pending uncapped forwarding leases", http.StatusTooEarly)
+		case errors.Is(err, billing.ErrEstavelleCapNotConfigured):
+			http.Error(w, "relay cap state could not be leased", http.StatusServiceUnavailable)
+		case errors.Is(err, billing.ErrEstavelleCapExhausted):
+			http.Error(w, "relay spending cap exhausted", http.StatusTooManyRequests)
+		case errors.Is(err, billing.ErrCreditRequestConflict):
+			http.Error(w, "relay cap request ID conflicts with prior request", http.StatusConflict)
+		default:
+			http.Error(w, "could not reserve relay cap credits", http.StatusInternalServerError)
+		}
+		return
+	}
+	validMillis := end.Sub(time.Now().UTC()).Milliseconds()
+	if validMillis <= 0 {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "relay cap period boundary is being refreshed", http.StatusTooEarly)
+		return
+	}
+	encoded, err := json.Marshal(grant)
+	if err != nil {
+		http.Error(w, "could not encode relay cap grant", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
+	w.Header().Set("X-Karst-Estavelle-Cap-Grant-Valid-Millis", strconv.FormatInt(validMillis, 10))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(encoded)
+}
+
+var _ http.Handler = (*estavelleCreditHandler)(nil)

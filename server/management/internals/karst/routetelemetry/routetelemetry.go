@@ -10,7 +10,7 @@
 // not a second signed endpoint the way relay telemetry (ADR-0021) needs,
 // since a node already has a live session here and a relay does not.
 //
-// Latest snapshot only, by design: the same posture relayreg's own
+// Latest snapshot only, by design: the same posture estavellereg's own
 // RecordTelemetry already takes for ADR-0021, and the one ADR-0047 expects
 // of any new control-plane metric field (history belongs in an operator's
 // own Prometheus, reached through its re-export, not a bespoke store here).
@@ -27,6 +27,8 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/netbirdio/netbird/management/server/migration"
 )
 
 // StoredRouteBytes is at most one row per (account, route): the latest
@@ -50,9 +52,9 @@ type StoredRouteBytes struct {
 
 func (StoredRouteBytes) TableName() string { return "karst_route_telemetry" }
 
-// StoredGatewayHealth keeps candidate health independent of route-wide counters.
+// StoredAvenHealth keeps candidate health independent of route-wide counters.
 // Legacy route rows cannot be attributed to a node and are never backfilled.
-type StoredGatewayHealth struct {
+type StoredAvenHealth struct {
 	ReadinessReported bool
 	AccountID         string `gorm:"primaryKey;size:64"`
 	GatewayID         string `gorm:"primaryKey"`
@@ -71,7 +73,7 @@ type StoredGatewayHealth struct {
 	ReportedAt       time.Time
 }
 
-func (StoredGatewayHealth) TableName() string { return "karst_gateway_health" }
+func (StoredAvenHealth) TableName() string { return "karst_aven_health" }
 
 type Store struct{ db *gorm.DB }
 
@@ -79,7 +81,12 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("route telemetry: nil database")
 	}
-	if err := db.AutoMigrate(&StoredRouteBytes{}, &StoredGatewayHealth{}); err != nil {
+	// ADR-0069's clean-break Gateway->Aven rename: idempotent, no-op once
+	// the rename has happened.
+	if err := migration.RenameTable[StoredAvenHealth](context.Background(), db, "karst_gateway_health"); err != nil {
+		return nil, fmt.Errorf("route telemetry: migrate: %w", err)
+	}
+	if err := db.AutoMigrate(&StoredRouteBytes{}, &StoredAvenHealth{}); err != nil {
 		return nil, fmt.Errorf("route telemetry: migrate: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -97,7 +104,7 @@ type RouteReport struct {
 	IngressBytes     uint64
 	IngressPackets   uint64
 	ForwardingActive bool
-	// ObservedEgressIP, issue #554 -- see StoredGatewayHealth's own doc
+	// ObservedEgressIP, issue #554 -- see StoredAvenHealth's own doc
 	// comment on this field.
 	ObservedEgressIP string
 }
@@ -129,7 +136,7 @@ func (s *Store) RecordRouteBytes(ctx context.Context, accountID, routeID string,
 		return fmt.Errorf("route telemetry: record %s: %w", routeID, err)
 	}
 	if report.GatewayID != "" {
-		health := StoredGatewayHealth{AccountID: accountID, GatewayID: report.GatewayID,
+		health := StoredAvenHealth{AccountID: accountID, GatewayID: report.GatewayID,
 			RouteID: routeID, ForwardingActive: report.ForwardingActive, ReportedAt: record.ReportedAt,
 			ReadinessReported: report.ReadinessReported || report.ForwardingActive,
 			ObservedEgressIP:  report.ObservedEgressIP}
@@ -143,16 +150,16 @@ func (s *Store) RecordRouteBytes(ctx context.Context, accountID, routeID string,
 	return nil
 }
 
-// LatestByGateway returns account-scoped reports keyed first by node, then resource.
-func (s *Store) LatestByGateway(ctx context.Context, accountID string) (map[string]map[string]StoredGatewayHealth, error) {
-	var rows []StoredGatewayHealth
+// LatestByAven returns account-scoped reports keyed first by node, then resource.
+func (s *Store) LatestByAven(ctx context.Context, accountID string) (map[string]map[string]StoredAvenHealth, error) {
+	var rows []StoredAvenHealth
 	if err := s.db.WithContext(ctx).Where("account_id = ?", accountID).Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("gateway health: list: %w", err)
 	}
-	result := make(map[string]map[string]StoredGatewayHealth)
+	result := make(map[string]map[string]StoredAvenHealth)
 	for _, row := range rows {
 		if result[row.GatewayID] == nil {
-			result[row.GatewayID] = make(map[string]StoredGatewayHealth)
+			result[row.GatewayID] = make(map[string]StoredAvenHealth)
 		}
 		result[row.GatewayID][row.RouteID] = row
 	}

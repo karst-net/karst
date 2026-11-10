@@ -14,9 +14,9 @@ and is the place to update when a deferral is later picked up.
 
 The target console model follows [ADR-0056](adr/0056-four-component-families.md):
 node agent, transport infrastructure, control services and trust tooling.
-Show subnet and exit routes under one node **Gateway** capability, retaining
+Show subnet and exit routes under one node **Aven** capability, retaining
 per-route consent/readiness. Show Ponor and TURN backend modes under one
-**Relay** service, retaining per-mode health, admission, capacity and credential
+**Estavelle** service, retaining per-mode health, admission, capacity and credential
 expiry. Unified API/UI work is pending #404; existing views and endpoint names
 below describe current behavior. Console administration never conveys Bedrock
 membership-signing authority. See [migration contract](COMPONENT-ARCHITECTURE.md#migration-contract-for-404).
@@ -55,7 +55,7 @@ admin policy-write API. See
 
 New form-managed grants reference account group IDs and resolve live device
 membership. Renames preserve access. The Groups view links to the same grants
-and Relay configuration that determine effective access. Legacy JSON policy
+and Estavelle configuration that determine effective access. Legacy JSON policy
 names remain independent until explicitly mapped through the reviewed migration
 form; see ADR-0058 and the form-managed access section below. No automatic
 name-based migration is performed.
@@ -84,7 +84,7 @@ name-based migration is performed.
 ## Per-node throughput
 
 - **Both path and throughput are shown.** Path: which peer, direct or
-  relayed, the relay id and endpoint if relayed, and when it was last
+  relayed, the estavelle id and endpoint if relayed, and when it was last
   observed. Throughput: bytes sent/received per peer, a running total for
   the session rather than a rate (`GET /nodes/{handle}/paths`, the Paths
   dialog on the Machines page).
@@ -101,7 +101,7 @@ name-based migration is performed.
 - **Deferred, smaller: `relay_id` and `since` on a path observation.** Both
   fields exist on the API contract and are already read by the console, but
   the server has never populated either — `relay_id` because a session
-  observation does not yet say *which* relay a relayed path used (its own
+  observation does not yet say *which* estavelle a relayed path used (its own
   proto-field-sized gap, not yet scoped), and `since` because the
   full-replace storage above has nowhere to keep "when did this path
   configuration start" across reports.
@@ -111,49 +111,49 @@ name-based migration is performed.
 - **Issue #281: aggregate egress bytes/packets per exit-node/subnet-router
   route, for NOC visibility only** — never a planner or scaling input
   (settled out of scope by #282). Self-reported by whichever node is
-  currently a route's authenticated gateway, read back from that route's
-  own nftables forward-accept counter (`bins/karstd/src/gateway.rs`'s
+  currently a route's authenticated aven, read back from that route's
+  own nftables forward-accept counter (`bins/karstd/src/aven.rs`'s
   `karst_routes` table already tags it with the route's id), over the same
   control-channel session `KarstSessionObservation` already uses — not a
-  second, relay-telemetry-style signed endpoint, since a node already has
-  a live session here and ADR-0021's relay channel has no concept of
+  second, estavelle-telemetry-style signed endpoint, since a node already has
+  a live session here and ADR-0021's estavelle channel has no concept of
   "route" at all to report this through.
 - **Both egress and ingress, each attributed per route.** Issue #371 split
   `karst_routes`'s previously shared, uncommented return-leg accept rule
   into one comment-tagged rule per route (ordered most-specific-destination
   first, the same way the forward-leg rules already were, so an exit route
-  and a subnet route together on one gateway still attribute correctly
+  and a subnet route together on one aven still attribute correctly
   rather than one claiming the other's reply traffic). Never a
   *destination* breakdown, though — only per-route.
 - **Surfaced on the NOC map's `"route"` component** (`GET
   /noc/components`) as `bytes`/`packets` (egress) and
   `ingress_bytes`/`ingress_packets` (ingress), each summed across every
-  route a gateway group serves — absent, not zero, until some gateway for
+  route an aven group serves — absent, not zero, until some aven for
   the group has self-reported at least once. There is no per-route (as
   opposed to per-group) drill-down endpoint yet; the group-level sum is
   what this issue lands, and a finer drill-down is left for whenever the
   NOC view (#241) actually wants one.
-- Latest snapshot only, the same posture relay telemetry (ADR-0021) and
+- Latest snapshot only, the same posture estavelle telemetry (ADR-0021) and
   per-node throughput above both already have — no history, no rate, just
   the current total.
 
-## Relay health and onboarding
+## Estavelle health and onboarding
 
-- **Both are done.** Relay onboarding (add/remove with client-side address
-  validation) predates this page; relay health now reflects a relay's own
+- **Both are done.** Estavelle onboarding (add/remove with client-side address
+  validation) predates this page; estavelle health now reflects an estavelle's own
   signed, periodic self-report to the control plane (ADR-0021, issue #147)
   rather than a permanent `"unknown"` placeholder.
 
 ## NOC view
 
-- **Phase 1a is done: declared relay locations, a map, health, and current
-  snapshot.** An operator declares a relay's position (`location.lat`/`lon`/
-  `label`, optional) through the same add-relay form/API the Relays page
+- **Phase 1a is done: declared estavelle locations, a map, health, and current
+  snapshot.** An operator declares an estavelle's position (`location.lat`/`lon`/
+  `label`, optional) through the same add-estavelle form/API the Estavelles page
   already uses (ADR-0046 §1 — never GeoIP, never inferred from `address`).
   The NOC page (`GET /karst/v1/noc/components`, `GET
-  /karst/v1/noc/relays/{id}`) plots every relay with a declared location on
-  a map, color-coded by the same health states the Relays page shows, and
-  lists relays with no declared location separately rather than hiding
+  /karst/v1/noc/estavelles/{id}`) plots every estavelle with a declared location on
+  a map, color-coded by the same health states the Estavelles page shows, and
+  lists estavelles with no declared location separately rather than hiding
   them. A new read-only `noc` role (ADR-0046 §6) can reach these two
   endpoints and nothing that writes; every view load and drill-down is
   audit-logged (`karst.noc.view`, `karst.noc.drilldown`) explicitly in the
@@ -161,13 +161,13 @@ name-based migration is performed.
 - **Deferred: history, current rate, and utilization against capacity**
   (ADR-0047). These need the Prometheus re-export and account-scoped query
   proxy ADR-0047 describes, which is separately scoped Phase 1b work, not
-  part of this page yet. A relay's current snapshot today is still the
-  same cumulative total the Relays page already shows (`health.bytes`), not
+  part of this page yet. An estavelle's current snapshot today is still the
+  same cumulative total the Estavelles page already shows (`health.bytes`), not
   a rate.
-- **Deferred: non-relay components and client aggregates.** Exit nodes,
+- **Deferred: non-estavelle components and client aggregates.** Exit nodes,
   subnet routers, TURN, Bedrock, and the control plane itself (#241's own
   Phase 3) and client per-region/per-aquifer aggregates (ADR-0046 §2, #241's
-  Phase 4) are not on this page yet — it shows relays only.
+  Phase 4) are not on this page yet — it shows estavelles only.
 - **Done: the basemap is now Natural Earth's 1:110m admin-0 country
   boundaries**, not the original hand-authored placeholder. Converted from
   the `world-atlas` npm package's TopoJSON (ISC-licensed packaging of
@@ -262,7 +262,7 @@ name-based migration is performed.
 Groups and Access controls are consolidated into **Groups & access**, with Groups
 and Access grants views. New grants use stable account group IDs and live device
 membership. Select source groups, destination groups/machines or a configured
-Gateway network, ports, and any additional SSH permission. Review concrete access
+Aven network, ports, and any additional SSH permission. Review concrete access
 changes before applying. A concurrent policy update requires reload and reapply.
 Group renames preserve device membership and form-managed grants.
 
@@ -270,40 +270,40 @@ Existing policy rules remain readable. Mapping a legacy policy group to a
 registry group is explicit and previewed; matching display names never triggers
 an automatic migration. Broad legacy rules remain effective until migrated.
 
-**Relays → Configure a relay** selects a registered running backend, allowed
-groups, optional IPv4/IPv6 exit service, an enrolled Linux Gateway and priority.
+**Estavelles → Configure an estavelle** selects a registered running backend, allowed
+groups, optional IPv4/IPv6 exit service, an enrolled Linux Aven and priority.
 Resource-owned exit grants appear in Access grants and are edited through the
 resource form. Its transaction saves the association, admission policy, routes
 and generated access grant together. Service revisions prevent stale edits.
-The form explicitly discloses the required all-port Gateway machine permission;
+The form explicitly discloses the required all-port Aven machine permission;
 it does not claim destination-only ingress isolation. Client exit consent and
 forwarding readiness are still required. This does not provision a new workload.
 
 Group restrictions require a live identity-bound roster writer. The default
-Compose bootstrap derives its public identity binding from the local relay
+Compose bootstrap derives its public identity binding from the local estavelle
 binary and supplies `KARST_RELAY_ROSTER_ID_FILE`. Other installations can supply
 that identity file or `KARST_RELAY_ROSTER_ID` (registry ID in URL-safe base64).
 These are installation settings, not per-resource administrator configuration.
 Without the capability the form and API refuse restricted configuration.
 Admission normally converges within 30 seconds (25-second refresh plus 5-second
-relay poll). If the writer fails, the relay expires its last roster after 90
+estavelle poll). If the writer fails, the estavelle expires its last roster after 90
 seconds plus the next poll. Removing a managed association leaves admission
 closed. Existing legacy tenants on an explicitly shared backend keep their
 existing account boundary; unregistered tenants do not gain admission.
 
 See [ADR-0058](adr/0058-form-managed-group-and-resource-access.md) for migration,
-downgrade and Gateway ingress constraints.
+downgrade and Aven ingress constraints.
 
-### Unified relay management
+### Unified estavelle management
 
-**Relays** has one inventory for registered endpoints and their service
-configurations. Each configured relay shows its address, admission health,
+**Estavelles** has one inventory for registered endpoints and their service
+configurations. Each configured estavelle shows its address, admission health,
 group-access status and internet-egress settings. Unassociated endpoints stay
-visible as **Not configured**, with a **Configure relay** action. Missing
+visible as **Not configured**, with a **Configure estavelle** action. Missing
 registrations remain visible for diagnosis. Shared legacy endpoints can still
 appear under multiple named configurations.
 
-**Add relay** registers a running endpoint and immediately opens group-access
+**Add estavelle** registers a running endpoint and immediately opens group-access
 and exit configuration with that endpoint selected. Canceling this second
 step leaves the registration visible. In service publication mode an
 unassociated endpoint is not published; in legacy mode registration can make
@@ -323,7 +323,7 @@ deletion/configuration actions are disabled until that API recovers.
 
 **Groups & access → Groups → Delete** opens an impact review with current machine
 membership and named dependencies. Access grants, legacy membership mappings,
-relay restrictions, Gateway routing/distribution/access assignments, DNS,
+estavelle restrictions, Aven routing/distribution/access assignments, DNS,
 automatic user assignments and active invitations must be resolved in their
 owning forms first. Disabled resources still count as dependencies.
 
@@ -331,7 +331,7 @@ An unavailable dependency source blocks deletion. After resolving assignments,
 refresh the review and acknowledge deletion explicitly. The console reloads
 before deleting; changed membership or access requires another acknowledgment.
 The server independently rejects deletion while current form-managed policy or
-relay admission records reference the group, in addition to inherited management
+estavelle admission records reference the group, in addition to inherited management
 dependency checks. Historical policy versions are retained. Revoked, expired or
 exhausted invitations remain visible as history without blocking deletion;
 active invitations must be revoked first. Deleting a group never deletes its
@@ -343,8 +343,8 @@ machines or automatically removes access grants.
 shows machines gaining and losing group access alongside the group's named
 resource assignments. Acknowledge that review before applying. Other groups
 and preserved legacy rules may independently permit access; this list does not
-claim to compute all effective access. Relay admission updates on its roster
-refresh, and internet egress still requires local client consent and Gateway
+claim to compute all effective access. Estavelle admission updates on its roster
+refresh, and internet egress still requires local client consent and Aven
 readiness.
 
 Membership and rename forms save against the group revision loaded when the
@@ -356,11 +356,11 @@ be upgraded before these console forms can save safely. Existing API clients
 may continue using the replacement endpoint without the optional If-Match
 header; they retain their existing concurrency behavior.
 
-### Relay operational observations
+### Estavelle operational observations
 
-The Relays inventory shows named allowed groups and operational observations
+The Estavelles inventory shows named allowed groups and operational observations
 beside each managed configuration. A saved configuration is not proof that its
-rules have reached a relay or that internet egress works.
+rules have reached an estavelle or that internet egress works.
 
 Admission-writer observations use the server's identity-bound roster lease.
 The console polls every 15 seconds and ages the displayed observation every
@@ -370,7 +370,7 @@ refresh establishes writer availability, not receipt of a particular policy
 revision or successful client traffic.
 
 IPv4 and IPv6 forwarding are shown separately. Match the configured public
-Gateway handle and that service's managed exit offer, then show the Gateway's
+Aven handle and that service's managed exit offer, then show the Aven's
 control connection, offer enablement and per-offer readiness report. Node names,
 addresses, internal IDs and aggregate readiness are not binding evidence. An
 older control server without public handles shows unknown readiness until
@@ -378,41 +378,41 @@ upgraded. Failed refreshes mark observations unavailable even if cached data
 previously reported ready. Registration and access editing remain available.
 
 Forwarding readiness is self-reported and has the freshness semantics of the
-Gateway inventory. A reported-ready offer still requires client exit consent,
+Aven inventory. A reported-ready offer still requires client exit consent,
 applicable policy, and working end-to-end connectivity. The console does not
 infer consent, provision workloads or change forwarding from these observations.
 
-### Local Relay installation handoff
+### Local Estavelle installation handoff
 
-**Relays → Install a local relay** generates a download for the supported
+**Estavelles → Install a local estavelle** generates a download for the supported
 co-located reference Docker Compose deployment. Enter the existing public IP
 and port, certificate TLS name and region; optionally select a declared location
-and compatible Relay/control image tags or digests. Review the interruption:
-applying restarts control and Relay, and the generated admission writer denies
+and compatible Estavelle/control image tags or digests. Review the interruption:
+applying restarts control and Estavelle, and the generated admission writer denies
 legacy/unconfigured tenants until managed access is saved. Existing managed
 access remains enforced. Downloading does not start an installation.
 
 On the Linux control host, run the downloaded program with `--directory` pointing
 to the existing Compose directory. Its default invocation checks prerequisites;
 add `--apply` to install. It requires Python 3.11+, Compose v2, OpenSSL, the
-existing writable shared state and trusted Relay certificate/key. It generates
+existing writable shared state and trusted Estavelle certificate/key. It generates
 the runtime configuration and identity-bound writer overlay, preserving existing
 secrets. It rejects unsupported control images, conflicting writers and registry
 or Compose bindings rather than rewriting them.
 
-Import `state/relay-install/receipt.json` through **Add relay → Installation
+Import `state/estavelle-install/receipt.json` through **Add estavelle → Installation
 receipt**, review the endpoint and register it. The public key is imported, not
 typed. A matching registered identity is reused. The next form selects allowed
 groups and optional IPv4/IPv6 internet egress through an explicitly enrolled
-Linux Gateway. Preview service publication if it is not enabled. Check the
+Linux Aven. Preview service publication if it is not enabled. Check the
 operational observations afterward; neither a receipt nor a running container
 proves forwarding or confirms an applied policy revision.
 
-Failures record `state/relay-install/status.json`, retain keys and permit retry
+Failures record `state/estavelle-install/status.json`, retain keys and permit retry
 with the same handoff. Earlier actions may have completed; no automatic rollback
-reopens access. Use `state/relay-install/compose.json` alongside the original
+reopens access. Use `state/estavelle-install/compose.json` alongside the original
 Compose file for future lifecycle operations. Removing the overlay or downgrading
-the writer can bypass managed-only admission. This path supports one local Relay,
+the writer can bypass managed-only admission. This path supports one local Estavelle,
 not remote hosts, cloud/cluster provisioning, new TLS trust distribution or
-Gateway installation. Infrastructure connections remain discovery-only for this
+Aven installation. Infrastructure connections remain discovery-only for this
 workflow. See ADR-0062 and the reference Compose guide.

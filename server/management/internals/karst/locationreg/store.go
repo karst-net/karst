@@ -35,11 +35,11 @@ func accountFromContext(ctx context.Context) (string, error) {
 }
 
 // StoredLocation is the database form of a validated registry entry. Unlike
-// relayreg.StoredRelay (keyed by identity key) or turncred.StoredTurnServer
+// estavellereg.StoredEstavelle (keyed by identity key) or turncred.StoredTurnServer
 // (keyed by URI), a location has no natural identifier of its own, so the ID
 // is derived from its full content — two entries with identical lat/lon/
 // label/kind are one entry, the same "two names for one thing" posture
-// relayreg.Parse already takes for a repeated identity key.
+// estavellereg.Parse already takes for a repeated identity key.
 type StoredLocation struct {
 	AccountID string  `gorm:"primaryKey;size:64" json:"-"`
 	ID        string  `gorm:"primaryKey" json:"id"`
@@ -95,7 +95,7 @@ func (s *Store) Create(ctx context.Context, entry Entry) (*StoredLocation, error
 	}
 	// The preflight gives a clear response in the ordinary case; the conflict
 	// clause handles two simultaneous creates without exposing a driver-specific
-	// unique-constraint message to either caller — mirrors relayreg.Store.Create.
+	// unique-constraint message to either caller — mirrors estavellereg.Store.Create.
 	result := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(record)
 	if result.Error != nil {
 		return nil, fmt.Errorf("location registry: create: %w", result.Error)

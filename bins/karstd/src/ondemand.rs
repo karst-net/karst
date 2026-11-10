@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// A Ponor relay id.
-pub type RelayId = [u8; karst_relay_proto::consts::ID_LEN];
+pub type RelayId = [u8; karst_estavelle_proto::consts::ID_LEN];
 
 /// A handle on a connection the pool is holding open.
 pub trait Channel {
@@ -147,7 +147,7 @@ mod tests {
     }
 
     fn relay(tag: u8) -> RelayId {
-        [tag; karst_relay_proto::consts::ID_LEN]
+        [tag; karst_estavelle_proto::consts::ID_LEN]
     }
 
     fn pool() -> Pool<Fake> {

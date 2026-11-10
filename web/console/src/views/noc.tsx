@@ -3,7 +3,7 @@
 
 // The NOC view, Phase 1a (#241, ADR-0046/ADR-0047), extended to ADR-0046
 // §1's full component list plus the admin-authorized "possible locations"
-// registry: a map of every relay, exit-node/subnet-router gateway group,
+// registry: a map of every estavelle, exit-node/subnet-router aven group,
 // and the account's control-plane/Bedrock declared locations, each colored
 // by health where it has one, plus every
 // authorized-but-possibly-unoccupied location as a hollow marker. History,
@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { LngLatBounds, Map as MapLibreMap, setWorkerUrl, type GeoJSONSource, type MapGeoJSONFeature, type MapLayerMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
-import type { Location as NocLocation, NocComponent, Relay } from "@karst-net/api-client";
+import type { Location as NocLocation, NocComponent, Estavelle } from "@karst-net/api-client";
 import { Dialog, Observed, Status, type StatusState } from "@karst-net/ui";
 import { api } from "../api";
 import { Failure, formatBytes, useResource, usePolledResource } from "../common";
@@ -57,20 +57,20 @@ function token(name: string): string {
 // glyph here is also always paired with its color in the legend, which is
 // what makes the chart-4/chart-5 slots' relaxed CVD floor acceptable for
 // this use (see the token comment).
-const kindGlyph: Record<string, string> = { relay: "●", route: "▲", control_plane: "■", bedrock: "★" };
-const kindLabel: Record<string, string> = { relay: "Relay", route: "Exit/subnet gateway", control_plane: "Control plane", bedrock: "Bedrock" };
-const kindChartToken: Record<string, string> = { relay: "--chart-1", route: "--chart-3", control_plane: "--chart-4", bedrock: "--chart-5" };
+const kindGlyph: Record<string, string> = { estavelle: "●", route: "▲", control_plane: "■", bedrock: "★" };
+const kindLabel: Record<string, string> = { estavelle: "Estavelle", route: "Exit/subnet aven", control_plane: "Control plane", bedrock: "Bedrock" };
+const kindChartToken: Record<string, string> = { estavelle: "--chart-1", route: "--chart-3", control_plane: "--chart-4", bedrock: "--chart-5" };
 const kinds = Object.keys(kindGlyph);
 
 const healthState = (health?: string): StatusState => health === "confirmed" ? "healthy" : health === "stale" ? "warning" : "unknown";
 
-// Matches the Relays page's own mapping (views/relay-services.tsx) -- the drill-down
-// dialog for a relay shows the same health ADR-0021 already derives, not a
-// second opinion on it. Only relays carry this richer, telemetry-backed
+// Matches the Estavelles page's own mapping (views/estavelle-services.tsx) -- the drill-down
+// dialog for an estavelle shows the same health ADR-0021 already derives, not a
+// second opinion on it. Only estavelles carry this richer, telemetry-backed
 // shape; every other kind's detail comes straight from the NocComponent
 // already in hand.
-const relayHealthState = (relay: Relay): StatusState =>
-  relay.health.admission_state === "confirmed" ? "healthy" : relay.health.admission_state === "stale" ? "warning" : "unknown";
+const estavelleHealthState = (estavelle: Estavelle): StatusState =>
+  estavelle.health.admission_state === "confirmed" ? "healthy" : estavelle.health.admission_state === "stale" ? "warning" : "unknown";
 
 function componentFeature(component: NocComponent) {
   return {
@@ -100,7 +100,7 @@ export function Noc() {
   // once, to whatever the first poll actually contains, then leave the
   // operator's own pan/zoom alone on every poll after that.
   const didInitialFit = useRef(false);
-  const [selected, setSelected] = useState<{ kind: string; id: string; component?: NocComponent; relay?: Relay; error?: string }>();
+  const [selected, setSelected] = useState<{ kind: string; id: string; component?: NocComponent; estavelle?: Estavelle; error?: string }>();
 
   // Mount-once: construct the map and its static layers. Component data is
   // pushed in via the effects below, the same construct-once/update-via-ref
@@ -142,21 +142,21 @@ export function Noc() {
         paint: { "line-color": token("--muted"), "line-width": 1.2 },
       });
 
-      // Relays: clustered, exactly as Phase 1a shipped it -- untouched
+      // Estavelles: clustered, exactly as Phase 1a shipped it -- untouched
       // except for the added glyph layer, which carries this marker's kind
       // the same secondary-channel way every other kind below does.
-      instance.addSource("relays", { type: "geojson", data: { type: "FeatureCollection", features: [] }, cluster: true, clusterRadius: 40 });
+      instance.addSource("estavelles", { type: "geojson", data: { type: "FeatureCollection", features: [] }, cluster: true, clusterRadius: 40 });
       instance.addLayer({
-        id: "relay-clusters", type: "circle", source: "relays", filter: ["has", "point_count"],
+        id: "estavelle-clusters", type: "circle", source: "estavelles", filter: ["has", "point_count"],
         paint: { "circle-color": token("--accent"), "circle-radius": ["step", ["get", "point_count"], 14, 10, 18, 50, 24] },
       });
       instance.addLayer({
-        id: "relay-cluster-count", type: "symbol", source: "relays", filter: ["has", "point_count"],
+        id: "estavelle-cluster-count", type: "symbol", source: "estavelles", filter: ["has", "point_count"],
         layout: { "text-field": "{point_count_abbreviated}", "text-size": 12 },
         paint: { "text-color": token("--accent-text") },
       });
       instance.addLayer({
-        id: "relay-points", type: "circle", source: "relays", filter: ["!", ["has", "point_count"]],
+        id: "estavelle-points", type: "circle", source: "estavelles", filter: ["!", ["has", "point_count"]],
         paint: {
           "circle-radius": 7,
           "circle-stroke-width": 1,
@@ -165,15 +165,15 @@ export function Noc() {
         },
       });
       instance.addLayer({
-        id: "relay-glyph", type: "symbol", source: "relays", filter: ["!", ["has", "point_count"]],
-        layout: { "text-field": kindGlyph.relay, "text-size": 10, "text-allow-overlap": true },
-        paint: { "text-color": token(kindChartToken.relay) },
+        id: "estavelle-glyph", type: "symbol", source: "estavelles", filter: ["!", ["has", "point_count"]],
+        layout: { "text-field": kindGlyph.estavelle, "text-size": 10, "text-allow-overlap": true },
+        paint: { "text-color": token(kindChartToken.estavelle) },
       });
 
       // Every other component kind (ADR-0046 §1): one shared source, not
       // clustered -- route/control_plane/bedrock are infrastructure, never
       // numerous enough in one deployment to need it the way a
-      // client-peer-scale fleet of relays can be.
+      // client-peer-scale fleet of estavelles can be.
       instance.addSource("components", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       instance.addLayer({
         id: "component-points", type: "circle", source: "components",
@@ -209,18 +209,18 @@ export function Noc() {
         paint: { "text-color": token("--muted") },
       });
 
-      for (const layer of ["relay-points", "relay-clusters", "component-points"]) {
+      for (const layer of ["estavelle-points", "estavelle-clusters", "component-points"]) {
         instance.on("mouseenter", layer, () => { instance.getCanvas().style.cursor = "pointer"; });
         instance.on("mouseleave", layer, () => { instance.getCanvas().style.cursor = ""; });
       }
-      instance.on("click", "relay-points", (event: MapLayerMouseEvent) => {
+      instance.on("click", "estavelle-points", (event: MapLayerMouseEvent) => {
         const id = event.features?.[0]?.properties?.id as string | undefined;
-        if (id) setSelected({ kind: "relay", id });
+        if (id) setSelected({ kind: "estavelle", id });
       });
-      instance.on("click", "relay-clusters", (event: MapLayerMouseEvent) => {
+      instance.on("click", "estavelle-clusters", (event: MapLayerMouseEvent) => {
         const feature: MapGeoJSONFeature | undefined = event.features?.[0];
         const clusterId = feature?.properties?.cluster_id as number | undefined;
-        const source = instance.getSource("relays") as GeoJSONSource | undefined;
+        const source = instance.getSource("estavelles") as GeoJSONSource | undefined;
         if (clusterId === undefined || !source || feature?.geometry.type !== "Point") return;
         source.getClusterExpansionZoom(clusterId).then((zoom) => {
           instance.easeTo({ center: feature.geometry.type === "Point" ? (feature.geometry.coordinates as [number, number]) : undefined, zoom });
@@ -245,7 +245,7 @@ export function Noc() {
   // actually contains -- a fleet concentrated in one region, or a set of
   // authorized-but-unoccupied locations on another continent, can each sit
   // entirely outside an arbitrary initial viewport, and the two load
-  // independently (one is a relay/component poll, the other an admin
+  // independently (one is an estavelle/component poll, the other an admin
   // registry fetch). Takes the current snapshot of both every time either
   // effect below calls it, so whichever loads first does not fit a bounds
   // that then ignores the other arriving later.
@@ -264,10 +264,10 @@ export function Noc() {
   // sequenced, since one is a network fetch and the other is WebGL init.
   useEffect(() => {
     if (!mapReady.current || !map.current) return;
-    const relaySource = map.current.getSource("relays") as GeoJSONSource | undefined;
-    relaySource?.setData({ type: "FeatureCollection", features: placed.filter((c) => c.kind === "relay").map(componentFeature) });
+    const estavelleSource = map.current.getSource("estavelles") as GeoJSONSource | undefined;
+    estavelleSource?.setData({ type: "FeatureCollection", features: placed.filter((c) => c.kind === "estavelle").map(componentFeature) });
     const componentSource = map.current.getSource("components") as GeoJSONSource | undefined;
-    componentSource?.setData({ type: "FeatureCollection", features: placed.filter((c) => c.kind !== "relay").map(componentFeature) });
+    componentSource?.setData({ type: "FeatureCollection", features: placed.filter((c) => c.kind !== "estavelle").map(componentFeature) });
     tryInitialFit();
   }, [resource.value]);
 
@@ -279,18 +279,18 @@ export function Noc() {
   }, [locations.value]);
 
   useEffect(() => {
-    if (!selected || selected.kind !== "relay") return;
+    if (!selected || selected.kind !== "estavelle") return;
     let active = true;
-    api.nocRelay(selected.id).then((value) => { if (active) setSelected({ kind: "relay", id: selected.id, relay: value }); })
-      .catch((error: Error) => { if (active) setSelected({ kind: "relay", id: selected.id, error: error.message }); });
+    api.nocEstavelle(selected.id).then((value) => { if (active) setSelected({ kind: "estavelle", id: selected.id, estavelle: value }); })
+      .catch((error: Error) => { if (active) setSelected({ kind: "estavelle", id: selected.id, error: error.message }); });
     return () => { active = false; };
   }, [selected?.kind, selected?.id]);
 
-  const selectedComponent = selected?.kind !== "relay" ? components.find((c) => c.kind === selected?.kind && c.id === selected?.id) : undefined;
+  const selectedComponent = selected?.kind !== "estavelle" ? components.find((c) => c.kind === selected?.kind && c.id === selected?.id) : undefined;
 
   return <section className="noc-view">
     <h2>NOC view</h2>
-    <TutorialHint>A read-only map of this account's physical components (relays) and logical ones (exit-node/subnet-router gateways, the control plane itself, Bedrock) plotted wherever each has a location — detected, declared, or just authorized but not yet occupied (the hollow markers). Every relay, exit-node/subnet-router gateway, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</TutorialHint>
+    <TutorialHint>A read-only map of this account's physical components (estavelles) and logical ones (exit-node/subnet-router avens, the control plane itself, Bedrock) plotted wherever each has a location — detected, declared, or just authorized but not yet occupied (the hollow markers). Every estavelle, exit-node/subnet-router aven, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</TutorialHint>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {locations.error && <Failure message={locations.error} retry={locations.reload} />}
     <div ref={container} className="noc-map" role="application" aria-label="Component map" />
@@ -309,16 +309,16 @@ export function Noc() {
         </li>)}</ul></div>}
     </details>
 
-    <Dialog open={Boolean(selected)} title={selected?.kind === "relay" ? `Relay — ${selected?.relay?.location?.label || selected?.relay?.region || selected?.id || ""}` : `${kindLabel[selected?.kind ?? ""] ?? selected?.kind} — ${selectedComponent?.label ?? selected?.id ?? ""}`} onClose={() => setSelected(undefined)}>
-      {selected?.kind === "relay"
-        ? (selected.error ? <p role="alert">{selected.error}</p> : !selected.relay ? <p>Loading…</p> : <>
-          <p><code>{selected.relay.address}</code></p>
-          <p>Region: {selected.relay.region}</p>
-          {selected.relay.location && <p>Location: {selected.relay.location.label || `${selected.relay.location.lat}, ${selected.relay.location.lon}`} <span className="lede">({selected.relay.location_source === "detected" ? "detected via cloud metadata" : "declared"})</span></p>}
-          <p>Health: <Status state={relayHealthState(selected.relay)} label={selected.relay.health.admission_state} /></p>
-          <p>Sessions: {selected.relay.health.sessions ?? "—"}</p>
-          <p>Bytes (cumulative): {selected.relay.health.bytes != null ? formatBytes(selected.relay.health.bytes) : "—"}</p>
-          <p>Last confirmed: <Observed at={selected.relay.health.last_confirmed_at} /></p>
+    <Dialog open={Boolean(selected)} title={selected?.kind === "estavelle" ? `Estavelle — ${selected?.estavelle?.location?.label || selected?.estavelle?.region || selected?.id || ""}` : `${kindLabel[selected?.kind ?? ""] ?? selected?.kind} — ${selectedComponent?.label ?? selected?.id ?? ""}`} onClose={() => setSelected(undefined)}>
+      {selected?.kind === "estavelle"
+        ? (selected.error ? <p role="alert">{selected.error}</p> : !selected.estavelle ? <p>Loading…</p> : <>
+          <p><code>{selected.estavelle.address}</code></p>
+          <p>Region: {selected.estavelle.region}</p>
+          {selected.estavelle.location && <p>Location: {selected.estavelle.location.label || `${selected.estavelle.location.lat}, ${selected.estavelle.location.lon}`} <span className="lede">({selected.estavelle.location_source === "detected" ? "detected via cloud metadata" : "declared"})</span></p>}
+          <p>Health: <Status state={estavelleHealthState(selected.estavelle)} label={selected.estavelle.health.admission_state} /></p>
+          <p>Sessions: {selected.estavelle.health.sessions ?? "—"}</p>
+          <p>Bytes (cumulative): {selected.estavelle.health.bytes != null ? formatBytes(selected.estavelle.health.bytes) : "—"}</p>
+          <p>Last confirmed: <Observed at={selected.estavelle.health.last_confirmed_at} /></p>
         </>)
         : selectedComponent && <>
           <p>Kind: {kindLabel[selectedComponent.kind] ?? selectedComponent.kind}</p>

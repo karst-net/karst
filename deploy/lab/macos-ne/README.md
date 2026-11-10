@@ -18,49 +18,51 @@ flowchart LR
   subgraph Host[Lab host: docker compose]
     L --> KC[keycloak] & CP[karst-control]
     L -->|docker exec| P[peer: karstd + fixtures]
-    CP --- R[karst-relay]
+    CP --- R[karst-estavelle]
   end
-  NE <-->|direct: LAN / relay: via R| P
+  NE <-->|direct: LAN / estavelle: via R| P
 ```
 
 ## Pieces
 
 | File | Where it runs | What it does |
 | --- | --- | --- |
-| `docker-compose.yml` | lab host | control, relay, Keycloak and the peer. All plaintext HTTP, because the control channel authenticates with its pins (GETTING-STARTED.md §7.1) |
-| `bootstrap.sh` | lab host | creates state (relay identity and certificate, OIDC realm, `management.json`), starts the stack and runs `labctl.py init`. Idempotent |
+| `docker-compose.yml` | lab host | control, estavelle, Keycloak and the peer. All plaintext HTTP, because the control channel authenticates with its pins (GETTING-STARTED.md §7.1) |
+| `bootstrap.sh` | lab host | creates state (estavelle identity and certificate, OIDC realm, `management.json`), starts the stack and runs `labctl.py init`. Idempotent |
 | `labctl.py` | lab host | admin-API driver: `init` (account, `lab` group, published policy, peer, routes), `prepare`, `mutate`, `status` |
 | `labctl-ssh` | lab host | forced command that admits only `labctl.py`'s own verbs and flags |
-| `peer.Dockerfile`, `peer-entrypoint.sh`, `peer-fixtures.py` | peer, peer2 containers | a 64 KiB HTTP body on `:8080`, a UDP echo on `:7777`, and an `sshd` on `:22` (key-only, `state/ssh_lab_client`), all firewalled to arrive only on `karst0`; the subnet (`10.203.0.1`) and exit (`198.18.0.1`) fixture addresses on `peer`; the `LAB-DIRECT` chain for the relay scenario |
+| `peer.Dockerfile`, `peer-entrypoint.sh`, `peer-fixtures.py` | peer, peer2 containers | a 64 KiB HTTP body on `:8080`, a UDP echo on `:7777`, and an `sshd` on `:22` (key-only, `state/ssh_lab_client`), all firewalled to arrive only on `karst0`; the subnet (`10.203.0.1`) and exit (`198.18.0.1`) fixture addresses on `peer`; the `LAB-DIRECT` chain for the estavelle scenario |
 | `karst-ne-lab` | Mac, `/usr/local/libexec` | turns `labctl.py prepare` output into the runner-owned, mode-0600 invitation and environment files the handoff contract names; `net-setup`/`net-teardown` point the Mac's Wi-Fi at labgw and revert it |
 
 ### Why the peer has a macvlan address
 
 karstd advertises its interface addresses as direct candidates, and it has no
 setting for a static advertised endpoint. A peer on a Docker bridge would
-offer only `172.x`, so the Mac could reach it only through the relay, and the
-`direct` scenario must not pass that way. The peer therefore gets its own
+offer only `172.x`, so the Mac could reach it only through the estavelle, and
+the `direct` scenario must not pass that way. The peer therefore gets its own
 static LAN address. A macvlan child cannot reach its parent host, so the
-peer's second, bridge attachment carries traffic to control and relay (a
+peer's second, bridge attachment carries traffic to control and estavelle (a
 `/32` route to the host).
 
-### Why control and relay sit behind labgw
+### Why control and estavelle sit behind labgw
 
 An active exit route takes over the Mac's default route. To show that this
-does not capture Karst's own control and relay traffic (ADR-0036 §2), those
-services must be reachable from the Mac **only through its default route**,
-as they are in any real deployment. On the Mac's own LAN they would be
-reached on-link whatever the tunnel did, and the check would prove nothing.
+does not capture Karst's own control and estavelle traffic (ADR-0036 §2),
+those services must be reachable from the Mac **only through its default
+route**, as they are in any real deployment. On the Mac's own LAN they would
+be reached on-link whatever the tunnel did, and the check would prove
+nothing.
 
-So control and relay also live on an internal `core` network
-(`10.230.0.0/24`: control `.10`, relay `.11`), and the lab Mac's default
+So control and estavelle also live on an internal `core` network
+(`10.230.0.0/24`: control `.10`, estavelle `.11`), and the lab Mac's default
 gateway is **labgw**: a small container on its own static LAN address (the
 address after the peer's, the two forming a `/31`). labgw routes the Mac to
 `core` and NATs its other traffic to the LAN's own router. Invitations name
-the control plane's core address, and the relay registry its core address;
-the peer is attached to `core` directly. Unauthenticated HTTP responders
-(`control-probe`, `relay-probe`) share the control and relay containers'
-network namespaces on `:8081`, since neither serves a 2xx of its own.
+the control plane's core address, and the estavelle registry its core
+address; the peer is attached to `core` directly. Unauthenticated HTTP
+responders (`control-probe`, `estavelle-probe`) share the control and
+estavelle containers' network namespaces on `:8081`, since neither serves a
+2xx of its own.
 
 Point the Mac at labgw for the session, keeping its address and the LAN's
 DNS:
@@ -77,7 +79,7 @@ stuck on a static address (#200):
 sudo karst-ne-lab net-teardown
 ```
 
-With the exit active, app traffic to the control and relay hosts goes
+With the exit active, app traffic to the control and estavelle hosts goes
 *through* the exit (the peer forwards it onto `core`), while the extension's
 own sockets bypass its tunnel; the lab Mac showed its engine staying
 synchronized, direct and error-free throughout.
@@ -85,15 +87,16 @@ synchronized, direct and error-free throughout.
 ### Scenarios
 
 - **direct**: `LAB-DIRECT` is empty.
-- **relay**: `LAB-DIRECT` drops every UDP packet on the peer's LAN
-  attachment. Direct candidates fail, but the relay stays reachable over the
-  bridge.
+- **estavelle**: `LAB-DIRECT` drops every UDP packet on the peer's LAN
+  attachment. Direct candidates fail, but the estavelle stays reachable over
+  the bridge.
 - **route churn**: `mutate --route subnet` toggles `enabled` on the
   `lab-subnet` route (`10.203.0.0/24`, gateway the peer).
 - **exit route**: `mutate --route exit` toggles `lab-exit` (`0.0.0.0/0`,
   `skip_auto_apply`). The exit probe `198.18.0.1` is reachable only through
-  the tunnel. Control and relay share the lab host, so both native-interface
-  checks use the host's Keycloak realm URL, since the relay speaks no HTTP.
+  the tunnel. Control and estavelle share the lab host, so both
+  native-interface checks use the host's Keycloak realm URL, since the
+  estavelle speaks no HTTP.
   A recipient exit route becomes active only with local consent (ADR-0024);
   the workflow gives it as the Mac's administrator with the shipped CLI
   (`sudo karst gateway exit use`, ADR-0036).
@@ -125,15 +128,16 @@ filters only from the store's current version: `KARST_POLICY_FILE` is loaded
 and logged ("loaded policy … (1 rules)") but never consulted, so without a
 published version every node is default deny and the tunnel carries nothing.
 
-### A direct path needs the relay first
+### A direct path needs the estavelle first
 
-Endpoint candidates are exchanged through the relay, so a client that cannot
-reach it never learns the peer's addresses and never attempts a direct path,
-even on the same LAN. A Mac without the lab relay certificate trusted stays
-`connecting` rather than falling back to a direct connection. `labctl`
-invitations carry `state/tls/relay.crt` as `relay_ca`, and enrollment writes
-it to the state directory as `[control] relay_ca_file`. A Mac enrolled from
-an older invitation needs the certificate in its system trust store instead.
+Endpoint candidates are exchanged through the estavelle, so a client that
+cannot reach it never learns the peer's addresses and never attempts a
+direct path, even on the same LAN. A Mac without the lab estavelle
+certificate trusted stays `connecting` rather than falling back to a direct
+connection. `labctl` invitations carry `state/tls/estavelle.crt` as
+`relay_ca`, and enrollment writes it to the state directory as
+`[control] estavelle_ca_file`. A Mac enrolled from an older invitation needs
+the certificate in its system trust store instead.
 
 `prepare` always resets to a baseline first. It deletes earlier `lab-mac-*`
 peers, revokes pending invitations, withdraws both routes and sets
@@ -145,7 +149,7 @@ On the lab host (the images come from `deploy/images`):
 
 ```sh
 tag=$(git rev-parse --short HEAD)
-for img in karst-control karst-relay karstd; do
+for img in karst-control karst-estavelle karstd; do
   docker build -f deploy/images/$img.Dockerfile -t karst-ne-lab/$img:$tag .
 done
 cd deploy/lab/macos-ne
@@ -173,8 +177,8 @@ re-enrolls from its own invitation, so the configuration persists.
 
 Through MDM, deliver a profile that allows the System Extension
 (`WJ3MJC4KV7` / `dev.karst.packettunnel`, type `NetworkExtension`). The lab
-relay's certificate needs no profile: every `labctl` invitation carries it,
-and the extension trusts it for relay TLS only.
+estavelle's certificate needs no profile: every `labctl` invitation carries
+it, and the extension trusts it for estavelle TLS only.
 
 The workflow gate also needs the client fixes in #189 and the harness and
 notarization changes in #190. Before those, the harness cannot reach the

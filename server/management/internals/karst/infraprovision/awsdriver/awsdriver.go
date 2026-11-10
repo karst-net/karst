@@ -3,7 +3,7 @@
 
 // Package awsdriver is the infraprovision.Driver implementation backing
 // an AWS infrastructure connection (ADR-0063; ADR-0067) -- a direct port
-// of relayalloc's pre-ADR-0067 awsdrive.go, itself a hand-ported copy of
+// of estavellealloc's pre-ADR-0067 awsdrive.go, itself a hand-ported copy of
 // bins/karst-scaler-aws/src/driver.rs and bundle.rs's own logic: this
 // package cannot depend on a Rust crate, and that crate stays exactly as
 // it was, still the actuator bins/karst-scaler's own drive_loop.rs
@@ -58,7 +58,7 @@ type LaunchDefaults struct {
 
 // ec2API is the handful of EC2 calls this driver makes, narrowed so tests
 // can supply a fake instead of a real *ec2.Client -- the same "narrow
-// interface, fake it" pattern relayalloc's own enrollMinter/relayFinder/
+// interface, fake it" pattern estavellealloc's own enrollMinter/relayFinder/
 // etc. (awsdrive_loop.go, pre-ADR-0067) already use. *ec2.Client satisfies
 // this directly.
 type ec2API interface {

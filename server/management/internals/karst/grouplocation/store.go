@@ -30,7 +30,7 @@ func accountFromContext(ctx context.Context) (string, error) {
 
 // StoredGroupLocation is at most one row per (account, group): a group's
 // declared location is a property an admin sets and may later change, not
-// an append-only registry like relayreg/turncred — there is never a reason
+// an append-only registry like estavellereg/turncred — there is never a reason
 // for two locations to exist for the same group at once.
 type StoredGroupLocation struct {
 	AccountID string  `gorm:"primaryKey;size:64" json:"-"`

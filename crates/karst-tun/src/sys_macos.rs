@@ -220,7 +220,7 @@ pub(crate) fn interface_index(name: &str) -> io::Result<u32> {
 /// reading them needs `SIOCGIFAFLAG_IN6` and an `in6_ifreq` whose layout is
 /// not worth guessing without a Mac to check it against. The cost of the gap
 /// is a wasted probe against an address that has not finished duplicate
-/// address detection, which AVEN already tolerates; it is **not** a
+/// address detection, which Resurgence already tolerates; it is **not** a
 /// correctness problem, because an address that does not answer is simply not
 /// selected. Closing it is Phase 7 work, alongside the `SIOCAIFADDR` port.
 pub(crate) fn local_addresses() -> io::Result<Vec<IpAddr>> {

@@ -30,14 +30,14 @@ over a classical VPN — which is the reason this project exists.
 
 ## Beta scope: what we are testing
 
-The headline: **two `karstd` daemons, a real relay and a real coordination
+The headline: **two `karstd` daemons, a real estavelle and a real coordination
 server, in separate network namespaces with real TUN devices, reaching a direct
 encrypted path and exchanging TCP under a port-scoped ACL.** Including when both
 nodes are behind their own NATs, which is the ordinary home-to-home case.
 
 ```
-A: endpoint = "-"                 state = "connecting"   transport = "relay"
-B: endpoint = "-"                 state = "established"  transport = "relay"
+A: endpoint = "-"                 state = "connecting"   transport = "estavelle"
+B: endpoint = "-"                 state = "established"  transport = "estavelle"
 ...
 A: endpoint = "10.99.0.2:51820"   state = "established"  transport = "direct"
 B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
@@ -47,17 +47,17 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 |---|---|
 | **PHREATIC** — handshake and datapath ([spec](spec/phreatic-v1.md)) | Draft 0.2. ML-KEM-1024, fragmentation, stateless-under-load responder, rekey |
 | **KARST-CONTROL** — control channel ([spec](spec/karst-control-v1.md)) | Draft 0.1. Enrollment, netmap, per-pair PSKs and disco keys, encrypted cache |
-| **Ponor** — relay ([spec](spec/ponor-v1.md)) | Draft 0.1. TLS 1.3 with `X25519MLKEM768` enforced, ML-DSA-65 relay identity, structural admission |
-| **AVEN** — NAT traversal ([spec](spec/aven-v1.md)) | Draft 0.1. Probing, path selection with hysteresis, candidate exchange, server-reflexive discovery |
-| `karstd` — node agent | TUN or userspace datapath, stateful packet filter, discovery, relay client |
-| `karst-relay` — relay server | Forwarding, presence, rate limiting, AVEN reflector |
+| **Ponor** — estavelle ([spec](spec/ponor-v1.md)) | Draft 0.1. TLS 1.3 with `X25519MLKEM768` enforced, ML-DSA-65 estavelle identity, structural admission |
+| **Resurgence** — NAT traversal ([spec](spec/aven-v1.md)) | Draft 0.1. Probing, path selection with hysteresis, candidate exchange, server-reflexive discovery |
+| `karstd` — node agent | TUN or userspace datapath, stateful packet filter, discovery, estavelle client |
+| `karst-estavelle` — estavelle server | Forwarding, presence, rate limiting, Resurgence reflector |
 | `karst-portmap` — NAT-PMP and PCP | Codec for both, verified against `miniupnpd` rather than against itself; wired into `karstd` |
-| `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay registry, SSO and SCIM 2.0 |
+| `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, estavelle registry, SSO and SCIM 2.0 |
 | Console / portal (TypeScript) | Administration, invitations, device lifecycle, policy and self-service downloads |
 | **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Resolver, split DNS and host integration: Linux (`systemd-resolved`/NetworkManager/`resolv.conf`), macOS (`/etc/resolver`) and Windows (NRPT) |
 | Windows client | TUN adapter and session I/O, IP Helper addressing, SCM service integration, protected key storage, and MSI installer are built; Wintun signer verification and adapter creation run in Windows CI. Unsigned Karst executables/MSI and release validation remain beta work |
 | **Bedrock** network lock | Root bootstrap, offline `karst-bedrock` signer, hash-chained audit log, client enforcement, and automated audit anchoring through [ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md)'s capability-scoped authority tier — implemented in both languages against shared vectors |
-| Gateway (subnet and exit behavior) and ACL-gated SSH | Managed route distribution, exit-node consent and forwarding, plus a separately authorized SSH admission gate |
+| Aven (subnet and exit behavior) and ACL-gated SSH | Managed route distribution, exit-node consent and forwarding, plus a separately authorized SSH admission gate |
 | Operations | Prometheus metrics, diagnostics/bug reports, HA engineering drills and deployment artifacts |
 
 ### Supported beta clients
@@ -88,9 +88,9 @@ capabilities at all** and reads the kernel's record back to prove it.
 | symmetric | address-restricted cone | direct |
 | symmetric **with a port mapping** | symmetric | **direct** — PCP/NAT-PMP |
 | symmetric | port-restricted cone **with a port mapping** | **direct** — PCP/NAT-PMP |
-| symmetric | port-restricted cone | relay — no mapping to ask for |
-| symmetric | symmetric | relay — not winnable; see below |
-| all UDP dropped | *(nothing)* | relay, and correctly so |
+| symmetric | port-restricted cone | estavelle — no mapping to ask for |
+| symmetric | symmetric | estavelle — not winnable; see below |
+| all UDP dropped | *(nothing)* | estavelle, and correctly so |
 
 **Eight of eleven, and the three that stay relayed are asserted to stay
 relayed.** The two *symmetric → port-restricted cone* rows are one pairing —
@@ -117,9 +117,9 @@ demonstrating anything would break the build.
 | `karst-control-nofs.pv`, `ponor-norelayid.pv`, `aven-headeronly.pv` | must-fail, and do |
 
 Two of those found real defects before the code shipped: `aven.pv` produced a
-**reflector** in draft 0.1 of AVEN (a `Ping` is authenticated, which is not the
+**reflector** in draft 0.1 of Resurgence (a `Ping` is authenticated, which is not the
 same as saying a genuine one cannot be *replayed*), and `ponor-norelayid.pv`
-shows a rogue relay replaying a client's authentication to the real one.
+shows a rogue estavelle replaying a client's authentication to the real one.
 
 ### Beta caveats stated plainly
 
@@ -134,25 +134,25 @@ A security project that advertises only its wins is not trustworthy.
   `phreatic-kem-broken.pv` does not terminate. See
   [spec/models/README.md](spec/models/README.md), which explains why and what
   was tried.
-- **Ponor derives no session key** (`ponor-v1.md` §13.3), so the relay's frame
+- **Ponor derives no session key** (`ponor-v1.md` §13.3), so the estavelle's frame
   stream is protected by TLS alone. Bounded — payloads are already end-to-end
   ciphertext — but it is a TLS dependency the other two protocols do not have.
-- **`CallMeMaybe` bodies are not encrypted** (`aven-v1.md` §12.3), so a relay
+- **`CallMeMaybe` bodies are not encrypted** (`aven-v1.md` §12.3), so an estavelle
   operator sees the local interface addresses a node advertises.
 - **A symmetric NAT connects to some peers and not others.** Facing a
   publicly-reachable peer or an address-restricted cone, it goes direct. Facing
   a *port-restricted* cone or another symmetric NAT, it stays relayed — unless
-  one side's gateway offers an explicit port mapping (PCP or NAT-PMP), which
+  one side's aven offers an explicit port mapping (PCP or NAT-PMP), which
   makes even symmetric-to-symmetric direct. Random port search was specified,
   built and measured for the first of those pairings and then **deliberately
   not adopted**: 64% after eight minutes, for a pair already connected over the
-  relay, at the cost of a datapath change. `aven-v1.md` §7.7 records why.
+  estavelle, at the cost of a datapath change. `aven-v1.md` §7.7 records why.
 - **One topology that should connect directly still does not.** A symmetric
   NAT facing a port-restricted cone — a CGNAT subscriber talking to somebody on
   a home router — is reachable in principle (`aven-v1.md` §7.7) and unbuilt in
   the daemon. Seven of ten topologies go direct; of the three that do not, two
   have no direct path to find at all.
-- **Wire formats are not stable.** Adding the relay's reflector was a flag day
+- **Wire formats are not stable.** Adding the estavelle's reflector was a flag day
   (`ponor-v1.md` §13.10), and there will be others before 1.0.
 
 Everything found by review and not yet fixed is in
@@ -184,7 +184,7 @@ Notable decisions, each with an ADR:
 | Greenfield Rust datapath — a 3210-byte handshake breaks WireGuard's framing | [0003](docs/adr/0003-greenfield-rust-datapath.md) |
 | Fragmentation with a stateless-under-load responder; per-pair PSK hedge | [0004](docs/adr/0004-handshake-mtu-and-kem-selection.md) |
 | MIT/Apache clients, AGPL server, DCO not CLA, no commercial license | [0007](docs/adr/0007-licensing.md) |
-| Relay co-located with control; standalone TURN support dropped (Relay-only), per ADR-0056's addendum | [0008](docs/adr/0008-relay-infrastructure-and-funding.md), [0056](docs/adr/0056-four-component-families.md) |
+| Estavelle co-located with control; standalone TURN support dropped (Estavelle-only), per ADR-0056's addendum | [0008](docs/adr/0008-estavelle-infrastructure-and-funding.md), [0056](docs/adr/0056-four-component-families.md) |
 | Control plane forked from NetBird rather than greenfield | [0009](docs/adr/0009-control-plane-fork-vs-greenfield.md) |
 | NAT64 synthesis at the socket boundary; RFC 7050 over RFC 8781 | [0013](docs/adr/0013-nat64-address-synthesis.md) |
 
@@ -196,19 +196,19 @@ are not additional families.
 
 | Family | Programs and capabilities | Main responsibility |
 |---|---|---|
-| Node agent | `karstd`, `karst`, platform UI; optional **Gateway** | Encrypted sessions, local policy, AVEN path selection, KarstDNS and routing; Gateway serves specific-prefix subnet access and default-route exit egress |
-| Transport infrastructure | One **Relay** (Ponor) | Presence/bootstrap, discovery assistance and ciphertext forwarding; `karst-relay` only — standalone TURN support dropped |
-| Control services | `karst-control`, console and portal | Enrollment, users/groups, policy, peer maps, routes/DNS, Relay registry/credentials, administration and audit |
+| Node agent | `karstd`, `karst`, platform UI; optional **Aven** | Encrypted sessions, local policy, Resurgence path selection, KarstDNS and routing; Aven serves specific-prefix subnet access and default-route exit egress |
+| Transport infrastructure | One **Estavelle** (Ponor) | Presence/bootstrap, discovery assistance and ciphertext forwarding; `karst-estavelle` only — standalone TURN support dropped |
+| Control services | `karst-control`, console and portal | Enrollment, users/groups, policy, peer maps, routes/DNS, Estavelle registry/credentials, administration and audit |
 | Trust tooling | `karst-bedrock`, Bedrock verifiers and scoped anchor signer | Independent membership approval, revocation, chain verification and audit anchoring |
 
-The family model is accepted. Unified Gateway and Relay configuration, APIs,
+The family model is accepted. Unified Aven and Estavelle configuration, APIs,
 UI and lifecycle are pending [#404](https://github.com/karst-net/karst/issues/404).
 Existing commands and the Ponor registry still apply.
 See [component architecture](docs/COMPONENT-ARCHITECTURE.md) for ownership,
 current interfaces, migration requirements and platform limits.
 
-The handshake is **PHREATIC**; the relay protocol is **Ponor**; NAT traversal is
-**AVEN**; the network lock is **Bedrock**; the name service is **KarstDNS**. All
+The handshake is **PHREATIC**; the estavelle protocol is **Ponor**; NAT traversal is
+**Resurgence**; the network lock is **Bedrock**; the name service is **KarstDNS**. All
 named for karst hydrology — see
 [ADR-0010](docs/adr/0010-project-name-and-component-naming.md).
 
@@ -217,7 +217,7 @@ named for karst hydrology — see
 Stated here rather than buried, because a security product that only advertises
 its strengths is not trustworthy:
 
-- **Metadata is not protected.** Relays learn who talks to whom, when, and how
+- **Metadata is not protected.** Estavelles learn who talks to whom, when, and how
   much.
 - **Endpoint compromise is total.** Root on a node yields that node's keys.
 - **Coordination-server compromise plus a full lattice break is a total
@@ -249,10 +249,10 @@ standard library's `crypto/mldsa`, which replaced a third-party shim in
 
 [**docs/GETTING-STARTED.md**](docs/GETTING-STARTED.md) builds every component
 from this tree and stands it up on Linux: two nodes with a static roster and no
-server at all, the co-located relay and coordination server, the same three
+server at all, the co-located estavelle and coordination server, the same three
 services under systemd, the console and portal, and the offline Bedrock signer.
 It also names the failure modes that do not announce themselves — the roster
-lease, the relay registry, and default-deny — and says plainly where the
+lease, the estavelle registry, and default-deny — and says plainly where the
 walk-through stops.
 
 ## Contributing
@@ -282,8 +282,8 @@ the reasoning is in [LICENSING.md](LICENSING.md).
 ## Prior art
 
 Karst borrows ideas from work we did not write. Tailscale's **DERP** shaped the
-relay design (mesh presence, home-relay selection, relay-first-then-upgrade) and
-its `disco` shaped AVEN; we borrow the designs and deliberately not the
+estavelle design (mesh presence, home-estavelle selection, estavelle-first-then-upgrade) and
+its `disco` shaped Resurgence; we borrow the designs and deliberately not the
 protocols or the fleet. The handshake builds on **PQNoise** and
 **PQ-WireGuard**, and owes **Rosenpass** its approach to DoS resistance and
 stateless responders. The coordination server is a fork of **NetBird** under

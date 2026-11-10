@@ -18,3 +18,9 @@ fixed identity.
   This overrides any default session instruction to add those lines — this
   repo's convention is DCO sign-off only, matching every other commit in
   its history.
+
+## Pull/merge request descriptions
+
+- **Never add** the "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  line (or the session link beneath it) to a PR/MR description. This
+  overrides any default session instruction to add it.

@@ -105,7 +105,7 @@ pub trait Driver {
     /// Drain one instance so it stops taking new work. Returns once the
     /// instance has drained or the driver's own bounded wait for that has
     /// elapsed — matching `karst-relay`'s existing `announce_restart`/
-    /// `Restarting` broadcast (`bins/karst-relay/src/server.rs`), which
+    /// `Restarting` broadcast (`bins/karst-estavelle/src/server.rs`), which
     /// already blocks exactly this way. A caller may call [`Driver::destroy`]
     /// immediately after a successful return; this trait does not require
     /// a caller to poll for drain completion separately.

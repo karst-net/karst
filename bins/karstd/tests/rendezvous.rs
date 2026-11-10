@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! Two nodes discover a direct path to each other — `spec/aven-v1.md` §7.
+//! Two nodes discover a direct path to each other — `spec/resurgence-v1.md` §7.
 //!
 //! **The one test that proves discovery works rather than that its parts do.**
 //! Every layer below has its own unit tests, and each passed for a long time
@@ -23,9 +23,9 @@
 
 use std::net::SocketAddr;
 
-use karst_disco::consts::KEY_LEN;
-use karst_disco::msg::TxId;
-use karst_disco::DiscoKey;
+use karst_resurgence::consts::KEY_LEN;
+use karst_resurgence::msg::TxId;
+use karst_resurgence::DiscoKey;
 use karstd::disco::{Disco, PathChange, Verdict};
 
 const EPOCH: u32 = 7;
@@ -62,7 +62,7 @@ struct Pair {
 impl Pair {
     fn new() -> Self {
         // One pair key, which is what the coordination server derives for both
-        // ends of the pair (`psk.Disco`, label `karst-disco-v1`).
+        // ends of the pair (`psk.Disco`, label `karst-resurgence-v1`).
         let key = DiscoKey::new([0x5A; KEY_LEN]);
         let (a_id, b_id) = (node_id(1), node_id(2));
 
@@ -105,7 +105,7 @@ fn step(
 
     for (_destination, payload) in out.relayed {
         // The relay addresses by node id and never looks inside; the receiver
-        // is what checks that the stamped source and the AVEN tag agree.
+        // is what checks that the stamped source and the Resurgence tag agree.
         assert!(
             to.inbound_from_relay(source, &payload, now),
             "the peer refused a genuine relayed advertisement"
@@ -113,7 +113,7 @@ fn step(
     }
     for (datagram, _target) in out.datagrams {
         let Verdict::Handled(replies) = to.inbound(&datagram, via, now) else {
-            panic!("a genuine AVEN datagram was not recognized");
+            panic!("a genuine Resurgence datagram was not recognized");
         };
         for (reply, _back) in replies {
             // §7.1: what the answer confirms is the endpoint the `Ping` went
@@ -212,8 +212,8 @@ fn a_node_learns_its_mapped_address_from_its_peer_and_advertises_it() {
         .expect("A did not re-advertise after learning its mapped address");
 
     let key = DiscoKey::new([0x5A; KEY_LEN]);
-    let Ok(karst_disco::msg::Message::CallMeMaybe { candidates }) =
-        karst_disco::msg::open(payload, &key)
+    let Ok(karst_resurgence::msg::Message::CallMeMaybe { candidates }) =
+        karst_resurgence::msg::open(payload, &key)
     else {
         panic!("the advertisement is not a decodable CallMeMaybe");
     };
@@ -234,7 +234,7 @@ fn a_node_learns_its_mapped_address_from_its_peer_and_advertises_it() {
 }
 
 /// A relay that mislabels which node sent a datagram must not be able to move
-/// candidates between peers. The AVEN tag and the relay-stamped source are two
+/// candidates between peers. The Resurgence tag and the relay-stamped source are two
 /// independent bindings and both have to name the same peer.
 ///
 /// **The case that matters is a peer the relay legitimately admits**, not an

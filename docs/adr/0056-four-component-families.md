@@ -1,11 +1,20 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0056: Four component families with unified Gateway and Relay capabilities
 
-- **Status:** Accepted architecture; implementation consolidation pending #404
+- **Status:** Accepted architecture; implementation consolidation pending #404; terminology partially superseded by ADR-0069
 - **Date:** 2026-10-20
 - **Deciders:** Project owner (issues #403 and #404)
-- **Related:** [#403](https://github.com/karst-net/karst/issues/403), [#404](https://github.com/karst-net/karst/issues/404), ADR-0008, ADR-0010, ADR-0014, ADR-0016
+- **Related:** [#403](https://github.com/karst-net/karst/issues/403), [#404](https://github.com/karst-net/karst/issues/404), ADR-0008, ADR-0010, ADR-0014, ADR-0016, ADR-0069
 - **Supersedes in part:** ADR-0008's separate Relay/TURN component model and ADR-0010's identification of Ponor as both protocol and service. Their other decisions remain in force.
+
+> **Terminology superseded by [ADR-0069](0069-resurgence-estavelle-aven-renaming.md)
+> (2026-11-08):** "Gateway" below is now **Aven**, and "Relay" is now
+> **Estavelle** — a clean-break rename of binaries, crates, wire strings and
+> the console. This ADR's architectural decision (one unified capability for
+> subnet/exit routing, one component for Ponor+TURN transport) is unaffected;
+> only the names changed. The #404 migration contract this ADR's own status
+> line tracks is a separate, still-open consolidation and is not touched by
+> the rename either.
 
 ## Context
 
@@ -31,7 +40,7 @@ A family is neither a binary count nor a host count. Libraries and protocols
 serve these families; verification code remains in consumers. External IdPs,
 DNS upstreams, SIEMs, and TURN providers are integrations, not extra families.
 
-### One Gateway capability
+### One Gateway capability (renamed Aven by ADR-0069)
 
 Gateway is an optional capability of an enrolled node agent. Specific prefixes
 provide subnet access; default prefixes provide exit behavior. One node may
@@ -41,7 +50,7 @@ where their semantics differ: default routes require durable, local consent,
 underlay escape routes, and deliberate DNS treatment. Route distribution alone
 must never activate an exit. Policy still governs destination access.
 
-### One Relay component, two protocol modes
+### One Relay component, two protocol modes (renamed Estavelle by ADR-0069)
 
 Relay is the operator-facing component. Ponor remains the Karst protocol for
 persistent presence/bootstrap and forwarding; TURN remains the standard
@@ -105,7 +114,7 @@ disclosure, and failover diagnostics under the shared Relay view.
 > "Reconsider if" condition below about an external TURN backend are now
 > moot rather than wrong — there is no TURN backend, embedded or external,
 > left to reconsider. [Component architecture](../COMPONENT-ARCHITECTURE.md)
-> and [Relay service associations](../relay-services.md) describe the
+> and [Estavelle service associations](../estavelle-services.md) describe the
 > resulting Ponor-only shape.
 >
 > **Addendum, 2026-10-23 — evaluated and reverted BYO external TURN

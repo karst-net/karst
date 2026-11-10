@@ -18,12 +18,12 @@
 //! moment of that same call — the opposite ordering problem. [`create`]
 //! therefore writes a bundle with `address: None`, and `karst-relay
 //! enroll` resolves its own address after boot via IMDS (extending
-//! `bins/karst-relay/src/cloud_location.rs`'s existing probe, the same
+//! `bins/karst-estavelle/src/cloud_location.rs`'s existing probe, the same
 //! mechanism ADR-0048 already uses for self-reported location) rather
 //! than the driver trying to predict it.
 //!
 //! `tls_server_name`, by contrast, does *not* need to wait: it is never a
-//! real DNS name a client resolves (`bins/karst-relay/src/tls.rs`'s own
+//! real DNS name a client resolves (`bins/karst-estavelle/src/tls.rs`'s own
 //! crate doc — a relay's certificate is never what authenticates it), so
 //! [`bundle::tls_server_name`] derives a stable label from the
 //! enrollment token, known before the instance does.

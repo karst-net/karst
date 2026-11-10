@@ -53,7 +53,7 @@ const PREVIOUS_PSK: [u8; 32] = [
     0x2F, 0x81, 0x44, 0xD9, 0x0B, 0x67, 0xC3, 0x1E, 0xAA, 0x50, 0x9D, 0x36, 0xF2, 0x78, 0x15, 0xBC,
     0x63, 0x0E, 0xD1, 0x8A, 0x47, 0x99, 0x22, 0xFB, 0x54, 0x3C, 0xE7, 0x60, 0x0D, 0xB8, 0x71, 0x2A,
 ];
-/// The AVEN authenticator is independent key material and must receive the
+/// The Resurgence authenticator is independent key material and must receive the
 /// same diagnostic treatment as either PHREATIC PSK.
 const DISCO_KEY: [u8; 32] = [
     0x5A, 0x16, 0xE3, 0x48, 0x91, 0x2C, 0xB7, 0x04, 0x6D, 0xF0, 0x3A, 0x85, 0xCE, 0x19, 0x72, 0xDB,
@@ -183,8 +183,8 @@ fn netmap_with_psks() -> Netmap {
 
 fn local() -> LocalSettings {
     LocalSettings {
-        relay_ca_file: None,
-        prefer_quic_relay: false,
+        estavelle_ca_file: None,
+        prefer_quic_estavelle: false,
         metrics_listen: None,
         tracing_collector: None,
         tracing_collector_server_name: None,
@@ -199,7 +199,7 @@ fn local() -> LocalSettings {
         userspace_publish: Vec::new(),
         nat64: None,
         exit_node_state_file: None,
-        gateway_forwarding: true,
+        aven_forwarding: true,
         datapath_workers: 1,
         anchor_probe_enabled: false,
     }

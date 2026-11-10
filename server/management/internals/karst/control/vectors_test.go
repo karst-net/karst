@@ -13,9 +13,9 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -155,7 +155,7 @@ type versionDNSUpstream struct {
 
 // versionRelay is the relay registry as the version hash sees it.
 //
-// The `karst-relays` term has existed on both sides since 2026-08-18 and until
+// The `karst-estavelles` term has existed on both sides since 2026-08-18 and until
 // now no vector carried a single relay, so the one field of the netmap that a
 // production server had never populated (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)) was also the one the
 // two implementations had never been checked to agree on. A disagreement here
@@ -291,15 +291,15 @@ func pattern(n int, seed byte) []byte {
 
 // relayFor builds a registry entry with its id derived the way production does.
 //
-// Through relayreg rather than a literal, so the fixture cannot drift from the
+// Through estavellereg rather than a literal, so the fixture cannot drift from the
 // package that renders real registries — and karstd recomputes the same digest
 // while decoding, rejecting the whole netmap when it disagrees.
-func relayFor(address, serverName string, seed byte, region string) *proto.KarstRelay {
-	key := pattern(relayreg.IdentityKeySize, seed)
-	return &proto.KarstRelay{
+func relayFor(address, serverName string, seed byte, region string) *proto.KarstEstavelle {
+	key := pattern(estavellereg.IdentityKeySize, seed)
+	return &proto.KarstEstavelle{
 		Address:       address,
 		TlsServerName: serverName,
-		RelayId:       relayreg.RelayID(key),
+		RelayId:       estavellereg.EstavelleID(key),
 		IdentityKey:   key,
 		Region:        region,
 	}
@@ -331,7 +331,7 @@ func TestVectors(t *testing.T) {
 		Spec: "KARST-CONTROL v1",
 		Note: "Cross-implementation vectors. Covers derivation and framing, " +
 			"not ML-KEM/ML-DSA themselves (those have NIST KATs). " +
-			"2026-08-18: netmap_version gained the domain-separated karst-relays " +
+			"2026-08-18: netmap_version gained the domain-separated karst-estavelles " +
 			"term; pre-change version values are intentionally incompatible. " +
 			"2026-08-21: netmap_version cases carry relay registries. The term " +
 			"had been hashed by both ends since 2026-08-18 with no vector " +
@@ -761,7 +761,7 @@ func TestVectors(t *testing.T) {
 					DnsName:    "beta",
 					AllowedIps: []string{"100.64.0.2/32"},
 				}},
-				Relays: []*proto.KarstRelay{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default")},
+				Relays: []*proto.KarstEstavelle{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default")},
 			},
 			psks: []string{hex.EncodeToString(pattern(32, 0x70))},
 		},
@@ -783,7 +783,7 @@ func TestVectors(t *testing.T) {
 					DnsName:    "beta",
 					AllowedIps: []string{"100.64.0.2/32"},
 				}},
-				Relays: []*proto.KarstRelay{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "eu-west")},
+				Relays: []*proto.KarstEstavelle{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "eu-west")},
 			},
 			psks: []string{hex.EncodeToString(pattern(32, 0x70))},
 		},
@@ -847,7 +847,7 @@ func TestVectors(t *testing.T) {
 				NodeId:    []byte("node-one"),
 				DnsName:   "alpha",
 				Addresses: []string{"100.64.0.1"},
-				Relays: []*proto.KarstRelay{
+				Relays: []*proto.KarstEstavelle{
 					relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default"),
 					relayFor("198.51.100.9:443", "two.example.com", 0xB0, "eu-west"),
 				},

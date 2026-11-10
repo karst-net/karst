@@ -44,7 +44,7 @@ use crate::filter::Direction;
 /// Most flows tracked per peer.
 ///
 /// State a peer's traffic causes this node to allocate, so it is counted and
-/// capped like every other such thing (`aven-v1.md` §7.1 makes the same
+/// capped like every other such thing (`resurgence-v1.md` §7.1 makes the same
 /// argument for probes). Four thousand is far more than a node legitimately
 /// holds open to one peer and far less than an attacker would need to matter.
 const MAX_FLOWS: usize = 4096;

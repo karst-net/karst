@@ -3,7 +3,7 @@
 # Co-located deployment, under Nomad
 
 The same deployment [`../compose/`](../compose/README.md) documents --
-one coordination server and one relay, sharing one `./state` -- run under
+one coordination server and one estavelle, sharing one `./state` -- run under
 HashiCorp Nomad instead of `docker compose`. This is an additional supported
 path, not a replacement: `deploy/compose/` is unaffected and still the
 simplest way to try karst on one machine. Reach for this directory if you
@@ -12,7 +12,7 @@ and would rather manage karst the same way.
 
 ```sh
 cd ../compose && ./bootstrap.sh # same as the compose README, once
-nomad job run karst.nomad.hcl   # control + relay
+nomad job run karst.nomad.hcl   # control + estavelle
 ```
 
 `bootstrap.sh` is orchestrator-agnostic -- it only ever does standalone
@@ -21,11 +21,11 @@ set up before running it.
 
 ## What's different from the compose path
 
-- **The base job (`karst.nomad.hcl`, control + relay only) uses host
+- **The base job (`karst.nomad.hcl`, control + estavelle only) uses host
   networking** for both tasks -- there's no third service for either to
   collide with, so this is the simplest option.
 - **`prod/` splits networking instead**, because it has two services
-  (control, keycloak) that must stay unpublished and two (relay, caddy) that
+  (control, keycloak) that must stay unpublished and two (estavelle, caddy) that
   must own a real host port, and both control and caddy default to listening
   on the same internal port (33073) -- host networking for everyone would
   make them collide. See `prod/karst.nomad.hcl`'s own header comment for the

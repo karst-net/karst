@@ -295,7 +295,7 @@ impl Signer for Identity {
 
 // Ponor shares the node identity key but not the control-channel signature
 // context. A relay signature must never be reusable as a control signature.
-impl karst_relay_proto::Signer for Identity {
+impl karst_estavelle_proto::Signer for Identity {
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, Box<dyn core::error::Error + Send + Sync>> {
         let sig = self
             .signing
@@ -329,7 +329,7 @@ impl Verifier for ServerVerifier {
 #[derive(Debug)]
 pub struct RelayVerifier;
 
-impl karst_relay_proto::Verifier for RelayVerifier {
+impl karst_estavelle_proto::Verifier for RelayVerifier {
     fn verify(&self, public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
         let Ok(pk) = <[u8; 2592]>::try_from(public_key) else {
             return false;
@@ -439,7 +439,7 @@ pub struct Client {
     /// gateway for anything, which produces a request byte-identical to one
     /// from before this field existed.
     route_observations: Vec<pb::KarstRouteObservation>,
-    /// This node's own current AVEN candidate list — `karst_control.proto`'s
+    /// This node's own current Resurgence candidate list — `karst_control.proto`'s
     /// `KarstNetmapRequest.candidates`, set fresh on every refresh tick the
     /// same way `sessions` is (never a queued delta: the current list is
     /// what matters, not what changed since the last report), by
@@ -1290,7 +1290,7 @@ impl Client {
         self.route_observations = observations;
     }
 
-    /// Replace this node's own current AVEN candidate list — `karst_control.proto`'s
+    /// Replace this node's own current Resurgence candidate list — `karst_control.proto`'s
     /// `KarstNetmapRequest.candidates`. Set fresh from
     /// [`disco::Disco::candidates_wire`](crate::disco::Disco::candidates_wire)
     /// on every refresh tick, the same as `sessions` and unlike the queued
@@ -1545,7 +1545,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
     let mut client = Client::new(section, dir, &keys)?;
     client.reach_via_nat64(nat64);
 
-    let gateway_exit_state_path = file.gateway_exit_state_path(dir).map_err(Error::Config)?;
+    let aven_exit_state_path = file.aven_exit_state_path(dir).map_err(Error::Config)?;
     let local = LocalSettings {
         keys,
         listen: file.node.listen,
@@ -1564,10 +1564,10 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         anchor_probe_enabled: file.probe.anchor_probe,
         // Resolved against the config directory like every other path here, so
         // a relative one means what an operator editing the file expects.
-        relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),
-        prefer_quic_relay: section.prefer_quic_relay,
-        exit_node_state_file: Some(gateway_exit_state_path),
-        gateway_forwarding: file.gateway.forwarding,
+        estavelle_ca_file: section.estavelle_ca_file.as_ref().map(|p| resolve(p, dir)),
+        prefer_quic_estavelle: section.prefer_quic_estavelle,
+        exit_node_state_file: Some(aven_exit_state_path),
+        aven_forwarding: file.aven.forwarding,
     };
 
     // A current-thread runtime, created and dropped here. The datapath is
@@ -2150,8 +2150,8 @@ mod tests {
 
     fn section(dir: &Path, cache: Option<&str>) -> ControlSection {
         ControlSection {
-            relay_ca_file: None,
-            prefer_quic_relay: false,
+            estavelle_ca_file: None,
+            prefer_quic_estavelle: false,
             server: "http://127.0.0.1:1".to_owned(),
             server_kem_pin: encode_hex(&[0x01; 1184]),
             server_verify_pin: encode_hex(&[0x02; 2592]),

@@ -13,7 +13,7 @@ import (
 
 // Bucket names for a measured anchor RTT — the same four ranges §4a's relay
 // histogram uses (RTTUnder20ms/RTT20To50ms/RTT50To100ms/RTTOver100ms in
-// relaytelemetry.go), so an operator reading both histograms sees one set of
+// estavelletelemetry.go), so an operator reading both histograms sees one set of
 // buckets, not two conventions for the same kind of measurement.
 const (
 	BucketUnder20ms = "under_20ms"

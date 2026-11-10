@@ -110,7 +110,7 @@ func TestRecordRouteObservationsStoresObservedEgressIP(t *testing.T) {
 	reports := []*proto.KarstRouteObservation{{RouteId: "route-a", ObservedEgressIp: "203.0.113.9"}}
 	h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", reports, offers)
 
-	rows, err := store.LatestByGateway(context.Background(), "acct-a")
+	rows, err := store.LatestByAven(context.Background(), "acct-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestRecordRouteObservationsStoresObservedEgressIP(t *testing.T) {
 	// gateway must replace, not accumulate alongside, the earlier one.
 	reports = []*proto.KarstRouteObservation{{RouteId: "route-a", ObservedEgressIp: "203.0.113.99"}}
 	h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", reports, offers)
-	rows, err = store.LatestByGateway(context.Background(), "acct-a")
+	rows, err = store.LatestByAven(context.Background(), "acct-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestGatewayReadinessMixedVersionReports(t *testing.T) {
 				t.Fatal(err)
 			}
 			h.recordRouteObservations(context.Background(), "gateway-a", "acct-a", []*proto.KarstRouteObservation{tc.observation}, offers)
-			rows, err := store.LatestByGateway(context.Background(), "acct-a")
+			rows, err := store.LatestByAven(context.Background(), "acct-a")
 			if err != nil {
 				t.Fatal(err)
 			}

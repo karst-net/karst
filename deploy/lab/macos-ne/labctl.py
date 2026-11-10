@@ -9,7 +9,7 @@ with a forced command (see karst-ne-lab and README.md), so the lab admin's
 credentials never leave this host.
 
     labctl.py init                       one-time: account, group, peer, routes
-    labctl.py prepare --scenario direct|relay [--route-churn] [--exit-route]
+    labctl.py prepare --scenario direct|estavelle [--route-churn] [--exit-route]
     labctl.py mutate --route subnet --state add|remove
     labctl.py mutate --route exit --state active|withdrawn
     labctl.py status
@@ -70,7 +70,7 @@ CONTROL = f"http://{HOST}:{ENV['KARST_LAB_CONTROL_PORT']}"
 # only through labgw (its default gateway), so an active exit route covers
 # it (ADR-0036 §2). Labs from before the core network fall back to CONTROL.
 CORE_CONTROL_IP = ENV.get("KARST_LAB_CORE_CONTROL_IP")
-CORE_RELAY_IP = ENV.get("KARST_LAB_CORE_RELAY_IP")
+CORE_ESTAVELLE_IP = ENV.get("KARST_LAB_CORE_ESTAVELLE_IP")
 ENROLL_CONTROL = f"http://{CORE_CONTROL_IP}:33073" if CORE_CONTROL_IP else CONTROL
 KEYCLOAK = f"http://{HOST}:{ENV['KARST_LAB_KEYCLOAK_PORT']}/auth/realms/karst"
 SUBNET_ADDR = ENV["KARST_LAB_SUBNET_ADDR"]
@@ -147,10 +147,10 @@ def invitation(api, name):
     grant = api("POST", "/api/karst/v1/invitations", {
         "name": name, "groups": [group_id(api)], "for_user_id": current_user_id(api),
     })
-    # The relay's self-signed certificate rides in the invitation, so the
-    # Mac trusts it for relay TLS only (enrollment writes relay_ca_file)
+    # The estavelle's self-signed certificate rides in the invitation, so the
+    # Mac trusts it for estavelle TLS only (enrollment writes estavelle_ca_file)
     # instead of needing it in the system trust store.
-    with open(os.path.join(STATE, "tls", "relay.crt")) as f:
+    with open(os.path.join(STATE, "tls", "estavelle.crt")) as f:
         relay_ca = f.read()
     payload = json.dumps({"server": ENROLL_CONTROL, **metadata, "setup_key": grant["credential"], "relay_ca": relay_ca}, separators=(",", ":"))
     encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
@@ -265,8 +265,8 @@ def ensure_peer(api, name, container, gateway):
             f'control_minimum_version = {metadata["control_minimum_version"]}\n'
             'identity_key_file = "/etc/karst/identity.key"\n'
             'cache_file = "/etc/karst/netmap.cache"\n'
-            # bootstrap.sh copies the lab relay's self-signed certificate here.
-            'relay_ca_file = "/etc/karst/relay-ca.crt"\n'
+            # bootstrap.sh copies the lab estavelle's self-signed certificate here.
+            'estavelle_ca_file = "/etc/karst/estavelle-ca.crt"\n'
             f'setup_key = "{grant["credential"]}"\n'
         )
         with open(os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
@@ -303,7 +303,7 @@ def cmd_prepare(args):
             api("POST", f"/api/karst/v1/invitations/{grant['id']}/revoke")
     set_route(api, SUBNET_ROUTE, False)
     set_route(api, EXIT_ROUTE, False)
-    set_direct_blocked(args.scenario == "relay")
+    set_direct_blocked(args.scenario == "estavelle")
     peer = lab_peer(api)
     if not peer or not peer_running():
         raise SystemExit("labctl: the lab peer is not connected; run `labctl.py init`")
@@ -325,12 +325,12 @@ def cmd_prepare(args):
         handoff["KARST_CI_SUBNET_PROBE_URL"] = f"http://{SUBNET_ADDR}:{FIXTURE_HTTP_PORT}/probe"
         handoff["KARST_CI_SUBNET_ROUTE_PREFIX"] = SUBNET_PREFIX
     if args.exit_route:
-        # Control and relay at their core addresses, reachable from the Mac
+        # Control and estavelle at their core addresses, reachable from the Mac
         # only through its default route; each has an HTTP responder sharing
         # its network namespace on :8081, since neither serves an
         # unauthenticated 2xx itself.
         control_host = CORE_CONTROL_IP or HOST
-        relay_host = CORE_RELAY_IP or HOST
+        relay_host = CORE_ESTAVELLE_IP or HOST
         handoff["KARST_CI_EXIT_PROBE_URL"] = f"http://{EXIT_ADDR}:{FIXTURE_HTTP_PORT}/probe"
         handoff["KARST_CI_EXIT_ROUTE_PREFIX"] = "0.0.0.0/0"
         handoff["KARST_CI_CONTROL_PLANE_PROBE_URL"] = f"http://{control_host}:8081/"
@@ -372,7 +372,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
     prepare = sub.add_parser("prepare")
-    prepare.add_argument("--scenario", choices=["direct", "relay"], required=True)
+    prepare.add_argument("--scenario", choices=["direct", "estavelle"], required=True)
     prepare.add_argument("--route-churn", action="store_true")
     prepare.add_argument("--exit-route", action="store_true")
     mutate = sub.add_parser("mutate")

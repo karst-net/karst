@@ -155,7 +155,7 @@ pub enum Command {
     /// Explain which resolver path the current policy selects for one name.
     DnsQuery(String),
     /// Report subnet/exit offers, local exit selection and forwarding readiness.
-    GatewayStatus,
+    AvenStatus,
     /// List exit-route offers and the locally selected one.
     ExitList,
     /// Persistently select one exit-route offer by stable id.
@@ -195,7 +195,7 @@ impl Command {
             "bugreport" => Some(Self::BugReport),
             "metrics" => Some(Self::Metrics),
             "dns-status" => Some(Self::DnsStatus),
-            "gateway-status" => Some(Self::GatewayStatus),
+            "aven-status" => Some(Self::AvenStatus),
             "exit-list" => Some(Self::ExitList),
             "exit-disable" => Some(Self::ExitDisable),
             "file-pending" => Some(Self::FilePending),
@@ -257,7 +257,7 @@ impl Command {
             Self::Metrics => "metrics".to_owned(),
             Self::DnsStatus => "dns-status".to_owned(),
             Self::DnsQuery(name) => format!("dns-query {name}"),
-            Self::GatewayStatus => "gateway-status".to_owned(),
+            Self::AvenStatus => "aven-status".to_owned(),
             Self::ExitList => "exit-list".to_owned(),
             Self::ExitUse(id) => format!("exit-use {id}"),
             Self::ExitDisable => "exit-disable".to_owned(),
@@ -526,7 +526,7 @@ mod tests {
             Command::Metrics,
             Command::DnsStatus,
             Command::DnsQuery("atlas.aquifer.karst".to_owned()),
-            Command::GatewayStatus,
+            Command::AvenStatus,
             Command::ExitList,
             Command::ExitUse("exit-eu".to_owned()),
             Command::ExitDisable,

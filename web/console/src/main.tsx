@@ -19,7 +19,7 @@ import { Posture } from "./views/posture";
 import { Dns } from "./views/dns";
 import { Routes } from "./views/routes";
 import { Audit } from "./views/audit";
-import { RelayServices } from "./views/relay-services";
+import { EstavelleServices } from "./views/estavelle-services";
 import { Locations } from "./views/locations";
 import { InfrastructureConnections } from "./views/infrastructure-connections";
 import { Settings } from "./views/settings";
@@ -27,11 +27,11 @@ import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "domains" | "machines" | "access" | "compliance" | "users" | "identity-providers" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
+type Route = "domains" | "machines" | "access" | "compliance" | "users" | "identity-providers" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "estavelles" | "connections" | "locations" | "noc" | "scaler" | "billing" | "settings";
 type Mode = "configure" | "observe";
 type NavItem = { route: Route; label: string; hash: string; group?: string };
 
-// Machines and Gateways are each both a config surface (enroll/edit) and a
+// Machines and Avens are each both a config surface (enroll/edit) and a
 // status surface (health/metrics) -- rather than duplicate the nav entry,
 // each view itself splits into a "Manage"/"Status" (or "Metrics") tab (see
 // machines.tsx, routes.tsx), and the two modes link to the same route at a
@@ -48,8 +48,8 @@ const navConfigure: NavItem[] = [
   { route: "bedrock", label: "Network lock", hash: "/bedrock", group: "Identity & Access" },
   { route: "domains", label: "Domains", hash: "/domains", group: "Network" },
   { route: "dns", label: "DNS", hash: "/dns", group: "Network" },
-  { route: "routes", label: "Gateways", hash: "/gateways", group: "Network" },
-  { route: "relays", label: "Relays", hash: "/relays", group: "Infrastructure" },
+  { route: "routes", label: "Avens", hash: "/avens", group: "Network" },
+  { route: "estavelles", label: "Estavelles", hash: "/estavelles", group: "Infrastructure" },
   { route: "connections", label: "Infrastructure connections", hash: "/connections", group: "Infrastructure" },
   { route: "locations", label: "Authorized locations", hash: "/locations", group: "Infrastructure" },
   { route: "scaler", label: "Scaler Advisor", hash: "/scaler", group: "Infrastructure" },
@@ -62,7 +62,7 @@ const navObserve: NavItem[] = [
   { route: "posture", label: "Crypto posture", hash: "/posture" },
   { route: "audit", label: "Audit log", hash: "/audit" },
   { route: "machines", label: "Devices", hash: "/machines/status" },
-  { route: "routes", label: "Gateways", hash: "/gateways/metrics" },
+  { route: "routes", label: "Avens", hash: "/avens/metrics" },
 ];
 
 const navByMode: Record<Mode, NavItem[]> = { configure: navConfigure, observe: navObserve };
@@ -87,7 +87,7 @@ function groupNav(items: NavItem[]): Array<{ group?: string; items: NavItem[] }>
  *  blank page. */
 function parseHash(): { route: Route; mode: Mode; machineTab?: "add" } {
   const rawPath = (location.hash || "#/domains").slice(1);
-  const path = rawPath === "/routes" ? "/gateways" : rawPath;
+  const path = rawPath === "/routes" ? "/avens" : rawPath;
   // Preserve saved enrollment links inside the consolidated Machines surface.
   if (path === "/access" || path === "/groups/access") return { route: "access", mode: "configure" };
   if (path === "/groups/compliance") return { route: "compliance", mode: "configure" };
@@ -176,7 +176,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "dns" && <Dns />}
       {route === "routes" && <Routes key={mode} defaultTab={mode === "observe" ? "metrics" : "manage"} />}
       {route === "audit" && <Audit />}
-      {route === "relays" && <RelayServices />}
+      {route === "estavelles" && <EstavelleServices />}
       {route === "connections" && <InfrastructureConnections />}
       {route === "locations" && <Locations />}
       {route === "noc" && <Noc />}

@@ -13,7 +13,7 @@ import (
 // fleetChecker is node.Store's own CountRelayLifecycleBelow/
 // CountGatewayIngressBelow, accepted as an interface so this package does
 // not import node directly -- the same narrow-interface convention
-// relayalloc's relayAllocationRegistry/relayAllocationGrantStore already
+// estavellealloc's relayAllocationRegistry/relayAllocationGrantStore already
 // use for their own cross-package dependencies.
 type fleetChecker interface {
 	CountRelayLifecycleBelow(ctx context.Context, account string, required uint32, tx *gorm.DB) (int64, error)

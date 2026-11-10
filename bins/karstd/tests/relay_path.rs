@@ -18,7 +18,7 @@
 //! that a direct path displaces it without dropping the session.
 //!
 //! Nothing here calls `set_endpoint` to fake a path except where a test says it
-//! is standing in for AVEN, which has its own end-to-end test in
+//! is standing in for Resurgence, which has its own end-to-end test in
 //! `rendezvous.rs`.
 
 #![allow(
@@ -37,7 +37,7 @@ use karst_noise::handshake::{ResponderRandomness, StaticKeys};
 use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
 use karstd::config::{Config, Peer};
 use karstd::engine::{Engine, Transport, Via};
-use karstd::netmap::Relay;
+use karstd::netmap::Estavelle;
 use karstd::routing::{AllowedIps, Prefix};
 
 /// Deterministic randomness. These are tests of routing and framing, not of
@@ -60,13 +60,13 @@ fn keys(byte: u8) -> Arc<StaticKeys> {
 
 /// A relay registry entry. Only the node-facing fields matter here; nothing in
 /// this test opens a socket.
-fn relay_with(tag: u8) -> Relay {
+fn relay_with(tag: u8) -> Estavelle {
     use sha2::{Digest as _, Sha256};
     let identity_key = vec![tag; 2592];
     let mut h = Sha256::new();
-    h.update(b"karst-relay-id-v1");
+    h.update(b"karst-estavelle-id-v1");
     h.update(&identity_key);
-    Relay {
+    Estavelle {
         address: format!("127.0.0.1:{}", 443 + u16::from(tag)),
         tls_server_name: "relay.test".to_owned(),
         relay_id: h.finalize().into(),
@@ -77,14 +77,14 @@ fn relay_with(tag: u8) -> Relay {
 
 /// The relay this node holds — §9.1's first rule, and the one every test here
 /// used before the second rule existed.
-fn relay() -> Relay {
+fn relay() -> Estavelle {
     relay_with(0x44)
 }
 
 /// A second registry entry, which no node here connects to and some peers
 /// publish as their home. `ponor-v1.md` §9.1's second rule is entirely about
 /// this case: the peer is somewhere this node is not.
-fn elsewhere() -> Relay {
+fn elsewhere() -> Estavelle {
     relay_with(0x55)
 }
 
@@ -110,8 +110,8 @@ struct PeerSpec {
     endpoint: Option<SocketAddr>,
     /// The range this peer owns.
     range: &'static str,
-    /// The AVEN pair key, when the netmap supplies one. `None` means no
-    /// discovery for this peer, ever (`aven-v1.md` §5.1).
+    /// The Resurgence pair key, when the netmap supplies one. `None` means no
+    /// discovery for this peer, ever (`resurgence-v1.md` §5.1).
     disco_key: Option<[u8; 32]>,
     /// The relay this peer published as its home — `ponor-v1.md` §9.1. `None`
     /// is a peer that has published none, which is every peer here except
@@ -148,19 +148,19 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
             psk_is_fallback: false,
             psk_previous: None,
             disco_key: spec.disco_key,
-            home_relay: spec.home_relay,
+            home_estavelle: spec.home_relay,
             candidates: Vec::new(),
         });
     }
 
     let config = Config {
-        relay_ca_file: None,
-        prefer_quic_relay: false,
+        estavelle_ca_file: None,
+        prefer_quic_estavelle: false,
         metrics_listen: None,
         tracing_collector: None,
         route_offers: Vec::new(),
         exit_node_state_file: None,
-        gateway_forwarding: true,
+        aven_forwarding: true,
         keys: keys(own),
         listen: "0.0.0.0:0".parse().expect("listen"),
         port_mapping: true,
@@ -345,7 +345,7 @@ fn a_peer_with_no_endpoint_and_no_relay_is_still_undeliverable() {
 
 /// **The upgrade, and the part that has to be seamless: the session survives
 /// it.** A relay→direct transition that rehandshaked would be a visible stall
-/// on every path change, and path changes are exactly what AVEN produces.
+/// on every path change, and path changes are exactly what Resurgence produces.
 #[test]
 fn a_direct_path_displaces_the_relay_without_disturbing_the_session() {
     let a = pair(0x01, 0x02, "100.64.0.2/32", "100.64.0.1/24", true);
@@ -360,7 +360,7 @@ fn a_direct_path_displaces_the_relay_without_disturbing_the_session() {
         .iter()
         .all(|(_, via)| matches!(via, Via::Relay { .. })));
 
-    // Standing in for AVEN confirming a path — `rendezvous.rs` covers how one
+    // Standing in for Resurgence confirming a path — `rendezvous.rs` covers how one
     // is actually found.
     let direct: SocketAddr = "203.0.113.2:51820".parse().expect("endpoint");
     assert!(a.engine.set_endpoint(0, direct));
@@ -486,7 +486,7 @@ fn status_reports_how_each_peer_is_reached() {
     let a = pair(0x01, 0x02, "100.64.0.2/32", "100.64.0.1/24", true);
     assert_eq!(
         transport(&a),
-        Transport::Relay,
+        Transport::Estavelle,
         "a peer with no direct path was not reported as relayed"
     );
 
@@ -518,7 +518,7 @@ fn status_reports_how_each_peer_is_reached() {
 /// caught.
 #[test]
 fn a_published_endpoint_that_has_gone_stale_falls_back_to_the_relay() {
-    use karst_disco::msg::TxId;
+    use karst_resurgence::msg::TxId;
     use karstd::disco::{Disco, PathChange};
 
     let stale: SocketAddr = "203.0.113.9:51820".parse().expect("endpoint");
@@ -573,7 +573,7 @@ fn a_published_endpoint_that_has_gone_stale_falls_back_to_the_relay() {
     assert_eq!(node.engine.endpoint(0), None);
     assert_eq!(
         node.engine.status().first().expect("one peer").transport,
-        Transport::Relay,
+        Transport::Estavelle,
         "the peer did not fall back to the relay"
     );
 }
@@ -648,7 +648,7 @@ fn a_peer_that_published_another_relay_is_still_tried_here_first() {
     assert_eq!(
         a.engine.relay_for(id_of(0x02)),
         None,
-        "AVEN's rendezvous took a different route from the data"
+        "Resurgence's rendezvous took a different route from the data"
     );
 }
 

@@ -122,7 +122,7 @@ func TestKarstMetrics_PSKEpochAge(t *testing.T) {
 }
 
 func TestKarstMetrics_NilReceiverIsNoOp(t *testing.T) {
-	// Metrics is optional plumbing throughout Karst (bedrock.Log, relayreg.Store,
+	// Metrics is optional plumbing throughout Karst (bedrock.Log, estavellereg.Store,
 	// control.EpochScheduler); every Set* method must tolerate a nil receiver
 	// so a caller that never wired metrics does not need its own nil checks.
 	var m *KarstMetrics

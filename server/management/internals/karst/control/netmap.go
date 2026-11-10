@@ -22,12 +22,12 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
-	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -166,12 +166,12 @@ type NetmapHandler struct {
 	// Relays is the authenticated Ponor registry. Entries are static at this
 	// boundary until relay administration is moved into the control database.
 	RelayServices interface {
-		Netmap(context.Context) (bool, []*proto.KarstRelay, error)
-		Publication(context.Context) (relayservice.Publication, error)
+		Netmap(context.Context) (bool, []*proto.KarstEstavelle, error)
+		Publication(context.Context) (estavelleservice.Publication, error)
 	}
-	Relays     []*proto.KarstRelay
+	Relays     []*proto.KarstEstavelle
 	RelayStore interface {
-		NetmapRelays(context.Context) ([]*proto.KarstRelay, error)
+		NetmapRelays(context.Context) ([]*proto.KarstEstavelle, error)
 	}
 
 	// Policy is the ACL document to compile a per-node filter from (§4.3).
@@ -336,7 +336,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		return nil, fmt.Errorf("record DNS zone affinity capability: %w", err)
 	}
 	if h.RelayServices != nil {
-		publication, err := h.RelayServices.Publication(relayservice.WithAccount(ctx, accountID))
+		publication, err := h.RelayServices.Publication(estavelleservice.WithAccount(ctx, accountID))
 		if err != nil {
 			return nil, fmt.Errorf("load Relay publication compatibility: %w", err)
 		}
@@ -422,10 +422,10 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// deployment, so treating its presence alone as the switch would make
 	// the static, file/env-configured list permanently unreachable --
 	// exactly the accounts it exists to serve.
-	var relays []*proto.KarstRelay
+	var relays []*proto.KarstEstavelle
 	servicePublication := false
 	if h.RelayServices != nil {
-		servicePublication, relays, err = h.RelayServices.Netmap(relayservice.WithAccount(ctx, accountID))
+		servicePublication, relays, err = h.RelayServices.Netmap(estavelleservice.WithAccount(ctx, accountID))
 		if err != nil {
 			return nil, fmt.Errorf("load Relay services: %w", err)
 		}
@@ -433,7 +433,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if !servicePublication {
 		relays = h.Relays
 		if h.RelayStore != nil {
-			stored, err := h.RelayStore.NetmapRelays(relayreg.WithAccount(ctx, accountID))
+			stored, err := h.RelayStore.NetmapRelays(estavellereg.WithAccount(ctx, accountID))
 			if err != nil {
 				return nil, fmt.Errorf("load relays: %w", err)
 			}
@@ -443,9 +443,9 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		}
 	}
 	if scoped, ok := h.RelayServices.(interface {
-		FilterForPeer(context.Context, string, []*proto.KarstRelay) ([]*proto.KarstRelay, error)
+		FilterForPeer(context.Context, string, []*proto.KarstEstavelle) ([]*proto.KarstEstavelle, error)
 	}); ok {
-		relays, err = scoped.FilterForPeer(relayservice.WithAccount(ctx, accountID), selfPeer.ID, relays)
+		relays, err = scoped.FilterForPeer(estavelleservice.WithAccount(ctx, accountID), selfPeer.ID, relays)
 		if err != nil {
 			return nil, fmt.Errorf("relay group access: %w", err)
 		}
@@ -1055,7 +1055,7 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 	// without a second lookup.
 	gateways := make(map[string]*proto.KarstRouteOffer, len(offers))
 	for _, offer := range offers {
-		if offer.GetRole() == proto.KarstRouteRole_KARST_ROUTE_ROLE_GATEWAY && string(offer.GetGatewayId()) == self {
+		if offer.GetRole() == proto.KarstRouteRole_KARST_ROUTE_ROLE_AVEN && string(offer.GetGatewayId()) == self {
 			gateways[offer.GetRouteId()] = offer
 		}
 	}
@@ -1280,7 +1280,7 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 		writePorts(h, r.GetPorts())
 	}
 
-	writeField(h, []byte("karst-relays"))
+	writeField(h, []byte("karst-estavelles"))
 	for _, relay := range resp.GetRelays() {
 		writeField(h, []byte(relay.GetAddress()))
 		writeField(h, []byte(relay.GetTlsServerName()))

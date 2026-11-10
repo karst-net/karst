@@ -9,7 +9,7 @@
 //! socket, which cannot send to an IPv6 candidate at all — the kernel refuses
 //! with `EAFNOSUPPORT` and [`dispatch`] drops the error, because a send failure
 //! must not take the daemon down. So the only configuration that can use an
-//! IPv6 path is `[::]`, and `aven-v1.md`'s candidate encoding carries IPv6
+//! IPv6 path is `[::]`, and `resurgence-v1.md`'s candidate encoding carries IPv6
 //! addresses precisely so that it can.
 //!
 //! A dual-stack socket reaches both families, but it does not report both the
@@ -127,13 +127,13 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str, own_at: &s
         psk_is_fallback: false,
         psk_previous: None,
         disco_key: None,
-        home_relay: None,
+        home_estavelle: None,
         candidates: Vec::new(),
     }];
 
     let config = Arc::new(Config {
-        relay_ca_file: None,
-        prefer_quic_relay: false,
+        estavelle_ca_file: None,
+        prefer_quic_estavelle: false,
         metrics_listen: None,
         tracing_collector: None,
         keys: keys(own),
@@ -150,7 +150,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str, own_at: &s
         psk_epoch: 1,
         route_offers: Vec::new(),
         exit_node_state_file: None,
-        gateway_forwarding: true,
+        aven_forwarding: true,
         node_id: handle(&[own; 2592]).into_bytes(),
         relays: Vec::new(),
         peers,
@@ -345,8 +345,8 @@ fn the_session_establishes_either_way_which_is_why_this_is_quiet() {
 /// A peer's endpoint, once learned, is not private to the node that learned it.
 /// It is printed by `karst status`, compared against by `set_endpoint`, handed
 /// to `add_peer_candidate` as a path — and, the one that does the damage,
-/// echoed straight back as AVEN's `Pong.observed`, which is how a node is told
-/// its own reflexive address (`aven-v1.md` §7.2). A node told its reflexive
+/// echoed straight back as Resurgence's `Pong.observed`, which is how a node is told
+/// its own reflexive address (`resurgence-v1.md` §7.2). A node told its reflexive
 /// address is `[::ffff:a.b.c.d]` advertises that to the whole aquifer, and a
 /// peer whose socket is `AF_INET` cannot send to it at all: the kernel refuses
 /// with `EAFNOSUPPORT` and `dispatch` drops the error, deliberately, because a

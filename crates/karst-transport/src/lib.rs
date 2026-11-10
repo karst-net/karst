@@ -133,7 +133,7 @@ pub type SourceKey = [u8; 18];
 /// `SocketAddr::V4(x) == SocketAddr::V6(mapped)` is false, always.
 ///
 /// Everything above this layer compares addresses for equality — the engine
-/// attributes a datagram to a peer that way, AVEN hands the source straight
+/// attributes a datagram to a peer that way, Resurgence hands the source straight
 /// back as `Pong.observed`, and `karst status` prints it. Normalizing here
 /// rather than at each of those means there is one representation of an
 /// address in the daemon, and it is the one every other node can reach: a

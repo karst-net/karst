@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/stretchr/testify/require"
 )
@@ -131,7 +131,7 @@ func TestCalculateRejectsRelayReportsWithDailyGapEvidence(t *testing.T) {
 	end := start.Add(time.Second)
 	devices := completeDeviceReport(start, end, deviceSegment(start, end, 1))
 	relays := completeRelayReport(start, end, "100")
-	relays.Days = []relayusage.ReportDay{{GapWindows: 1}}
+	relays.Days = []estavelleusage.ReportDay{{GapWindows: 1}}
 	schedule := RateSchedule{
 		Version: "v1", Currency: "USD",
 		DeviceTiers: []DeviceTier{{MinorPerPeriod: 100}}, RelayUnitBytes: 1,
@@ -154,7 +154,7 @@ func TestCalculateRejectsNoncanonicalCompleteRelayBytes(t *testing.T) {
 		DeviceTiers: []DeviceTier{{MinorPerPeriod: 0}}, RelayUnitBytes: 1,
 	}
 	_, err := Calculate(devices, relays, schedule)
-	require.ErrorIs(t, err, relayusage.ErrReportData)
+	require.ErrorIs(t, err, estavelleusage.ErrReportData)
 }
 
 func TestCalculateRequiresMatchingCompleteReportPeriods(t *testing.T) {
@@ -229,8 +229,8 @@ func deviceSegment(start, end time.Time, devices int64) usage.DeviceSegment {
 	return usage.DeviceSegment{Start: start, End: end, Coverage: "complete", Devices: &devices}
 }
 
-func completeRelayReport(start, end time.Time, bytes string) relayusage.Report {
-	return relayusage.Report{
+func completeRelayReport(start, end time.Time, bytes string) estavelleusage.Report {
+	return estavelleusage.Report{
 		Start: start, End: end, AsOf: end,
 		Coverage: "authorized_producers", HistoryComplete: true, Complete: true,
 		ExpectedWindows: 1, ReportedBytes: bytes,

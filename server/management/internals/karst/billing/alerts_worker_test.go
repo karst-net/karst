@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/stretchr/testify/require"
 )
 
-type relayAlertReportFunc func(context.Context, string, time.Time, time.Time) (report relayusage.Report, err error)
+type relayAlertReportFunc func(context.Context, string, time.Time, time.Time) (report estavelleusage.Report, err error)
 
-func (f relayAlertReportFunc) Report(ctx context.Context, account string, start, end time.Time) (relayusage.Report, error) {
+func (f relayAlertReportFunc) Report(ctx context.Context, account string, start, end time.Time) (estavelleusage.Report, error) {
 	return f(ctx, account, start, end)
 }
 
@@ -30,7 +30,7 @@ func TestEvaluateCurrentRelayAlertsOnlyProcessesAssignedAccounts(t *testing.T) {
 	require.NoError(t, store.AssignSchedule(accountCtx, start, periodEnd, schedule.Version))
 
 	reports := 0
-	reporter := relayAlertReportFunc(func(_ context.Context, account string, reportStart, reportEnd time.Time) (relayusage.Report, error) {
+	reporter := relayAlertReportFunc(func(_ context.Context, account string, reportStart, reportEnd time.Time) (estavelleusage.Report, error) {
 		reports++
 		require.Equal(t, "scheduled-account", account)
 		require.Equal(t, start, reportStart)
@@ -38,14 +38,14 @@ func TestEvaluateCurrentRelayAlertsOnlyProcessesAssignedAccounts(t *testing.T) {
 		report := completeRelayReport(start, reportEnd, "9000000000")
 		return report, nil
 	})
-	require.NoError(t, store.EvaluateCurrentRelayAlerts(ctx, reporter, now))
+	require.NoError(t, store.EvaluateCurrentEstavelleAlerts(ctx, reporter, now))
 	require.Equal(t, 1, reports)
 
-	alerts, err := store.RelayAlerts(accountCtx, start, periodEnd)
+	alerts, err := store.EstavelleAlerts(accountCtx, start, periodEnd)
 	require.NoError(t, err)
 	require.Len(t, alerts, 2)
 
-	other, err := store.RelayAlerts(WithAccount(ctx, "unconfigured-account"), start, periodEnd)
+	other, err := store.EstavelleAlerts(WithAccount(ctx, "unconfigured-account"), start, periodEnd)
 	require.NoError(t, err)
 	require.Empty(t, other)
 }
@@ -54,10 +54,10 @@ func TestEvaluateCurrentRelayAlertsDoesNoWorkWithoutAssignments(t *testing.T) {
 	store := testBillingStore(t)
 	now := time.Date(2026, 10, 12, 12, 30, 0, 0, time.UTC)
 	reports := 0
-	reporter := relayAlertReportFunc(func(context.Context, string, time.Time, time.Time) (relayusage.Report, error) {
+	reporter := relayAlertReportFunc(func(context.Context, string, time.Time, time.Time) (estavelleusage.Report, error) {
 		reports++
-		return relayusage.Report{}, nil
+		return estavelleusage.Report{}, nil
 	})
-	require.NoError(t, store.EvaluateCurrentRelayAlerts(context.Background(), reporter, now))
+	require.NoError(t, store.EvaluateCurrentEstavelleAlerts(context.Background(), reporter, now))
 	require.Zero(t, reports)
 }

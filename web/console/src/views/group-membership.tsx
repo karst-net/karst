@@ -68,7 +68,7 @@ export function GroupMembership({ id, onClose, onSaved }: { id: string; onClose:
       <h3>Devices gaining group access</h3>{added.length ? <ul>{added.map(id => <li key={id}>{name(id)}</li>)}</ul> : <p>None</p>}
       <h3>Devices losing group access</h3>{removed.length ? <ul>{removed.map(id => <li key={id}>{name(id)}</li>)}</ul> : <p>None</p>}
       <h3>Group assignments</h3>{impact?.dependencies.length ? <ul>{impact.dependencies.map(item => <li key={item.key}><a href={item.href}>{item.label}</a></li>)}</ul> : <p>No assignments found in the console's supported resource forms.</p>}
-      <p>Changes affect access supplied by this group. Other groups and legacy rules may still allow access. Relay admission converges on the next roster refresh; internet egress still requires client consent and Gateway readiness.</p>
+      <p>Changes affect access supplied by this group. Other groups and legacy rules may still allow access. Estavelle admission converges on the next roster refresh; internet egress still requires client consent and Aven readiness.</p>
       <label><input type="checkbox" disabled={busy || conflicted} checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the devices and group assignments.</label>
       <div className="actions"><button disabled={busy} onClick={() => { setReviewing(false); setAcknowledged(false); }}>Back</button><button className="primary" disabled={busy || conflicted || !acknowledged} onClick={() => void save()}>Apply membership changes</button></div>
     </>)}

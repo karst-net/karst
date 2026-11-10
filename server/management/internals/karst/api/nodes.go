@@ -4,7 +4,7 @@
 // Package api serves Karst-owned administrative endpoints on the management
 // router. It deliberately consumes the router's existing authentication
 // middleware rather than parsing credentials itself, with one exception:
-// relaysEnroll (ADR-0045 §6) authenticates a not-yet-registered relay's own
+// estavellesEnroll (ADR-0045 §6) authenticates a not-yet-registered relay's own
 // one-off enrollment token directly, because that caller has no
 // router-level session to hold in the first place — see its own doc
 // comment.
@@ -35,6 +35,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/compliance"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/firstrun"
 	"github.com/netbirdio/netbird/management/internals/karst/geo"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
@@ -44,7 +45,6 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/tutorialmode"
@@ -140,7 +140,7 @@ type handler struct {
 	complianceDraft complianceDraftReadWriter
 	audit           auditReader
 	policy          policyReader
-	relays          relayReader
+	estavelles      estavelleReader
 	bedrock         bedrockReader
 	chain           bedrockLogReader
 	peerWriter      peerWriter
@@ -302,7 +302,7 @@ type infraConnectionReadWriter interface {
 	EnableLocalZone(ctx context.Context, id, code, parentRegion string) (infraconnections.DiscoveredRegion, error)
 	// UpdateLaunchDefaults is ADR-0045's 2026-11-04 addendum: the AWS
 	// launch shape (AMI/instance type/subnet/security groups) a named
-	// relay allocation (ADR-0063, package relayalloc) actuates against,
+	// relay allocation (ADR-0063, package estavellealloc) actuates against,
 	// set here rather than collected on the allocation request itself --
 	// see UpdateLaunchDefaultsRequest's own doc comment.
 	UpdateLaunchDefaults(ctx context.Context, id string, req infraconnections.UpdateLaunchDefaultsRequest) (*infraconnections.Account, error)
@@ -324,12 +324,12 @@ type tenancyReader interface {
 	AccessibleAccounts(ctx context.Context, userID string) ([]string, error)
 }
 
-// relayHealth is deliberately separate from relayreg.StoredRelay. Registry
+// estavelleHealth is deliberately separate from estavellereg.StoredEstavelle. Registry
 // records describe what nodes may dial; admission telemetry belongs to a
 // relay. ADR-0021: populated from a relay's own signed reports
-// (relayreg.Store.LatestTelemetry) when any have arrived; unknown remains the
+// (estavellereg.Store.LatestTelemetry) when any have arrived; unknown remains the
 // only truthful value for a relay that has never reported.
-type relayHealth struct {
+type estavelleHealth struct {
 	Source          string     `json:"source"`
 	LastConfirmedAt *time.Time `json:"last_confirmed_at"`
 	Sessions        *int       `json:"sessions"`
@@ -337,15 +337,15 @@ type relayHealth struct {
 	AdmissionState  string     `json:"admission_state"`
 }
 
-type relayResponse struct {
-	relayreg.StoredRelay
-	Health relayHealth `json:"health"`
+type estavelleResponse struct {
+	estavellereg.StoredEstavelle
+	Health estavelleHealth `json:"health"`
 	// Location is the relay's NOC-map position -- declared (ADR-0046 §1) or
 	// detected via cloud instance metadata (ADR-0048), whichever locationFor
 	// resolves. Nil means neither source has one.
-	Location *relayreg.Location `json:"location,omitempty"`
+	Location *estavellereg.Location `json:"location,omitempty"`
 	// LocationSource says which of the two it came from, mirroring
-	// relayHealth.Source's existing "roster_mtime"/"relay_telemetry"
+	// estavelleHealth.Source's existing "roster_mtime"/"relay_telemetry"
 	// provenance-tagging shape rather than inventing a new one. Omitted
 	// along with Location when neither source has a value.
 	LocationSource string `json:"location_source,omitempty"`
@@ -356,14 +356,14 @@ type relayResponse struct {
 // map rendering does not need five different response types to draw five
 // kinds of marker.
 type nocComponent struct {
-	Kind string `json:"kind"` // "relay" | "turn" | "route" | "control_plane" | "bedrock"
+	Kind string `json:"kind"` // "estavelle" | "turn" | "route" | "control_plane" | "bedrock"
 	ID   string `json:"id"`
 	// Label is a human-readable name for the marker/legend: a relay's
 	// location label or region, a TURN server's URI, the route
 	// identifier(s) a gateway group serves, or a fixed name for the
 	// account-scoped singletons.
 	Label string `json:"label"`
-	// Health is relayHealth.AdmissionState's own vocabulary
+	// Health is estavelleHealth.AdmissionState's own vocabulary
 	// (confirmed/stale/unknown), empty for every kind that has no
 	// telemetry-derived health to report.
 	Health   string        `json:"health,omitempty"`
@@ -372,7 +372,7 @@ type nocComponent struct {
 	// aggregate egress and ingress throughput, populated only for Kind:
 	// "route" (summed across every route the group serves) -- nil wherever
 	// no gateway for this group has yet self-reported any, the same "nil,
-	// not zero, until something real has arrived" posture relayHealth.Bytes
+	// not zero, until something real has arrived" posture estavelleHealth.Bytes
 	// already has for relays. Never a destination breakdown -- see
 	// routetelemetry's own doc comment on why.
 	Bytes          *int64 `json:"bytes,omitempty"`
@@ -381,8 +381,8 @@ type nocComponent struct {
 	IngressPackets *int64 `json:"ingress_packets,omitempty"`
 }
 
-func unknownRelayHealth() relayHealth {
-	return relayHealth{Source: "roster_mtime", AdmissionState: "unknown"}
+func unknownRelayHealth() estavelleHealth {
+	return estavelleHealth{Source: "roster_mtime", AdmissionState: "unknown"}
 }
 
 // relayTelemetryFreshWindow bounds how old a relay's last confirmed report
@@ -395,11 +395,11 @@ const relayTelemetryFreshWindow = 3 * time.Minute
 // healthFor derives a relay's health from its latest self-report, if any —
 // ADR-0021. A read error is treated the same as no report: this is a display
 // concern, not a reason to fail the surrounding list/get request.
-func (h *handler) healthFor(ctx context.Context, id string) relayHealth {
-	if h.relays == nil {
+func (h *handler) healthFor(ctx context.Context, id string) estavelleHealth {
+	if h.estavelles == nil {
 		return unknownRelayHealth()
 	}
-	record, err := h.relays.LatestTelemetry(ctx, id)
+	record, err := h.estavelles.LatestTelemetry(ctx, id)
 	if err != nil || record == nil {
 		return unknownRelayHealth()
 	}
@@ -413,7 +413,7 @@ func (h *handler) healthFor(ctx context.Context, id string) relayHealth {
 	// admin reading this field would recognize as one.
 	sessions := record.LocalClients
 	bytes := int(record.BytesTotal)
-	return relayHealth{
+	return estavelleHealth{
 		Source:          "relay_telemetry",
 		LastConfirmedAt: &reportedAt,
 		Sessions:        &sessions,
@@ -422,8 +422,8 @@ func (h *handler) healthFor(ctx context.Context, id string) relayHealth {
 	}
 }
 
-func (h *handler) relayResponseFor(ctx context.Context, relay relayreg.StoredRelay) relayResponse {
-	resp := relayResponse{StoredRelay: relay, Health: h.healthFor(ctx, relay.ID)}
+func (h *handler) estavelleResponseFor(ctx context.Context, relay estavellereg.StoredEstavelle) estavelleResponse {
+	resp := estavelleResponse{StoredEstavelle: relay, Health: h.healthFor(ctx, relay.ID)}
 	resp.Location, resp.LocationSource = h.locationFor(ctx, relay)
 	return resp
 }
@@ -432,14 +432,14 @@ func (h *handler) relayResponseFor(ctx context.Context, relay relayreg.StoredRel
 // overrides declared (ADR-0046 §1) when present, declared is the fallback,
 // neither is "unknown". A read error is treated the same as no detected
 // location, the same posture healthFor already takes for telemetry reads.
-func (h *handler) locationFor(ctx context.Context, relay relayreg.StoredRelay) (*relayreg.Location, string) {
-	if h.relays != nil {
-		if record, err := h.relays.LatestTelemetry(ctx, relay.ID); err == nil && record != nil && record.DetectedLat != nil {
-			return &relayreg.Location{Lat: *record.DetectedLat, Lon: *record.DetectedLon}, "detected"
+func (h *handler) locationFor(ctx context.Context, relay estavellereg.StoredEstavelle) (*estavellereg.Location, string) {
+	if h.estavelles != nil {
+		if record, err := h.estavelles.LatestTelemetry(ctx, relay.ID); err == nil && record != nil && record.DetectedLat != nil {
+			return &estavellereg.Location{Lat: *record.DetectedLat, Lon: *record.DetectedLon}, "detected"
 		}
 	}
 	if relay.LocationLat != nil {
-		return &relayreg.Location{Lat: *relay.LocationLat, Lon: *relay.LocationLon, Label: relay.LocationLabel}, "declared"
+		return &estavellereg.Location{Lat: *relay.LocationLat, Lon: *relay.LocationLon, Label: relay.LocationLabel}, "declared"
 	}
 	return nil, ""
 }
@@ -490,30 +490,30 @@ type auditAnchorReader interface {
 	AccountHead(context.Context, string) (uint64, string, error)
 	VerifyFrom(context.Context, uint64, string) (uint64, error)
 }
-type relayReader interface {
-	List(context.Context) ([]relayreg.StoredRelay, error)
-	Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error)
+type estavelleReader interface {
+	List(context.Context) ([]estavellereg.StoredEstavelle, error)
+	Create(context.Context, estavellereg.Entry) (*estavellereg.StoredEstavelle, error)
 	Delete(context.Context, string) error
 	// DeleteByAddress is ADR-0045 §7's own driver-initiated teardown path
-	// (issue #319) — see relayDeenroll and relayreg.Store.DeleteByAddress's
+	// (issue #319) — see estavelleDeenroll and estavellereg.Store.DeleteByAddress's
 	// own doc comment for why this is keyed by address, not id.
 	DeleteByAddress(context.Context, string) error
 	// DeleteByTLSServerName is DeleteByAddress's own counterpart for the
-	// AWS driver (issue #329) — see relayreg.Store.DeleteByTLSServerName's
+	// AWS driver (issue #329) — see estavellereg.Store.DeleteByTLSServerName's
 	// own doc comment for why that driver needs a different key than the
 	// Kubernetes driver does.
 	DeleteByTLSServerName(context.Context, string) error
 	// LatestTelemetry is ADR-0021's read side: a relay's most recent
 	// self-report, or nil if it has never reported.
-	LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error)
+	LatestTelemetry(context.Context, string) (*estavellereg.EstavelleTelemetryRecord, error)
 	// DemandByRegion is ADR-0045 §7 Phase 1's demand-side input — see its
-	// own doc comment on relayreg.Store for why it is deliberately not
+	// own doc comment on estavellereg.Store for why it is deliberately not
 	// account-scoped the way every other method here is.
-	DemandByRegion(context.Context) ([]relayreg.RegionDemand, error)
+	DemandByRegion(context.Context) ([]estavellereg.RegionDemand, error)
 	// DemandHistory is ADR-0045 §8 (Phase 3)'s retained time series over
-	// the same signal DemandByRegion reads live — see relayreg.Store's own
+	// the same signal DemandByRegion reads live — see estavellereg.Store's own
 	// doc comment on RegionDemandSample for why this exists at all.
-	DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error)
+	DemandHistory(context.Context, time.Time, time.Time) ([]estavellereg.RegionDemandSample, error)
 }
 
 // demandReader is ADR-0045 §4b/§7's deployment-wide anchor-RTT histogram —
@@ -550,7 +550,7 @@ type ephemeralAnchorReadWriter interface {
 
 // knownEventReader is ADR-0045 §8 (Phase 3)'s operator-entered calendar --
 // account-scoped, not deployment-wide or cross-account the way
-// relayReader.DemandHistory is: when an organization's own traffic is
+// estavelleReader.DemandHistory is: when an organization's own traffic is
 // expected to change is that organization's own calendar.
 type knownEventReader interface {
 	List(context.Context) ([]knownevents.StoredKnownEvent, error)
@@ -606,9 +606,9 @@ const maxRequestBodyBytes = 1 << 20
 // auth would be a second, uncontrolled trust path into deployment-wide
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
-// missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, invitationAssignees invitationAssigneeStore, complianceStore complianceReader, complianceDraftStore complianceDraftReadWriter, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections, invitationAssignees: invitationAssignees, compliance: complianceStore, complianceDraft: complianceDraftStore}
+// missing route" posture h.estavelles/h.anchors being nil already has.
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, estavelles estavelleReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, invitationAssignees invitationAssigneeStore, complianceStore complianceReader, complianceDraftStore complianceDraftReadWriter, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, estavelles: estavelles, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections, invitationAssignees: invitationAssignees, compliance: complianceStore, complianceDraft: complianceDraftStore}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -622,7 +622,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	} else {
 		karstRouter.Use(karstAuthorization(permissionsManager))
 	}
-	karstRouter.HandleFunc("/gateways", h.gateways).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/avens", h.avens).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/invitations", h.invitations).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/invitations/{id}/revoke", h.revokeInvitation).Methods(http.MethodPost, http.MethodOptions)
 	// Mesh domains (ADR-0032). Deliberately exempted from the blanket
@@ -672,20 +672,20 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/compliance/draft/versions", h.complianceDraftVersions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/compliance/draft/versions/{version}", h.complianceDraftVersion).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/compliance/draft/rollback/{version}", h.complianceDraftRollback).Methods(http.MethodPost, http.MethodOptions)
-	karstRouter.HandleFunc("/relays", h.relaysList).Methods(http.MethodGet, http.MethodOptions)
-	karstRouter.HandleFunc("/relays", h.relaysCreate).Methods(http.MethodPost, http.MethodOptions)
-	karstRouter.HandleFunc("/relays/{relayId}", h.relaysDelete).Methods(http.MethodDelete, http.MethodOptions)
-	karstRouter.HandleFunc("/relays/{relayId}/health", h.relayHealth).Methods(http.MethodGet, http.MethodOptions)
-	karstRouter.HandleFunc("/relays/enroll-tokens", h.relayEnrollTokensCreate).Methods(http.MethodPost, http.MethodOptions)
-	karstRouter.HandleFunc("/relays/deenroll", h.relayDeenroll).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/estavelles", h.estavellesList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/estavelles", h.estavellesCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/estavelles/{estavelleId}", h.estavellesDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/estavelles/{estavelleId}/health", h.estavelleHealth).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/estavelles/enroll-tokens", h.estavelleEnrollTokensCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/estavelles/deenroll", h.estavelleDeenroll).Methods(http.MethodPost, http.MethodOptions)
 	// Deliberately on the parent router, not karstRouter -- see
-	// relaysEnroll's own doc comment for why. limitRequestBody is applied
+	// estavellesEnroll's own doc comment for why. limitRequestBody is applied
 	// explicitly since this route does not inherit karstRouter's own
 	// middleware stack.
-	router.Handle("/karst/v1/relays/enroll", limitRequestBody(http.HandlerFunc(h.relaysEnroll))).Methods(http.MethodPost, http.MethodOptions)
+	router.Handle("/karst/v1/estavelles/enroll", limitRequestBody(http.HandlerFunc(h.estavellesEnroll))).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/versions", h.versions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/components", h.nocComponents).Methods(http.MethodGet, http.MethodOptions)
-	karstRouter.HandleFunc("/noc/relays/{relayId}", h.nocRelay).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/noc/estavelles/{estavelleId}", h.nocEstavelle).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/regions", h.demandRegions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/regions/history", h.demandRegionsHistory).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/anchors", h.demandAnchors).Methods(http.MethodGet, http.MethodOptions)
@@ -896,21 +896,21 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			// what actually keeps the role narrow, independent of whatever a
 			// future endpoint added under this same module gate would
 			// otherwise permit it to reach. Deliberately NOT allowlisted:
-			// relay-services' own routes — granting/revoking an allocation's
-			// access calls relayservice in-process from inside the
-			// relay-allocations handler itself (see
-			// RegisterRelayAllocationEndpoints), so the Scaler role never
-			// needs, and is never given, direct relay-services access.
-			// relayDeenroll is deliberately a POST (operations.Create), not
-			// the DELETE relaysDelete already is -- roles.Scaler's own
-			// Delete grant stays false; see relayDeenroll's own doc comment
+			// estavelle-services' own routes — granting/revoking an allocation's
+			// access calls estavelleservice in-process from inside the
+			// estavelle-allocations handler itself (see
+			// RegisterEstavelleAllocationEndpoints), so the Scaler role never
+			// needs, and is never given, direct estavelle-services access.
+			// estavelleDeenroll is deliberately a POST (operations.Create), not
+			// the DELETE estavellesDelete already is -- roles.Scaler's own
+			// Delete grant stays false; see estavelleDeenroll's own doc comment
 			// (issue #319) for why this is a request shaped like a Create
-			// rather than a widened Delete grant. Every relay-allocations
+			// rather than a widened Delete grant. Every estavelle-allocations
 			// action below follows the same shape for the same reason.
 			if role, ok := nbcontext.RoleFromContext(ctx); ok && types.UserRole(role) == types.UserRoleScaler {
 				path := strings.TrimPrefix(r.URL.Path, "/api")
-				if path != relayEnrollTokensPath && path != relayDeenrollPath && path != relayAllocationsPendingPath && !relayAllocationScalerActionPath.MatchString(path) {
-					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll tokens, request relay de-enrollment, or drive its own relay allocations"), w)
+				if path != estavelleEnrollTokensPath && path != estavelleDeenrollPath && path != estavelleAllocationsPendingPath && !estavelleAllocationScalerActionPath.MatchString(path) {
+					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint estavelle-enroll tokens, request estavelle de-enrollment, or drive its own estavelle allocations"), w)
 					return
 				}
 			}
@@ -926,7 +926,7 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 func scopeToAccount(ctx context.Context, accountID string) context.Context {
 	ctx = knownevents.WithAccount(ctx, accountID)
 	ctx = karstpolicy.WithAccount(ctx, accountID)
-	ctx = relayreg.WithAccount(ctx, accountID)
+	ctx = estavellereg.WithAccount(ctx, accountID)
 	ctx = locationreg.WithAccount(ctx, accountID)
 	ctx = grouplocation.WithAccount(ctx, accountID)
 	ctx = cplocation.WithAccount(ctx, accountID)
@@ -1681,21 +1681,21 @@ func renderBedrockRequest(log, pending []bedrock.Entry) string {
 	return out.String()
 }
 
-func (h *handler) relayHealth(w http.ResponseWriter, r *http.Request) {
+func (h *handler) estavelleHealth(w http.ResponseWriter, r *http.Request) {
 	if !requireUser(w, r) {
 		return
 	}
-	if h.relays == nil {
+	if h.estavelles == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
-	relays, err := h.relays.List(r.Context())
+	relays, err := h.estavelles.List(r.Context())
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
 	for _, relay := range relays {
-		if relay.ID == mux.Vars(r)["relayId"] {
+		if relay.ID == mux.Vars(r)["estavelleId"] {
 			util.WriteJSONObject(r.Context(), w, h.healthFor(r.Context(), relay.ID))
 			return
 		}
@@ -1836,42 +1836,42 @@ func (h *handler) bedrockMode(w http.ResponseWriter, r *http.Request) {
 	util.WriteJSONObject(r.Context(), w, map[string]any{"mode": configuration.Mode, "quorum": configuration.Quorum, "roots": []any{}, "authorities": []any{}})
 }
 
-func (h *handler) relaysList(w http.ResponseWriter, r *http.Request) {
+func (h *handler) estavellesList(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.relays == nil {
+	if h.estavelles == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
-	relays, err := h.relays.List(r.Context())
+	relays, err := h.estavelles.List(r.Context())
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	result := make([]relayResponse, 0, len(relays))
+	result := make([]estavelleResponse, 0, len(relays))
 	for _, relay := range relays {
-		result = append(result, h.relayResponseFor(r.Context(), relay))
+		result = append(result, h.estavelleResponseFor(r.Context(), relay))
 	}
 	util.WriteJSONObject(r.Context(), w, result)
 }
-func (h *handler) relaysCreate(w http.ResponseWriter, r *http.Request) {
+func (h *handler) estavellesCreate(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.relays == nil {
+	if h.estavelles == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
-	var entry relayreg.Entry
+	var entry estavellereg.Entry
 	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
-	relay, err := h.relays.Create(r.Context(), entry)
-	if errors.Is(err, relayreg.ErrExists) {
+	relay, err := h.estavelles.Create(r.Context(), entry)
+	if errors.Is(err, estavellereg.ErrExists) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay already exists"), w)
 		return
 	}
@@ -1881,20 +1881,20 @@ func (h *handler) relaysCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(h.relayResponseFor(r.Context(), *relay)); err != nil {
+	if err := json.NewEncoder(w).Encode(h.estavelleResponseFor(r.Context(), *relay)); err != nil {
 		util.WriteError(r.Context(), err, w)
 	}
 }
-func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
+func (h *handler) estavellesDelete(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.relays == nil {
+	if h.estavelles == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
-	if err := h.relays.Delete(r.Context(), mux.Vars(r)["relayId"]); errors.Is(err, relayreg.ErrNotFound) {
+	if err := h.estavelles.Delete(r.Context(), mux.Vars(r)["estavelleId"]); errors.Is(err, estavellereg.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
 		return
 	} else if err != nil {
@@ -1904,13 +1904,13 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// relayDeenrollRequest is what a karst-scaler Kubernetes (or AWS) relay
+// estavelleDeenrollRequest is what a karst-scaler Kubernetes (or AWS) relay
 // driver sends to remove the registry entry for a relay instance it has
 // destroyed (issue #319). Keyed by address, not id -- the driver computes a
 // to-be-destroyed instance's own address deterministically at create() time
-// and has no reason to List first just to recover the id relaysDelete
+// and has no reason to List first just to recover the id estavellesDelete
 // expects. A relay's registry id cannot be derived from its address either
-// -- see relayreg.Store.DeleteByAddress's own doc comment for why that
+// -- see estavellereg.Store.DeleteByAddress's own doc comment for why that
 // matters to how this request is handled, not just how it is shaped.
 //
 // Exactly one of Address/TLSServerName must be set -- the two keys two
@@ -1924,28 +1924,28 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 // early as the Kubernetes driver's address is (#329). One request shape
 // serving both, rather than two near-identical routes for the same
 // underlying operation.
-type relayDeenrollRequest struct {
+type estavelleDeenrollRequest struct {
 	Address       string `json:"address,omitempty"`
 	TLSServerName string `json:"tls_server_name,omitempty"`
 }
 
-// relayDeenroll lets the Scaler role remove a relayreg.Store entry without
-// the generic Delete grant relaysDelete needs -- see this route's own
+// estavelleDeenroll lets the Scaler role remove a estavellereg.Store entry without
+// the generic Delete grant estavellesDelete needs -- see this route's own
 // entry in the Scaler hard-allowlist (above, in karstAuthorization) for
 // why this is shaped as a POST/Create request rather than a widened Delete
 // permission. Runs through the ordinary karstRouter/karstAuthorization
 // stack: the caller is karst-scaler's own drive loop, which already holds
 // a session-bearing Scaler PAT.
-func (h *handler) relayDeenroll(w http.ResponseWriter, r *http.Request) {
+func (h *handler) estavelleDeenroll(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.relays == nil {
+	if h.estavelles == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
-	var req relayDeenrollRequest
+	var req estavelleDeenrollRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
@@ -1953,14 +1953,14 @@ func (h *handler) relayDeenroll(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch {
 	case req.Address != "" && req.TLSServerName == "":
-		err = h.relays.DeleteByAddress(r.Context(), req.Address)
+		err = h.estavelles.DeleteByAddress(r.Context(), req.Address)
 	case req.TLSServerName != "" && req.Address == "":
-		err = h.relays.DeleteByTLSServerName(r.Context(), req.TLSServerName)
+		err = h.estavelles.DeleteByTLSServerName(r.Context(), req.TLSServerName)
 	default:
 		util.WriteErrorResponse("exactly one of address or tls_server_name is required", http.StatusBadRequest, w)
 		return
 	}
-	if errors.Is(err, relayreg.ErrNotFound) {
+	if errors.Is(err, estavellereg.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
 		return
 	} else if err != nil {
@@ -1970,73 +1970,73 @@ func (h *handler) relayDeenroll(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// relayEnrollTokensPath and relayDeenrollPath are the only two routes the
+// estavelleEnrollTokensPath and estavelleDeenrollPath are the only two routes the
 // Scaler role's hard allowlist in karstAuthorization permits — see that
-// allowlist's own comment, relayEnrollTokensCreate below, and relayDeenroll.
-const relayEnrollTokensPath = "/karst/v1/relays/enroll-tokens"
-const relayDeenrollPath = "/karst/v1/relays/deenroll"
+// allowlist's own comment, estavelleEnrollTokensCreate below, and estavelleDeenroll.
+const estavelleEnrollTokensPath = "/karst/v1/estavelles/enroll-tokens"
+const estavelleDeenrollPath = "/karst/v1/estavelles/deenroll"
 
-// relayEnrollTokenRequest is what karst-scaler's own drive loop (ADR-0045
+// estavelleEnrollTokenRequest is what karst-scaler's own drive loop (ADR-0045
 // §7 Phase 2) sends when it has just created a relay instance and needs a
 // credential for that instance to complete its own roster admission with.
-type relayEnrollTokenRequest struct {
+type estavelleEnrollTokenRequest struct {
 	// PoolID names the pool the new instance belongs to, carried into the
 	// minted key's own Name only for an operator reading the Auth keys
 	// console later — it plays no role in redemption.
 	PoolID string `json:"pool_id"`
 	// ExpiresInSecs overrides the default expiry (see
-	// DefaultAccountManager.MintRelayEnrollKey) — 0 means "use the
+	// DefaultAccountManager.MintEstavelleEnrollKey) — 0 means "use the
 	// default," not "never expires": this credential has no unlimited
 	// option, the same ADR-0045 §6 posture as the scaling circuit breaker.
 	ExpiresInSecs int64 `json:"expires_in_secs,omitempty"`
 }
 
-type relayEnrollTokenResponse struct {
+type estavelleEnrollTokenResponse struct {
 	Token string `json:"token"`
 }
 
-// relayEnrollTokensCreate mints ADR-0045 §6's "short-lived, single-use
+// estavelleEnrollTokensCreate mints ADR-0045 §6's "short-lived, single-use
 // enrollment token minted for that specific instance" — the credential a
-// relay the scaler just created redeems at relaysEnroll below, in place of
-// an admin pasting its public key into the console (relaysCreate above).
+// relay the scaler just created redeems at estavellesEnroll below, in place of
+// an admin pasting its public key into the console (estavellesCreate above).
 // Reached only by a caller karstAuthorization has already resolved to the
-// Scaler role (or an Admin/Owner, who could already reach relaysCreate
+// Scaler role (or an Admin/Owner, who could already reach estavellesCreate
 // directly) — never the relay itself, which has no session yet; that is
 // exactly the asymmetry this token exists to bridge.
-func (h *handler) relayEnrollTokensCreate(w http.ResponseWriter, r *http.Request) {
+func (h *handler) estavelleEnrollTokensCreate(w http.ResponseWriter, r *http.Request) {
 	user, err := nbcontext.GetUserAuthFromContext(r.Context())
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
 	minter, ok := h.accounts.(interface {
-		MintRelayEnrollKey(context.Context, string, string, time.Duration) (string, error)
+		MintEstavelleEnrollKey(context.Context, string, string, time.Duration) (string, error)
 	})
 	if !ok {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay enrollment is not configured"), w)
 		return
 	}
-	var req relayEnrollTokenRequest
+	var req estavelleEnrollTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
-	token, err := minter.MintRelayEnrollKey(r.Context(), user.AccountId, req.PoolID, time.Duration(req.ExpiresInSecs)*time.Second)
+	token, err := minter.MintEstavelleEnrollKey(r.Context(), user.AccountId, req.PoolID, time.Duration(req.ExpiresInSecs)*time.Second)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(relayEnrollTokenResponse{Token: token}); err != nil {
+	if err := json.NewEncoder(w).Encode(estavelleEnrollTokenResponse{Token: token}); err != nil {
 		util.WriteError(r.Context(), err, w)
 	}
 }
 
 // bearerToken reads the `Authorization: Bearer <token>` header
-// relaysEnroll's own caller — a relay with no session, only its minted
+// estavellesEnroll's own caller — a relay with no session, only its minted
 // enroll token — authenticates with. Not reused from anywhere else in this
-// tree on purpose: see relaysEnroll's own doc comment for why this endpoint
+// tree on purpose: see estavellesEnroll's own doc comment for why this endpoint
 // is this package's one deliberate exception to parsing a credential
 // itself.
 func bearerToken(r *http.Request) string {
@@ -2048,9 +2048,9 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(strings.TrimPrefix(h, prefix))
 }
 
-// relaysEnroll lets a relay the scaler just created complete its own
+// estavellesEnroll lets a relay the scaler just created complete its own
 // roster admission with no admin session — ADR-0045 §6's signed-enrollment
-// requirement; see relayEnrollTokensCreate above for where its credential
+// requirement; see estavelleEnrollTokensCreate above for where its credential
 // comes from. Deliberately registered on the parent router, not
 // karstRouter (see RegisterEndpoints): every karstRouter route requires an
 // authenticated user/PAT context before any handler runs
@@ -2062,40 +2062,40 @@ func bearerToken(r *http.Request) string {
 //
 // Does not add a proof-of-possession challenge for the submitted
 // IdentityKey — a relay registering here is no less trusted than one an
-// admin registers through relaysCreate today, which has the identical gap
+// admin registers through estavellesCreate today, which has the identical gap
 // (the public key is simply asserted, never challenged, at registration
 // time either way). Closing that gap for both paths at once is follow-up
 // work, not something this endpoint needs to solve alone.
-func (h *handler) relaysEnroll(w http.ResponseWriter, r *http.Request) {
+func (h *handler) estavellesEnroll(w http.ResponseWriter, r *http.Request) {
 	token := bearerToken(r)
 	if token == "" {
 		util.WriteError(r.Context(), status.Errorf(status.Unauthorized, "relay enrollment requires a bearer token"), w)
 		return
 	}
-	if h.relays == nil {
+	if h.estavelles == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
 	consumer, ok := h.accounts.(interface {
-		ConsumeRelayEnrollKey(context.Context, string) (string, string, error)
+		ConsumeEstavelleEnrollKey(context.Context, string) (string, string, error)
 	})
 	if !ok {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay enrollment is not configured"), w)
 		return
 	}
-	accountID, keyID, err := consumer.ConsumeRelayEnrollKey(r.Context(), token)
+	accountID, keyID, err := consumer.ConsumeEstavelleEnrollKey(r.Context(), token)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	var entry relayreg.Entry
+	var entry estavellereg.Entry
 	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
-	ctx := relayreg.WithAccount(r.Context(), accountID)
-	relay, err := h.relays.Create(ctx, entry)
-	if errors.Is(err, relayreg.ErrExists) {
+	ctx := estavellereg.WithAccount(r.Context(), accountID)
+	relay, err := h.estavelles.Create(ctx, entry)
+	if errors.Is(err, estavellereg.ErrExists) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay already exists"), w)
 		return
 	}
@@ -2104,7 +2104,7 @@ func (h *handler) relaysEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.audit != nil {
-		if _, err := h.audit.Append(audit.WithAccount(ctx, accountID), keyID, "karst.relays.enroll", "relay", relay.ID); err != nil {
+		if _, err := h.audit.Append(audit.WithAccount(ctx, accountID), keyID, "karst.estavelles.enroll", "estavelle", relay.ID); err != nil {
 			// Not fatal -- auditMutations' own doc comment gives the same
 			// reasoning: an audit outage must not turn a working
 			// admission path into an impossible one.
@@ -2113,7 +2113,7 @@ func (h *handler) relaysEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(h.relayResponseFor(r.Context(), *relay)); err != nil {
+	if err := json.NewEncoder(w).Encode(h.estavelleResponseFor(r.Context(), *relay)); err != nil {
 		util.WriteError(r.Context(), err, w)
 	}
 }
@@ -2139,19 +2139,19 @@ func (h *handler) nocComponents(w http.ResponseWriter, r *http.Request) {
 
 	var result []nocComponent
 
-	if h.relays != nil {
-		relays, err := h.relays.List(r.Context())
+	if h.estavelles != nil {
+		relays, err := h.estavelles.List(r.Context())
 		if err != nil {
 			util.WriteError(r.Context(), err, w)
 			return
 		}
 		for _, relay := range relays {
-			resp := h.relayResponseFor(r.Context(), relay)
+			resp := h.estavelleResponseFor(r.Context(), relay)
 			label := resp.Region
 			if resp.Location != nil && resp.Location.Label != "" {
 				label = resp.Location.Label
 			}
-			result = append(result, nocComponent{Kind: "relay", ID: resp.ID, Label: label, Health: resp.Health.AdmissionState, Location: resp.Location})
+			result = append(result, nocComponent{Kind: "estavelle", ID: resp.ID, Label: label, Health: resp.Health.AdmissionState, Location: resp.Location})
 		}
 	}
 
@@ -2294,34 +2294,34 @@ func (h *handler) routeGroupComponents(ctx context.Context, accountID, userID st
 	return result, nil
 }
 
-// nocRelay is the NOC map's drill-down for one relay — the marker-click
-// detail panel. There is no relayReader.Get; relay counts are small enough
+// nocEstavelle is the NOC map's drill-down for one relay — the marker-click
+// detail panel. There is no estavelleReader.Get; relay counts are small enough
 // (Phase 1a is relays only, not the wider fleet later phases add) that
 // filtering the same List this account already pays for elsewhere is
 // simpler than adding a new store method for one caller.
-func (h *handler) nocRelay(w http.ResponseWriter, r *http.Request) {
+func (h *handler) nocEstavelle(w http.ResponseWriter, r *http.Request) {
 	user, err := nbcontext.GetUserAuthFromContext(r.Context())
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.relays == nil {
+	if h.estavelles == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
-	relayID := mux.Vars(r)["relayId"]
-	relays, err := h.relays.List(r.Context())
+	estavelleID := mux.Vars(r)["estavelleId"]
+	relays, err := h.estavelles.List(r.Context())
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
 	for _, relay := range relays {
-		if relay.ID != relayID {
+		if relay.ID != estavelleID {
 			continue
 		}
-		resp := h.relayResponseFor(r.Context(), relay)
+		resp := h.estavelleResponseFor(r.Context(), relay)
 		if h.audit != nil {
-			if _, err := h.audit.Append(r.Context(), user.UserId, "karst.noc.drilldown", "relay/"+relayID, ""); err != nil {
+			if _, err := h.audit.Append(r.Context(), user.UserId, "karst.noc.drilldown", "relay/"+estavelleID, ""); err != nil {
 				util.WriteError(r.Context(), err, w)
 				return
 			}
@@ -2332,9 +2332,9 @@ func (h *handler) nocRelay(w http.ResponseWriter, r *http.Request) {
 	util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
 }
 
-// regionDemandResponse mirrors relayreg.RegionDemand with the JSON spelling
+// regionDemandResponse mirrors estavellereg.RegionDemand with the JSON spelling
 // karst-openapi.yml's RegionDemand schema declares; RegionDemand itself
-// carries no JSON tags, since relayreg has no reason to know the API's
+// carries no JSON tags, since estavellereg has no reason to know the API's
 // field-naming convention.
 type regionDemandResponse struct {
 	Region       string `json:"region"`
@@ -2346,7 +2346,7 @@ type regionDemandResponse struct {
 }
 
 // anchorHistogramResponse mirrors regionallow.AnchorHistogramEntry, for the
-// same reason regionDemandResponse mirrors relayreg.RegionDemand.
+// same reason regionDemandResponse mirrors estavellereg.RegionDemand.
 type anchorHistogramResponse struct {
 	Provider string `json:"provider"`
 	Region   string `json:"region"`
@@ -2378,7 +2378,7 @@ func requireAdvisorRole(ctx context.Context) error {
 
 // demandRegions is ADR-0045 §7 Phase 1's per-(region, aquifer) demand feed
 // — §4a's RTT histogram, aggregated across every account's relays.
-// Deliberately cross-account; see relayreg.Store.DemandByRegion's own doc
+// Deliberately cross-account; see estavellereg.Store.DemandByRegion's own doc
 // comment for why. Audit-logged on every call — more deliberately than
 // nocComponents's karst.noc.view above, since every call here sees every
 // tenant's data, not just the caller's own account's.
@@ -2392,11 +2392,11 @@ func (h *handler) demandRegions(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.relays == nil {
+	if h.estavelles == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
-	rows, err := h.relays.DemandByRegion(r.Context())
+	rows, err := h.estavelles.DemandByRegion(r.Context())
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2434,7 +2434,7 @@ type regionDemandHistoryResponse struct {
 }
 
 // demandRegionsHistory is ADR-0045 §8 (Phase 3)'s retained time series over
-// demandRegions' own live signal — see relayreg.Store's own doc comment on
+// demandRegions' own live signal — see estavellereg.Store's own doc comment on
 // RegionDemandSample for why this exists (Phases 0-1 did not actually build
 // the history §8 says they should have) and what it does and does not
 // store. Gated behind the same UserRoleAdvisor role as demandRegions, for
@@ -2450,7 +2450,7 @@ func (h *handler) demandRegionsHistory(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.relays == nil {
+	if h.estavelles == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
 		return
 	}
@@ -2459,7 +2459,7 @@ func (h *handler) demandRegionsHistory(w http.ResponseWriter, r *http.Request) {
 		util.WriteErrorResponse(err.Error(), http.StatusBadRequest, w)
 		return
 	}
-	rows, err := h.relays.DemandHistory(r.Context(), since, until)
+	rows, err := h.estavelles.DemandHistory(r.Context(), since, until)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2719,7 +2719,7 @@ func (h *handler) scalerSuggestions(w http.ResponseWriter, r *http.Request) {
 
 // locationsList/locationsCreate/locationsDelete manage the NOC map's
 // admin-authorized "possible locations" registry (package locationreg) --
-// the same list/create/delete shape as relaysList/relaysCreate/relaysDelete.
+// the same list/create/delete shape as estavellesList/estavellesCreate/estavellesDelete.
 func (h *handler) locationsList(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)

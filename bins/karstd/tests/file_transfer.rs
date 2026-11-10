@@ -85,13 +85,13 @@ fn node(
         psk_is_fallback: false,
         psk_previous: None,
         disco_key: None,
-        home_relay: None,
+        home_estavelle: None,
         candidates: Vec::new(),
     }];
 
     let config = Arc::new(Config {
-        relay_ca_file: None,
-        prefer_quic_relay: false,
+        estavelle_ca_file: None,
+        prefer_quic_estavelle: false,
         metrics_listen: None,
         tracing_collector: None,
         keys: keys(own),
@@ -108,7 +108,7 @@ fn node(
         psk_epoch: 1,
         route_offers: Vec::new(),
         exit_node_state_file: None,
-        gateway_forwarding: true,
+        aven_forwarding: true,
         node_id: handle(&[own; 2592]).into_bytes(),
         relays: Vec::new(),
         peers,

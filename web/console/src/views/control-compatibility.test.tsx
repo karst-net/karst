@@ -23,7 +23,7 @@ describe("observed control compatibility", () => {
     expect(html).toContain("Upgrade the");
     expect(html).toContain("reconnect it to control");
     expect(html).not.toContain("Compatibility is unverified");
-    expect(html).toContain(capability === "relay_lifecycle_schema" ? "live Relay service modes" : "destination-scoped ingress policy");
+    expect(html).toContain(capability === "relay_lifecycle_schema" ? "live Estavelle service modes" : "destination-scoped ingress policy");
   });
 
   it("labels old acceptance stale without claiming working traffic", () => {

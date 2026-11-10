@@ -27,11 +27,11 @@ services:
     image: ghcr.io/karst-net/karst-control:v0.0.0-pentest.1
     restart: unless-stopped
     environment:
-      KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
+      KARST_ESTAVELLE_ROSTER_FILE: /var/lib/karst/roster.toml
       # Optional deployment-namespace prefix on top of the per-account aquifer
       # ADR-0033 now derives automatically — see deploy/compose/README.md.
       KARST_AQUIFER: ${KARST_AQUIFER:-}
-      KARST_RELAY_REGISTRY_FILE: /var/lib/karst/relays.json
+      KARST_ESTAVELLE_REGISTRY_FILE: /var/lib/karst/estavelles.json
       KARST_POLICY_FILE: /var/lib/karst/policy.json
       KARST_BOOTSTRAP_SETUP_KEY_FILE: /var/lib/karst/bootstrap.key
     volumes:
@@ -49,14 +49,14 @@ services:
       # defense in depth beyond "the router doesn't forward it" alone.
       - "${KARST_LAN_ADDR}:33074:33073"
 
-  relay:
-    image: ghcr.io/karst-net/karst-relay:v0.0.0-pentest.1
+  estavelle:
+    image: ghcr.io/karst-net/karst-estavelle:v0.0.0-pentest.1
     restart: unless-stopped
-    command: ["--config", "/var/lib/karst/relay.toml"]
+    command: ["--config", "/var/lib/karst/estavelle.toml"]
     volumes:
       - ../state:/var/lib/karst
     ports:
-      - "${KARST_RELAY_PORT:-443}:443"
+      - "${KARST_ESTAVELLE_PORT:-443}:443"
     depends_on:
       - control
 

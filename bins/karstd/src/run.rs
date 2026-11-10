@@ -23,10 +23,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use karst_control_client::transport::pb;
-use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
 use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
+use karst_resurgence::TxId;
 use karst_transport::{Received, UdpTransport, BATCH, MAX_GRO_READ};
 use karst_tun::{Tun, TunConfig, Userspace};
 
@@ -392,13 +392,13 @@ mod run_embedded_tests {
     /// `Config`'s fields are irrelevant filler.
     fn config(network_mode: crate::config::NetworkMode) -> Config {
         Config {
-            relay_ca_file: None,
-            prefer_quic_relay: false,
+            estavelle_ca_file: None,
+            prefer_quic_estavelle: false,
             metrics_listen: None,
             tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
-            gateway_forwarding: true,
+            aven_forwarding: true,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
@@ -532,7 +532,7 @@ fn run_engine(
         .as_ref()
         .map(|client| client.endpoint().to_owned());
     let tun = bring_up_interface(config, attachment)?;
-    let gateway = Mutex::new(crate::gateway::Manager::default());
+    let gateway = Mutex::new(crate::aven::Manager::default());
     let gateway_error = Mutex::new(None);
     apply_gateway(&gateway, &gateway_error, config);
 
@@ -733,7 +733,7 @@ fn run_engine(
     let engine = Arc::new(Engine::new(config));
     let _ = dns_engine.set(Arc::clone(&engine));
 
-    // AVEN state, shared between the receive loop and the timer that drives
+    // Resurgence state, shared between the receive loop and the timer that drives
     // probing. A static roster has no server-issued handles or disco keys, so
     // reconciliation leaves it empty; a netmap roster immediately seeds its
     // direct endpoints as unconfirmed candidates.
@@ -755,8 +755,8 @@ fn run_engine(
 
     let relay = config.relays.first().cloned();
     let relay_node_id = config.node_id.clone();
-    let relay_ca = config.relay_ca_file.clone();
-    let relay_prefer_quic = config.prefer_quic_relay;
+    let relay_ca = config.estavelle_ca_file.clone();
+    let relay_prefer_quic = config.prefer_quic_estavelle;
     // Keep bounded queues available before the first handshake, including
     // when service publication initially has no Ponor endpoint. The workers
     // wait without opening a connection until authenticated configuration arrives.
@@ -860,10 +860,10 @@ fn run_engine(
             .as_ref()
             .and_then(|c| c.pin)
             .map(|pin| crate::config::encode_hex(&pin)),
-        relay_ca_file: config.relay_ca_file.clone(),
-        prefer_quic_relay: config.prefer_quic_relay,
+        estavelle_ca_file: config.estavelle_ca_file.clone(),
+        prefer_quic_estavelle: config.prefer_quic_estavelle,
         exit_node_state_file: config.exit_node_state_file.clone(),
-        gateway_forwarding: config.gateway_forwarding,
+        aven_forwarding: config.aven_forwarding,
         datapath_workers: config.datapath_workers,
         anchor_probe_enabled: config.anchor_probe_enabled,
     };
@@ -886,8 +886,8 @@ fn run_engine(
             home: &home_selector,
             identity,
             node_id: relay_node_id,
-            relay_ca_file: relay_ca,
-            prefer_quic_relay: relay_prefer_quic,
+            estavelle_ca_file: relay_ca,
+            prefer_quic_estavelle: relay_prefer_quic,
             disco: &disco,
             engine: &engine,
             socket: &socket,
@@ -970,7 +970,7 @@ fn run_engine(
         }
 
         // ── the relay ─────────────────────────────────────────────────────
-        // Both protocols and both directions. AVEN's rendezvous made this
+        // Both protocols and both directions. Resurgence's rendezvous made this
         // connection necessary; PHREATIC's fallback is what makes a peer with
         // no direct path reachable rather than merely known about.
         if let (Some(common), Some(mut relay_in), Some(on_demand_in)) =
@@ -1164,7 +1164,7 @@ fn run_engine(
                             }
                             if matches!(
                                 command,
-                                ipc::Command::GatewayStatus | ipc::Command::StatusJson
+                                ipc::Command::AvenStatus | ipc::Command::StatusJson
                             ) {
                                 let current = engine_ctl.config();
                                 let selected = exit_node_ctl.and_then(|state| {
@@ -1191,7 +1191,7 @@ fn run_engine(
                                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                                     .installed()
                                     .clone();
-                                if command == ipc::Command::GatewayStatus {
+                                if command == ipc::Command::AvenStatus {
                                     return routing_report(
                                         &current,
                                         selected.as_deref(),
@@ -1644,9 +1644,9 @@ fn run_engine(
     Ok(())
 }
 
-/// Advance AVEN's timers and turn its intents into I/O.
+/// Advance Resurgence's timers and turn its intents into I/O.
 ///
-/// AVEN owns reachability discovery, while the run loop owns the shared socket;
+/// Resurgence owns reachability discovery, while the run loop owns the shared socket;
 /// keeping the conversion here prevents the sans-io discovery crate from
 /// acquiring an I/O dependency.
 ///
@@ -1931,7 +1931,7 @@ fn hex_short(id: &[u8]) -> String {
     })
 }
 
-/// The addresses this node offers as candidates — `spec/aven-v1.md` §7.3.
+/// The addresses this node offers as candidates — `spec/resurgence-v1.md` §7.3.
 ///
 /// `karst_tun::local_addresses` has already dropped what a peer could not
 /// reach at all — loopback, link-local, tentative, deprecated. What is left is
@@ -1971,14 +1971,14 @@ fn gather_interfaces(config: &Config) -> Vec<std::net::IpAddr> {
 
 /// One datagram waiting for the relay worker to put it on the wire.
 ///
-/// Carries both AVEN advertisements and PHREATIC data, because to the relay
+/// Carries both Resurgence advertisements and PHREATIC data, because to the relay
 /// they are the same thing: opaque bytes for a named node. Ponor reads the
 /// destination id and nothing else.
 #[derive(Debug)]
 enum Relayed {
-    /// A PHREATIC or AVEN datagram for a peer.
+    /// A PHREATIC or Resurgence datagram for a peer.
     Packet {
-        destination: [u8; karst_relay_proto::consts::ID_LEN],
+        destination: [u8; karst_estavelle_proto::consts::ID_LEN],
         payload: Vec<u8>,
     },
     /// §9.1's latency probe, addressed to the relay itself rather than through
@@ -2086,7 +2086,7 @@ impl RelaySender {
 
 /// A Ponor identifier: a node id or a relay id, which are the same width and
 /// derived the same way from different keys.
-type RelayId = [u8; karst_relay_proto::consts::ID_LEN];
+type RelayId = [u8; karst_estavelle_proto::consts::ID_LEN];
 
 /// Reconnect delay bounds for the relay worker.
 const RELAY_BACKOFF_MIN: Duration = Duration::from_secs(1);
@@ -2250,15 +2250,15 @@ struct RelayCommon<'a> {
     socket: &'a UdpTransport,
     tun: &'a NetworkDevice,
     /// Extra trust anchors for the TLS hop, from local configuration.
-    relay_ca_file: Option<std::path::PathBuf>,
-    /// Try QUIC before TCP+TLS — ADR-0020, `ControlSection::prefer_quic_relay`.
-    prefer_quic_relay: bool,
+    estavelle_ca_file: Option<std::path::PathBuf>,
+    /// Try QUIC before TCP+TLS — ADR-0020, `ControlSection::prefer_quic_estavelle`.
+    prefer_quic_estavelle: bool,
     /// Where a reply to a relayed datagram goes when it is itself relayed —
     /// which every response to a relayed handshake is, until a direct path
     /// exists. Sending is non-blocking, so the receive task may use it.
     relayed: &'a RelaySender,
     started: Instant,
-    /// See [`Reachability`]. Keyed by `crate::netmap::Relay::address`.
+    /// See [`Reachability`]. Keyed by `crate::netmap::Estavelle::address`.
     relay_health: &'a Mutex<HashMap<String, Reachability>>,
 }
 
@@ -2284,7 +2284,7 @@ enum RelayRole {
 
 struct RelayContext<'a> {
     common: &'a RelayCommon<'a>,
-    relay: crate::netmap::Relay,
+    relay: crate::netmap::Estavelle,
     role: RelayRole,
 }
 
@@ -2310,7 +2310,7 @@ fn relay_registration_current(context: &RelayContext<'_>) -> bool {
 /// opened to reach a particular relay — a peer's published home, or an
 /// alternative under measurement — and re-pointing it at the selector's answer
 /// would defeat both.
-fn moved_home(context: &RelayContext<'_>) -> Option<crate::netmap::Relay> {
+fn moved_home(context: &RelayContext<'_>) -> Option<crate::netmap::Estavelle> {
     if !context.is_home() {
         return None;
     }
@@ -2335,8 +2335,8 @@ fn moved_home(context: &RelayContext<'_>) -> Option<crate::netmap::Relay> {
 fn home_target(
     chosen: Option<RelayId>,
     current: RelayId,
-    registry: &[crate::netmap::Relay],
-) -> Option<crate::netmap::Relay> {
+    registry: &[crate::netmap::Estavelle],
+) -> Option<crate::netmap::Estavelle> {
     match chosen {
         // Where it already is.
         Some(id) if id == current => None,
@@ -2374,7 +2374,10 @@ const HOME_RELAY_ATTEMPTS: u32 = 3;
 /// **Registry order, wrapping.** A node with one relay has nowhere to go and
 /// must keep trying the one it has: the roster it is missing from may be
 /// updated, and abandoning the only relay would make that unrecoverable.
-fn next_relay(current: RelayId, registry: &[crate::netmap::Relay]) -> Option<crate::netmap::Relay> {
+fn next_relay(
+    current: RelayId,
+    registry: &[crate::netmap::Estavelle],
+) -> Option<crate::netmap::Estavelle> {
     let at = registry.iter().position(|r| r.relay_id == current);
     match at {
         // Not in the registry at all — withdrawn while this node was on it.
@@ -2432,8 +2435,8 @@ fn abandon_relay(context: &mut RelayContext<'_>) {
 fn handover(
     engine: &Engine,
     relayed: &RelaySender,
-    old: &crate::netmap::Relay,
-    new: &crate::netmap::Relay,
+    old: &crate::netmap::Estavelle,
+    new: &crate::netmap::Estavelle,
 ) {
     tracing::warn!(
         "karstd: moving home relay from {} to {}",
@@ -2456,7 +2459,7 @@ fn quic_client_config_if_enabled(
     context: &RelayContext<'_>,
     tls: &Arc<rustls::ClientConfig>,
 ) -> Option<quinn::ClientConfig> {
-    if !context.common.prefer_quic_relay {
+    if !context.common.prefer_quic_estavelle {
         return None;
     }
     match crate::relay_tls::quic_client_config(tls) {
@@ -2532,7 +2535,7 @@ async fn connect_preferring_quic(
     .await
 }
 
-/// Carry relayed traffic — AVEN rendezvous and PHREATIC data — over one
+/// Carry relayed traffic — Resurgence rendezvous and PHREATIC data — over one
 /// authenticated Ponor connection.
 ///
 /// A dedicated current-thread runtime, because relay TCP reads must not occupy
@@ -2555,10 +2558,10 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
         tracing::warn!("karstd: cannot start relay runtime; the relay path is disabled");
         return;
     };
-    let tls = match crate::relay_tls::client_config(context.common.relay_ca_file.as_deref()) {
+    let tls = match crate::relay_tls::client_config(context.common.estavelle_ca_file.as_deref()) {
         Ok(tls) => tls,
         // Named rather than swallowed. The likeliest cause is a mistyped or
-        // unreadable `relay_ca_file`, and "the relay path is disabled" without
+        // unreadable `estavelle_ca_file`, and "the relay path is disabled" without
         // the reason is the kind of message that costs an afternoon.
         Err(e) => {
             tracing::warn!("karstd: {e}; the relay path is disabled");
@@ -2938,11 +2941,11 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
         return;
     }
     // §7.7: this relay runs a reflector, and here is the key. Handed
-    // straight to discovery — the address inside is AVEN's encoding,
-    // and `karst-disco` owns that.
+    // straight to discovery — the address inside is Resurgence's encoding,
+    // and `karst-resurgence` owns that.
     //
     // **Only from the home connection.** A reflector is a vantage point
-    // AVEN probes over minutes; taking one from a connection that
+    // Resurgence probes over minutes; taking one from a connection that
     // closes as soon as its traffic stops would leave discovery
     // advertising a mapping nothing is keeping alive, which is the
     // failure `clear_reflector` exists to prevent.
@@ -2950,7 +2953,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
         if !context.is_home() {
             return;
         }
-        let Ok(endpoint) = karst_disco::Endpoint::from_wire(&endpoint) else {
+        let Ok(endpoint) = karst_resurgence::Endpoint::from_wire(&endpoint) else {
             // A relay this node authenticated sent an endpoint it
             // cannot parse. Nothing to do but ignore the offer; the
             // connection is still good for carrying traffic, which is
@@ -3026,7 +3029,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
         context.common.engine.seen_on_home_relay(source_id);
     }
     let now = now_ms(context.common.started);
-    // **AVEN is asked first, exactly as on the UDP socket**, and for the
+    // **Resurgence is asked first, exactly as on the UDP socket**, and for the
     // same reason: the two protocols share this transport too, and only
     // one of them can authenticate any given datagram. `Disco` reports
     // whether the payload was its own; anything else is PHREATIC's.
@@ -3243,7 +3246,7 @@ fn sync_relay_latency(
     }
 }
 
-/// Apply only AVEN-confirmed paths to the PHREATIC roster. Candidates never
+/// Apply only Resurgence-confirmed paths to the PHREATIC roster. Candidates never
 /// reach this boundary, so an unauthenticated endpoint cannot redirect data.
 fn apply_disco_paths(disco: &Mutex<disco::Disco>, engine: &Engine) -> bool {
     let changes = disco
@@ -3295,7 +3298,7 @@ fn apply_routes(
 /// Apply gateway state fail-closed and retain the last readiness error for
 /// status and diagnostics.
 fn apply_gateway(
-    gateway: &Mutex<crate::gateway::Manager>,
+    gateway: &Mutex<crate::aven::Manager>,
     status: &Mutex<Option<String>>,
     config: &Config,
 ) {
@@ -3308,7 +3311,7 @@ fn apply_gateway(
         .require_kernel_guard(manager.input_guard_required());
     config
         .filter
-        .set_scoped_ready(result.is_ok() && cfg!(target_os = "linux") && config.gateway_forwarding);
+        .set_scoped_ready(result.is_ok() && cfg!(target_os = "linux") && config.aven_forwarding);
     drop(manager);
     let error = match result {
         Ok(_) => None,
@@ -3692,7 +3695,7 @@ impl Routes {
         let gatewayed: std::collections::BTreeSet<(std::net::IpAddr, u8)> = config
             .route_offers
             .iter()
-            .filter(|offer| offer.role == crate::route_offer::Role::Gateway)
+            .filter(|offer| offer.role == crate::route_offer::Role::Aven)
             .map(|offer| (offer.prefix.base(), offer.prefix.len()))
             .collect();
         let mut out = std::collections::BTreeSet::new();
@@ -4192,11 +4195,11 @@ fn gateway_health_metrics(config: &Config, active: bool) -> String {
     let offers = config
         .route_offers
         .iter()
-        .filter(|offer| offer.role == crate::route_offer::Role::Gateway)
+        .filter(|offer| offer.role == crate::route_offer::Role::Aven)
         .count();
-    let disabled = if config.gateway_forwarding { 0 } else { offers };
-    let ready = if active && config.gateway_forwarding {
-        crate::gateway::Ruleset::from_config(config).grants.len()
+    let disabled = if config.aven_forwarding { 0 } else { offers };
+    let ready = if active && config.aven_forwarding {
+        crate::aven::Ruleset::from_config(config).grants.len()
     } else {
         0
     };
@@ -4505,7 +4508,7 @@ fn routing_report(
     let _ = writeln!(out, "offers = {}", config.route_offers.len());
     let _ = writeln!(out, "selected_exit = {selected_exit:?}");
     let _ = writeln!(out, "exit_route_active = {}", active_exit.is_some());
-    let _ = writeln!(out, "gateway_forwarding = {}", config.gateway_forwarding);
+    let _ = writeln!(out, "aven_forwarding = {}", config.aven_forwarding);
     let _ = writeln!(out, "gateway_active = {gateway_active}");
     let _ = writeln!(out, "gateway_error = {gateway_error:?}");
 
@@ -4516,9 +4519,9 @@ fn routing_report(
         };
         let role = match offer.role {
             crate::route_offer::Role::Recipient => "recipient",
-            crate::route_offer::Role::Gateway => "gateway",
+            crate::route_offer::Role::Aven => "aven",
         };
-        let active = role == "gateway" && gateway_active
+        let active = role == "aven" && gateway_active
             || kind == "exit"
                 && role == "recipient"
                 && active_exit == Some(offer.route_id.as_str())
@@ -4576,7 +4579,7 @@ fn report(
         ),
         ipc::Command::DnsStatus
         | ipc::Command::DnsQuery(_)
-        | ipc::Command::GatewayStatus
+        | ipc::Command::AvenStatus
         | ipc::Command::ExitList
         | ipc::Command::ExitUse(_)
         | ipc::Command::ExitDisable
@@ -4911,7 +4914,7 @@ struct RoutingJson {
     selected_exit: Option<String>,
     exit_route_active: bool,
     gateway_active: bool,
-    gateway_forwarding: bool,
+    aven_forwarding: bool,
     gateway_error: Option<String>,
     routes: Vec<RouteJson>,
 }
@@ -4947,9 +4950,9 @@ fn routing_json(
             };
             let role = match offer.role {
                 crate::route_offer::Role::Recipient => "recipient",
-                crate::route_offer::Role::Gateway => "gateway",
+                crate::route_offer::Role::Aven => "aven",
             };
-            let active = role == "gateway" && gateway_active
+            let active = role == "aven" && gateway_active
                 || kind == "exit"
                     && role == "recipient"
                     && active_exit == Some(offer.route_id.as_str())
@@ -4973,7 +4976,7 @@ fn routing_json(
         selected_exit: selected_exit.map(str::to_owned),
         exit_route_active: active_exit.is_some(),
         gateway_active,
-        gateway_forwarding: config.gateway_forwarding,
+        aven_forwarding: config.aven_forwarding,
         gateway_error: gateway_error.map(str::to_owned),
         routes,
     }
@@ -5179,7 +5182,7 @@ fn dns_query_report(config: &Config, name: &str) -> String {
 /// Perform the I/O an engine asked for.
 /// Decide which protocol an arriving datagram belongs to, and handle it.
 ///
-/// AVEN shares the datapath socket with PHREATIC — `aven-v1.md` §4, and it must,
+/// Resurgence shares the datapath socket with PHREATIC — `resurgence-v1.md` §4, and it must,
 /// because a path is only useful if it is the one PHREATIC will take and a NAT
 /// binding proven on one port says nothing about another.
 ///
@@ -5187,7 +5190,7 @@ fn dns_query_report(config: &Config, name: &str) -> String {
 /// authenticate**, not merely on a missing magic. That distinction is the whole
 /// of the demultiplexer's correctness: `phreatic-v1.md` §5 begins every datagram
 /// with a CSPRNG-drawn `reassembly_id`, so roughly one in 2^32 starts with
-/// AVEN's four bytes by chance, and a decision made on the magic alone would
+/// Resurgence's four bytes by chance, and a decision made on the magic alone would
 /// discard a real fragment about once a day on a busy node with nothing in any
 /// log to explain it.
 fn demultiplex(
@@ -5216,7 +5219,7 @@ fn demultiplex(
             packets: Vec::new(),
             files_received: Vec::new(),
         },
-        disco::Verdict::NotAven => {
+        disco::Verdict::NotResurgence => {
             engine.inbound(reasm, datagram, from, now_ms, &responder_randomness())
         }
     }
@@ -5575,7 +5578,7 @@ fn refresh_netmap(
     dns_hook: &Arc<crate::dns::AnswerHook>,
     exit_node: Option<&Mutex<crate::exit_node::Selection>>,
     dns_host: &Mutex<crate::dns::HostRuntime>,
-    gateway: &Mutex<crate::gateway::Manager>,
+    gateway: &Mutex<crate::aven::Manager>,
     gateway_error: &Mutex<Option<String>>,
     relayed: Option<&RelaySender>,
     last_push: &Mutex<Option<Instant>>,
@@ -5707,7 +5710,7 @@ fn refresh_netmap(
                 peer_id: status.node_id,
                 path: match status.transport {
                     crate::engine::Transport::Direct => "direct",
-                    crate::engine::Transport::Relay => "relay",
+                    crate::engine::Transport::Estavelle => "relay",
                     crate::engine::Transport::Unreachable => "unreachable",
                 }
                 .to_owned(),
@@ -5742,13 +5745,13 @@ fn refresh_netmap(
         // Issue #281 (bytes/packets); issue #404 (forwarding_active). Read
         // back fresh every tick, same as `sessions` above — these are the
         // kernel's own live counters, not a buffer anything queues into
-        // between ticks. One observation per `Role::Gateway` offer this
+        // between ticks. One observation per `Role::Aven` offer this
         // node currently holds, not only ones with a live nftables rule:
         // the control plane's Gateway inventory had no health signal at
         // all before this (every row read a hardcoded "unreported"), and a
         // quiet-but-ready route must not look identical to one whose
         // nftables apply failed merely because neither has moved a byte
-        // yet. A node with no `Role::Gateway` offers reports nothing, the
+        // yet. A node with no `Role::Aven` offers reports nothing, the
         // same empty-request shape as before this field existed.
         let route_observations = {
             let mut gateway = gateway
@@ -5758,12 +5761,12 @@ fn refresh_netmap(
             let gateway_offers: Vec<&crate::route_offer::Offer> = current
                 .route_offers
                 .iter()
-                .filter(|offer| offer.role == crate::route_offer::Role::Gateway)
+                .filter(|offer| offer.role == crate::route_offer::Role::Aven)
                 .collect();
             if gateway_offers.is_empty() {
                 Vec::new()
             } else {
-                let live: std::collections::HashMap<String, crate::gateway::RouteBytes> =
+                let live: std::collections::HashMap<String, crate::aven::RouteBytes> =
                     if gateway.active() {
                         match gateway.route_bytes() {
                             Ok(routes) => routes
@@ -5791,7 +5794,7 @@ fn refresh_netmap(
                         let observed_egress_ip = offer
                             .pinned_egress_ip
                             .is_some()
-                            .then(|| crate::gateway::observed_egress_ip(&offer.prefix))
+                            .then(|| crate::aven::observed_egress_ip(&offer.prefix))
                             .flatten()
                             .map(|ip| ip.to_string())
                             .unwrap_or_default();
@@ -5822,7 +5825,7 @@ fn refresh_netmap(
             }
         };
         client.set_route_observations(route_observations);
-        // This node's own current AVEN candidate list — read back fresh
+        // This node's own current Resurgence candidate list — read back fresh
         // every tick, same as `sessions` above: it is a live snapshot of
         // interfaces/reflexive state, not a buffer anything queues into
         // between ticks. See `karst_control.proto`'s
@@ -6332,18 +6335,18 @@ mod route_tests {
                 psk_is_fallback: true,
                 psk_previous: None,
                 disco_key: None,
-                home_relay: None,
+                home_estavelle: None,
                 candidates: Vec::new(),
             });
         }
         Config {
-            relay_ca_file: None,
-            prefer_quic_relay: false,
+            estavelle_ca_file: None,
+            prefer_quic_estavelle: false,
             metrics_listen: None,
             tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
-            gateway_forwarding: true,
+            aven_forwarding: true,
             keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
@@ -6564,7 +6567,7 @@ mod route_tests {
                 } as i32,
                 masquerade: true,
                 keep_route: false,
-                role: pb::KarstRouteRole::Gateway as i32,
+                role: pb::KarstRouteRole::Aven as i32,
                 ..Default::default()
             },
             &[1],
@@ -6681,7 +6684,7 @@ mod route_tests {
             partial.contains("state=\"degraded\"} 1"),
             "a family without source addresses has no forwarding grant"
         );
-        cfg.gateway_forwarding = false;
+        cfg.aven_forwarding = false;
         let metrics = super::gateway_health_metrics(&cfg, false);
         assert!(metrics.contains("state=\"disabled\"} 3"));
         assert!(metrics.contains("state=\"degraded\"} 0"));
@@ -6702,7 +6705,7 @@ mod route_tests {
         let rows: Vec<_> = report.split("[[route]]").skip(1).collect();
         assert_eq!(rows.len(), 2);
         assert!(rows[0].contains("kind = \"subnet\""));
-        assert!(rows[0].contains("role = \"gateway\""));
+        assert!(rows[0].contains("role = \"aven\""));
         assert!(rows[0].contains("active = true"));
         assert!(rows[1].contains("kind = \"exit\""));
         assert!(rows[1].contains("role = \"recipient\""));
@@ -7087,8 +7090,8 @@ mod relay_queue_tests {
     #[test]
     fn each_rule_reaches_its_own_connection() {
         let (sender, mut home, mut on_demand) = sender(4);
-        let peer = [0xAA; karst_relay_proto::consts::ID_LEN];
-        let elsewhere = [0xBB; karst_relay_proto::consts::ID_LEN];
+        let peer = [0xAA; karst_estavelle_proto::consts::ID_LEN];
+        let elsewhere = [0xBB; karst_estavelle_proto::consts::ID_LEN];
 
         sender.send_via(None, peer, b"first rule");
         sender.send_via(Some(elsewhere), peer, b"second rule");
@@ -7108,8 +7111,8 @@ mod relay_queue_tests {
     #[test]
     fn a_relay_that_is_not_dialed_yet_cannot_fill_the_home_queue() {
         let (sender, mut home, _on_demand) = sender(2);
-        let peer = [0xAA; karst_relay_proto::consts::ID_LEN];
-        let elsewhere = [0xBB; karst_relay_proto::consts::ID_LEN];
+        let peer = [0xAA; karst_estavelle_proto::consts::ID_LEN];
+        let elsewhere = [0xBB; karst_estavelle_proto::consts::ID_LEN];
 
         for _ in 0..8 {
             sender.send_via(Some(elsewhere), peer, b"backlog");
@@ -7134,13 +7137,13 @@ mod probe_tests {
 
     use super::*;
 
-    fn relay(tag: u8) -> crate::netmap::Relay {
+    fn relay(tag: u8) -> crate::netmap::Estavelle {
         use sha2::{Digest as _, Sha256};
         let identity_key = vec![tag; 2592];
         let mut h = Sha256::new();
-        h.update(b"karst-relay-id-v1");
+        h.update(b"karst-estavelle-id-v1");
         h.update(&identity_key);
-        crate::netmap::Relay {
+        crate::netmap::Estavelle {
             address: format!("198.51.100.{tag}:443"),
             tls_server_name: "relay.test".to_owned(),
             relay_id: h.finalize().into(),
@@ -7150,20 +7153,20 @@ mod probe_tests {
     }
 
     /// An engine whose netmap carries `relays` and no peers.
-    pub(super) fn engine(relays: Vec<crate::netmap::Relay>) -> Engine {
+    pub(super) fn engine(relays: Vec<crate::netmap::Estavelle>) -> Engine {
         Engine::new(&config(relays))
     }
 
     /// The configuration [`engine`] runs on.
-    pub(super) fn config(relays: Vec<crate::netmap::Relay>) -> Arc<crate::config::Config> {
+    pub(super) fn config(relays: Vec<crate::netmap::Estavelle>) -> Arc<crate::config::Config> {
         Arc::new(crate::config::Config {
-            relay_ca_file: None,
-            prefer_quic_relay: false,
+            estavelle_ca_file: None,
+            prefer_quic_estavelle: false,
             metrics_listen: None,
             tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
-            gateway_forwarding: true,
+            aven_forwarding: true,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:0".parse().expect("addr"),
             port_mapping: false,
@@ -7900,7 +7903,7 @@ mod probe_tests {
             "took {took} ms; the slow cycle alone needs ten minutes per candidate"
         );
         assert!(
-            rounds >= karst_disco::consts::HYSTERESIS_SAMPLES,
+            rounds >= karst_resurgence::consts::HYSTERESIS_SAMPLES,
             "adopted on fewer wins than §9.2 requires"
         );
     }
@@ -7987,7 +7990,7 @@ mod probe_tests {
             }
             assert!(
                 runs.iter()
-                    .all(|(_, n)| *n >= karst_disco::consts::HYSTERESIS_SAMPLES as usize),
+                    .all(|(_, n)| *n >= karst_resurgence::consts::HYSTERESIS_SAMPLES as usize),
                 "a candidate was measured for too few consecutive rounds to sustain a \
                  margin: {runs:?}"
             );
@@ -8031,13 +8034,13 @@ mod probe_tests {
     fn engine_config(engine: &Engine) -> crate::config::Config {
         let relays = engine.relays();
         crate::config::Config {
-            relay_ca_file: None,
-            prefer_quic_relay: false,
+            estavelle_ca_file: None,
+            prefer_quic_estavelle: false,
             metrics_listen: None,
             tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
-            gateway_forwarding: true,
+            aven_forwarding: true,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:0".parse().expect("addr"),
             port_mapping: false,

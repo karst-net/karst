@@ -31,7 +31,7 @@ func (s installAdmission) AllowedOnManagedRelay(_ context.Context, relay, accoun
 	return relay == "relay" && account == "account" && handle == "allowed", nil
 }
 func TestInstallationRosterUsesManagedAuthorizationAndPropagatesFailure(t *testing.T) {
-	source := scopedRelayRoster{source: installRosterSource{}, store: installAdmission{}, relayID: "relay", requireManaged: true}
+	source := scopedEstavelleRoster{source: installRosterSource{}, store: installAdmission{}, estavelleID: "relay", requireManaged: true}
 	entries, err := source.All()
 	require.NoError(t, err)
 	require.Len(t, entries, 1)

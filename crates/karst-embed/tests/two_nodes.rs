@@ -49,7 +49,7 @@ struct Pins {
     verify: String,
 }
 
-/// A real `karst-relay` process — direct candidate punching between two
+/// A real `karst-estavelle` process — direct candidate punching between two
 /// nodes that share one host's actual network interfaces (no namespaces,
 /// unlike `aquifer.rs`) is not something this test can assume will converge
 /// quickly, if at all; the relay is the one documented, proven fallback
@@ -102,8 +102,8 @@ impl RelaySetup {
         std::fs::write(&key_path, cert.signing_key.serialize_pem()).expect("write key");
 
         let relay_key_path = dir.join("relay.key");
-        let relay_identity =
-            karst_relay::sign::Identity::load_or_create(&relay_key_path).expect("relay identity");
+        let relay_identity = karst_estavelle::sign::Identity::load_or_create(&relay_key_path)
+            .expect("relay identity");
         let public_key_hex = hex(relay_identity.public_key());
 
         let address = format!("127.0.0.1:{port}");
@@ -113,7 +113,7 @@ impl RelaySetup {
         // own docker bridges rewrite the apparent source address of a
         // "local" UDP send (confirmed directly: a socket bound to
         // 172.17.0.1 was observed by its peer as 192.168.68.121) — the same
-        // shape a real NAT presents. Disco's hole-punching needs AVEN's own
+        // shape a real NAT presents. Disco's hole-punching needs Resurgence's own
         // reflector (`ponor-v1.md` §7.7) to learn that real, reachable
         // address; without it, candidates are exchanged but no pair of them
         // actually reaches the other side, and the handshake never
@@ -141,21 +141,21 @@ impl RelaySetup {
     }
 
     /// Write the roster admitting `identity_pks` (each this test's own
-    /// node's ML-DSA control-plane identity — `bins/karst-relay/src/roster.rs`'s
+    /// node's ML-DSA control-plane identity — `bins/karst-estavelle/src/roster.rs`'s
     /// `identity_pk`, not a Noise session key) into one aquifer, `"t1"`,
     /// matching `bins/karstd/tests/aquifer.rs`'s own convention — then spawn
-    /// the real `karst-relay` binary against it.
+    /// the real `karst-estavelle` binary against it.
     fn spawn(&self, identity_pks: &[Vec<u8>]) -> Relay {
         let repo = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-        let relay_bin = format!("{repo}/target/debug/karst-relay");
+        let relay_bin = format!("{repo}/target/debug/karst-estavelle");
         let build = Command::new("cargo")
-            .args(["build", "-p", "karst-relay"])
+            .args(["build", "-p", "karst-estavelle"])
             .current_dir(repo)
             .output()
-            .expect("run `cargo build -p karst-relay`");
+            .expect("run `cargo build -p karst-estavelle`");
         assert!(
             build.status.success(),
-            "building karst-relay failed: {}",
+            "building karst-estavelle failed: {}",
             String::from_utf8_lossy(&build.stderr)
         );
 
@@ -199,7 +199,7 @@ impl RelaySetup {
                 std::fs::File::create(&stderr_log).expect("relay stderr log"),
             ))
             .spawn()
-            .expect("spawn karst-relay");
+            .expect("spawn karst-estavelle");
         // No readiness handshake from the relay binary itself to wait on; a
         // short, fixed sleep before nodes start is simpler than a retry loop
         // for a process that either binds its listener almost immediately or

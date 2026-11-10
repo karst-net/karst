@@ -37,9 +37,9 @@ export function ControlCompatibility({ check }: { check?: NodeControlCheck }) {
     <p>Last control check: {check.status === "incompatible" ? "Incompatible" : "Accepted"}. Observation status: {freshness}. Checked <Observed at={check.observed_at} />.</p>
     {check.status === "incompatible" ? <p role="status">
       {check.capability === "relay_lifecycle_schema"
-        ? "The control server rejected this agent because its Relay service lifecycle capability does not meet the account’s requirements. Upgrade the agent to a release supporting live Relay service modes, then reconnect it to control."
+        ? "The control server rejected this agent because its Estavelle service lifecycle capability does not meet the account’s requirements. Upgrade the agent to a release supporting live Estavelle service modes, then reconnect it to control."
         : check.capability === "gateway_ingress_schema"
-          ? "The control server rejected this gateway because it does not support the configured destination-scoped ingress policy. Upgrade the gateway agent to a release supporting scoped ingress, then reconnect it to control."
+          ? "The control server rejected this aven because it does not support the configured destination-scoped ingress policy. Upgrade the aven agent to a release supporting scoped ingress, then reconnect it to control."
           : "The control server rejected this agent’s capabilities. Upgrade the agent to a release supported by control, then reconnect it."}
       {check.capability && <> Required {check.capability}: {check.required_schema ?? "Unknown"}; reported: {check.reported_schema ?? "Unknown"}.</>}
     </p> : <p>The control server built a netmap for this agent at the last check. This does not establish that the agent applied it or that data-plane traffic works.</p>}

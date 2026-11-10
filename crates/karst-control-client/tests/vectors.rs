@@ -163,7 +163,7 @@ struct VersionDNSRoute {
 
 /// The relay registry, as the version hash sees it.
 ///
-/// The `karst-relays` term has been hashed by both ends since 2026-08-18 and no
+/// The `karst-estavelles` term has been hashed by both ends since 2026-08-18 and no
 /// vector carried a relay until 2026-08-21, because until then no production
 /// server ever populated the field — the only code that did was the Go test
 /// server (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)). A drift here is not a degraded relay: this node
@@ -839,12 +839,12 @@ fn a_relay_id_is_the_digest_of_its_identity_key() {
                 "the vector's identity key is not an ML-DSA-87 public key"
             );
             let mut h = Sha256::new();
-            h.update(b"karst-relay-id-v1");
+            h.update(b"karst-estavelle-id-v1");
             h.update(&key);
             assert_eq!(
                 unhex(&r.relay_id),
                 h.finalize().as_slice(),
-                "relay_id is not SHA-256(\"karst-relay-id-v1\" || identity_key); \
+                "relay_id is not SHA-256(\"karst-estavelle-id-v1\" || identity_key); \
                  karstd would refuse every netmap carrying this registry"
             );
             checked += 1;

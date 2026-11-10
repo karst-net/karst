@@ -11,7 +11,7 @@
 // machine's location" concretely means a location declared on the group,
 // not on the fork's own Group entity (types.Group) itself.
 //
-// This is a Karst-owned side table, the same shape of addition relayreg and
+// This is a Karst-owned side table, the same shape of addition estavellereg and
 // turncred already are beside the inherited fork, rather than a field added
 // to types.Group: that type is upstream-owned scaffolding reused across
 // ACL/DNS/policy with its own REST surface and OpenAPI schema, and groups.tsx

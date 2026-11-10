@@ -7,7 +7,7 @@
 > **Current component architecture:** [ADR-0056](docs/adr/0056-four-component-families.md)
 > and [component architecture](docs/COMPONENT-ARCHITECTURE.md) define four
 > families: node agent, transport infrastructure, control services, and trust
-> tooling. Gateway combines subnet and exit behavior; Relay combines Ponor and
+> tooling. Aven combines subnet and exit behavior; Estavelle combines Ponor and
 > TURN modes through a managed backend adapter. The tables and phase records
 > below remain historical; runtime/API consolidation is tracked in #404.
 
@@ -34,7 +34,7 @@ cryptographic dependency is post-quantum. It consists of:
 | `karst-core` | Rust | PQ handshake, key schedule, wire formats, AEAD datapath |
 | `karstd` | Rust | Node agent: TUN device, peer state, routing, DNS |
 | `karst` | Rust | Node CLI |
-| `karst-relay` | Rust | DERP-equivalent encrypted relay (**Ponor** protocol) |
+| `karst-estavelle` | Rust | DERP-equivalent encrypted estavelle (**Ponor** protocol) |
 | `karst-control` | Go | Coordination server: registration, policy, keys, SSO, audit |
 | `karst-console` | React/TypeScript | Admin console |
 | `karst-portal` | React/TypeScript | End-user self-service portal |
@@ -42,7 +42,7 @@ cryptographic dependency is post-quantum. It consists of:
 **Decisions locked in for this plan** (from scoping):
 
 1. Greenfield Rust data plane — not a fork of wireguard-go/tailscale. Includes
-   relay infrastructure, NAT traversal, and MagicDNS-equivalent name service.
+   estavelle infrastructure, NAT traversal, and MagicDNS-equivalent name service.
 2. Control plane is Go (HTTP/JSON + gRPC), UI is React + TypeScript.
 3. First deployment target is a **self-hosted, single-tenant coordination
    server** (Headscale-shaped). Multi-tenant SaaS and air-gapped/CNSA-strict
@@ -73,7 +73,7 @@ risks and the residual risk register. This section is the summary.
 | Future cryptanalytically-relevant quantum computer (CRQC) | **Yes** | Applied retroactively to captured traffic |
 | Active MITM at time of connection | **Yes** | Classical only; a CRQC-in-the-moment is a stated non-goal for v1 auth |
 | Compromised coordination server | **Yes** | Must not be able to silently add a node — see Bedrock (§4.5) |
-| Compromised relay | **Yes** | Relays are untrusted; they see ciphertext and metadata only |
+| Compromised estavelle | **Yes** | Estavelles are untrusted; they see ciphertext and metadata only |
 | Malicious peer inside the aquifer | **Yes** | Contained by ACL enforcement at both ends |
 | Endpoint compromise / malicious admin with root | No | Out of scope |
 | Traffic-analysis / metadata-hiding beyond padding | No | Documented non-goal for v1 |
@@ -297,8 +297,8 @@ crates/
   karst-proto/      wire formats, fragmentation, codec, no_std-friendly
   karst-noise/      PHREATIC handshake state machine (sans-io)
   karst-transport/  UDP sockets, GSO/GRO, sendmmsg, endpoint mgmt
-  karst-disco/      NAT traversal: AVEN probing, path selection
-  karst-relay-proto/ Ponor framing and handshake, both sides
+  karst-resurgence/      NAT traversal: Resurgence probing, path selection
+  karst-estavelle-proto/ Ponor framing and handshake, both sides
   karst-dns/        KarstDNS resolver + split-DNS
   karst-tun/        platform TUN/TAP abstraction
   karst-node/       daemon: state machine, config, IPC, netmap ingest
@@ -307,7 +307,7 @@ crates/
 bins/
   karstd/           node daemon
   karst/               CLI
-  karst-relay/      relay server
+  karst-estavelle/      estavelle server
 ```
 
 **Sans-io discipline:** `karst-noise` and `karst-proto` do no I/O. They
@@ -665,7 +665,7 @@ internal/
   policy/              ACL parse, compile, evaluate
   lock/                Bedrock (network lock) signature chain
   dns/                 name allocation, split-DNS config
-  relay/               relay registry, health, region map
+  estavelle/               estavelle registry, health, region map
   audit/               append-only audit log
   provisioning/        SCIM 2.0, group sync
   store/               GORM (from the fork), Postgres 16+
@@ -699,7 +699,7 @@ TypeScript client and the Rust client.
 4. If Bedrock is enabled, the node key must additionally be countersigned
    by a quorum of lock keys before peers will accept it (§4.5).
 5. Node opens a long-lived stream and receives **network map deltas**: peer
-   list, public keys, endpoints, relay assignments, DNS config, ACL-derived
+   list, public keys, endpoints, estavelle assignments, DNS config, ACL-derived
    packet filter, expiry.
 
 ### 4.3 Access control policy
@@ -759,79 +759,79 @@ as a stretch goal.
 
 ---
 
-## 5. Relay infrastructure (`karst-relay`, **Ponor** protocol)
+## 5. Estavelle infrastructure (`karst-estavelle`, **Ponor** protocol)
 
-Untrusted packet relays for peers that cannot establish a direct path (~5–15%
+Untrusted packet estavelles for peers that cannot establish a direct path (~5–15%
 of connections in practice, higher on mobile/CGNAT).
 
 **Normative specification: [spec/ponor-v1.md](spec/ponor-v1.md).** This section
 is the summary and the rationale; where the two disagree the spec governs. Two
 points below have been tightened by it and are marked in place: strict-mode
-admission is no longer a mode (spec §5.3), and relay identity does not rest on
+admission is no longer a mode (spec §5.3), and estavelle identity does not rest on
 the TLS certificate (spec §4.2).
 
 The design owes a clear debt to Tailscale's **DERP** — mesh presence,
-home-relay selection, relay-first-then-upgrade — which is credited as prior art
+home-estavelle selection, estavelle-first-then-upgrade — which is credited as prior art
 here and in `spec/phreatic-v1.md`. We borrow the design and **not** the protocol or
-the fleet: [ADR-0008](docs/adr/0008-relay-infrastructure-and-funding.md) rules
-out both, and `karst-relay` must never gain a DERP compatibility mode.
+the fleet: [ADR-0008](docs/adr/0008-estavelle-infrastructure-and-funding.md) rules
+out both, and `karst-estavelle` must never gain a DERP compatibility mode.
 
 - Transport: HTTPS/TLS 1.3 with hybrid `X25519MLKEM768`, upgrading to a binary
   frame protocol. Port 443 so it survives restrictive networks. **QUIC landed
   as a second, opt-in transport binding carrying the same protocol**
-  ([ADR-0020](docs/adr/0020-quic-relay-transport.md), `spec/ponor-v1.md`
+  ([ADR-0020](docs/adr/0020-quic-estavelle-transport.md), `spec/ponor-v1.md`
   §4.4, issue #122) — same port, ALPN instead of the HTTP upgrade, TLS 1.3's
   hybrid group requirement unchanged. It removes TCP-in-TCP retransmission on
   that hop but not the per-peer head-of-line-blocking cost (spec §13 #5),
   which needs per-destination-peer stream multiplexing and remains a distinct,
   larger follow-up. QUIC *datagram* carriage (unreliable, for the multiplexed
   case) is a further-out idea, not scheduled.
-- Relays are **addressed by node ID** — the 32-byte hash of the identity key,
+- Estavelles are **addressed by node ID** — the 32-byte hash of the identity key,
   the same value as the KARST-CONTROL handle (spec §5.1). *Amended 2026-08-14:
   this line previously said "by node public key", which was written before the
   identity model settled; a 1952-byte ML-DSA key on every forwarded frame was
-  never the intent.* Relays hold no long-term state and see only PHREATIC
+  never the intent.* Estavelles hold no long-term state and see only PHREATIC
   ciphertext. What the operator learns is enumerated in spec §11 rather than
   summarized — "and nothing else" was too generous, since the traffic graph, the
   timing and the exact packet sizes are all visible and none of it is padded.
-- Every connection begins over a relay and **upgrades to a direct path** when
+- Every connection begins over an estavelle and **upgrades to a direct path** when
   discovery succeeds, with no packet loss during the switch (the datapath
   keeps both paths warm and cuts over on receipt of the first direct packet).
-- Region map: multiple relays per region, latency-probed by clients, published
+- Region map: multiple estavelles per region, latency-probed by clients, published
   by the control server so self-hosters can add their own.
-- Mesh mode: relays in a region gossip client presence so a peer connected to
-  relay A in region X can be reached via relay B.
+- Mesh mode: estavelles in a region gossip client presence so a peer connected to
+  estavelle A in region X can be reached via estavelle B.
 - Abuse controls: per-key rate limits over **both bytes and frames** (a flood of
   minimum-size frames is cheap in bandwidth and expensive in per-frame work, so
   a bytes-only limit is one an attacker sizes around), per-connection byte
   accounting, and admission only for keys present in a signed aquifer roster.
-  *Amended 2026-08-14: "strict mode is mandatory for community-pool relays" is
+  *Amended 2026-08-14: "strict mode is mandatory for community-pool estavelles" is
   obsolete — spec §5.3 removed the mode.* Admission is now structural for every
-  relay: `ClientAuth` carries no public key, so a relay cannot verify a node it
-  has no roster entry for. An open relay is an abuse conduit that hands its
+  estavelle: `ClientAuth` carries no public key, so an estavelle cannot verify a node it
+  has no roster entry for. An open estavelle is an abuse conduit that hands its
   operator traffic they cannot inspect and did not agree to carry, and it is now
   a configuration that cannot be reached rather than one that must be chosen
   against.
 - Forwarding is scoped **per aquifer** (spec §5.4): source and destination must
-  be in the same one. Without that rule a multi-tenant relay is a
+  be in the same one. Without that rule a multi-tenant estavelle is a
   general-purpose message bus between any two keys it has ever been told about.
 - **Standard TURN (RFC 8656) as a pluggable sustained-fallback datapath.** The
   answer to regional coverage and SPOF without anyone donating bandwidth: point
   at coturn you already run, or rent commodity TURN for cents. Supplement, not
   replacement — DERP-style always-connected presence has no TURN equivalent, so
-  `karst-relay` keeps bootstrap and presence. ChannelData framing (4-byte
+  `karst-estavelle` keeps bootstrap and presence. ChannelData framing (4-byte
   header) to minimize MTU impact; ephemeral HMAC credentials minted by the
   control server and shipped in the netmap, never static ones (one more netmap
   secret — see §2.6).
-- Relay registry validation rejects `derp://` endpoints.
+- Estavelle registry validation rejects `derp://` endpoints.
 
-**Deployment default: the relay is co-located with the coordination server.**
+**Deployment default: the estavelle is co-located with the coordination server.**
 The self-hoster already runs a public-IP host, so marginal infrastructure cost
 is zero. Ship it in the same `docker-compose` and the same static binary, so a
 self-hoster is relaying in under five minutes without deciding anything. This
 is both the adoption lever and the answer to who pays for bandwidth (§13 Q4).
 
-A community relay pool is supported but opt-in, with the metadata-privacy cost
+A community estavelle pool is supported but opt-in, with the metadata-privacy cost
 disclosed at the point of configuration rather than in documentation: a
 volunteer operator learns who talks to whom. There is deliberately **no default
 public Karst fleet** — ADR-0007 forecloses the revenue that would fund the
@@ -839,7 +839,7 @@ egress.
 
 ---
 
-## 6. NAT traversal (`karst-disco`, **AVEN** protocol)
+## 6. NAT traversal (`karst-resurgence`, **Resurgence** protocol)
 
 The hard, unglamorous part where most mesh VPNs actually fail. Budget generously.
 
@@ -847,28 +847,28 @@ The hard, unglamorous part where most mesh VPNs actually fail. Budget generously
 the summary; where the two disagree the spec governs. One point below is
 tightened by it: probes are authenticated with a **per-pair disco key derived
 separately from the PSK** (spec §5.1), and a node holding no disco key for a
-peer does not probe it at all — the pair stays on the relay rather than
+peer does not probe it at all — the pair stays on the estavelle rather than
 probing unauthenticated.
 
-- **Endpoint discovery:** local interface enumeration, STUN against our relays
+- **Endpoint discovery:** local interface enumeration, STUN against our estavelles
   for the server-reflexive address, and peer-reported observed addresses.
 - **Discovery protocol:** small authenticated probe messages (`ping`/`pong`)
-  carrying a call-me-maybe of candidate endpoints, sent over the relay to
+  carrying a call-me-maybe of candidate endpoints, sent over the estavelle to
   bootstrap and directly thereafter. Authenticated with a per-peer disco key
   so probes cannot be spoofed to redirect traffic.
 - **Path selection:** continuous latency probing across candidate paths, with
-  hysteresis to prevent flapping; prefer direct over relay, IPv6 over IPv4,
+  hysteresis to prevent flapping; prefer direct over estavelle, IPv6 over IPv4,
   lower latency over higher.
 - **Hole punching:** simultaneous open, birthday-paradox port prediction for
   symmetric NATs, and port-mapping via **UPnP-IGD, NAT-PMP, and PCP** when the
-  gateway offers them.
+  aven offers them.
 - **Test matrix** (netns + nftables, run in CI on every commit):
   full-cone, restricted-cone, port-restricted-cone, symmetric,
   symmetric-behind-CGNAT, hairpinning-broken, IPv6-only, NAT64/DNS64,
-  double-NAT, and UDP-blocked (relay-only fallback).
+  double-NAT, and UDP-blocked (estavelle-only fallback).
 
 Success criterion: **≥ 90% direct-connection rate** across the matrix,
-with graceful, invisible relay fallback for the remainder.
+with graceful, invisible estavelle fallback for the remainder.
 
 ---
 
@@ -904,13 +904,13 @@ server state.
 
 | View | Contents |
 |---|---|
-| Machines | Node list with status, version, OS, IPs, tags, expiry, last seen; per-node detail with live path status (direct vs relay), throughput, and route advertisements |
+| Machines | Node list with status, version, OS, IPs, tags, expiry, last seen; per-node detail with live path status (direct vs estavelle), throughput, and route advertisements |
 | Users | Roster, role assignment, IdP linkage, per-user device list, deprovision |
 | Groups | IdP-synced and manual groups, membership, ACL usage cross-reference |
 | Access controls | HuJSON editor with schema-aware autocomplete, inline lint, **preview diff of affected flows**, versioned history, rollback |
 | Auth keys | Create/revoke, reusable/ephemeral/pre-authorized/tagged, expiry, usage audit |
 | DNS | Nameservers, split DNS, search domains, MagicDNS toggle |
-| Relays | Registry, health, region map, self-hosted relay onboarding |
+| Estavelles | Registry, health, region map, self-hosted estavelle onboarding |
 | Bedrock | Key inventory, quorum config, pending node signing requests, signed-log viewer |
 | Crypto posture | Per-node negotiated suite, PQ coverage percentage, flagged legacy/downgraded sessions, **lattice-only (PSK-absent) session indicator** (§2.6), minimum-suite enforcement |
 | Audit log | Filterable, exportable (JSON/CSV), streaming to SIEM via webhook/syslog |
@@ -997,7 +997,7 @@ onwards, anchored on the week of 2026-08-10.
   project's only defensive instrument, so these are not optional tidying.
 - **Exit:** `just check` is green on an empty skeleton; ADR-0001 through
   ADR-0010 (algorithm selection, hybrid rationale, greenfield rationale,
-  MTU strategy, identity model, agility layer, licensing, relay
+  MTU strategy, identity model, agility layer, licensing, estavelle
   infrastructure, control-plane fork, naming) are merged; the project has its final
   name; CI
   rejects a test commit carrying a GPL dependency and one missing a sign-off.
@@ -2115,7 +2115,7 @@ onwards, anchored on the week of 2026-08-10.
   run finds zero PSK bytes. The log scan runs in CI, not as a one-time check —
   this is a regression that gets reintroduced, not one that gets fixed once.
 
-### Phase 4 — Relays and NAT traversal (10 weeks · Aug–Oct 2026) — ✅ complete
+### Phase 4 — Estavelles and NAT traversal (10 weeks · Aug–Oct 2026) — ✅ complete
 
 > **Completed 2026-08-21**, with one exit criterion **conceded rather than met**
 > and stated here rather than left to be found further down. Every topology in
@@ -2129,7 +2129,7 @@ onwards, anchored on the week of 2026-08-10.
 > path exists at all.
 
 - ✅ **Ponor v1 specified** — `spec/ponor-v1.md`, normative, with framing,
-  mutual post-quantum authentication, admission, presence, mesh and relay
+  mutual post-quantum authentication, admission, presence, mesh and estavelle
   selection. §13 lists nine open items honestly; the two that matter are
   roster freshness/revocation, which §5.3 makes load-bearing and then does not
   specify, and §13.3 — that Ponor derives no session key, so the handshake's
@@ -2146,12 +2146,12 @@ onwards, anchored on the week of 2026-08-10.
   the hop. `karst-control-v1.md` §1.2 justified its inner layer by the netmap
   carrying PSKs past a TLS terminator the *server* was nonetheless trusted
   with; there is no equivalent secret here, and a third layer would hide
-  metadata from a terminator but not from the relay, which is the party the
+  metadata from a terminator but not from the estavelle, which is the party the
   metadata is disclosed to. §1.2 of the new spec records this so the next
   reader does not "fix" the inconsistency.
 
-  **The relay is not authenticated by its TLS certificate** (§4.2). It signs
-  with an ML-DSA-65 key published in the relay registry. Three reasons, of
+  **The estavelle is not authenticated by its TLS certificate** (§4.2). It signs
+  with an ML-DSA-65 key published in the estavelle registry. Three reasons, of
   which the third is the practical one: WebPKI is classical and this would
   otherwise be the one hop in Karst with no PQ authentication; a certificate is
   no evidence of identity behind a shared load balancer; and the realiztic
@@ -2159,14 +2159,14 @@ onwards, anchored on the week of 2026-08-10.
   key distributed through the netmap works and pinning a chain does not.
 
   **Admission control is structural rather than a mode** (§5.3). `ClientAuth`
-  carries **no public key** — the relay verifies against the key it holds in
-  its roster, so a relay with no entry for a node *cannot verify that node's
+  carries **no public key** — the estavelle verifies against the key it holds in
+  its roster, so an estavelle with no entry for a node *cannot verify that node's
   signature at all*. ADR-0008 §6 requires signed-roster admission for pool
-  relays and PLAN.md §5 had left it optional; carrying the key on the wire
+  estavelles and PLAN.md §5 had left it optional; carrying the key on the wire
   would have made "verify the presented key and let it in" a two-line change
   that looks like a convenience feature. It is now not expressible. The cost is
   real and named: roster distribution becomes a hard operational dependency.
-- ✅ **`karst-relay-proto`** — the sans-io half, both roles, 35 tests.
+- ✅ **`karst-estavelle-proto`** — the sans-io half, both roles, 35 tests.
   Frame codec written to the pre-authentication discipline (panic-free, no
   indexing, over-long frames rejected from four bytes of header before
   anything is sized from an attacker's length field), and the two handshake
@@ -2178,12 +2178,12 @@ onwards, anchored on the week of 2026-08-10.
   natural implementation returns on a failed roster lookup and pays for a full
   ML-DSA-65 verification only on a hit, and that difference is a
   roster-membership oracle readable from off the machine at one connection per
-  guess. The relay now verifies against a decoy key on a miss so both paths do
+  guess. The estavelle now verifies against a decoy key on a miss so both paths do
   the same work. The claim is bounded in the spec rather than overstated — it
   closes the lookup asymmetry, not every asymmetry.
 - ✅ **Ponor modeled — `spec/models/ponor.pv`, 4/4 in ProVerif 2.05**, seconds.
   Injective authentication in both directions for both roles, against an
-  attacker that **operates a relay honest clients legitimately connect to** —
+  attacker that **operates an estavelle honest clients legitimately connect to** —
   which is not a contrived adversary but the community pool ADR-0008 §6 offers.
 
   **The broken variant this phase planned was the wrong one, and finding that
@@ -2195,10 +2195,10 @@ onwards, anchored on the week of 2026-08-10.
   defends a misconfiguration, not an attack.
 
   The load-bearing field is **`relay_id`**, and `ponor-norelayid.pv` fails two
-  queries to prove it. The trace: a rogue relay reads the honest relay's
+  queries to prove it. The trace: a rogue estavelle reads the honest estavelle's
   `relay_random`, replays it inside its *own* hello to a client that has the
   rogue legitimately pinned, and forwards the resulting signature to the honest
-  relay — which admits the honest node. The rogue impersonates its own clients
+  estavelle — which admits the honest node. The rogue impersonates its own clients
   elsewhere. The client performs the §4.2 identity check in both versions;
   **checking who you are talking to is not the same as binding it into what you
   sign**, and that distinction is the whole of the difference.
@@ -2213,7 +2213,7 @@ onwards, anchored on the week of 2026-08-10.
   somebody remembering to run `just verify` — and neither must-fail model was
   either. All five ProVerif models now run on every commit; the
   broken-primitive variants stay nightly because they take minutes to hours.
-- ✅ **`karst-relay` runs.** TLS 1.3 on a real socket, the HTTP upgrade, the
+- ✅ **`karst-estavelle` runs.** TLS 1.3 on a real socket, the HTTP upgrade, the
   Ponor handshake, forwarding, presence and rate limiting. 108 tests in the
   crate, 515 across the workspace; `cargo deny check` clean on all four checks.
 
@@ -2250,9 +2250,9 @@ onwards, anchored on the week of 2026-08-10.
 
   Two rules tightened while implementing, both now in code and tests: **a
   cross-aquifer destination is indistinguishable from an unknown one** (telling
-  them apart is a cross-tenant membership oracle on a shared relay), and **a
+  them apart is a cross-tenant membership oracle on a shared estavelle), and **a
   `Forward` from a mesh peer is re-checked against our own roster**, so a
-  compromised meshed relay cannot inject cross-aquifer traffic. §8 had left the
+  compromised meshed estavelle cannot inject cross-aquifer traffic. §8 had left the
   second implicit.
 
   **Three test layers, because each sees what the others cannot.** Unit tests
@@ -2264,7 +2264,7 @@ onwards, anchored on the week of 2026-08-10.
   across reads, two frames coalesced into one write, and bytes arriving in the
   same segment as the HTTP head.
 
-  **The rogue-relay case was checked against the defect rather than trusted.**
+  **The rogue-estavelle case was checked against the defect rather than trusted.**
   Unbinding `relay_id` in the handshake makes exactly that one end-to-end case
   fail and the other eight pass — the same result `ponor-norelayid.pv` gives,
   now against the real signature scheme.
@@ -2279,27 +2279,27 @@ onwards, anchored on the week of 2026-08-10.
   peers, so the receiving half is done, but nothing dials a configured peer
   yet), Prometheus metrics, `Restarting` on graceful shutdown, and roster
   reload without a restart — which §13.2 makes the consequential one.
-- ✅ **§9.1 home-relay selection.** `bins/karstd/src/home.rs`, sans-io. A node
-  used to hold `config.relays.first()`, which is a choice made by the server's
+- ✅ **§9.1 home-estavelle selection.** `bins/karstd/src/home.rs`, sans-io. A node
+  used to hold `config.estavelles.first()`, which is a choice made by the server's
   iteration order rather than by the network. It now measures, chooses, moves,
   publishes, and uses what its peers publish — and
   `two_nodes_on_two_relays_reach_each_other` is the end-to-end row that closes
   it, which was the last piece outstanding and which found four defects on the
   way (GitHub issues [#34](https://github.com/karst-net/karst/issues/34), [#35](https://github.com/karst-net/karst/issues/35), [#36](https://github.com/karst-net/karst/issues/36), and [#37](https://github.com/karst-net/karst/issues/37)).
 
-  **The hysteresis is AVEN's, and reusing it caught a bug.** §9.2 recommends
+  **The hysteresis is Resurgence's, and reusing it caught a bug.** §9.2 recommends
   "20 ms or 20%, whichever is larger", which `aven-v1.md` §8.2 already states
   for path selection. Written fresh, this read the rule as an **OR** — either
   margin suffices — under which a 1 ms gain on a 3 ms path clears the 20% test
   and a node switches on jitter, which is the exact behavior §9.2 exists to
-  prevent. `karst_disco::margin` had it right; it is now public and there is one
+  prevent. `karst_resurgence::margin` had it right; it is now public and there is one
   implementation rather than two free to disagree.
 
   Two properties the tests pin. **The first selection is immediate**, because
   hysteresis defends an existing choice and making the first one wait three
-  rounds leaves a starting node without a relay when peers most need somewhere
-  to reach it. And **a relay that does not answer a round is absent from it**:
-  `select` consumes the round's measurements, so a relay that has stopped
+  rounds leaves a starting node without an estavelle when peers most need somewhere
+  to reach it. And **an estavelle that does not answer a round is absent from it**:
+  `select` consumes the round's measurements, so an estavelle that has stopped
   responding cannot keep looking as fast as the day it died — while a single
   missed datagram still leaves the incumbent in place, since silence is not
   evidence against it.
@@ -2311,7 +2311,7 @@ onwards, anchored on the week of 2026-08-10.
   ✅ **The choice is published.** `KarstNetmapRequest.home_relay` carries it up
   and `KarstNetmapPeer.home_relay` carries it back down, so a node can reach a
   peer by §9.1's second rule — an on-demand connection to that peer's home
-  relay — which is the only rendezvous a cross-region pair has, since §8
+  estavelle — which is the only rendezvous a cross-region pair has, since §8
   confines a mesh to one region on purpose.
 
   Reported on the netmap request the node already sends rather than through a
@@ -2320,37 +2320,37 @@ onwards, anchored on the week of 2026-08-10.
 
   **The field had to enter both content hashes, and that is the part that would
   have failed silently.** The netmap version and the per-peer digest are hashes
-  over routable data. A home relay that moved without changing the digest would
+  over routable data. A home estavelle that moved without changing the digest would
   never be delivered as a delta, and every other node would go on dialing a
-  relay the peer had left — a change that appears to apply and does not, which
+  estavelle the peer had left — a change that appears to apply and does not, which
   is exactly what the filter fields' own comment warns about.
 
   The cross-language vector suite caught the protocol change on the first run
   and its message said what to do about it, which is what it is for. The
-  vectors now carry a case with a **non-empty** home relay: an empty value
+  vectors now carry a case with a **non-empty** home estavelle: an empty value
   still shifts the hash through its length prefix, so it would catch a side
   that skipped the field entirely but not one that hashed it in the wrong
   place.
 
   ✅ **The loop that fills it.** Every 60 s the daemon settles the last round's
-  answers, then pings the relay it holds on the connection it already has —
+  answers, then pings the estavelle it holds on the connection it already has —
   `Frame::Ping` behind whatever is queued, so the round trip measured is the one
-  the datapath would see rather than one taken past the traffic. A live relay
+  the datapath would see rather than one taken past the traffic. A live estavelle
   answering a real ping is a test (`relay_live.rs`), because the two halves were
-  proven separately and neither showed that `karstd` sends a frame this relay
+  proven separately and neither showed that `karstd` sends a frame this estavelle
   recognizes: a `Pong` the client failed to parse would leave the selector
-  receiving nothing, which looks exactly like a relay that is merely slow.
+  receiving nothing, which looks exactly like an estavelle that is merely slow.
 
   **A probe is matched by token, and an unmatched token measures nothing.** The
-  same rule as AVEN §7.4, for the same reason — a relay that volunteered or
+  same rule as Resurgence §7.4, for the same reason — an estavelle that volunteered or
   replayed a `Pong` could otherwise report an arbitrarily good latency and win
-  an election. Two probes may be outstanding; a relay that answers neither is
+  an election. Two probes may be outstanding; an estavelle that answers neither is
   not sent a third, so its silence is measured rather than this node's
   willingness to ask.
 
   **A move is published immediately rather than on the refresh timer.** Between
-  a node changing relay and its peers hearing about it, every peer is dialing a
-  relay this node has left, so the packets are not late — they are delivered
+  a node changing estavelle and its peers hearing about it, every peer is dialing a
+  estavelle this node has left, so the packets are not late — they are delivered
   nowhere.
 
   ✅ **The server keeps it.** The field was on the wire in both directions and
@@ -2360,11 +2360,11 @@ onwards, anchored on the week of 2026-08-10.
   written only when the value actually moves — every node reports on every poll,
   and an unconditional write is one row update per node per refresh interval.
   A value that is not 32 bytes is refused rather than ignored, since ignoring it
-  leaves the node believing it published a relay while its peers dial the old
+  leaves the node believing it published an estavelle while its peers dial the old
   one.
 
-  ✅ **The second rule: a peer's published relay is used.** `Via::Relay` now
-  names *which* relay carries a datagram, `ondemand.rs` holds the connections
+  ✅ **The second rule: a peer's published estavelle is used.** `Via::Estavelle` now
+  names *which* estavelle carries a datagram, `ondemand.rs` holds the connections
   that answer names other than this node's own, and a thread in `run.rs` dials
   them and closes them again after two minutes without traffic (§9.1's "SHOULD
   be closed after a period with no traffic"). Idleness counts **both**
@@ -2373,27 +2373,27 @@ onwards, anchored on the week of 2026-08-10.
   period.
 
   **§9.1 orders the two rules, and the order is the whole economy of it.** This
-  node's own relay is tried first — it is already connected, and the peer may be
+  node's own estavelle is tried first — it is already connected, and the peer may be
   on it or on its mesh — and only a `PeerGone` moves the peer to its published
-  home. That is the only way to learn it: §5.4 makes a relay refuse to say who
+  home. That is the only way to learn it: §5.4 makes an estavelle refuse to say who
   it holds, because answering for an arbitrary id is a membership oracle across
   tenants. The refusal costs one datagram and expires after five minutes, so a
-  peer that later joins this relay stops paying for a second connection.
+  peer that later joins this estavelle stops paying for a second connection.
 
   **`PeerGone` used to cost the connection to every other peer.** It fell
   through to the packet path, produced `OutOfOrder`, and the receive loop
   treated that as a broken stream — so addressing a peer that was merely
   offline tore down the home connection and rebuilt it with backoff. It is an
-  ordinary event on a relay, and it happens *first*, since a node cannot know
+  ordinary event on an estavelle, and it happens *first*, since a node cannot know
   where a peer is until it tries.
 
-  AVEN's advertisements take the same route as the data, which is not a detail:
-  a rendezvous sent to a relay the peer is not on reaches nobody, and the
+  Resurgence's advertisements take the same route as the data, which is not a detail:
+  a rendezvous sent to an estavelle the peer is not on reaches nobody, and the
   direct path it would have opened is the one thing that makes an on-demand
   connection temporary.
 
   ✅ **Alternatives are measured, and the choice can move.** Each round the
-  daemon measures the relay it holds and **one** alternative, dialed for the
+  daemon measures the estavelle it holds and **one** alternative, dialed for the
   purpose and let go again; when §9.2's margin is sustained the home connection
   follows the choice.
 
@@ -2401,19 +2401,19 @@ onwards, anchored on the week of 2026-08-10.
   round.** A challenger needs `HYSTERESIS_SAMPLES` *consecutive* winning rounds
   and `select` consumes each round as it goes — so a candidate measured once
   every ten minutes can never accumulate a streak, and a rotation that visited a
-  different relay each round would leave every alternative permanently
+  different estavelle each round would leave every alternative permanently
   unadoptable while looking busy. So one candidate is measured on consecutive
   rounds, `PROBE_ROUNDS` of them, and then rests. The window is one round longer
   than the streak because **the first measurement is spoiled by construction**:
   that probe rides a connection still being established, so its round trip
   carries a TCP handshake, a TLS 1.3 exchange and an ML-DSA-65 signature.
 
-  **Probes are keyed by the relay they were sent to.** With more than one
-  connection in flight, one table for the node would let a busy relay's probes
+  **Probes are keyed by the estavelle they were sent to.** With more than one
+  connection in flight, one table for the node would let a busy estavelle's probes
   spend the allowance that measures a silent one's silence — and would make a
   `Pong` resolvable against a token this node sent somewhere else.
 
-  **A relay already held is an incumbent, and that was a real defect.** The
+  **An estavelle already held is an incumbent, and that was a real defect.** The
   daemon connects to one before anything has been measured, and `select`'s first
   selection is immediate because there is normally nothing to defend. Together
   those meant the first round handed the node to whichever alternative happened
@@ -2421,37 +2421,37 @@ onwards, anchored on the week of 2026-08-10.
   for the whole aquifer. Every unit test passed; the daemon-level test that
   drives a round at a time is what caught it.
 
-  **A move keeps the old relay reachable meanwhile.** Peers go on dialing it
+  **A move keeps the old estavelle reachable meanwhile.** Peers go on dialing it
   until the netmap reaches them, and in that window their packets are not late,
-  they are delivered nowhere. So the relay being left is handed to the
+  they are delivered nowhere. So the estavelle being left is handed to the
   on-demand pool above, which holds it exactly as long as traffic keeps arriving
-  there and lets it go when none does — §9.2's argument one layer down. A relay
+  there and lets it go when none does — §9.2's argument one layer down. An estavelle
   the netmap withdraws is released by `retain` and left for one the netmap still
   carries, rather than stranding the node somewhere peers are no longer told to
   look.
 
-  ✅ **Two nodes on two relays, end to end.** `aquifer.rs`'s two-relay row runs
-  two relays and makes one unreachable from node B — which is what a relay a
+  ✅ **Two nodes on two estavelles, end to end.** `aquifer.rs`'s two-estavelle row runs
+  two estavelles and makes one unreachable from node B — which is what an estavelle a
   node is not admitted to looks like from outside, since §10.1 makes a roster
-  miss indistinguishable from a relay that is down. B leaves the relay its
+  miss indistinguishable from an estavelle that is down. B leaves the estavelle its
   registry lists first and takes the other; A, still on the first and with no
   way to know where B is, discovers B's absence by addressing it, reads the
-  relay B published, dials it, and carries a TCP conversation over it.
+  estavelle B published, dials it, and carries a TCP conversation over it.
 
-  **A node that cannot get onto its relay now tries another.** Nothing measures
-  a relay it has no connection to, so without this a node whose registry listed
-  a relay it was not admitted to first would retry that one for the life of the
+  **A node that cannot get onto its estavelle now tries another.** Nothing measures
+  an estavelle it has no connection to, so without this a node whose registry listed
+  an estavelle it was not admitted to first would retry that one for the life of the
   process and never reach the ones it *was* admitted to.
 
   **That row found four defects, three of them in code that had already been
-  committed with passing tests** — GitHub issues [#34](https://github.com/karst-net/karst/issues/34), [#35](https://github.com/karst-net/karst/issues/35), [#36](https://github.com/karst-net/karst/issues/36), and [#37](https://github.com/karst-net/karst/issues/37). The on-demand relay
+  committed with passing tests** — GitHub issues [#34](https://github.com/karst-net/karst/issues/34), [#35](https://github.com/karst-net/karst/issues/35), [#36](https://github.com/karst-net/karst/issues/36), and [#37](https://github.com/karst-net/karst/issues/37). The on-demand estavelle
   thread died at startup on every run (`tokio::time::timeout` arms its timer as
   it is constructed, so building one outside a runtime panics), which means
   §9.1's second rule had never once run in a daemon while its pool, its queue
-  split and its routing all had green tests. A relay whose address blackholed
-  packets stalled the relay path for two minutes with nothing logged. A node
-  held two Ponor connections to one relay — the measurement connection and the
-  home connection, after the measured relay was adopted — and a relay replaces
+  split and its routing all had green tests. An estavelle whose address blackholed
+  packets stalled the estavelle path for two minutes with nothing logged. A node
+  held two Ponor connections to one estavelle — the measurement connection and the
+  home connection, after the measured estavelle was adopted — and an estavelle replaces
   an older connection for the same node id with the newer, so the two took
   turns and dropped a fragmented handshake between them.
 
@@ -2503,31 +2503,31 @@ onwards, anchored on the week of 2026-08-10.
   Sampling one would have passed against the defect five times in six — which
   is roughly what happened before the diagnosis: the gate passed on its first
   run and failed the next three.
-- ✅ **`karst-relay`'s operational surface.** Metrics, mesh dialing and its I/O
+- ✅ **`karst-estavelle`'s operational surface.** Metrics, mesh dialing and its I/O
   are done — the entries below. The two items that were outstanding are closed,
   one by building it and one by finding the claim about it was wrong:
 
   - ✅ **The region map, end to end.** This bullet used to say the client half
     was missing: that `bins/karstd/src/home.rs` has no notion of region, and
-    that picking the fastest relay "is the right answer only because no
-    deployment has yet handed it relays from two regions". **Checked
+    that picking the fastest estavelle "is the right answer only because no
+    deployment has yet handed it estavelles from two regions". **Checked
     2026-08-21, and the second half of that sentence is false.** Picking the
     fastest is the right answer with any number of regions, and §9 specifies
     exactly that — RTT with hysteresis, no mention of region.
 
     The reason it is right is worth writing down, because it is what the
-    original claim missed: **a region belongs to a relay and a node has none.**
+    original claim missed: **a region belongs to an estavelle and a node has none.**
     Nothing tells a node where it is. A node filtering to "its own region"
     would first have to infer one, and the only evidence available is latency —
     so filtering would replace a direct measurement with a guess derived from
     it. Region stays load-bearing where §8 puts it, confining a mesh, and two
     nodes homed in different regions still reach each other by §9.1's second
-    path: an on-demand connection to the peer's home relay. That is one extra
+    path: an on-demand connection to the peer's home estavelle. That is one extra
     connection, not a failure to connect.
 
-    §5's "multiple relays per region, latency-probed by clients, published by
+    §5's "multiple estavelles per region, latency-probed by clients, published by
     the control server" is therefore complete, and what had actually been
-    missing from it was the third clause — nothing published relays at all
+    missing from it was the third clause — nothing published estavelles at all
     (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)), which is why no deployment had ever handed a node two
     regions to be wrong about.
 
@@ -2539,11 +2539,11 @@ onwards, anchored on the week of 2026-08-10.
     **One known cost, stated so it is not rediscovered as a bug.** The probe
     rotation measures one alternative at a time for `PROBE_ROUNDS` (4) rounds
     and then rests `REST_ROUNDS` (6), at a `PROBE_INTERVAL` of 60 s — ten
-    minutes per candidate, so a full cycle over an *N*-relay registry takes
-    10(*N*−1) minutes regardless of which regions those relays are in. That is
+    minutes per candidate, so a full cycle over an *N*-estavelle registry takes
+    10(*N*−1) minutes regardless of which regions those estavelles are in. That is
     linear in registry size and is bounded in practice by ADR-0007's decision
     that there is no default public fleet: a self-hosted registry is a handful
-    of relays, not a global map. A candidate also gets exactly three usable
+    of estavelles, not a global map. A candidate also gets exactly three usable
     rounds against a hysteresis needing three consecutive wins, so a single lost
     `Pong` costs it that turn and it waits for the next one.
   - ✅ **Co-location with the control server in the default deployment
@@ -2559,14 +2559,14 @@ onwards, anchored on the week of 2026-08-10.
     and both are the same shape: a component that lived only in the test
     harness while production read the field the harness filled.
 
-    - GitHub issue [#47](https://github.com/karst-net/karst/issues/47) — a relay's admission list is a file with a **ninety-second
+    - GitHub issue [#47](https://github.com/karst-net/karst/issues/47) — an estavelle's admission list is a file with a **ninety-second
       lease** (§5.3 makes admission structural; `roster::MAX_AGE` empties it
       when nobody refreshes), and nothing outside `aquifer.rs`'s fixture
-      refreshed it. Any deployed relay stopped admitting nodes ninety seconds
+      refreshed it. Any deployed estavelle stopped admitting nodes ninety seconds
       after it started. `karst/roster` rewrites it every 25 s, unconditionally,
       because the lease is refreshed by mtime rather than by contents.
-    - GitHub issue [#48](https://github.com/karst-net/karst/issues/48) — the netmap's relay registry was populated **only by
-      `karst/testserver`**. A production server published no relays, so nodes
+    - GitHub issue [#48](https://github.com/karst-net/karst/issues/48) — the netmap's estavelle registry was populated **only by
+      `karst/testserver`**. A production server published no estavelles, so nodes
       that could not connect directly could not connect at all, silently.
       `karst/relayreg` loads an operator-written registry; `relay_id` is derived
       from the pinned key rather than typed, and the file is validated fatally
@@ -2574,10 +2574,10 @@ onwards, anchored on the week of 2026-08-10.
 
     Both mechanisms were then exercised against a running deployment rather
     than argued for. With the producer up, the roster's mtime advanced every
-    25 s while its contents stayed byte-identical, and the relay ran past the
-    lease without complaint. Stopped, the relay logged `roster lease expired`
+    25 s while its contents stayed byte-identical, and the estavelle ran past the
+    lease without complaint. Stopped, the estavelle logged `roster lease expired`
     at the 90-second boundary and admitted nobody; restarted, it recovered on
-    the next write. The relay's own `relay_id` matched the one derived from the
+    the next write. The estavelle's own `relay_id` matched the one derived from the
     registry entry, end to end, which is the check `karstd` performs before it
     will accept a netmap at all.
 
@@ -2585,54 +2585,54 @@ onwards, anchored on the week of 2026-08-10.
     the infrastructure; it cannot walk a self-hoster to a connected node,
     because a node needs a setup key, a setup key needs an account, and an
     account needs the admin console. The five-minute path exists as far as the
-    server and relay, and `deploy/compose/README.md` says so in those words
+    server and estavelle, and `deploy/compose/README.md` says so in those words
     rather than letting a reader discover it after the third command.
 
   ✅ **Mesh dialing, end to end.** `mesh.rs` decides which peers are due and
-  how long to wait; `server.rs` dials them. **Two relays mesh and a packet
+  how long to wait; `server.rs` dials them. **Two estavelles mesh and a packet
   crosses between them**, which is the only test that exercises the outbound
   half at all.
 
   **§8 says what a mesh connection is and not who opens it, and that gap has a
   failure mode.** If both ends dial, both succeed, and the hub — which keys a
-  mesh peer by relay id — replaces one with the other; two relays doing that on
+  mesh peer by estavelle id — replaces one with the other; two estavelles doing that on
   a timer displace each other indefinitely, resending the presence state on
-  every flap. So **the relay whose id sorts lower dials and the other only
+  every flap. So **the estavelle whose id sorts lower dials and the other only
   listens**: deterministic, no negotiation, no extra frame, and half the
-  connections in a region. A relay id is a hash of an ML-DSA-65 key, so the
+  connections in a region. An estavelle id is a hash of an ML-DSA-65 key, so the
   ordering is arbitrary and stable, which is all the rule needs.
 
-  The consequence is a configuration rule worth stating: **every relay in a
+  The consequence is a configuration rule worth stating: **every estavelle in a
   region carries the whole mesh list, addresses included**, and the rule
   decides who acts. An asymmetric file is a puzzle with a silent failure — the
   pair simply never meshes.
 
-  The address is optional and a row without one is still admitted. A relay
+  The address is optional and a row without one is still admitted. An estavelle
   behind a load balancer may be dial-in only, and refusing to admit one nobody
   can dial would make the common cloud deployment unconfigurable. It lives on
-  `FileRoster` rather than on `karst-relay-proto`'s `RelayEntry`: where to dial
-  a relay is a deployment fact, and a second implementation of Ponor needs the
+  `FileRoster` rather than on `karst-estavelle-proto`'s `RelayEntry`: where to dial
+  an estavelle is a deployment fact, and a second implementation of Ponor needs the
   identity key and nothing about our topology.
 
   Two properties the tests pin that are easy to get wrong. A dial in flight is
   not dialed again on the next tick — `due` marks the attempt as it hands it
   out, or every tick between a dial and its outcome starts another. And backoff
-  **survives a roster reload**, or a relay refreshing on a timer retries a dead
+  **survives a roster reload**, or an estavelle refreshing on a timer retries a dead
   peer at full rate for ever, the reload undoing the state meant to slow it.
 
   The I/O half needed the post-handshake loop **generalized over the stream
-  type**. `serve` accepts a TLS *server* stream and a dialing relay holds a
+  type**. `serve` accepts a TLS *server* stream and a dialing estavelle holds a
   *client* one, while everything after the handshake — framing, the hub, the
   write queue — is identical. A second copy for the outbound path would have
   given mesh its own queue draining and close handling, free to drift from the
   one every client uses.
 
   **The trust anchor for dialing is required and there are no system roots.**
-  §4.2 declines to rest relay identity on certificates, so a mesh that fell back
+  §4.2 declines to rest estavelle identity on certificates, so a mesh that fell back
   to public roots would quietly accept anything a public CA had issued for the
   name — the exact trust that section refuses. It also keeps a `WebPKI` bundle
   out of a crate that does not otherwise need one. The certificate *name* is a
-  separate roster field from the dial address, because a relay behind a load
+  separate roster field from the dial address, because an estavelle behind a load
   balancer is reached at one and presents the other.
 
   Checked against two defects, both of which the end-to-end row catches and no
@@ -2640,19 +2640,19 @@ onwards, anchored on the week of 2026-08-10.
   fails it.
 
   ✅ **§8's regional boundary, enforced on both sides.** Mesh is within a
-  region because cross-region relay-to-relay forwarding would make every
-  relay's bandwidth spendable by every other region's operator. A relay refuses
+  region because cross-region estavelle-to-estavelle forwarding would make every
+  estavelle's bandwidth spendable by every other region's operator. An estavelle refuses
   both to dial and to admit a peer whose region differs — guarding only the
   dialer would leave the boundary holding on one side of every pair, so an
-  operator who listed a foreign relay would simply be meshed *by* it instead.
+  operator who listed a foreign estavelle would simply be meshed *by* it instead.
 
   Stated for what it is: a guard against **misconfiguration**, not against a
-  hostile operator, who writes both files. Its value is that a foreign relay in
+  hostile operator, who writes both files. Its value is that a foreign estavelle in
   the mesh list becomes a mistake visible at once rather than a slow bandwidth
   transfer nobody attributes to it.
 
   The default region is a name rather than empty, so a single-region deployment
-  works untouched and two relays that never heard of regions still mesh.
+  works untouched and two estavelles that never heard of regions still mesh.
   Removing both guards makes a packet cross the boundary, which is the row's
   own defect check.
 
@@ -2667,7 +2667,7 @@ onwards, anchored on the week of 2026-08-10.
   startup.
 
   **No per-node labels, and that is disclosure rather than cardinality.** A
-  relay in a public pool carries thousands of nodes; a label per node is a
+  estavelle in a public pool carries thousands of nodes; a label per node is a
   cardinality problem, but the reason it is forbidden is `ponor-v1.md` §11 —
   an endpoint naming every node by id would publish the tailnet's membership to
   anything that could reach it. There is a test asserting no metric carries a
@@ -2676,7 +2676,7 @@ onwards, anchored on the week of 2026-08-10.
   The counters had to become monotonic to be useful: `ConnStats` lives on the
   connection and dies with it, so `Hub` now folds a departed connection's
   totals into a retained sum. A counter that falls every time a client
-  disconnects reads downstream as a relay restart.
+  disconnects reads downstream as an estavelle restart.
 
   Rendered by hand rather than through a client library, as `http.rs` beside it
   is: the text format is three lines of rules, and a registry plus a macro layer
@@ -2697,16 +2697,16 @@ onwards, anchored on the week of 2026-08-10.
   existed to prevent.
 
   **The base case is covered without it.** ADR-0008's argument was that the
-  co-located relay handles ordinary deployments and TURN buys interoperability
-  with third-party infrastructure. Ten topologies now say the relay path is
+  co-located estavelle handles ordinary deployments and TURN buys interoperability
+  with third-party infrastructure. Ten topologies now say the estavelle path is
   automatic and lossless, including the two where no direct path exists at all.
   Nothing in Phase 4's exit depends on TURN.
 
   Carried forward whole: client-side allocation, permissions, channel binding
   and credential refresh; control-server ephemeral credential minting; coturn
   added to the NAT matrix.
-- ✅ **AVEN v1 specified and its codec built** — `spec/aven-v1.md` and
-  `crates/karst-disco/`, 51 tests. The NAT-traversal protocol gets a themed
+- ✅ **Resurgence v1 specified and its codec built** — `spec/aven-v1.md` and
+  `crates/karst-resurgence/`, 51 tests. The NAT-traversal protocol gets a themed
   name per ADR-0010's rule (an *aven* is the shaft connecting a cave system
   upward to the surface); it is a rename away from anything else if the name
   does not appeal.
@@ -2727,7 +2727,7 @@ onwards, anchored on the week of 2026-08-10.
 
   **An absent disco key means no discovery, ever** (§5.1). This is the one
   place §2.6's zero-PSK fallback is deliberately *not* mirrored: connectivity
-  survives without discovery because the relay carries it, so nothing is bought
+  survives without discovery because the estavelle carries it, so nothing is bought
   by relaxing, and unauthenticated probing would let an attacker tell a node
   where to send its traffic — which is the whole of what this protocol decides.
 
@@ -2756,7 +2756,7 @@ onwards, anchored on the week of 2026-08-10.
   The hysteresis tests were checked against the defect rather than trusted:
   dropping the three-consecutive-wins requirement fails exactly the three
   hysteresis tests and nothing else.
-- ✅ **AVEN modeled — `spec/models/aven.pv`, 4/4 in ProVerif 2.05.** The
+- ✅ **Resurgence modeled — `spec/models/aven.pv`, 4/4 in ProVerif 2.05.** The
   attacker holds **a different peer of A's disco key** throughout, because a
   aquifer is not a trust boundary (§1.1 lists a malicious peer inside one as in
   scope).
@@ -2801,7 +2801,7 @@ onwards, anchored on the week of 2026-08-10.
   four queries passed **vacuously**. A must-fail model that passes is a signal
   to go and look. `spec/models/README.md` records it, because the failure mode
   is silent and general.
-- ✅ **`karst-disco` probe scheduling** — `engine.rs`, 69 tests in the crate.
+- ✅ **`karst-resurgence` probe scheduling** — `engine.rs`, 69 tests in the crate.
   Complete against what `aven-v1.md` specifies; the one scheduling question the
   spec leaves open is §12.2, whether a node accepts the previous epoch's disco
   key while a rotation is in flight, and that is unwritten there rather than
@@ -2831,44 +2831,44 @@ onwards, anchored on the week of 2026-08-10.
   give-up condition was off by one against §7.5's "immediately, then
   100/300/900".
 - ✅ **The node speaks Ponor, and the netmap carries what discovery needs.**
-  `bins/karstd/src/relay.rs` and `relay_tls.rs` are the node half of the
-  handshake `karst-relay` already answers: TLS 1.3 with `X25519MLKEM768`
+  `bins/karstd/src/estavelle.rs` and `relay_tls.rs` are the node half of the
+  handshake `karst-estavelle` already answers: TLS 1.3 with `X25519MLKEM768`
   enforced at startup, the HTTP upgrade, and the pinned ML-DSA-65 Ponor
   identity. The control plane grew two things to feed it — a per-pair
-  `disco_key` and a relay registry — and both are now part of the netmap
+  `disco_key` and an estavelle registry — and both are now part of the netmap
   version hash on both ends.
 
   **The disco key is derived under its own label, not reused from the PSK**
-  (`psk.Disco`, `karst-disco-v1`). Reusing the PHREATIC PSK would have cost
+  (`psk.Disco`, `karst-resurgence-v1`). Reusing the PHREATIC PSK would have cost
   nothing to write and would have coupled two independent authenticators, so a
   change to either protocol becomes a cross-protocol key-reuse bug. The Go test
   asserts the two are *unequal* for the same pair, not merely that each is
   derived.
 
-  **A relay entry is checked against itself while the netmap is decoded.**
+  **An estavelle entry is checked against itself while the netmap is decoded.**
   `ponor-v1.md` §5.2 defines `relay_id` as a digest of the pinned identity key,
-  so `Relay::from_wire` recomputes it and refuses a mismatch. The alternative is
+  so `Estavelle::from_wire` recomputes it and refuses a mismatch. The alternative is
   a registry typo surfacing much later as a handshake failure with nothing in
   any log to explain it.
 
   **The registry is in the version hash, and the test that matters is the
   negative one**: a node holding the pre-change version must not be told
-  "unchanged", or it stays pinned to a retired or compromised relay while every
+  "unchanged", or it stays pinned to a retired or compromised estavelle while every
   poll says its netmap is current.
 
   `tls_server_name` is carried separately from `address` and §4.2 was amended
-  to say so — a self-hoster reaches a relay by IP or through a load balancer
+  to say so — a self-hoster reaches an estavelle by IP or through a load balancer
   while the certificate names something else, and Ponor authenticates by the
   ML-DSA key either way.
-- ✅ **AVEN closes end to end — two nodes rendezvous over the relay and confirm
+- ✅ **Resurgence closes end to end — two nodes rendezvous over the estavelle and confirm
   a direct path.** `Disco::reconcile` loads per-peer disco keys from the netmap,
   the node enumerates its own interfaces, the scheduler advertises them, the
-  relay carries the advertisement both ways, both ends probe on the same poll,
+  estavelle carries the advertisement both ways, both ends probe on the same poll,
   and a confirmed path is installed as the peer's endpoint.
 
   **The test that matters is `tests/rendezvous.rs`**, and the reason it exists
   is that every layer below it had passing unit tests for weeks while the slice
-  did nothing: the scheduler produced advertisements nobody carried, the relay
+  did nothing: the scheduler produced advertisements nobody carried, the estavelle
   carried datagrams nobody produced, and selection ran over a candidate set that
   was always empty. Each layer agreed with itself. Nothing looked at the join.
 
@@ -2878,14 +2878,14 @@ onwards, anchored on the week of 2026-08-10.
   silently did not. That is the shape of the whole bug class here, reproduced in
   a test harness in about twenty lines.
 
-  **A relay-carried advertisement has its own entry point, and that is the
+  **An estavelle-carried advertisement has its own entry point, and that is the
   design decision worth defending.** `inbound_from_relay` is separate from
   `inbound` rather than a flag on it, because the two differ in what they are
-  allowed to authorize: the AVEN tag proves *who wrote* a message and says
+  allowed to authorize: the Resurgence tag proves *who wrote* a message and says
   nothing about whether an arbitrary UDP source is a permitted delivery path for
-  a fresh endpoint list. It additionally requires the relay-stamped source id
+  a fresh endpoint list. It additionally requires the estavelle-stamped source id
   and the tag to name the same peer, so one admitted peer cannot replay
-  another's authentic datagram under its own relay identity. A relay carrying a
+  another's authentic datagram under its own estavelle identity. An estavelle carrying a
   `Ping` or `Pong` is refused outright.
 
   **The case that pins that rule is an admitted peer, not a stranger.** The
@@ -2916,7 +2916,7 @@ onwards, anchored on the week of 2026-08-10.
   A private RFC 1918 address is deliberately kept: two nodes on the same LAN
   behind the same NAT have no other way to find each other, and that is the case
   direct paths help most. §12.3's cost — a `CallMeMaybe` body is not
-  encrypted, so the relay operator sees them — is a protocol gap to close, not a
+  encrypted, so the estavelle operator sees them — is a protocol gap to close, not a
   reason to withhold the candidate that makes local discovery work.
 - ✅ **§7.2's reflexive addresses, and the rule the spec was missing.** A node
   behind a NAT never sees its own mapped address; it learns one only from a peer
@@ -2943,7 +2943,7 @@ onwards, anchored on the week of 2026-08-10.
   clears the chosen path as soon as nothing is usable, deliberately — but the
   daemon read a *snapshot* of the chosen paths, and a snapshot can only say
   "install this". A direct path that died left the datapath pointed at a dead
-  address for the lifetime of the process, which made AVEN a net connectivity
+  address for the lifetime of the process, which made Resurgence a net connectivity
   regression. `Disco::path_changes` now emits transitions, and the two
   directions are deliberately asymmetric: an install displaces whatever was
   there, because a confirmed path beats a learned address; a release is a
@@ -2966,7 +2966,7 @@ onwards, anchored on the week of 2026-08-10.
   migration and its byte-compatibility check. Recorded under Phase 4 because it
   happened here, not because it is Phase 4 work — it closes a dependency the
   control plane took on in Phase 3 and always intended to give back.
-- `karst-disco`: **port mapping (PCP, NAT-PMP, UPnP-IGD). Port prediction is
+- `karst-resurgence`: **port mapping (PCP, NAT-PMP, UPnP-IGD). Port prediction is
   recommended for removal** — see GitHub issue [#29](https://github.com/karst-net/karst/issues/29).
 
   Both were listed here as complementary. Measurement says they are not: Linux's
@@ -2983,25 +2983,25 @@ onwards, anchored on the week of 2026-08-10.
   probabilistic, and it can be tested against a third-party server rather than
   one we wrote.
 - ✅ **`karst-portmap` — the codec for both protocols, 41 unit tests and four
-  against a real gateway.** Sans-io like every other protocol crate: bytes to
+  against a real aven.** Sans-io like every other protocol crate: bytes to
   typed values and back, plus the renewal arithmetic. No socket, no clock, no
-  gateway discovery.
+  aven discovery.
 
   **The integration test is the point of the crate, not an extra.** A
   round-trip test proves the encoder and decoder agree with each other, which
   is exactly what a shared misreading also produces — and a shared misreading is
   the likely failure here, because these are byte-offset protocols with no
-  length fields and nothing self-describing. So `tests/gateway.rs` drives
+  length fields and nothing self-describing. So `tests/aven.rs` drives
   **miniupnpd** in a namespace and asserts against what an implementation we did
   not write says. Same argument as the NAT matrix, one layer up.
 
   It earned its keep twice within an hour of existing.
 
   It found a **wrong result-code table**: PCP code 4 was listed as "network
-  failure", which is 7 — 4 is `UNSUPP_OPCODE`. A gateway that does not implement
+  failure", which is 7 — 4 is `UNSUPP_OPCODE`. A aven that does not implement
   `MAP` would have been retried forever while a genuinely transient failure was
   given up on after one attempt. Both the right and the wrong set look
-  reasonable in a diff, which is why it took a real gateway to surface.
+  reasonable in a diff, which is why it took a real aven to surface.
 
   And both mutations of the encoder are caught by it. Sending the wrong client
   address in a PCP `MAP` draws a real `ADDRESS_MISMATCH` (code 12) from
@@ -3023,35 +3023,35 @@ onwards, anchored on the week of 2026-08-10.
   makes a node advertise an address that does not work, which is the same bound
   `aven-v1.md` §7.2 already places on a lying peer, and the reason that section
   forbids treating any reported address as a path.
-- ✅ **PHREATIC over the relay, and the upgrade is one rule.** `Output` names a
+- ✅ **PHREATIC over the estavelle, and the upgrade is one rule.** `Output` names a
   destination rather than an address, and `Engine::via` is the only place that
-  chooses: a direct endpoint if there is one, the relay otherwise.
+  chooses: a direct endpoint if there is one, the estavelle otherwise.
 
   **The upgrade and the fallback are that rule read at different moments**,
-  which is why it is two lines and not a state machine. AVEN already owns
+  which is why it is two lines and not a state machine. Resurgence already owns
   whether a direct endpoint exists — it installs one on a confirmed path and
   withdraws it when the path stops answering — so the two subsystems needed no
   coordination at all. Deciding it in one place is what keeps that true: the
   code before this asked `endpoint(peer)` in four separate places and dropped
-  the packet when it was `None`, and a relay arm added to three of them would
+  the packet when it was `None`, and an estavelle arm added to three of them would
   have been a peer that could receive but not send.
 
   **`inbound_from_relay` is a separate entry point rather than a flag**, because
   the two differ in what they may conclude from where a datagram arrived.
-  It learns no endpoint — the source address is the *relay's*, and installing it
+  It learns no endpoint — the source address is the *estavelle's*, and installing it
   would aim a peer's traffic at a TLS port that is not a PHREATIC listener. It
-  attributes by the relay-stamped source instead of guessing from the endpoint
+  attributes by the estavelle-stamped source instead of guessing from the endpoint
   table. And it reassembles under a key disjoint by construction from every UDP
   source key, which matters exactly during an upgrade, when a relayed and a
   direct stream from the same peer are briefly both in flight.
 
-  **A relayed handshake must name the peer the relay says sent it.** Ponor
+  **A relayed handshake must name the peer the estavelle says sent it.** Ponor
   authenticated a node id; the AEAD resolves a `peer_id_hint`; requiring the two
   to agree is what stops one admitted peer replaying another's handshake under
-  its own relay identity. The test that pins it uses a peer this node holds a
+  its own estavelle identity. The test that pins it uses a peer this node holds a
   key for — a stranger is refused a step earlier by the lookup, so a test using
   one passes with the check deleted. That mistake was made twice in this phase,
-  once here and once in the AVEN equivalent, which is why it is written down.
+  once here and once in the Resurgence equivalent, which is why it is written down.
 
   **The connection is split so the directions cannot block each other.** They
   share one TLS stream but must not share a scheduling point: a worker
@@ -3059,9 +3059,9 @@ onwards, anchored on the week of 2026-08-10.
   interval to every relayed packet, and once this path carries tunnel data that
   interval *is* the tunnel's latency.
 
-  The queue from the datapath to the relay worker is bounded and **drops rather
+  The queue from the datapath to the estavelle worker is bounded and **drops rather
   than blocks** — these calls happen on the threads carrying the tunnel, and
-  waiting on a dead relay would turn a relay outage into a total outage, which
+  waiting on a dead estavelle would turn an estavelle outage into a total outage, which
   is the opposite of what a fallback path is for. §7.3 makes the same choice one
   hop further on. The drops are counted and surfaced in `karst status`, because
   the failure this replaces was silent.
@@ -3071,23 +3071,23 @@ onwards, anchored on the week of 2026-08-10.
   different problems with different fixes, and a bool merges the second into the
   healthy case.
 
-  **A relay with a self-signed certificate had no working configuration**, which
+  **An estavelle with a self-signed certificate had no working configuration**, which
   is GitHub issue [#21](https://github.com/karst-net/karst/issues/21) and was found by trying to write an integration test
   against a real one. `ponor-v1.md` §4.2 names that deployment as the realiztic
   self-hosted case and `relay_tls` loaded the system trust store alone.
-  `[control] relay_ca_file` now supplements it. It cannot weaken relay
+  `[control] relay_ca_file` now supplements it. It cannot weaken estavelle
   authentication, structurally rather than by promise: §4.2 already makes the
   certificate insufficient on its own, and the netmap-pinned ML-DSA-65 identity
-  is what names the relay.
+  is what names the estavelle.
 
 - ✅ **The published endpoint is discovery's to withdraw** — GitHub issue
-  [#20](https://github.com/karst-net/karst/issues/20), found while building the relay path and closed the same day. `via`
+  [#20](https://github.com/karst-net/karst/issues/20), found while building the estavelle path and closed the same day. `via`
   preferred any endpoint and a netmap-configured one exists from startup, so a
-  peer whose published address had gone stale was unreachable even with a relay
+  peer whose published address had gone stale was unreachable even with an estavelle
   available and the peer connected to it.
 
-  **The root cause was ownership.** AVEN probed that endpoint and knew it did
-  not answer; `release_endpoint` withdrew only paths AVEN had *installed*, and
+  **The root cause was ownership.** Resurgence probed that endpoint and knew it did
+  not answer; `release_endpoint` withdrew only paths Resurgence had *installed*, and
   this one came from the control plane. The information existed and no code
   could act on it. Discovery now adopts it at reconcile, which is what gives it
   the standing to take it away — probing an address nobody owns produces a
@@ -3097,7 +3097,7 @@ onwards, anchored on the week of 2026-08-10.
   `Engine::exhausted` is §7.5's schedule run to its end. Before that, "nothing
   chosen" means "not confirmed yet" — the state every peer is in for the second
   of probing after every roster change — and withdrawing there would drop a
-  working endpoint onto the relay each time the netmap moved. Acting on it is
+  working endpoint onto the estavelle each time the netmap moved. Acting on it is
   safe precisely because giving up is not permanent: the 30-second re-probe
   sweep retries everything, so a peer that returns is found again without any
   state remembering it was written off.
@@ -3113,7 +3113,7 @@ onwards, anchored on the week of 2026-08-10.
   §5.1 rather than an exception: no key means no discovery, ever, so there is
   nothing to learn from and nothing that could responsibly take it away. That is
   also what keeps a static TOML roster working.
-- ✅ **NAT matrix — the instrument, validated.** `crates/karst-disco/tests/
+- ✅ **NAT matrix — the instrument, validated.** `crates/karst-resurgence/tests/
   nat_matrix.rs` builds three network namespaces with a masquerading middle and
   two distinct outer addresses, and establishes that each topology behaves the
   way its label says. **Thirteen tests**, run privileged in CI beside the TUN
@@ -3202,20 +3202,20 @@ onwards, anchored on the week of 2026-08-10.
   instrument pins how each behaves and says nothing about what a daemon does on
   one. Neither is named by an exit criterion; double NAT was the third and is
   built (row 11).
-- ✅ **The node's relay client, on a real socket** — `bins/karstd/tests/
-  relay_live.rs`. `karst-relay` runs in process as a library, with a
+- ✅ **The node's estavelle client, on a real socket** — `bins/karstd/tests/
+  relay_live.rs`. `karst-estavelle` runs in process as a library, with a
   self-signed certificate the node trusts through `relay_ca_file`, and
   `karstd`'s Ponor client connects to it: TLS, the HTTP upgrade, the handshake
   with real ML-DSA-65 on both sides, and a packet forwarded between two
   admitted nodes.
 
   **None of that code had ever been on a socket.** The codec is tested in
-  `karst-relay-proto`, the node session against a stub signature scheme, the
-  relay's listener against a hand-rolled client — and a stub agrees with the
+  `karst-estavelle-proto`, the node session against a stub signature scheme, the
+  estavelle's listener against a hand-rolled client — and a stub agrees with the
   code that calls it by construction. What was untested was the pair, which is
   where a mismatched identifier or a context string differing by one byte would
   live. The first assertion in the file is that the control plane's handle and
-  the relay's node id are the same value; they are, and nothing but this
+  the estavelle's node id are the same value; they are, and nothing but this
   required them to be.
 
   **Two comments in it overclaimed and were corrected by mutation testing**,
@@ -3228,7 +3228,7 @@ onwards, anchored on the week of 2026-08-10.
   a different key necessarily names a different id and the two cannot be
   separated. Both now say what they prove.
 
-  A third mutation was more instructive than the test: forcing the relay's
+  A third mutation was more instructive than the test: forcing the estavelle's
   signature check to pass still refuses an unlisted node, and so does making
   the roster return somebody else's entry. Admission needs **both** a roster
   hit and a verified signature, and only breaking both together admits a
@@ -3239,27 +3239,27 @@ onwards, anchored on the week of 2026-08-10.
   introduced here, and fixed by a lockfile bump to 0.4.16. Recorded because the
   gate is only worth having if a red result is acted on the day it appears —
   this one had been red without anyone running it.
-- ✅ **The whole stack ran, and it works: relay → direct, end to end.**
-  Two `karstd` daemons in separate network namespaces, a real `karst-relay`, a
+- ✅ **The whole stack ran, and it works: estavelle → direct, end to end.**
+  Two `karstd` daemons in separate network namespaces, a real `karst-estavelle`, a
   real Go coordination server, real TUN devices. Nothing stubbed.
 
   ```
-  A: endpoint = "-"                 state = "connecting"  transport = "relay"
-  B: endpoint = "-"                 state = "established" transport = "relay"
+  A: endpoint = "-"                 state = "connecting"  transport = "estavelle"
+  B: endpoint = "-"                 state = "established" transport = "estavelle"
   ...
   A: endpoint = "10.99.0.2:51820"   state = "established" transport = "direct"
   B: endpoint = "10.99.0.1:51820"   state = "established" transport = "direct"
   ```
 
-  Enrollment, a netmap carrying disco keys and a relay registry, a Ponor
+  Enrollment, a netmap carrying disco keys and an estavelle registry, a Ponor
   connection over TLS with a self-signed CA, a PHREATIC handshake **through the
-  relay**, an AVEN rendezvous over it, probes on the shared UDP socket, and the
+  estavelle**, an Resurgence rendezvous over it, probes on the shared UDP socket, and the
   upgrade. That is the Phase 4 headline and it had never been run.
 
   It needed two small fixtures the tree lacked: `--listen` on the testserver
   (its nodes live in another namespace and cannot reach its loopback) and
-  `--relay ADDR PK`, because the registry row it advertised was a placeholder
-  key and no node can connect to a relay whose advertised key is a pattern of
+  `--estavelle ADDR PK`, because the registry row it advertised was a placeholder
+  key and no node can connect to an estavelle whose advertised key is a pattern of
   `0x91`.
 
   **And it immediately found a High defect that every unit test passed.** The
@@ -3270,7 +3270,7 @@ onwards, anchored on the week of 2026-08-10.
   example policy was the one that failed.
 
   This is the argument for end-to-end tests stated as a result rather than a
-  principle. Nine matrix rows, six relay tests, four discovery tests and a
+  principle. Nine matrix rows, six estavelle tests, four discovery tests and a
   hundred and seventy unit tests did not find it, because none of them had a
   *reply* — a reply only exists when something upstream holds a connection open.
 - ✅ **Connection tracking, so §4.3's ACLs work at all** — `crate::flow`, and
@@ -3296,7 +3296,7 @@ onwards, anchored on the week of 2026-08-10.
   with `acl_denied_out = 0` at both ends where it had been 12.
 - ✅ **A node repeats its candidates while it has no path** — GitHub issue
   [#24](https://github.com/karst-net/karst/issues/24), found from an asymmetry in the live run above: one daemon reached
-  `direct` and the other sat on `relay`. Advertisement was edge-triggered on the
+  `direct` and the other sat on `estavelle`. Advertisement was edge-triggered on the
   candidate list *changing*, which on a stable host happens once, ever —
   measured as one advertisement and then zero over a simulated hour. A peer that
   missed it never learned where its counterpart was, and **that is what a node
@@ -3304,13 +3304,13 @@ onwards, anchored on the week of 2026-08-10.
   advertisement is relayed, so it drops it.
 
   The reasoning was already one function above. The re-probe sweep repeats
-  itself and says why — *"without this a node that settles on a relay at boot
+  itself and says why — *"without this a node that settles on an estavelle at boot
   stays there until something else disturbs it"*. Telling a peer where you are
   and asking where it is are the two halves of one job, and only one was being
   repeated. `spec/aven-v1.md` §7.5 now makes it a MUST NOT.
 - ✅ **The live run is a test now** — `bins/karstd/tests/aquifer.rs`, wired into
   `just test-privileged`. Four processes: the Go coordination server,
-  `karst-relay`, and two `karstd` daemons in separate namespaces with real TUN
+  `karst-estavelle`, and two `karstd` daemons in separate namespaces with real TUN
   devices. First enrollment to a direct path carrying TCP under a port-scoped
   ACL, in **four seconds**.
 
@@ -3332,18 +3332,18 @@ onwards, anchored on the week of 2026-08-10.
 
   What it does **not** catch is GitHub issue [#24](https://github.com/karst-net/karst/issues/24), and the reason is worth stating: the
   fixture drops nothing, and 19 is about an advertisement that was sent and
-  lost. That property lives in `karst-disco`'s unit tests, where loss can be
+  lost. That property lives in `karst-resurgence`'s unit tests, where loss can be
   expressed. An end-to-end test is not a superset of the ones beneath it.
 - ✅ **Hole punching, measured through a real NAT** — `aquifer.rs` grew a second
   topology: node A behind a port-restricted cone, node B and the servers on the
   public side. Every address A can name is private and useless to B, so a direct
-  path can only come from the sequence AVEN exists for. Both ends reach
+  path can only come from the sequence Resurgence exists for. Both ends reach
   `transport = "direct"`, and the assertion that matters is **which** address B
   ends up holding: the NAT's mapped one, never A's private one.
 
   That assertion earned its place immediately. The first version of the
   topology added a route from the public side into the private prefix — "so the
-  relay's replies can get back", which they do not need, because they return
+  estavelle's replies can get back", which they do not need, because they return
   through conntrack's translation. With it, B reached `10.98.1.2` *directly* and
   reported a perfectly healthy direct path that no real NAT would have allowed.
   The test was not a NAT test; it was a router test that said NAT on the label,
@@ -3364,19 +3364,19 @@ onwards, anchored on the week of 2026-08-10.
 
   **The bootstrap problem was the whole of it.** Neither node could learn its own
   mapped address: interface addresses are private, `Pong.observed` needs a probe
-  to have crossed first and no probe could cross, and the relay could not say —
+  to have crossed first and no probe could cross, and the estavelle could not say —
   Ponor had no frame for an observed address and speaks **TCP**, whose NAT
-  binding is not the UDP one AVEN needs. The reflexive mechanism needed a
+  binding is not the UDP one Resurgence needs. The reflexive mechanism needed a
   working path to bootstrap a working path.
 
-  A **reflector** breaks it from outside: a UDP service a relay MAY run, keyed
+  A **reflector** breaks it from outside: a UDP service an estavelle MAY run, keyed
   by a 32-byte `reflect_key` minted per Ponor connection and delivered inside
-  TLS *after* the relay's ML-DSA-65 signature has verified. No new trust anchor
+  TLS *after* the estavelle's ML-DSA-65 signature has verified. No new trust anchor
   and no new key exchange — the ordering is the entire security argument.
 
   **Request and reply are the same size, and that is what `pad` is for.** The
   natural encoding is `Ping`/`Pong`'s: 46 bytes in, 65 out, a factor of 1.4.
-  That is small, and small is not the same as one. A service every relay in a
+  That is small, and small is not the same as one. A service every estavelle in a
   public pool operates, answering datagrams anyone able to replay one can send,
   must not amplify at all — so `Reflect` carries nineteen zero bytes reserving
   the space its own answer occupies, and the equality is a compile-time
@@ -3413,7 +3413,7 @@ onwards, anchored on the week of 2026-08-10.
 
   Verified end to end and **checked against the defect**: the row converges in
   ten seconds, each node holding the other's *mapped* address rather than its
-  private one, and removing `[reflect]` from the relay's configuration fails
+  private one, and removing `[reflect]` from the estavelle's configuration fails
   that row **and only that row** — every other topology reaches a direct path
   without it.
 
@@ -3442,14 +3442,14 @@ onwards, anchored on the week of 2026-08-10.
 
   **And the same question was then asked of every other `#[ignore]`d suite**,
   by listing them and matching each against the job that runs it. One had no
-  job: `karst-portmap`'s `gateway`, which drives the NAT-PMP and PCP codecs
+  job: `karst-portmap`'s `aven`, which drives the NAT-PMP and PCP codecs
   against `miniupnpd` — an implementation we did not write, and the only check
   that either codec agrees with anything but itself. Rows 8b and 9 rest on
   those bytes. It runs in the `aquifer` job too, where the root and the
   `miniupnpd` it needs already exist, and it costs four seconds. **Every
   privileged suite in the tree now has a CI home**: `device`, `two_nodes`,
   `nat_matrix` and `pref64` in `tun`; `control` and `interop` in `vectors`;
-  `aquifer`, `userspace` and `gateway` here. `pref64` joined on 2026-08-21 with
+  `aquifer`, `userspace` and `aven` here. `pref64` joined on 2026-08-21 with
   the mechanism it tests.
 
   **The suites now refuse to be quietly green** — *all* of them, as of
@@ -3489,12 +3489,12 @@ onwards, anchored on the week of 2026-08-10.
   have been in §7.7's hard class.
 
   **The hairpinning result has a direct consequence for the specification.**
-  Two nodes on one home network both learn a reflexive address from the relay
+  Two nodes on one home network both learn a reflexive address from the estavelle
   and then probe each other *at the NAT's own outer address* — which does not
   work. So `aven-v1.md` §7.2's **interface-address tier is what carries the
   same-LAN case**, and it is not a fallback there: it is the only thing that
   works. A node that advertised only reflexive addresses — the tempting
-  simplification once §7.6 exists, since they work everywhere else — would relay
+  simplification once §7.6 exists, since they work everywhere else — would estavelle
   two machines on the same desk through the internet.
 
   The carrier row closes a gap that mattered for how the exit criterion is read.
@@ -3511,15 +3511,15 @@ onwards, anchored on the week of 2026-08-10.
   | 3 | port-restricted cone | port-restricted cone | direct |
   | 4 | symmetric | *(nothing)* | direct |
   | 5 | symmetric | address-restricted cone | direct |
-  | 6 | symmetric | symmetric | **relay** |
-  | 7 | all UDP dropped | *(nothing)* | **relay**, and correctly so |
-  | 8 | symmetric | port-restricted cone | **relay** — no mapping to ask for |
+  | 6 | symmetric | symmetric | **estavelle** |
+  | 7 | all UDP dropped | *(nothing)* | **estavelle**, and correctly so |
+  | 8 | symmetric | port-restricted cone | **estavelle** — no mapping to ask for |
   | 8b | symmetric | port-restricted cone **with a port mapping** | direct — PCP/NAT-PMP |
   | 9 | symmetric **with a port mapping** | symmetric | direct — PCP/NAT-PMP |
   | 10 | the **same** NAT, one LAN | the same NAT, one LAN | direct — over private addresses |
   | 11 | its own router, behind a **carrier's** symmetric NAT | *(nothing)* | direct — B adopts the carrier's address |
 
-  Each row is a whole aquifer — Go control server, relay, two daemons, real TUN
+  Each row is a whole aquifer — Go control server, estavelle, two daemons, real TUN
   devices — not a probe against a socket, and each ends with a TCP conversation
   under a port-scoped ACL.
 
@@ -3581,7 +3581,7 @@ onwards, anchored on the week of 2026-08-10.
   That makes `aven-v1.md` §7.2's interface-address tier **load-bearing rather
   than decorative**. It is the only tier that works on this topology, so a node
   advertising reflexive addresses alone — the tempting simplification once §7.6
-  exists, since they work on every other row — would relay two machines on the
+  exists, since they work on every other row — would estavelle two machines on the
   same desk through the internet.
 
   Row 5 also turned up a pleasing detail. A's reflexive address is a dead
@@ -3593,7 +3593,7 @@ onwards, anchored on the week of 2026-08-10.
 
   **Rows 6 and 7 are assertions about staying put, and they are the ones worth
   reading carefully.** Neither merely waits for a timeout: each establishes on
-  the relay, then holds the pair under observation for 75 seconds — several
+  the estavelle, then holds the pair under observation for 75 seconds — several
   `Reflect` round trips, a full probe backoff, and one re-probe of every
   alternative — and fails if either node ever reports `direct`. The failure
   being guarded against is not "no direct path". It is a node advertising an
@@ -3798,11 +3798,11 @@ onwards, anchored on the week of 2026-08-10.
   `karst status` now reports `userspace_sockets`, without which the property
   would be back to being invisible, which is how it survived in the first place.
 - **Exit:** **every topology in the matrix where a direct path is physically
-  possible reaches one**, and the rest fall back to the relay without loss with
-  both nodes reporting why; relay fallback is automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind a
+  possible reaches one**, and the rest fall back to the estavelle without loss with
+  both nodes reporting why; estavelle fallback is automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind a
   different symmetric CGNAT **when at least one of the two NATs offers an
   explicit port mapping** (PCP, NAT-PMP or UPnP-IGD) — otherwise the pair falls
-  back to the relay without loss, and both nodes report the reason.
+  back to the estavelle without loss, and both nodes report the reason.
 
   The third criterion was **restated on 2026-08-19** and the original is kept
   here so the change is legible rather than silent:
@@ -3815,19 +3815,19 @@ onwards, anchored on the week of 2026-08-10.
   the short version is that two randomizing NATs square the search space, so the
   birthday paradox's √N saving still leaves ~170,000 probes per side for a
   99.9% success rate, and 0.01% after twenty seconds of trying. Tailscale
-  reaches the same conclusion and relays the same case. A criterion that no
+  reaches the same conclusion and estavelles the same case. A criterion that no
   implementation meets is not a standard, it is a wish.
 
   **Two of the three hold. The third does not, and there is now a number rather
   than an expectation.**
 
-  *Relay fallback is automatic and lossless* — row 7 above is the clean
-  statement of it. Every other row lets AVEN work and watches the relay lose to
+  *Estavelle fallback is automatic and lossless* — row 7 above is the clean
+  statement of it. Every other row lets Resurgence work and watches the estavelle lose to
   it, which tests the upgrade rather than the fallback; row 7 drops every UDP
   datagram in both directions, so there is no discovery to lose to. The pair
   establishes, stays established for the whole observation window, and carries
   TCP under the ACL with the drop counters at zero. `Engine::via` picks the
-  relay because no direct endpoint exists, and nothing above it knows the
+  estavelle because no direct endpoint exists, and nothing above it knows the
   difference.
 
   *Every physically-possible topology connects directly* — **ten of the eleven
@@ -3864,7 +3864,7 @@ onwards, anchored on the week of 2026-08-10.
   > ~~≥ 90% direct-connection rate across the matrix~~
 
   It was restated because it is **arithmetically unreachable by counting rows**,
-  and not for want of engineering. Three of the thirteen topologies are relay by
+  and not for want of engineering. Three of the thirteen topologies are estavelle by
   construction: symmetric-to-symmetric has no technique that reaches it
   (§12.4's 0.01%), a path with all UDP dropped has no direct path to find, and
   row 8 without a mapping has none this project is willing to buy (GitHub issue [#33](https://github.com/karst-net/karst/issues/33)).
@@ -3912,7 +3912,7 @@ onwards, anchored on the week of 2026-08-10.
   **Then building the row found GitHub issue [#51](https://github.com/karst-net/karst/issues/51), which is the larger half.** The
   first run failed in thirty seconds, before the node had finished starting:
   every address Karst hands a node is an IPv4 literal — the control server from
-  its configuration, the relay from the netmap, the peer from a call-me-maybe —
+  its configuration, the estavelle from the netmap, the peer from a call-me-maybe —
   and a node on a NAT64-only network has no IPv4 route to any of them. The
   fixture was probed on its own first, and `ping6` and TCP both crossed to
   `51.75.10.10` through `64:ff9b::334b:a0a`; the path worked and only the daemon
@@ -3921,7 +3921,7 @@ onwards, anchored on the week of 2026-08-10.
   The fix is **one rule at one boundary, plus two string rewrites**. The datapath
   socket synthesizes `prefix::v4` on send and extracts it on receive, so the
   engine above goes on holding plain IPv4 addresses on a host that cannot send
-  an IPv4 packet; the relay address and control URL are rewritten once, where
+  an IPv4 packet; the estavelle address and control URL are rewritten once, where
   the configuration becomes real. A *name* is left alone in both, because DNS64
   already synthesizes for names — only a literal arrives unsynthesized.
 
@@ -3999,7 +3999,7 @@ onwards, anchored on the week of 2026-08-10.
   this case, and citing RFC 6886 §3.2's double-NAT paragraph — checked RFC 1918
   and not RFC 6598. `miniupnpd` refuses rather than granting, which is why the
   row passes either way and why the fix is unit-tested rather than row-tested;
-  its refusal names the 100.64 address in the response body, so a gateway that
+  its refusal names the 100.64 address in the response body, so an aven that
   answered `SUCCESS` with the same body would have been believed.
 
   The same row opened **GitHub issue [#43](https://github.com/karst-net/karst/issues/43)**, deliberately held back from that commit
@@ -4007,7 +4007,7 @@ onwards, anchored on the week of 2026-08-10.
   all had always retried on the same five-second cadence, and that is most
   nodes. **Closed 2026-08-21.** The classification was right and stayed:
   RFC 6887 makes `NO_RESOURCES` transient, and a node that gave up would never
-  recover when a gateway's table drained. The schedule is now that same RFC's
+  recover when an aven's table drained. The schedule is now that same RFC's
   §8.1.1 — doubling to a 1024-second cap, ±10% jitter, resetting on any answer,
   and never giving up, which is what `MRC = 0` and `MRD = 0` say. A day of
   refusals costs about 90 requests instead of 17,280.
@@ -4037,7 +4037,7 @@ onwards, anchored on the week of 2026-08-10.
 
   *The original: a peer behind symmetric CGNAT reaches a peer behind a different
   symmetric CGNAT, with no mapping on either side* — **no.** Row 6 is
-  that case and it stays on the relay. The mechanism this plan named for it is
+  that case and it stays on the estavelle. The mechanism this plan named for it is
   port prediction, and GitHub issue [#29](https://github.com/karst-net/karst/issues/29) measures why that does not work: the
   symmetric NATs that matter scatter their external ports with no locality at
   all, so there is nothing to predict. Rows 4 and 5 establish that the failure
@@ -4049,7 +4049,7 @@ onwards, anchored on the week of 2026-08-10.
 
   > A peer behind symmetric CGNAT reaches a peer behind a different symmetric
   > CGNAT **when at least one of the two NATs offers an explicit port mapping**
-  > (PCP, NAT-PMP or UPnP-IGD); otherwise the pair falls back to the relay
+  > (PCP, NAT-PMP or UPnP-IGD); otherwise the pair falls back to the estavelle
   > without loss, and both nodes report the reason.
 
   That is achievable, verifiable against a third-party server, and honest about
@@ -4059,13 +4059,13 @@ onwards, anchored on the week of 2026-08-10.
   address as a top-tier candidate, renews on the granted lifetime, and reports
   both the live mapping and the failure reason in `karst status`. The aquifer
   matrix now splits the old doubly-symmetric row in two: with one mapping-
-  capable side it goes direct; with neither side mapped it stays on the relay.
+  capable side it goes direct; with neither side mapped it stays on the estavelle.
 
   **It does not close the whole space.** Port mapping helps only where a
-  gateway offers it; where neither side has one, the doubly-symmetric case is
-  still the relay row and that is the correct answer. And the current daemon
+  aven offers it; where neither side has one, the doubly-symmetric case is
+  still the estavelle row and that is the correct answer. And the current daemon
   path speaks the two UDP protocols `karst-portmap` already implements — PCP
-  and NAT-PMP. A gateway that offers only UPnP-IGD remains outside this build,
+  and NAT-PMP. A aven that offers only UPnP-IGD remains outside this build,
   which is the same crate boundary recorded when `karst-portmap` was added.
 
   **Row 8 is a separate and better-value target, and the literature agrees.**
@@ -4075,7 +4075,7 @@ onwards, anchored on the week of 2026-08-10.
   from the easy side reaches **64% success in under two seconds** at 100
   probes/sec. For hard/hard it collapses to **0.01% after twenty seconds**;
   99.9% would need 170,000 probes from each side, about 28 minutes. Tailscale
-  relays the hard/hard case, exactly as we do.
+  estavelles the hard/hard case, exactly as we do.
 
   So the honest split is that row 6 should be conceded and **row 8 is winnable
   and is the common pairing** — a CGNAT subscriber talking to somebody on a
@@ -4098,16 +4098,16 @@ onwards, anchored on the week of 2026-08-10.
   at the same place, because the birthday curve is superlinear in *N·M*.
 
   ❌ **Not adopted, 2026-08-19.** Specified, implemented, measured, and then
-  conceded to the relay — the same answer §12.4 reaches for
+  conceded to the estavelle — the same answer §12.4 reaches for
   symmetric-to-symmetric, on evidence rather than by assumption.
 
   The corrected arithmetic is what decided it. `N` is live *mappings*, not
   sockets opened, and a mapping lives about a NAT timeout. Only the hard side's
   search mappings are targets, so half its external ports are dead. And a node
   does not know which side it is — §7.6's two-reflector test would tell it and
-  most nodes have one relay — so it funds both roles from one budget, halving
+  most nodes have one estavelle — so it funds both roles from one budget, halving
   *N* and *M* together. At the allowance §7.5 grants that is **64% after eight
-  minutes**, for a pair already talking over the relay the whole time.
+  minutes**, for a pair already talking over the estavelle the whole time.
 
   What it costs is a **datapath change**: the collision lands on one of *N*
   sockets, so the peer's traffic must migrate to whichever socket won, against
@@ -4138,7 +4138,7 @@ entry carries no dates of its own; the record is
 - **Re-baselined 2026-08-27 from the use-case implementation review.** The
   Linux DNS resolver and host integration, offline `karst-bedrock` signer,
   Karst administrative API, console, portal, role-limited auditor view,
-  relay registry, policy lifecycle, and self-service one-time device keys now
+  estavelle registry, policy lifecycle, and self-service one-time device keys now
   exist in the tree. Treat the detailed Phase 5 notes' original "absent"
   inventories as historical, not current state.
 - **Bedrock's end-to-end workflow is complete and exercised across the real
@@ -4199,7 +4199,7 @@ entry carries no dates of its own; the record is
 - SCIM 2.0 provisioning and group sync, including measured deprovisioning.
 - **Do not claim managed subnet routers or exit nodes in Phase 5.** Generic
   prefix routing is not a managed exit-node feature: route distribution,
-  gateway lifecycle, client selection, forwarding controls, and ACL/node
+  aven lifecycle, client selection, forwarding controls, and ACL/node
   attributes remain Phase 6 work.
 - **Exit:** a non-expert admin can install the server, connect three nodes
   across **Linux plus one completed non-Linux client platform** and two NATs,
@@ -4300,7 +4300,7 @@ Phase 5's.
   to the NAT matrix.
 
   It arrives here with the base case already covered — thirteen `karstd` topologies
-  show the co-located relay path automatic and lossless — so what TURN buys is
+  show the co-located estavelle path automatic and lossless — so what TURN buys is
   interoperability with third-party infrastructure (ADR-0008), not connectivity.
   Scoped accordingly: it is a compatibility feature in this phase rather than a
   traversal one.
@@ -4322,7 +4322,7 @@ Phase 5's.
 ### Phase 7 — GA and mobile (12 weeks · Nov 2026–Jan 2027)
 
 - iOS and Android clients via UniFFI over the Rust core.
-- Performance tuning: io_uring, path MTU discovery, QUIC relay transport.
+- Performance tuning: io_uring, path MTU discovery, QUIC estavelle transport.
   **io_uring resolved 2026-09-12 (issue #120): evaluated and not adopted.**
   A plain io_uring receive path loses to the existing `recvmmsg` batching
   (3.6× the CPU for 4% less throughput), and the specific follow-up that
@@ -4446,7 +4446,7 @@ losing a week to it. Build it in Phase 2, before it's desperately needed.
 |---|---|---|---|
 | Handshake fragmentation opens a DoS vector | High | Medium | Per-fragment MACs, mandatory cookies under load, zero pre-validation state, bounded reassembly, amplification assertions, `kani` on the reassembler, external review (ADR-0004) |
 | Netmap now carries PSK secrets, raising the value of a server compromise | Medium | Medium | Encrypted at rest on nodes, never logged, master in HSM/KMS, rotation every 24h; stated plainly in the security whitepaper |
-| NAT traversal underperforms Tailscale | High | **High** | Full test matrix from Phase 4; 10-week budget; relay fallback always works; treat direct-connection rate as a tracked KPI |
+| NAT traversal underperforms Tailscale | High | **High** | Full test matrix from Phase 4; 10-week budget; estavelle fallback always works; treat direct-connection rate as a tracked KPI |
 | ML-KEM or ML-DSA cryptanalytic advance | Critical | Low | Hybrid construction means a break costs no confidentiality; agility layer allows swapping suites |
 | Greenfield scope exceeds estimate | High | **High** | Phase-5 usable milestone; mobile and SaaS explicitly deferred; ruthless non-goals |
 | Platform DNS integration breakage | Medium | High | Per-platform tests, conservative fallbacks, `karst doctor` diagnostics |
@@ -4465,7 +4465,7 @@ losing a week to it. Build it in Phase 2, before it's desperately needed.
    mixing for assumption diversity; McEliece retained as an optional profile.
 2. ~~**Licensing**~~ — **resolved 2026-08-08,
    [ADR-0007](docs/adr/0007-licensing.md).** `MIT OR Apache-2.0` for crates,
-   agent, CLI and relay; `AGPL-3.0-or-later` for the control server and web
+   agent, CLI and estavelle; `AGPL-3.0-or-later` for the control server and web
    apps; CC-BY-4.0 for the spec; DCO everywhere, no CLA. Commercial
    dual-licensing is deliberately foreclosed. See [LICENSING.md](LICENSING.md).
 3. ~~**Does the initiator's static key need encryption in msg1?**~~ —
@@ -4474,8 +4474,8 @@ losing a week to it. Build it in Phase 2, before it's desperately needed.
    premise was faulty: the hint travels inside the AEAD, so there is no privacy
    cost to accept — it matches WireGuard and beats it under responder-key
    compromise. Unsalted, session-independent, 32 bytes, no full-key fallback.
-4. ~~**Relay funding model for self-hosters**~~ — **resolved 2026-08-09,
-   [ADR-0008](docs/adr/0008-relay-infrastructure-and-funding.md).** Relay
+4. ~~**Estavelle funding model for self-hosters**~~ — **resolved 2026-08-09,
+   [ADR-0008](docs/adr/0008-estavelle-infrastructure-and-funding.md).** Estavelle
    co-located with the coordination server by default (zero marginal cost);
    standard TURN as a pluggable fallback for regional coverage; no default
    public fleet; community pool opt-in with mandatory strict-mode admission.

@@ -14,7 +14,7 @@ fi
 # Docker gives every bridge network's gateway the network's .1 address.
 lab_gw=$(ip -o -4 addr show dev "$lab_if" | awk '{ split($4, n, "/"); split(n[1], o, "."); print o[1]"."o[2]"."o[3]".1"; exit }')
 
-# Control and relay are published on the host's LAN address, which a macvlan
+# Control and estavelle are published on the host's LAN address, which a macvlan
 # child cannot reach; send just that address over the bridge. The default
 # route (compose's gw_priority) already goes out the LAN, towards the Mac.
 ip route replace "$KARST_LAB_HOST_IP/32" via "$lab_gw" dev "$lab_if"
@@ -57,8 +57,8 @@ for rule in "-p tcp --dport 8080" "-p udp --dport 7777" "-p tcp --dport 22"; do
     iptables -C INPUT $rule -j LAB-FIXTURES 2>/dev/null || iptables -A INPUT $rule -j LAB-FIXTURES
 done
 
-# The relay scenario's switch (labctl.py toggles it): drop all UDP on the LAN
-# attachment so no direct candidate works, while the relay stays reachable
+# The estavelle scenario's switch (labctl.py toggles it): drop all UDP on the LAN
+# attachment so no direct candidate works, while the estavelle stays reachable
 # over the bridge.
 iptables -N LAB-DIRECT 2>/dev/null || true
 iptables -C INPUT -i "$lan_if" -p udp -j LAB-DIRECT 2>/dev/null || iptables -A INPUT -i "$lan_if" -p udp -j LAB-DIRECT

@@ -46,7 +46,7 @@ impl std::error::Error for Error {}
 /// How long [`K8sDriver::drain`] waits for a pod to actually disappear
 /// before giving up — bounded so a stuck pod cannot hang `drive`'s whole
 /// reconciliation loop forever. `karst-relay`'s own flush window
-/// (`RESTART_FLUSH_MAX`, `bins/karst-relay/src/server.rs`) is 3s; this is
+/// (`RESTART_FLUSH_MAX`, `bins/karst-estavelle/src/server.rs`) is 3s; this is
 /// deliberately much larger to also cover normal pod-termination overhead
 /// (container runtime teardown, kubelet status propagation) that `3s`
 /// alone does not account for.
@@ -256,7 +256,7 @@ impl Driver for K8sDriver {
     fn drain(&mut self, pool_id: &str, id: &str) -> Result<(), DriverError> {
         self.rt.block_on(async {
             // A plain delete (default grace period) sends SIGTERM, which
-            // `bins/karst-relay/src/server.rs`'s own `shutdown_signal` →
+            // `bins/karst-estavelle/src/server.rs`'s own `shutdown_signal` →
             // `announce_restart` already handles correctly -- no new
             // in-relay RPC needed (confirmed during PR 1's own research).
             self.pods()

@@ -390,7 +390,7 @@ impl DNSConfig {
 
 /// A validated relay registry entry, pinned for the Ponor handshake.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Relay {
+pub struct Estavelle {
     pub address: String,
     /// DNS name for TLS SNI and certificate validation; Ponor identity remains
     /// pinned by `identity_key` and `relay_id`.
@@ -400,9 +400,9 @@ pub struct Relay {
     pub region: String,
 }
 
-impl fmt::Debug for Relay {
+impl fmt::Debug for Estavelle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Relay")
+        f.debug_struct("Estavelle")
             .field("address", &self.address)
             .field("tls_server_name", &self.tls_server_name)
             .field("region", &self.region)
@@ -410,10 +410,12 @@ impl fmt::Debug for Relay {
     }
 }
 
-impl Relay {
-    fn from_wire(relay: &pb::KarstRelay) -> Result<Self, Error> {
+impl Estavelle {
+    fn from_wire(relay: &pb::KarstEstavelle) -> Result<Self, Error> {
         if relay.address.parse::<std::net::SocketAddr>().is_err() {
-            return Err(Error::Relay("address is not a socket address".to_owned()));
+            return Err(Error::Estavelle(
+                "address is not a socket address".to_owned(),
+            ));
         }
         if relay.tls_server_name.is_empty()
             || !relay.tls_server_name.is_ascii()
@@ -422,7 +424,7 @@ impl Relay {
                 .bytes()
                 .any(|b| b.is_ascii_whitespace())
         {
-            return Err(Error::Relay(
+            return Err(Error::Estavelle(
                 "tls_server_name is not a usable ASCII DNS name".to_owned(),
             ));
         }
@@ -430,9 +432,9 @@ impl Relay {
             .relay_id
             .as_slice()
             .try_into()
-            .map_err(|_| Error::Relay("relay_id is not 32 bytes".to_owned()))?;
+            .map_err(|_| Error::Estavelle("relay_id is not 32 bytes".to_owned()))?;
         if relay.identity_key.len() != RELAY_IDENTITY_KEY_LEN {
-            return Err(Error::Relay(
+            return Err(Error::Estavelle(
                 "identity_key is not an ML-DSA-87 public key".to_owned(),
             ));
         }
@@ -441,11 +443,11 @@ impl Relay {
         // is decoded makes a malformed registry entry fail closed here rather
         // than later as an inexplicable handshake failure.
         let mut h = Sha256::new();
-        h.update(b"karst-relay-id-v1");
+        h.update(b"karst-estavelle-id-v1");
         h.update(&relay.identity_key);
         let derived: [u8; RELAY_ID_LEN] = h.finalize().into();
         if relay_id != derived {
-            return Err(Error::Relay(
+            return Err(Error::Estavelle(
                 "relay_id does not match identity_key".to_owned(),
             ));
         }
@@ -458,15 +460,15 @@ impl Relay {
         })
     }
 
-    fn to_wire(&self) -> pb::KarstRelay {
-        pb::KarstRelay {
+    fn to_wire(&self) -> pb::KarstEstavelle {
+        pb::KarstEstavelle {
             address: self.address.clone(),
             tls_server_name: self.tls_server_name.clone(),
             relay_id: self.relay_id.to_vec(),
             identity_key: self.identity_key.clone(),
             region: self.region.clone(),
             // A relay's declared NOC-map position (ADR-0046 §1) is
-            // operator/console data this node has no use for -- `Relay`
+            // operator/console data this node has no use for -- `Estavelle`
             // never stores it, so a round trip through this node's own
             // netmap cache drops it rather than carrying it as dead weight.
             location: None,
@@ -479,7 +481,7 @@ impl Relay {
 pub enum Error {
     /// The cached bytes are not a `KarstNetmapResponse`.
     Malformed(String),
-    GatewayIngressSchema(u32),
+    AvenIngressSchema(u32),
     /// A PSK field was present but not 32 bytes.
     PskLength {
         /// Which peer, as a lossy handle.
@@ -494,7 +496,7 @@ pub enum Error {
         /// What arrived.
         len: usize,
     },
-    Relay(String),
+    Estavelle(String),
     /// A route offer was malformed or contradicted this node's role.
     Route(String),
     /// The assembled state does not hash to the version the server reported.
@@ -512,7 +514,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::GatewayIngressSchema(v) => write!(f, "unsupported Gateway ingress schema {v}"),
+            Self::AvenIngressSchema(v) => write!(f, "unsupported Aven ingress schema {v}"),
             Self::Malformed(m) => write!(f, "malformed netmap: {m}"),
             Self::PskLength { peer, len } => {
                 write!(f, "peer {peer}: psk is {len} bytes, expected {PSK_LEN}")
@@ -523,7 +525,7 @@ impl fmt::Display for Error {
                     "peer {peer}: disco key is {len} bytes, expected {PSK_LEN}"
                 )
             }
-            Self::Relay(message) => write!(f, "invalid relay: {message}"),
+            Self::Estavelle(message) => write!(f, "invalid relay: {message}"),
             Self::Route(message) => write!(f, "invalid route offer: {message}"),
             Self::VersionMismatch { server, local } => write!(
                 f,
@@ -562,12 +564,12 @@ impl fmt::Debug for Psk {
     }
 }
 
-/// A per-pair AVEN key. It is separate from the PHREATIC PSK and must not
+/// A per-pair Resurgence key. It is separate from the PHREATIC PSK and must not
 /// render or remain in memory after its peer is dropped.
 pub struct DiscoKey([u8; PSK_LEN]);
 
 impl DiscoKey {
-    /// The bytes for the AVEN authenticator.
+    /// The bytes for the Resurgence authenticator.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8; PSK_LEN] {
         &self.0
@@ -612,9 +614,9 @@ pub struct Peer {
     /// PSK for the previous epoch, so a rotation is answerable in both
     /// directions (§7.3). Absent when the epoch is 0.
     pub psk_previous: Option<Psk>,
-    /// AVEN path-discovery key. Absent means keep the relay path.
+    /// Resurgence path-discovery key. Absent means keep the relay path.
     pub disco_key: Option<DiscoKey>,
-    /// This peer's own self-reported AVEN candidate list, redistributed by
+    /// This peer's own self-reported Resurgence candidate list, redistributed by
     /// the server from that peer's `KarstNetmapRequest.candidates` — see
     /// `karst_control.proto`'s doc comment on `KarstNetmapPeer.candidates`.
     /// As given on the wire, unparsed; `config::Peer::from_netmap` parses
@@ -793,7 +795,7 @@ pub struct Netmap {
     /// two are observably different states and must not collide (§3.2).
     pub ssh_filter_present: bool,
     /// Pinned relay choices, replaced wholesale with every netmap.
-    pub relays: Vec<Relay>,
+    pub relays: Vec<Estavelle>,
     /// Authenticated subnet and exit-route offers for this node.
     pub routes: Vec<crate::route_offer::Offer>,
     /// The tip of the Bedrock log the server reported — `bedrock-v1.md` §5.
@@ -971,7 +973,7 @@ impl Netmap {
                 && resp.gateway_ingress_schema != 1)
             || resp.ssh_filter.iter().any(|r| !r.dst_cidrs.is_empty())
         {
-            return Err(Error::GatewayIngressSchema(resp.gateway_ingress_schema));
+            return Err(Error::AvenIngressSchema(resp.gateway_ingress_schema));
         }
         if resp.unchanged {
             return Ok(Outcome::Unchanged);
@@ -999,7 +1001,7 @@ impl Netmap {
         self.relays = resp
             .relays
             .iter()
-            .map(Relay::from_wire)
+            .map(Estavelle::from_wire)
             .collect::<Result<_, _>>()?;
         self.routes =
             crate::route_offer::parse_all(resp.routes, &self.node_id).map_err(Error::Route)?;
@@ -1261,7 +1263,7 @@ impl Netmap {
             egress_filter: self.egress_filter.clone(),
             ssh_filter: self.ssh_filter.clone(),
             ssh_filter_present: self.ssh_filter_present,
-            relays: self.relays.iter().map(Relay::to_wire).collect(),
+            relays: self.relays.iter().map(Estavelle::to_wire).collect(),
             routes: self
                 .routes
                 .iter()
@@ -1311,7 +1313,7 @@ mod tests {
             invalid.gateway_ingress_schema = schema;
             assert!(matches!(
                 held.apply(invalid),
-                Err(Error::GatewayIngressSchema(_))
+                Err(Error::AvenIngressSchema(_))
             ));
             assert!(held.packet_filter.is_empty());
         }
@@ -1360,7 +1362,7 @@ mod tests {
         projected.relays = resp
             .relays
             .iter()
-            .map(Relay::from_wire)
+            .map(Estavelle::from_wire)
             .collect::<Result<_, _>>()
             .expect("test relay must be valid");
         projected.routes = crate::route_offer::parse_all(resp.routes.clone(), &projected.node_id)
@@ -1408,12 +1410,12 @@ mod tests {
         map
     }
 
-    fn wire_relay(identity_byte: u8) -> pb::KarstRelay {
+    fn wire_relay(identity_byte: u8) -> pb::KarstEstavelle {
         let identity_key = vec![identity_byte; RELAY_IDENTITY_KEY_LEN];
         let mut h = Sha256::new();
-        h.update(b"karst-relay-id-v1");
+        h.update(b"karst-estavelle-id-v1");
         h.update(&identity_key);
-        pb::KarstRelay {
+        pb::KarstEstavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
             relay_id: h.finalize().to_vec(),
@@ -1945,7 +1947,7 @@ mod tests {
 
     #[test]
     fn a_relay_with_an_unpinned_identity_is_refused() {
-        let relay = pb::KarstRelay {
+        let relay = pb::KarstEstavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
             relay_id: vec![0x11; RELAY_ID_LEN],
@@ -1953,19 +1955,25 @@ mod tests {
             region: "test".to_owned(),
             location: None,
         };
-        assert!(matches!(Relay::from_wire(&relay), Err(Error::Relay(_))));
+        assert!(matches!(
+            Estavelle::from_wire(&relay),
+            Err(Error::Estavelle(_))
+        ));
     }
 
     #[test]
     fn a_relay_without_a_tls_server_name_is_refused() {
         let mut relay = wire_relay(0x91);
         relay.tls_server_name.clear();
-        assert!(matches!(Relay::from_wire(&relay), Err(Error::Relay(_))));
+        assert!(matches!(
+            Estavelle::from_wire(&relay),
+            Err(Error::Estavelle(_))
+        ));
     }
 
     #[test]
     fn a_relay_id_must_be_derived_from_its_pinned_key() {
-        let relay = pb::KarstRelay {
+        let relay = pb::KarstEstavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
             relay_id: vec![0x11; RELAY_ID_LEN],
@@ -1974,7 +1982,7 @@ mod tests {
             location: None,
         };
         assert!(
-            matches!(Relay::from_wire(&relay), Err(Error::Relay(message)) if message.contains("does not match"))
+            matches!(Estavelle::from_wire(&relay), Err(Error::Estavelle(message)) if message.contains("does not match"))
         );
     }
 

@@ -49,7 +49,7 @@ Ranked by consequence of loss.
 | T1 | **Passive global collector** | Records all traffic indefinitely; decrypts later with a CRQC | **Yes — primary** |
 | T2 | **Active network attacker** | Spoofs, injects, drops, replays, MITMs; classical compute only | **Yes** |
 | T3 | **Malicious peer** | Holds valid credentials inside the network | **Yes** |
-| T4 | **Compromised relay operator** | Controls a Ponor relay or TURN provider | **Yes** |
+| T4 | **Compromised estavelle operator** | Controls a Ponor estavelle or TURN provider | **Yes** |
 | T5 | **Compromised coordination server** | Full control of the control plane | **Yes** |
 | T6 | **Malicious insider with admin rights** | Legitimate console access | **Partially** — auditable, not prevented |
 | T7 | **Supply-chain attacker** | Compromises a dependency or build | **Yes** |
@@ -69,8 +69,8 @@ but v1 does not claim resistance to an active adversary who already has a CRQC.
 ## Component ownership
 
 [ADR-0056](adr/0056-four-component-families.md) groups components into node
-agent, transport infrastructure, control services and trust tooling. Gateway
-is a node capability combining subnet and exit routes. Relay is one component
+agent, transport infrastructure, control services and trust tooling. Aven
+is a node capability combining subnet and exit routes. Estavelle is one component
 with Ponor and TURN modes; a managed coturn/external-provider adapter and
 unified operations are pending #404. This grouping changes no crypto claim.
 
@@ -83,23 +83,23 @@ flowchart TD
     Control -->|B2: netmap, PSKs, filters, credentials| Node[karstd]
     Host["host OS: TUN, DNS, keys"] -->|B6| Node
     Node -->|B1: PHREATIC datapath| Peer[peer]
-    Node -->|B3: ciphertext transit| Relay["Relay: Ponor and TURN backend"]
-    Node -->|B8: Gateway inner-packet forwarding| External["LAN, VPC or Internet"]
+    Node -->|B3: ciphertext transit| Estavelle["Estavelle: Ponor and TURN backend"]
+    Node -->|B8: Aven inner-packet forwarding| External["LAN, VPC or Internet"]
     Supply["B7: supply chain"] -. crosses every component .-> Control
     Supply -.-> Node
-    Supply -.-> Relay
+    Supply -.-> Estavelle
 ```
 
 | ID | Boundary | Trust assumption |
 |---|---|---|
 | B1 | node ↔ node | Peer is authenticated but **not trusted** — ACLs enforced at both ends |
 | B2 | node ↔ control server | Server is authorized to distribute policy, **not** to read traffic |
-| B3 | node ↔ relay/TURN | Fully untrusted; carries ciphertext only |
+| B3 | node ↔ estavelle/TURN | Fully untrusted; carries ciphertext only |
 | B4 | admin ↔ console | Authenticated, role-limited, fully audited |
 | B5 | control server ↔ IdP | IdP is authoritative for user identity only |
 | B6 | node ↔ host OS | Trusted (T8 is out of scope) |
 | B7 | build/supply chain | Verified, not trusted |
-| B8 | Gateway ↔ non-overlay destination | Overlay encryption ends at Gateway; destination metadata and unencrypted payload are exposed; application encryption can remain |
+| B8 | Aven ↔ non-overlay destination | Overlay encryption ends at Aven; destination metadata and unencrypted payload are exposed; application encryption can remain |
 
 ---
 
@@ -110,8 +110,8 @@ everything else holds.
 
 | Compromise | Yields | Does **not** yield |
 |---|---|---|
-| Relay Ponor process or TURN backend | Transport endpoint/peer metadata, timing, volume | Overlay plaintext |
-| Gateway for an approved route | Inner packet destinations and unencrypted payload for forwarded traffic | Decryption of application encryption merely from forwarding; unrelated peer-session plaintext |
+| Estavelle Ponor process or TURN backend | Transport endpoint/peer metadata, timing, volume | Overlay plaintext |
+| Aven for an approved route | Inner packet destinations and unencrypted payload for forwarded traffic | Decryption of application encryption merely from forwarding; unrelated peer-session plaintext |
 | Coordination server | Policy control, netmap contents incl. PSKs, ability to misroute or deny | **Cannot decrypt traffic** (no KEM secrets); **cannot inject a node** if Bedrock is enabled (ADR-0005, §4.5) |
 | Coordination server **+** full lattice break | **Everything** | — |
 | PSK master alone | Removes the diversity hedge | Nothing decryptable while ML-KEM holds |
@@ -158,16 +158,16 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | Control-plane telemetry reveals direct endpoints and peer topology (A9) | Nodes report authenticated, bounded last-known path observations only; data is account-scoped, never includes credentials, and is restricted to authorized admin/auditor views, including the NOC map (ADR-0046) | Phase 5 control API | Route × role secret/authorization scan |
 | An autoscaling decision provisions a new control replica, reaching T5's yield (full control-plane compromise) without first compromising any existing server | **Not yet mitigated; mitigation proposed.** Every control replica is symmetric and full-trust — ADR-0045 §7b: replicas "carry the signing keys and roster" — and there is no partial-trust replica tier today. Replica count and placement remain a fixed, operator-chosen, manually-provisioned decision (`docs/operations/ha.md`); no driver exists that can create or destroy one. ADR-0054 proposes a Bedrock-quorum-gated admission check before `karst_server_keys` is released to any new replica | ADR-0045 §7b (named the gap); ADR-0054 (Proposed mitigation, not implemented) | N/A today — enforced only by the absence of any such driver, not by a control. See §7 item 10 and R11 |
 
-### B3 — Relay and TURN
+### B3 — Estavelle and TURN
 
 | Threat | Mitigation | Decided | Validated by |
 |---|---|---|---|
-| Relay reads traffic (T4) | Carries PHREATIC ciphertext only; hybrid-PQ transport as second layer | §5, ADR-0008 | Design review |
-| Relay abuse / open-relay conduit | Signed-roster admission; **mandatory** strict mode for pool relays; per-key rate limits and byte accounting | ADR-0008 | Relay tests |
+| Estavelle reads traffic (T4) | Carries PHREATIC ciphertext only; hybrid-PQ transport as second layer | §5, ADR-0008 | Design review |
+| Estavelle abuse / open-relay conduit | Signed-roster admission; **mandatory** strict mode for pool estavelles; per-key rate limits and byte accounting | ADR-0008 | Estavelle tests |
 | Free-riding on foreign infrastructure | No DERP compatibility mode; registry rejects `derp://` | ADR-0008 | Registry validation test |
 | TURN credential theft | Ephemeral HMAC credentials, time-limited, netmap-delivered; never static | ADR-0008 | Credential-expiry tests |
-| Relay operator learns metadata (A9) | **Not mitigated** — disclosed at point of configuration | ADR-0008 | §7 |
-| Relay reaches a new network target (cloud instance metadata, for NOC-map location) beyond the mesh/control-plane reachability ADR-0039 assumes | Opt-in (`detect_location`, default off); bounded ~1s probe to the link-local `169.254.169.254` only; any failure/timeout/unrecognized region yields no location, never a guess | ADR-0048 | Config default test; prober timeout test |
+| Estavelle operator learns metadata (A9) | **Not mitigated** — disclosed at point of configuration | ADR-0008 | §7 |
+| Estavelle reaches a new network target (cloud instance metadata, for NOC-map location) beyond the mesh/control-plane reachability ADR-0039 assumes | Opt-in (`detect_location`, default off); bounded ~1s probe to the link-local `169.254.169.254` only; any failure/timeout/unrecognized region yields no location, never a guess | ADR-0048 | Config default test; prober timeout test |
 
 ### B4/B5 — Console, admin, identity
 
@@ -196,14 +196,14 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | **NetBird fork inherits upstream vulnerabilities** | Fork enters the dependency review cycle as a **first-class component, not a library** | ADR-0009 | Quarterly review; rebase discipline |
 | Build tampering | Reproducible builds, signed artifacts, SBOM per release, transparency-logged releases | §11 | Release pipeline |
 
-### B8 — Gateway forwarding beyond the overlay
+### B8 — Aven forwarding beyond the overlay
 
 Control distributes approved specific/default-prefix offers; agents enforce
-packet policy and local default-route consent. Gateway forwarding requires
+packet policy and local default-route consent. Aven forwarding requires
 supported host privileges, bounded forwarding grants, NAT or explicit return
 routes, and tunnel-underlay escape routes. Reuse of a consented route ID must
 not expand reachability silently. DNS paths need separate review. Co-locating
-Relay and Gateway does not give Relay tunnel keys or forwarding permissions.
+Estavelle and Aven does not give Estavelle tunnel keys or forwarding permissions.
 Bedrock membership approval does not authorize arbitrary packet destinations.
 
 ---
@@ -212,7 +212,7 @@ Bedrock membership approval does not authorize arbitrary packet destinations.
 
 Stated plainly, because a reviewer will find them anyway.
 
-1. **Metadata is not protected.** Relay operators, TURN providers, and on-path
+1. **Metadata is not protected.** Estavelle operators, TURN providers, and on-path
    observers learn who communicates with whom, when, and how much. Only
    fixed-size padding buckets are applied. Traffic analysis is a stated
    non-goal for v1.
@@ -249,7 +249,7 @@ Stated plainly, because a reviewer will find them anyway.
 10. **Control-replica count and placement are not autoscaled, and that is
     deliberate, not an oversight.** A control replica carries the signing
     keys and the full roster/netmap (ADR-0045 §7b) — scaling it the way
-    ADR-0045 scales relays would hand an autoscaling *decision*
+    ADR-0045 scales estavelles would hand an autoscaling *decision*
     the same reach as T5 (compromised coordination server), without an
     attacker needing to compromise anything that already exists, because a
     freshly created replica starts fully trusted on day one. The closest
@@ -273,10 +273,10 @@ Stated plainly, because a reviewer will find them anyway.
 |---|---|---|---|
 | R1 | Fragmentation opens an unforeseen DoS vector on the pre-auth path | High | Mitigated; **external review required before GA** |
 | R2 | Server compromise + lattice break = total | High | Accepted; documented in §7 and the whitepaper |
-| R3 | NAT traversal underperforms, pushing more traffic through metadata-visible relays | Medium | Tracked as a KPI; ≥90% direct target |
+| R3 | NAT traversal underperforms, pushing more traffic through metadata-visible estavelles | Medium | Tracked as a KPI; ≥90% direct target |
 | R4 | NetBird fork inherits an upstream vulnerability | Medium | Quarterly review; first-class dependency |
 | R5 | Netmap secrets leak via logs or diagnostics | Medium | CI log scan, **continuous not one-time** |
-| R6 | Metadata exposure via community relays | Medium | Opt-in with disclosure at configuration |
+| R6 | Metadata exposure via community estavelles | Medium | Opt-in with disclosure at configuration |
 | R7 | Lattice cryptanalysis advances | Low / catastrophic | Hybrid + PSK + SLH-DSA root; agility layer for rapid swap |
 | R8 | Agility layer itself becomes attack surface | Low | Closed allowlist; downgrade case in ProVerif |
 | R9 | Usage history exposes past account/device enrollment after live records are deleted | Medium | ADR-0050 collection defaults off. Usage reports require account owner/admin access, derive scope from authenticated context, audit every read, and prohibit caching. Retention and deletion policy remain activation prerequisites. |
@@ -329,7 +329,7 @@ as derived from the internally reviewed threat model and must not imply
 external review.
 
 
-### Form-managed group and relay access (ADR-0058 / #439)
+### Form-managed group and estavelle access (ADR-0058 / #439)
 
 New grants use current account-scoped device-group membership, not display-name
 matches or copied user lists. The compiler denies inactive owners and missing
@@ -337,10 +337,10 @@ memberships; membership source failure prevents compilation. Group mutations
 refresh account filters when registry grants exist. Writes keep immutable policy
 versions and resource revisions to reject concurrent overwrite.
 
-Relay discovery filtering is supplemental: an identity-bound roster writer
+Estavelle discovery filtering is supplemental: an identity-bound roster writer
 filters actual admission. Applying restrictions requires its live capability
 lease. Roster replacement rechecks active sessions; writer failure empties
-admission via the existing 90-second relay lease plus polling. Capability
+admission via the existing 90-second estavelle lease plus polling. Capability
 freshness proves a successful roster write, not runtime forwarding health.
 Removal retains a denied backend-access record, preventing deletion from
 reopening legacy account-wide access. Shared associations must be consolidated
@@ -350,8 +350,8 @@ are denied; explicitly registered legacy tenants retain existing behavior.
 Resource association, backend permission, native exit offers and generated access
 grant share a database transaction. Managed grants cannot be edited through the
 generic policy API independently of their resource. The form review discloses
-the Gateway all-port ingress grant required by the current node-and-port filter
-contract. This is broader than internet-only access; destination-scoped Gateway
+the Aven all-port ingress grant required by the current node-and-port filter
+contract. This is broader than internet-only access; destination-scoped Aven
 ingress remains a limitation. Existing SSH gates remain independent, and explicit
 empty gates survive automatic serialization. Exit consent remains client-local.
 
@@ -363,7 +363,7 @@ Provider workload provisioning and
 authenticated remote roster delivery are not claimed by the registered-backend
 configuration workflow.
 
-### Local Relay installation handoff (ADR-0062)
+### Local Estavelle installation handoff (ADR-0062)
 
 The console-generated local Compose installer carries public settings only and
 has no administrator API credential. The trusted host operator runs it with

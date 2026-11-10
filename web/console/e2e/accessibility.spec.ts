@@ -4,7 +4,7 @@
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-const routes = ["enroll", "domains", "machines", "access", "groups/compliance", "users", "identity-providers", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "connections", "billing", "settings"];
+const routes = ["enroll", "domains", "machines", "access", "groups/compliance", "users", "identity-providers", "groups", "bedrock", "posture", "dns", "routes", "audit", "estavelles", "connections", "billing", "settings"];
 
 for (const route of routes) {
   test(`${route} has no accessibility violations`, async ({ page }) => {
@@ -383,15 +383,15 @@ test("groups can be created and renamed, and provider groups cannot", async ({ p
 });
 
 test("a relay with a DNS name for an address is refused before it is sent", async ({ page }) => {
-  await page.goto("/#/relays");
-  await expect(page.getByRole("button", { name: "Add relay", exact: true })).toBeVisible();
+  await page.goto("/#/estavelles");
+  await expect(page.getByRole("button", { name: "Add estavelle", exact: true })).toBeVisible();
   const rowsBefore = await page.locator("tbody tr").count();
-  await page.getByRole("button", { name: "Add relay" }).click();
+  await page.getByRole("button", { name: "Add estavelle" }).click();
   await page.getByRole("button", { name: "Yes — register it" }).click();
-  await page.getByLabel("Relay address").fill("relay.example.com:443");
+  await page.getByLabel("Estavelle address").fill("relay.example.com:443");
   await page.getByLabel("TLS server name").fill("relay.example.com");
-  await page.getByLabel("Relay identity key").fill("fixture-public-key");
-  await page.getByRole("button", { name: "Add relay" }).nth(1).click();
+  await page.getByLabel("Estavelle identity key").fill("fixture-public-key");
+  await page.getByRole("button", { name: "Add estavelle" }).nth(1).click();
   // karstd parses this with SocketAddr, which does not resolve. A name here is
   // not one bad relay — it is a netmap every node rejects in full.
   await expect(page.getByRole("alert")).toContainText("must be an IP address and port");
@@ -399,23 +399,23 @@ test("a relay with a DNS name for an address is refused before it is sent", asyn
 });
 
 test("a relay can be added and removed", async ({ page }) => {
-  await page.goto("/#/relays");
-  await page.getByRole("button", { name: "Add relay" }).click();
+  await page.goto("/#/estavelles");
+  await page.getByRole("button", { name: "Add estavelle" }).click();
   await page.getByRole("button", { name: "Yes — register it" }).click();
-  await page.getByLabel("Relay address").fill("203.0.113.9:443");
+  await page.getByLabel("Estavelle address").fill("203.0.113.9:443");
   await page.getByLabel("TLS server name").fill("relay-new.example.test");
-  await page.getByLabel("Relay identity key").fill("fixture-public-key-new");
-  await page.getByLabel("Relay region").fill("ap-south");
-  await page.getByRole("button", { name: "Add relay" }).nth(1).click();
+  await page.getByLabel("Estavelle identity key").fill("fixture-public-key-new");
+  await page.getByLabel("Estavelle region").fill("ap-south");
+  await page.getByRole("button", { name: "Add estavelle" }).nth(1).click();
   await expect(page.getByRole("status").filter({ hasText: "Endpoint registered" })).toBeVisible();
-  await expect(page.getByLabel("Registered relay", { exact: true }).locator("option:checked")).toContainText("203.0.113.9:443");
+  await expect(page.getByLabel("Registered estavelle", { exact: true }).locator("option:checked")).toContainText("203.0.113.9:443");
   await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
   const row = page.locator("tbody tr").filter({ hasText: "203.0.113.9:443" });
   await expect(row).toBeVisible();
   page.on("dialog", (dialog) => dialog.accept());
   await row.getByRole("button", { name: "Endpoint details" }).click();
   await page.getByRole("button", { name: "Remove endpoint" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Relay endpoint removed" })).toContainText("Relay endpoint removed");
+  await expect(page.getByRole("status").filter({ hasText: "Estavelle endpoint removed" })).toContainText("Estavelle endpoint removed");
   await expect(page.locator("tbody tr").filter({ hasText: "203.0.113.9:443" })).toHaveCount(0);
 });
 
@@ -588,7 +588,7 @@ test.afterEach(async ({ page }) => { await setUncovered(page, uncovered); await 
 
 test("empty-account list views explain what happens next", async ({ page }) => {
   await setFixture(page, true);
-  for (const [route, title] of [["machines", "No devices yet"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["relays", "No relays configured"], ["identity-providers", "No identity providers configured"]]) {
+  for (const [route, title] of [["machines", "No devices yet"], ["users", "No users"], ["audit", "No audit events"], ["groups", "No groups"], ["estavelles", "No estavelles configured"], ["identity-providers", "No identity providers configured"]]) {
     await page.goto(`/#/${route}`);
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
   }

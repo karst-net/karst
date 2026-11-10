@@ -3,7 +3,7 @@
 # Getting started on Linux
 
 How to build every Karst component from this tree and stand it up on Linux
-hosts: the node agent, the relay, the coordination server, the web console and
+hosts: the node agent, the estavelle, the coordination server, the web console and
 portal, and the offline Bedrock signer.
 
 > **Status: beta.** This guide supports feature and platform testing, not a
@@ -12,7 +12,7 @@ portal, and the offline Bedrock signer.
 > [README.md](../README.md) and [GitHub issues](https://github.com/karst-net/karst/issues?q=is%3Aissue) first.
 
 **Where this walkthrough stops.** Paths A, B and C below get you a running
-relay, a running coordination server, and a node that enrolls and carries
+estavelle, a running coordination server, and a node that enrolls and carries
 traffic. They do **not** get you a self-service front door: the console and the
 setup-key API are behind an identity provider you have to wire into the
 coordination server yourself (§7, §8.2). Enrolling the fleet does not wait on
@@ -31,48 +31,49 @@ processes used by the current walkthrough:
 
 | Family | Programs/capabilities | Runs on | Current listeners |
 |---|---|---|---|
-| Node agent | `karstd`, `karst`, platform UI; optional Gateway for subnet/exit routes | Endpoint; supported forwarding host for Gateway | UDP 51820; local CLI socket |
-| Transport infrastructure | Relay: `karst-relay` (Ponor/AVEN reflector), optional coturn or external TURN backend | Public relay host and chosen backend | Ponor TCP 443; configured reflector UDP 3478; TURN backend ports separately configured |
+| Node agent | `karstd`, `karst`, platform UI; optional Aven for subnet/exit routes | Endpoint; supported forwarding host for Aven | UDP 51820; local CLI socket |
+| Transport infrastructure | Estavelle: `karst-estavelle` (Ponor/Resurgence reflector), optional coturn or external TURN backend | Public estavelle host and chosen backend | Ponor TCP 443; configured reflector UDP 3478; TURN backend ports separately configured |
 | Control services | `karst-control`, console and portal static files | Coordination host and web server | Control TCP 33073; web origin as configured |
 | Trust tooling | `karst-bedrock`, verifiers in consumers, optional scoped anchor signer | Authority devices; verifier/anchor hosts | Offline signer has no listener |
 
-Gateway and combined Relay configuration/API/UI consolidation is pending #404.
-TURN will be managed through an adapter, not embedded into `karst-relay`.
-Existing files, ports, flags and profiles below remain valid; enabling Gateway
+Aven and combined Estavelle configuration/API/UI consolidation is pending #404.
+TURN will be managed through an adapter, not embedded into `karst-estavelle`.
+Existing files, ports, flags and profiles below remain valid; enabling Aven
 does not imply recipient consent to a default route. See
 [component architecture](COMPONENT-ARCHITECTURE.md) for migration and platform
-limits, and [Gateway operations](subnet-routers-and-exit-nodes.md) for forwarding.
+limits, and [Aven operations](subnet-routers-and-exit-nodes.md) for forwarding.
 
-The default deployment co-locates the relay and the coordination server on one
-host — PLAN.md §5 — because a self-hoster who relays their own traffic is not
-spending anyone else's.
+The default deployment co-locates the estavelle and the coordination server on
+one host — PLAN.md §5 — because a self-hoster who estavelles their own traffic is
+not spending anyone else's.
 
 ```mermaid walkthrough=none reason="diagram"
 flowchart TB
     subgraph Host[public host]
         Control["karst-control :33073"]
-        Relay["karst-relay :443"]
-        Control -->|writes roster.toml| Relay
+        Estavelle["karst-estavelle :443"]
+        Control -->|writes roster.toml| Estavelle
     end
     NodeA[karstd] -->|enroll, netmap| Control
     NodeB[karstd] -->|enroll, netmap| Control
-    NodeA -->|relayed frames, then a direct path| Relay
-    NodeB -->|relayed frames, then a direct path| Relay
+    NodeA -->|relayed frames, then a direct path| Estavelle
+    NodeB -->|relayed frames, then a direct path| Estavelle
     NodeA <-->|PHREATIC UDP 51820| NodeB
 ```
 
-Two files tie the relay and the server together, and having only one of them
-fails silently in both directions. They are the single most common way a
+Two files tie the estavelle and the server together, and having only one of
+them fails silently in both directions. They are the single most common way a
 deployment of Karst is broken, so they are worth learning before anything else:
 
 | File | Written by | Read by | Says |
 |---|---|---|---|
-| `roster.toml` | `karst-control`, every 25 s | `karst-relay` | which nodes this relay admits |
-| `relays.json` | you, once | `karst-control` | which relays nodes are told about |
+| `roster.toml` | `karst-control`, every 25 s | `karst-estavelle` | which nodes this estavelle admits |
+| `estavelles.json` | you, once | `karst-control` | which estavelles nodes are told about |
 
-With only the roster, the relay admits nobody who ever arrives — no node was
-told the relay exists. With only the registry, every node dials a relay that
-refuses them. Neither failure logs anything resembling its cause.
+With only the roster, the estavelle admits nobody who ever arrives — no node
+was told the estavelle exists. With only the registry, every node dials an
+estavelle that refuses them. Neither failure logs anything resembling its
+cause.
 
 ---
 
@@ -80,7 +81,7 @@ refuses them. Neither failure logs anything resembling its cause.
 
 Per host, only what that host actually runs.
 
-**To build anything Rust** (`karstd`, `karst`, `karst-relay`, `karst-bedrock`):
+**To build anything Rust** (`karstd`, `karst`, `karst-estavelle`, `karst-bedrock`):
 
 ```sh walkthrough=none reason="prerequisites; the workflow installs its own toolchain"
 # Debian/Ubuntu
@@ -229,11 +230,11 @@ enrollment support and declares `zenity` and `pkexec` dependencies, including
 on headless hosts. If a previous `dpkg -i` attempt left it unconfigured, run
 `sudo apt-get --fix-broken install` before continuing.
 
-The packages supply `/usr/bin/karstd`, `/usr/bin/karst`, `/usr/bin/karst-relay`,
+The packages supply `/usr/bin/karstd`, `/usr/bin/karst`, `/usr/bin/karst-estavelle`,
 `/usr/bin/karst-control`, and their systemd units. Continue with §6's
 configuration steps, skipping its commands that install binaries from
 `target/release/` or `server/` and copy units from `deploy/systemd/`.
-Use the packaged units with `sudo systemctl enable --now karst-relay`,
+Use the packaged units with `sudo systemctl enable --now karst-estavelle`,
 then `karst-control`, then `karstd`, after configuring each service.
 Keep the node key-generation and directory-creation commands in §6.3.
 For §7, serve `karst-web/console` at `/` and `karst-web/portal` at `/portal/`;
@@ -246,12 +247,12 @@ in §2.
 
 From the repository root:
 
-Node agent, CLI, relay, offline signer:
+Node agent, CLI, estavelle, offline signer:
 
 ```sh walkthrough=A,B,C step=build-rust
 cargo build --release \
     --package karstd --package karst-cli \
-    --package karst-relay --package karst-bedrock
+    --package karst-estavelle --package karst-bedrock
 ```
 
 Coordination server:
@@ -267,7 +268,7 @@ cd web && corepack pnpm install --frozen-lockfile && corepack pnpm -r build && c
 ```
 
 The Rust binaries land in `target/release/` as `karstd`, `karst`,
-`karst-relay` and `karst-bedrock`. The web builds land in `web/console/dist`
+`karst-estavelle` and `karst-bedrock`. The web builds land in `web/console/dist`
 and `web/portal/dist`.
 
 Before trusting any of it, run the gate the CI runs:
@@ -306,7 +307,7 @@ naming a binary you never installed.
 
 ## 4. Path A: two nodes and nothing else
 
-The shortest thing that proves the tunnel. No relay, no coordination server —
+The shortest thing that proves the tunnel. No estavelle, no coordination server —
 peers are listed by hand in a roster, which is what `karstd` does when its
 config has no `[control]` table. Both nodes need a UDP path to each other (same
 LAN, or one with a routable address).
@@ -381,14 +382,14 @@ ping 10.77.0.2
 ```
 
 `karst status` reports each peer's session state, endpoint, and whether the
-path is `direct` or `relay`. A pair with no relay configured has only one
+path is `direct` or `estavelle`. A pair with no estavelle configured has only one
 honest answer.
 
 To run it as a service, see [Path C, §6.3](#63-the-node-agent).
 
 ---
 
-## 5. Path B: a coordination server and a relay, with containers
+## 5. Path B: a coordination server and an estavelle, with containers
 
 One host, one `docker compose up`, a working control plane. This is the
 deployment PLAN.md §5 makes the default.
@@ -397,21 +398,21 @@ Build the images and bootstrap the state:
 
 ```sh walkthrough=B step=up
 docker build -f deploy/images/karst-control.Dockerfile -t ghcr.io/karst-net/karst-control:dev .
-docker build -f deploy/images/karst-relay.Dockerfile   -t ghcr.io/karst-net/karst-relay:dev .
+docker build -f deploy/images/karst-estavelle.Dockerfile -t ghcr.io/karst-net/karst-estavelle:dev .
 
 cd deploy/compose
-KARST_RELAY_IP=203.0.113.7 ./bootstrap.sh     # once
+KARST_ESTAVELLE_IP=203.0.113.7 ./bootstrap.sh     # once
 docker compose up -d
 ```
 
-`KARST_RELAY_IP` is the address **nodes will dial** — the host's public IP, or
+`KARST_ESTAVELLE_IP` is the address **nodes will dial** — the host's public IP, or
 `127.0.0.1` to try it on one machine. It must be an IP address and not a DNS
 name: `karstd` parses it with Rust's `SocketAddr`, which does not resolve, and
 a name there produces a netmap **every node rejects in full**. The name belongs
-in `KARST_RELAY_SERVER_NAME`, which is what the certificate is issued for.
+in `KARST_ESTAVELLE_SERVER_NAME`, which is what the certificate is issued for.
 
 `bootstrap.sh` is idempotent — every step skips if its output exists — and
-writes the relay identity, a self-signed certificate, `relays.json`,
+writes the estavelle identity, a self-signed certificate, `estavelles.json`,
 `roster.toml`, an allow-all `policy.json`, and `management.json`. Full
 configuration table: [`deploy/compose/README.md`](../deploy/compose/README.md).
 
@@ -437,7 +438,7 @@ cat state/bootstrap.key
 | `[control] server_kem_pin` | the `server KEM pin` log line |
 | `[control] server_verify_pin` | the `server sign pin` log line |
 | `[control] setup_key` | `deploy/compose/state/bootstrap.key` |
-| `[control] relay_ca_file` | `deploy/compose/state/tls/relay.crt` |
+| `[control] estavelle_ca_file` | `deploy/compose/state/tls/estavelle.crt` |
 
 > ### ⚠ The pins are logged base64 and configured in hex
 >
@@ -460,8 +461,8 @@ cat state/bootstrap.key
 > well-formed. The pins themselves are stable across restarts, so any one line
 > will do; the last is the one that matches a server running now.
 >
-> The relay registry is *not* affected — `relays.json` takes `identity_key` as
-> base64, exactly as `karst-relay pubkey` prints it.
+> The estavelle registry is *not* affected — `estavelles.json` takes `identity_key` as
+> base64, exactly as `karst-estavelle pubkey` prints it.
 
 Both pins are mandatory fields, and `karstd` refuses to load a `[control]`
 table missing either. That is deliberate: a node that pinned only the KEM key
@@ -476,76 +477,78 @@ behavior is familiar before it happens in production:
 # The roster's mtime advances every 25s while its contents stay byte-identical.
 watch -n5 'stat -c "%y %s" state/roster.toml'
 
-# Stop the producer: the relay fails closed at 90s, then recovers.
+# Stop the producer: the estavelle fails closed at 90s, then recovers.
 docker compose stop control
-docker compose logs -f relay        # "roster lease expired" after ~90s
+docker compose logs -f estavelle    # "roster lease expired" after ~90s
 docker compose start control        # "roster reloaded"
 ```
 
-The relay treats a roster nobody is maintaining as untrustworthy. Its lease is
-90 seconds and something must rewrite the file forever; `karst-control` does,
-unconditionally, three times per lease.
+The estavelle treats a roster nobody is maintaining as untrustworthy. Its
+lease is 90 seconds and something must rewrite the file forever;
+`karst-control` does, unconditionally, three times per lease.
 
 ---
 
 ## 6. Path C: bare metal, with systemd
 
-The same three services without containers. Do them in this order — the relay's
-identity is an input to the server's configuration.
+The same three services without containers. Do them in this order — the
+estavelle's identity is an input to the server's configuration.
 
-### 6.1 The relay
+### 6.1 The estavelle
 
-```sh walkthrough=C step=relay-install
-sudo install -m 0755 target/release/karst-relay /usr/local/bin/
+```sh walkthrough=C step=estavelle-install
+sudo install -m 0755 target/release/karst-estavelle /usr/local/bin/
 sudo mkdir -p /etc/karst/tls
 ```
 
 A TLS certificate. Self-signed is not a compromise here:
 [`spec/ponor-v1.md`](../spec/ponor-v1.md) §4.2 declines to trust certificates
-for relay identity at all — a node authenticates a relay by the ML-DSA-87 key
-pinned in its netmap — so the certificate only has to get a TLS session
-established. Use a CA-issued one if you prefer; it changes nothing about who the
-relay is proved to be, only which certificates the hop will accept.
+for estavelle identity at all — a node authenticates an estavelle by the
+ML-DSA-87 key pinned in its netmap — so the certificate only has to get a TLS
+session established. Use a CA-issued one if you prefer; it changes nothing
+about who the estavelle is proved to be, only which certificates the hop will
+accept.
 
-```sh walkthrough=C step=relay-cert
+```sh walkthrough=C step=estavelle-cert
 sudo openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes \
-    -keyout /etc/karst/tls/relay.key -out /etc/karst/tls/relay.crt \
-    -subj "/CN=relay.example.com" \
-    -addext "subjectAltName=DNS:relay.example.com,IP:203.0.113.7" \
+    -keyout /etc/karst/tls/estavelle.key -out /etc/karst/tls/estavelle.crt \
+    -subj "/CN=estavelle.example.com" \
+    -addext "subjectAltName=DNS:estavelle.example.com,IP:203.0.113.7" \
     -addext "basicConstraints=critical,CA:FALSE" \
     -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
     -addext "extendedKeyUsage=serverAuth"
-sudo chmod 600 /etc/karst/tls/relay.key
+sudo chmod 600 /etc/karst/tls/estavelle.key
 ```
 
 The certificate must be a server leaf (`CA:FALSE`). Some OpenSSL defaults
 otherwise generate a CA certificate, which the node's TLS verifier rejects
-with `CaUsedAsEndEntity`, even when `relay_ca_file` names that certificate.
-For this self-signed example, copy `relay.crt` to each node and set
-`[control] relay_ca_file` to its local path as shown in §6.3.
+with `CaUsedAsEndEntity`, even when `estavelle_ca_file` names that certificate.
+For this self-signed example, copy `estavelle.crt` to each node and set
+`[control] estavelle_ca_file` to its local path as shown in §6.3.
 
 Confirm the leaf extensions before moving on:
 
-```sh walkthrough=C step=relay-cert-verify
-openssl x509 -in /etc/karst/tls/relay.crt -noout -text \
+```sh walkthrough=C step=estavelle-cert-verify
+openssl x509 -in /etc/karst/tls/estavelle.crt -noout -text \
     | grep -A1 "X509v3 Basic Constraints"
 # X509v3 Basic Constraints: critical
 #     CA:FALSE
 ```
 
-`/etc/karst/relay.toml`:
+`/etc/karst/estavelle.toml`:
 
-```toml walkthrough=C step=relay-config file=/etc/karst/relay.toml
+```toml walkthrough=C step=estavelle-config file=/etc/karst/estavelle.toml
 listen = "0.0.0.0:443"
-identity_key = "/etc/karst/relay.key"     # ML-DSA-87 seed, created on first run
+identity_key = "/etc/karst/estavelle.key"     # ML-DSA-87 seed, created on first run
 roster = "/etc/karst/roster.toml"         # required; no default is right
-tls_cert = "/etc/karst/tls/relay.crt"
-tls_key = "/etc/karst/tls/relay.key"
+tls_cert = "/etc/karst/tls/estavelle.crt"
+tls_key = "/etc/karst/tls/estavelle.key"
 region = "default"
 
-# The AVEN reflector — off unless configured, because a reflector is a UDP
-# service that answers datagrams. Its own socket, never the Ponor listener's:
-# AVEN needs a UDP mapping and Ponor's is TCP, which a NAT maps separately.
+# The Resurgence reflector — off unless configured, because a reflector is a
+# UDP service that answers datagrams. Its own socket, never the Ponor
+# listener's: Resurgence needs a UDP mapping and Ponor's is TCP, which a NAT
+# maps separately.
 [reflect]
 listen = "0.0.0.0:3478"
 advertise = "203.0.113.7:3478"   # required whenever `listen` is not reachable as written
@@ -557,12 +560,12 @@ advertise = "203.0.113.7:3478"   # required whenever `listen` is not reachable a
 listen = "127.0.0.1:9105"
 ```
 
-Seed the roster with a placeholder so the relay starts, then validate:
+Seed the roster with a placeholder so the estavelle starts, then validate:
 
-```sh walkthrough=C step=relay-check
+```sh walkthrough=C step=estavelle-check
 printf '# Placeholder. karst-control overwrites this every 25s.\n' | sudo tee /etc/karst/roster.toml
-sudo karst-relay check --config /etc/karst/relay.toml
-# relay.toml: ok
+sudo karst-estavelle check --config /etc/karst/estavelle.toml
+# estavelle.toml: ok
 #   listen        0.0.0.0:443
 #   roster        0 nodes, 0 mesh peers
 #                 (no nodes admitted; every connection will be rejected)
@@ -571,20 +574,20 @@ sudo karst-relay check --config /etc/karst/relay.toml
 Print the registry entry — this is what the coordination server publishes to
 every node:
 
-```sh walkthrough=C step=relay-pubkey
-sudo karst-relay pubkey --config /etc/karst/relay.toml
+```sh walkthrough=C step=estavelle-pubkey
+sudo karst-estavelle pubkey --config /etc/karst/estavelle.toml
 # relay_id     f10dfc0d…
 # identity_pk  rnKUFd9V3/L5PbvmvuWawzAMFNWcPAIkqNhyD2oP4dqg…
 ```
 
 Start it:
 
-```sh walkthrough=C step=relay-start
-sudo cp deploy/systemd/karst-relay.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now karst-relay
+```sh walkthrough=C step=estavelle-start
+sudo cp deploy/systemd/karst-estavelle.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now karst-estavelle
 ```
 
-Run `karst-relay check` after every roster change.
+Run `karst-estavelle check` after every roster change.
 
 ### 6.2 The coordination server
 
@@ -593,15 +596,15 @@ sudo install -m 0755 server/karst-control /usr/local/bin/
 sudo mkdir -p /etc/netbird /var/lib/netbird /var/lib/karst
 ```
 
-The relay registry, `/etc/karst/relays.json` — `identity_key` is the
+The estavelle registry, `/etc/karst/estavelles.json` — `identity_key` is the
 `identity_pk` printed above, verbatim, base64:
 
-```json walkthrough=C step=relays-json file=/etc/karst/relays.json
+```json walkthrough=C step=estavelles-json file=/etc/karst/estavelles.json
 {
-  "relays": [
+  "estavelles": [
     {
       "address": "203.0.113.7:443",
-      "tls_server_name": "relay.example.com",
+      "tls_server_name": "estavelle.example.com",
       "identity_key": "rnKUFd9V3/L5PbvmvuWawzAMFNWcPAIkqNhyD2oP4dqg…",
       "region": "default"
     }
@@ -706,20 +709,20 @@ so it needs no CORS setting.
 # feature. Left enabled, first start fetches GeoLite2 databases from a
 # third-party mirror and treats a bad download as fatal.
 NB_DISABLE_GEOLOCATION=true
-# Rewrites the relay's roster every 25s. Not optional when a relay sits beside
-# this server: the admission lease expires after 90 seconds.
-KARST_RELAY_ROSTER_FILE=/etc/karst/roster.toml
-# Which relays every node is told about. Without it, nodes that cannot connect
-# directly cannot connect at all — silently.
-KARST_RELAY_REGISTRY_FILE=/etc/karst/relays.json
+# Rewrites the estavelle's roster every 25s. Not optional when an estavelle
+# sits beside this server: the admission lease expires after 90 seconds.
+KARST_ESTAVELLE_ROSTER_FILE=/etc/karst/roster.toml
+# Which estavelles every node is told about. Without it, nodes that cannot
+# connect directly cannot connect at all — silently.
+KARST_ESTAVELLE_REGISTRY_FILE=/etc/karst/estavelles.json
 # Absent means an empty filter, which is DEFAULT DENY.
 KARST_POLICY_FILE=/etc/karst/policy.json
-# Each node's relay-forwarding scope (§5.4) is derived from its own account
-# automatically (ADR-0033) -- this stops a relay becoming a message bus
+# Each node's estavelle-forwarding scope (§5.4) is derived from its own account
+# automatically (ADR-0033) -- this stops an estavelle becoming a message bus
 # between any two keys it has heard of, including across accounts, with no
 # operator action required. Leave KARST_AQUIFER unset; it is now only an
 # optional prefix for an operator running more than one karst-control
-# deployment against a shared relay pool.
+# deployment against a shared estavelle pool.
 KARST_AQUIFER=
 # The first enrollment key, minted at startup and written here (§8.1). Without
 # it, a deployment with no identity provider can enroll nothing at all.
@@ -769,7 +772,7 @@ sudo sh -c 'umask 077 && karstd genkey > /etc/karst/node.key'
 sudo chmod 600 /etc/karst/node.key
 ```
 
-`/etc/karst/karstd.toml`. In control mode the overlay addresses, peers, relays
+`/etc/karst/karstd.toml`. In control mode the overlay addresses, peers, estavelles
 and packet filter all come from the netmap, so this file is much shorter than
 Path A's:
 
@@ -797,10 +800,10 @@ setup_key = "…"
 # Without a cache the node fetches a full netmap on every start and cannot come
 # up at all while the server is unreachable.
 cache_file = "/var/lib/karst/netmap.cache"
-# Only for a self-signed relay certificate. It narrows the extra trust to the
-# relay connection instead of making that host a trust anchor for every TLS
-# connection the machine makes.
-relay_ca_file = "/etc/karst/relay.crt"
+# Only for a self-signed estavelle certificate. It narrows the extra trust to
+# the estavelle connection instead of making that host a trust anchor for
+# every TLS connection the machine makes.
+estavelle_ca_file = "/etc/karst/estavelle.crt"
 ```
 
 Validate and start:
@@ -877,7 +880,7 @@ reported misleadingly.
 resource into a host-networked, privileged `karstd` DaemonSet. Node
 configuration goes in a Secret, not a ConfigMap — it can contain private keys.
 Read [`deploy/kubernetes/README.md`](../deploy/kubernetes/README.md) first: a
-`KarstNode` author is effectively a cluster administrator, and a relay deployed
+`KarstNode` author is effectively a cluster administrator, and an estavelle deployed
 there needs the same roster producer and registry entry as everywhere else.
 
 ---
@@ -897,7 +900,7 @@ corepack pnpm --filter @karst-net/portal dev
 ```
 
 The fixture is deliberately not a happy path: fifty nodes across paginated
-results, two relays with different health, mixed post-quantum posture, a
+results, two estavelles with different health, mixed post-quantum posture, a
 pending Bedrock signing request, and an audit chain that fails verification.
 
 **Against a real coordination server**, serve the built `dist/` directories
@@ -985,7 +988,7 @@ and [`deploy/compose/prod/README.md`](../deploy/compose/prod/README.md)
 covers trusting it. Path C's bare-metal reverse proxy has no such thing, and
 a public CA is often the wrong tool here anyway: it needs a publicly
 resolvable name and a way to prove control of it, neither of which fits a
-console reachable only from inside an org's network. Unlike the relay
+console reachable only from inside an org's network. Unlike the estavelle
 (§6.1), this certificate genuinely has to satisfy a real browser's TLS and
 cookie security, so a single ad hoc self-signed leaf works but means every
 renewal asks every device to re-trust a new certificate. An admin who would
@@ -994,7 +997,7 @@ console, does it the same way any private CA does: issue one root, then
 sign short-lived server leaves under it.
 
 The root is a certificate that signs other certificates — the opposite of
-§6.1's relay leaf, which is deliberately barred from doing that:
+§6.1's estavelle leaf, which is deliberately barred from doing that:
 
 ```sh walkthrough=C step=console-ca-root
 sudo mkdir -p /etc/karst/tls
@@ -1253,13 +1256,13 @@ bedrock_mode = "enforcing"   # off | advisory | enforcing
 
 | Host | Port | Protocol | Who connects | Notes |
 |---|---|---|---|---|
-| Relay | 443 | TCP | every node | Ponor. Chosen so it survives networks permitting only HTTPS |
-| Relay | 3478 | UDP | every node | AVEN reflector, only if `[reflect]` is configured |
-| Relay | 9105 | TCP | you | metrics, if configured. Bind to a management address |
+| Estavelle | 443 | TCP | every node | Ponor. Chosen so it survives networks permitting only HTTPS |
+| Estavelle | 3478 | UDP | every node | Resurgence reflector, only if `[reflect]` is configured |
+| Estavelle | 9105 | TCP | you | metrics, if configured. Bind to a management address |
 | Coordination server | 33073 | TCP | every node, console, portal | gRPC and HTTP share it |
-| Node | 51820 | UDP | peers, relay | inbound is best-effort; NAT traversal is the normal case |
+| Node | 51820 | UDP | peers, estavelle | inbound is best-effort; NAT traversal is the normal case |
 
-Never open the relay or coordination server to `0.0.0.0/0` on any port other
+Never open the estavelle or coordination server to `0.0.0.0/0` on any port other
 than the ones above.
 
 ---
@@ -1281,8 +1284,8 @@ know.
 What a healthy pair looks like — relayed first, direct shortly after:
 
 ``` walkthrough=none reason="sample output"
-A: endpoint = "-"                 state = "connecting"   transport = "relay"
-B: endpoint = "-"                 state = "established"  transport = "relay"
+A: endpoint = "-"                 state = "connecting"   transport = "estavelle"
+B: endpoint = "-"                 state = "established"  transport = "estavelle"
 …
 A: endpoint = "10.99.0.2:51820"   state = "established"  transport = "direct"
 B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
@@ -1290,7 +1293,7 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 
 Some pairs stay relayed and correctly so: symmetric NAT to symmetric NAT is not
 winnable, and symmetric to port-restricted cone goes direct only if one side's
-gateway answers PCP or NAT-PMP. The matrix in [README.md](../README.md) says
+aven answers PCP or NAT-PMP. The matrix in [README.md](../README.md) says
 which is which. A node that advertised an address it is not reachable at would
 be worse than one that admits it is relayed.
 
@@ -1305,12 +1308,12 @@ The failure modes below are the ones that do not announce themselves.
 | `invalid float, expected nothing` | a `[control]` value (e.g. `setup_key`, `server`) written unquoted; TOML reads the leading digits as a number | quote every value in `[control]` — they are all strings, even ones that look like an address or a bare hex token |
 | `server_kem_pin: field key: contains a non-hexadecimal character` | pin pasted as base64 from the log; the field is hex | `base64 -d \| xxd -p -c 0` (§5) |
 | `server_kem_pin is 2368 bytes, but … uses a 1184-byte key` | the conversion ran over a log holding more than one start, so it decoded every copy of the pin into one string | add `\| tail -1` after the `grep` (§5). Exactly double the right length is the tell |
-| Nodes reject the netmap entirely, no relay used | a DNS name in `relays.json` `address` | use `IP:port`; the name goes in `tls_server_name` |
-| Relay logs `roster lease expired`, admits nobody after 90 s | nothing is rewriting `roster.toml` | set `KARST_RELAY_ROSTER_FILE` on the server |
-| Nodes never dial a relay and never go direct | no `relays.json`, so the netmap carries no relays | set `KARST_RELAY_REGISTRY_FILE` |
+| Nodes reject the netmap entirely, no estavelle used | a DNS name in `estavelles.json` `address` | use `IP:port`; the name goes in `tls_server_name` |
+| Estavelle logs `roster lease expired`, admits nobody after 90 s | nothing is rewriting `roster.toml` | set `KARST_ESTAVELLE_ROSTER_FILE` on the server |
+| Nodes never dial an estavelle and never go direct | no `estavelles.json`, so the netmap carries no estavelles | set `KARST_ESTAVELLE_REGISTRY_FILE` |
 | Everything enrolls; no traffic passes | no policy file — an empty filter is **default deny** | set `KARST_POLICY_FILE` |
-| Relay TLS handshake fails on a node | self-signed relay certificate | point `relay_ca_file` at `relay.crt`, or add it to the invitation as `relay_ca` (PEM) so enrollment sets that up |
-| Relay TLS fails with `CaUsedAsEndEntity` | the relay certificate has `CA:TRUE` | regenerate a server leaf using §6.1's explicit `CA:FALSE` extensions, copy the new certificate to clients and restart the relay and clients |
+| Estavelle TLS handshake fails on a node | self-signed estavelle certificate | point `estavelle_ca_file` at `estavelle.crt`, or add it to the invitation as `relay_ca` (PEM) so enrollment sets that up |
+| Estavelle TLS fails with `CaUsedAsEndEntity` | the estavelle certificate has `CA:TRUE` | regenerate a server leaf using §6.1's explicit `CA:FALSE` extensions, copy the new certificate to clients and restart the estavelle and clients |
 | Peers are established but traffic fails on a multihomed host | the selected peer address can differ from the source address used for return UDP traffic ([#508](https://github.com/karst-net/karst/issues/508)) | compare `karst status` endpoints with a UDP packet capture; bind `[node] listen` to the reachable interface address, restart both nodes and verify traffic in both directions |
 | Karst traffic fails while Tailscale is also running | Tailscale may drop CGNAT-source packets arriving on `karst0`; Karst uses addresses in that range too | inspect `ip route get PEER_ADDRESS`, `ip rule`, and the host INPUT rules; add an explicit rule for the actual Karst interface and assigned network before the conflicting drop, following the host firewall's configuration method |
 | DNS listener reports `Address already in use` | another resolver, including Tailscale or a wildcard listener, already owns the configured address and port | inspect `sudo ss -lntup`; choose a free DNS listener using [the annotated node configuration](karstd-example.toml), or set `[dns] enabled = false` if this node does not need KarstDNS |
@@ -1331,7 +1334,7 @@ Everything found by review and not yet fixed is in
 | The implementation plan, phases 0–7 | [PLAN.md](../PLAN.md) |
 | Assets, adversaries, and **what Karst deliberately does not defend** | [docs/THREAT-MODEL.md](THREAT-MODEL.md) §7 |
 | Architecture decisions, each with its alternatives and costs | [docs/adr/](adr/) |
-| Handshake, relay, NAT traversal, control channel, DNS, network lock | [spec/](../spec/) |
+| Handshake, estavelle, NAT traversal, control channel, DNS, network lock | [spec/](../spec/) |
 | Annotated node configuration | [docs/karstd-example.toml](karstd-example.toml) |
 | Subnet routers and exit nodes: prerequisites, NAT modes, privacy, recovery | [docs/subnet-routers-and-exit-nodes.md](subnet-routers-and-exit-nodes.md) |
 | The co-located deployment in detail | [deploy/compose/README.md](../deploy/compose/README.md) |

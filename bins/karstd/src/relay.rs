@@ -5,17 +5,17 @@
 //!
 //! This is deliberately sans-I/O: TCP/TLS/HTTP upgrade belongs to the daemon
 //! transport, while this type makes it impossible to forward a PHREATIC or
-//! AVEN datagram before the relay's pinned ML-DSA identity has authenticated.
+//! Resurgence datagram before the relay's pinned ML-DSA identity has authenticated.
 
-use karst_relay_proto::consts::{
+use karst_estavelle_proto::consts::{
     ENDPOINT_LEN, FRAME_HEADER, FRAME_PAYLOAD_MAX, ID_LEN, REFLECT_KEY_LEN,
 };
-use karst_relay_proto::{frame, ClientHandshake, Frame, Role, Signer, Verifier};
+use karst_estavelle_proto::{frame, ClientHandshake, Frame, Role, Signer, Verifier};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
-use crate::netmap::Relay;
+use crate::netmap::Estavelle;
 
 /// What [`Connection`] needs of whatever carries the Ponor byte stream.
 ///
@@ -59,7 +59,7 @@ pub enum Event {
     Packet {
         /// The Ponor node id the relay authenticated as the source.
         source_id: [u8; ID_LEN],
-        /// The opaque PHREATIC or AVEN datagram.
+        /// The opaque PHREATIC or Resurgence datagram.
         payload: Vec<u8>,
     },
     /// A `Pong` answering a `Ping` this node sent — §9.1.
@@ -104,7 +104,7 @@ pub enum Event {
         /// Keep retrying for this long.
         try_for_ms: u32,
     },
-    /// This relay runs an AVEN reflector — `ponor-v1.md` §7.7.
+    /// This relay runs a Resurgence reflector — `ponor-v1.md` §7.7.
     ///
     /// Only ever produced **after** the relay's ML-DSA-87 signature has
     /// verified, which is the whole security argument for the key it carries:
@@ -113,8 +113,8 @@ pub enum Event {
     Reflector {
         /// The §5.3 reflect key, live for this connection only.
         key: [u8; REFLECT_KEY_LEN],
-        /// Where to send `Reflect`. Undecoded here — `karst-disco` owns
-        /// `aven-v1.md` §6.2 and this module owns Ponor framing.
+        /// Where to send `Reflect`. Undecoded here — `karst-resurgence` owns
+        /// `resurgence-v1.md` §6.2 and this module owns Ponor framing.
         endpoint: [u8; ENDPOINT_LEN],
     },
 }
@@ -158,9 +158,9 @@ impl Decoder {
         bytes: &[u8],
         signer: &impl Signer,
         verifier: &impl Verifier,
-    ) -> Result<Vec<Event>, karst_relay_proto::Error> {
+    ) -> Result<Vec<Event>, karst_estavelle_proto::Error> {
         if self.buffer.len().saturating_add(bytes.len()) > BUFFER_MAX {
-            return Err(karst_relay_proto::Error::FrameTooLarge(
+            return Err(karst_estavelle_proto::Error::FrameTooLarge(
                 self.buffer.len().saturating_add(bytes.len()),
             ));
         }
@@ -268,7 +268,7 @@ impl Connection {
         signer: &impl Signer,
         verifier: &impl Verifier,
         tls: std::sync::Arc<rustls::ClientConfig>,
-        relay: &Relay,
+        relay: &Estavelle,
     ) -> Result<Self, ConnectError> {
         // **Bounded, because the alternative is silence.** A relay whose
         // address blackholes packets — a filter that drops rather than refuses,
@@ -297,7 +297,7 @@ impl Connection {
         signer: &impl Signer,
         verifier: &impl Verifier,
         tls: std::sync::Arc<rustls::ClientConfig>,
-        relay: &Relay,
+        relay: &Estavelle,
     ) -> Result<Self, ConnectError> {
         let stream = TcpStream::connect(&relay.address)
             .await
@@ -344,7 +344,7 @@ impl Connection {
 
     /// As [`Self::connect`], but over QUIC — ADR-0020.
     ///
-    /// There is no HTTP upgrade: ALPN (`karst_relay_proto::consts::QUIC_ALPN`)
+    /// There is no HTTP upgrade: ALPN (`karst_estavelle_proto::consts::QUIC_ALPN`)
     /// is QUIC's protocol-selection point, settled inside the handshake
     /// [`crate::relay_tls::quic_client_config`] already configures. Everything
     /// past that — the Ponor handshake, `Sender`/`Receiver` — is identical to
@@ -359,7 +359,7 @@ impl Connection {
         signer: &impl Signer,
         verifier: &impl Verifier,
         quic: quinn::ClientConfig,
-        relay: &Relay,
+        relay: &Estavelle,
     ) -> Result<Self, ConnectError> {
         match tokio::time::timeout(
             CONNECT_TIMEOUT,
@@ -379,7 +379,7 @@ impl Connection {
         signer: &impl Signer,
         verifier: &impl Verifier,
         quic: quinn::ClientConfig,
-        relay: &Relay,
+        relay: &Estavelle,
     ) -> Result<Self, ConnectError> {
         let socket_addr = tokio::net::lookup_host(&relay.address)
             .await
@@ -448,7 +448,7 @@ impl Connection {
         self.read_events(signer, verifier).await
     }
 
-    /// Forward one opaque PHREATIC or AVEN datagram through this relay.
+    /// Forward one opaque PHREATIC or Resurgence datagram through this relay.
     ///
     /// # Errors
     /// Returns I/O failure if the established TLS stream cannot accept bytes.
@@ -537,7 +537,7 @@ impl std::fmt::Debug for Sender {
 }
 
 impl Sender {
-    /// Forward one opaque PHREATIC or AVEN datagram through this relay.
+    /// Forward one opaque PHREATIC or Resurgence datagram through this relay.
     ///
     /// # Errors
     /// Returns I/O failure if the TLS stream cannot accept bytes, and
@@ -749,7 +749,7 @@ impl Session {
     #[must_use]
     pub fn from_control_handle(
         node_handle: &[u8],
-        relay: &Relay,
+        relay: &Estavelle,
         random: [u8; ID_LEN],
     ) -> Option<Self> {
         let handle = std::str::from_utf8(node_handle).ok()?;
@@ -759,7 +759,7 @@ impl Session {
 
     /// Start a client handshake for a relay registry entry.
     #[must_use]
-    pub fn new(node_id: [u8; ID_LEN], relay: &Relay, random: [u8; ID_LEN]) -> Self {
+    pub fn new(node_id: [u8; ID_LEN], relay: &Estavelle, random: [u8; ID_LEN]) -> Self {
         Self {
             handshake: ClientHandshake::new(
                 Role::Client,
@@ -781,7 +781,7 @@ impl Session {
         &mut self,
         frame: &Frame<'_>,
         signer: &impl Signer,
-    ) -> Result<Vec<u8>, karst_relay_proto::Error> {
+    ) -> Result<Vec<u8>, karst_estavelle_proto::Error> {
         self.handshake.on_relay_hello(frame, signer)
     }
 
@@ -793,7 +793,7 @@ impl Session {
         &mut self,
         frame: &Frame<'_>,
         verifier: &impl Verifier,
-    ) -> Result<(), karst_relay_proto::Error> {
+    ) -> Result<(), karst_estavelle_proto::Error> {
         let result = self.handshake.on_relay_auth(frame, verifier);
         if result.is_ok() {
             self.awaiting_auth = false;
@@ -810,14 +810,14 @@ impl Session {
     /// shortcut.
     ///
     /// # Errors
-    /// Returns [`karst_relay_proto::Error::OutOfOrder`] for any frame not legal
+    /// Returns [`karst_estavelle_proto::Error::OutOfOrder`] for any frame not legal
     /// in the current state. A connection that receives one must be closed.
     pub fn on_frame(
         &mut self,
         frame: &Frame<'_>,
         signer: &impl Signer,
         verifier: &impl Verifier,
-    ) -> Result<Option<Event>, karst_relay_proto::Error> {
+    ) -> Result<Option<Event>, karst_estavelle_proto::Error> {
         if self.established() {
             // §7.7. Legal only here — a `ReflectOffer` before `RelayAuth` is a
             // key from a party this node has not authenticated, which is
@@ -882,7 +882,7 @@ impl Session {
                 .received(frame)
                 .map(|(source_id, payload)| Event::Packet { source_id, payload })
                 .map(Some)
-                .ok_or(karst_relay_proto::Error::OutOfOrder);
+                .ok_or(karst_estavelle_proto::Error::OutOfOrder);
         }
         if self.awaiting_auth {
             self.on_auth(frame, verifier)?;
@@ -943,7 +943,7 @@ impl Session {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use karst_relay_proto::consts::SIG_LEN;
+    use karst_estavelle_proto::consts::SIG_LEN;
     use sha2::{Digest as _, Sha256};
 
     use super::*;
@@ -964,12 +964,12 @@ mod tests {
         }
     }
 
-    fn relay() -> Relay {
+    fn relay() -> Estavelle {
         let identity_key = vec![0x44; 2592];
         let mut h = Sha256::new();
-        h.update(b"karst-relay-id-v1");
+        h.update(b"karst-estavelle-id-v1");
         h.update(&identity_key);
-        Relay {
+        Estavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
             relay_id: h.finalize().into(),
@@ -1023,7 +1023,7 @@ mod tests {
         };
         assert_eq!(
             session.on_frame(&packet, &TestSigner, &TestVerifier),
-            Err(karst_relay_proto::Error::OutOfOrder)
+            Err(karst_estavelle_proto::Error::OutOfOrder)
         );
     }
 
@@ -1169,7 +1169,7 @@ mod tests {
         let too_much = vec![0; BUFFER_MAX + 1];
         assert!(matches!(
             decoder.push(&too_much, &TestSigner, &TestVerifier),
-            Err(karst_relay_proto::Error::FrameTooLarge(_))
+            Err(karst_estavelle_proto::Error::FrameTooLarge(_))
         ));
     }
 

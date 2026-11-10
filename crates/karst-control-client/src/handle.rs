@@ -30,7 +30,7 @@ pub fn handle(identity_pk: &[u8]) -> String {
 /// Decode the 32-byte identifier represented by a control-plane handle.
 ///
 /// KARST-CONTROL carries this value in its base64 presentation because it is
-/// convenient for logs and JSON. Ponor and AVEN carry the digest itself to
+/// convenient for logs and JSON. Ponor and Resurgence carry the digest itself to
 /// avoid paying 12 extra bytes on every relay frame and discovery message.
 /// Keeping the conversion here prevents either protocol from quietly treating
 /// the display spelling as a distinct identifier.

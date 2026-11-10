@@ -23,15 +23,15 @@ test("owners can inspect coverage and opt into an acknowledged relay cap", async
   await expect(page.getByRole("heading", { name: "Payment notices" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Payment failure notices" })).toContainText(`Payment failed for ${period}`);
   await expect(page.getByText("Incomplete coverage").first()).toBeVisible();
-  await expect(page.getByText("Relay usage coverage is incomplete; threshold amounts are lower bounds.")).toBeVisible();
+  await expect(page.getByText("Estavelle coverage is incomplete. Reported bytes are a lower bound and do not include missing windows.")).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "75%" })).toBeVisible();
   await expect(page.getByText("No cap is configured")).toBeVisible();
 
   await page.getByLabel("Monthly overage limit in USD").fill("15.25");
-  await page.getByLabel(/I understand managed-relay connections/).check();
+  await page.getByLabel(/I understand managed-estavelle connections/).check();
   await page.getByRole("button", { name: "Save cap" }).click();
 
-  await expect(page.getByRole("status")).toContainText("Relay spending cap saved");
+  await expect(page.getByRole("status")).toContainText("Estavelle spending cap saved");
   await expect(page.getByText("Cap is enabled: $15.25 USD")).toBeVisible();
 });
 
@@ -43,10 +43,10 @@ test("owners can inspect coverage and opt into an acknowledged relay cap", async
 // server-side configuration change.
 test("an unconfigured account sees plain explanations instead of billing errors", async ({ page }) => {
   await page.route(`**/api/karst/v1/billing/payments*`, (route) => route.fulfill({ status: 412, json: { message: "Paddle billing is not enabled for this account" } }));
-  await page.route(`**/api/karst/v1/usage/relay-alerts*`, (route) => route.fulfill({ status: 412, json: { message: "no billing schedule is assigned for this period" } }));
+  await page.route(`**/api/karst/v1/usage/estavelle-alerts*`, (route) => route.fulfill({ status: 412, json: { message: "no billing schedule is assigned for this period" } }));
   await page.goto("/#/billing");
 
   await expect(page.getByText("Paddle billing is not enabled for this account.")).toBeVisible();
-  await expect(page.getByText(/No billing schedule is assigned for .+; relay usage alerts are unavailable\./)).toBeVisible();
+  await expect(page.getByText(/No billing schedule is assigned for .+; estavelle usage alerts are unavailable\./)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Could not load this view" })).toHaveCount(0);
 });

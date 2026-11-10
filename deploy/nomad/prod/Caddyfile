@@ -9,7 +9,7 @@
 #
 # Everything this deployment exposes externally shares this one port: the
 # console's static assets, its REST API, and the gRPC control channel node
-# agents and the relay dial. karst-control itself is not published
+# agents and the estavelle dial. karst-control itself is not published
 # externally at all -- only Caddy is, so this file is the actual edge.
 {
 	auto_https disable_redirects

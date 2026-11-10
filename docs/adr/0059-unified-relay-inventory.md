@@ -6,6 +6,9 @@
 - **Deciders:** Project owner direction to consolidate Relays, Services and Ponor endpoints
 - **Related:** ADR-0056, ADR-0058
 
+> **Naming note (ADR-0069, 2026-11-08):** "relay" throughout this document is
+> now **Estavelle**; the decision below is otherwise unaffected.
+
 ## Context
 
 Relays contained separate Services and Ponor endpoint views. Administrators

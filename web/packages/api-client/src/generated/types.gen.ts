@@ -6,7 +6,7 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}/api/karst/v1` | (string & {});
 };
 
-export type GatewayOffer = {
+export type AvenOffer = {
     id: string;
     network_id: string;
     prefix: string;
@@ -16,7 +16,7 @@ export type GatewayOffer = {
     metric: number;
     requires_client_consent: boolean;
     /**
-     * Self-reported by this offer's gateway over the authenticated control channel; never inferred from connectivity or traffic alone.
+     * Self-reported by this offer's aven over the authenticated control channel; never inferred from connectivity or traffic alone.
      */
     forwarding_readiness: 'unreported' | 'ready' | 'degraded';
     /**
@@ -33,7 +33,7 @@ export type GatewayOffer = {
     egress_drift: boolean;
 };
 
-export type GatewayNode = {
+export type AvenNode = {
     node_id: string;
     /**
      * Enrolled node public handle for explicit resource bindings. Optional for compatibility with older control servers; never infer it from names or addresses.
@@ -47,18 +47,18 @@ export type GatewayNode = {
      * Aggregated across this node's own offers, degraded-first.
      */
     forwarding_readiness: 'unreported' | 'ready' | 'degraded';
-    offers: Array<GatewayOffer>;
+    offers: Array<AvenOffer>;
 };
 
-export type GatewayInventory = {
+export type AvenInventory = {
     schema_version: 1;
-    gateways: Array<GatewayNode>;
+    avens: Array<AvenNode>;
     /**
      * Configured routes without a visible eligible node, including empty or missing routing groups.
      */
     unresolved_routes: Array<string>;
     /**
-     * Non-CIDR route declarations that cannot be projected as Karst Gateway offers.
+     * Non-CIDR route declarations that cannot be projected as Karst Aven offers.
      */
     unsupported_routes: Array<string>;
 };
@@ -133,7 +133,7 @@ export type DeviceUsageSegment = {
     devices: number | null;
 };
 
-export type RelayUsageReport = {
+export type EstavelleUsageReport = {
     start: string;
     end: string;
     as_of: string;
@@ -177,7 +177,7 @@ export type RelayUsageReport = {
      * Exact decimal bytes reported in received batches only.
      */
     reported_bytes: string;
-    days: Array<RelayUsageDay>;
+    days: Array<EstavelleUsageDay>;
     limitations: Array<string>;
 };
 
@@ -203,7 +203,7 @@ export type BillingPaymentFailureNotice = {
     created_at: string;
 };
 
-export type RelayUsageDay = {
+export type EstavelleUsageDay = {
     date: string;
     reported_bytes: string;
     reported_windows: number;
@@ -214,7 +214,7 @@ export type RelayUsageDay = {
     gap_reasons: Array<'unresolved_mapping' | 'capacity' | 'overflow' | 'clock' | 'observation_lost'>;
 };
 
-export type RelayAlertFeed = {
+export type EstavelleAlertFeed = {
     period_start: string;
     period_end: string;
     as_of: string;
@@ -226,10 +226,10 @@ export type RelayAlertFeed = {
      * Present when usage coverage is incomplete.
      */
     coverage_warning?: string;
-    alerts: Array<RelayAlertCandidate>;
+    alerts: Array<EstavelleAlertCandidate>;
 };
 
-export type RelayAlertCandidate = {
+export type EstavelleAlertCandidate = {
     period_start: string;
     period_end: string;
     schedule_version: string;
@@ -244,7 +244,7 @@ export type RelayAlertCandidate = {
     usage_complete: boolean;
 };
 
-export type RelayCapDraft = {
+export type EstavelleCapDraft = {
     period: string;
     /**
      * USD cents; byte budgets truncate down.
@@ -253,7 +253,7 @@ export type RelayCapDraft = {
     acknowledge_interruption: true;
 };
 
-export type RelayCreditRequest = {
+export type EstavelleCreditRequest = {
     relay_id: string;
     deployment_id: string;
     mapping_version: string;
@@ -263,7 +263,7 @@ export type RelayCreditRequest = {
     signature: string;
 };
 
-export type RelayCreditGrant = {
+export type EstavelleCreditGrant = {
     grant_id: string;
     account_id: string;
     period_start: string;
@@ -278,7 +278,7 @@ export type RelayCreditGrant = {
     created_at: string;
 };
 
-export type RelayCreditSurrender = {
+export type EstavelleCreditSurrender = {
     grant_id: string;
     relay_id: string;
     deployment_id: string;
@@ -288,7 +288,7 @@ export type RelayCreditSurrender = {
     signature: string;
 };
 
-export type RelayCap = {
+export type EstavelleCap = {
     enabled: boolean;
     period_start: string;
     period_end: string;
@@ -641,7 +641,7 @@ export type ComplianceGate = {
     }>;
 };
 
-export type RelayPublication = {
+export type EstavellePublication = {
     mode: 'legacy' | 'services';
     /**
      * Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
@@ -649,18 +649,18 @@ export type RelayPublication = {
     schema_version?: 2 | 3;
 };
 
-export type RelayService = {
+export type EstavelleService = {
     id: string;
     /**
      * Existing account-local Ponor registry ID.
      */
     ponor_id: string;
     /**
-     * Use live registry-group membership for relay admission. Requires a live identity-bound roster writer. POST /relay-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.
+     * Use live registry-group membership for estavelle admission. Requires a live identity-bound roster writer. POST /estavelle-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.
      */
     access_managed?: boolean;
     /**
-     * Stable account group IDs permitted to use this backend. POST /relay-services requires at least one entry.
+     * Stable account group IDs permitted to use this backend. POST /estavelle-services requires at least one entry.
      */
     allowed_groups?: Array<string>;
     /**
@@ -680,14 +680,14 @@ export type RelayService = {
     ponor_disabled?: boolean;
 };
 
-export type RelayServiceView = RelayService & {
+export type EstavelleServiceView = EstavelleService & {
     /**
      * Referenced Ponor registry entry exists in this account; not a health result.
      */
     ponor_present: boolean;
 };
 
-export type RelayAllocation = {
+export type EstavelleAllocation = {
     /**
      * Server-generated; never accepted from callers.
      */
@@ -812,27 +812,27 @@ export type RolloutComponentCompatibility = {
     message?: string;
 };
 
-export type RelayCreate = {
+export type EstavelleCreate = {
     address: string;
     identity_key: string;
     region: string;
     tls_server_name?: string;
-    location?: RelayLocation;
+    location?: EstavelleLocation;
 };
 
-export type Relay = RelayCreate & {
+export type Estavelle = EstavelleCreate & {
     /**
      * Derived from identity_key; never accepted from callers.
      */
     readonly id: string;
-    health: RelayHealth;
+    health: EstavelleHealth;
     /**
-     * Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on RelayCreate.
+     * Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on EstavelleCreate.
      */
     readonly location_source?: 'declared' | 'detected';
 };
 
-export type RelayHealth = {
+export type EstavelleHealth = {
     source: 'roster_mtime' | 'relay_telemetry';
     last_confirmed_at: string | null;
     sessions?: number | null;
@@ -840,7 +840,7 @@ export type RelayHealth = {
     admission_state: 'confirmed' | 'stale' | 'unknown';
 };
 
-export type RelayLocation = {
+export type EstavelleLocation = {
     lat: number;
     lon: number;
     label?: string;
@@ -1108,11 +1108,11 @@ export type GroupLocation = {
 };
 
 export type NocComponent = {
-    kind: 'relay' | 'route' | 'control_plane' | 'bedrock';
+    kind: 'estavelle' | 'route' | 'control_plane' | 'bedrock';
     id: string;
     label: string;
     health?: 'confirmed' | 'stale' | 'unknown';
-    location?: RelayLocation;
+    location?: EstavelleLocation;
     bytes?: number;
     packets?: number;
     ingress_bytes?: number;
@@ -1130,7 +1130,7 @@ export type BedrockStatus = {
     head_seq?: number;
     disabled?: boolean;
     covered_count?: number;
-    location?: RelayLocation;
+    location?: EstavelleLocation;
 };
 
 export type Authority = {
@@ -1285,7 +1285,7 @@ export type NodePageWritable = Page & {
     items: Array<NodeWritable>;
 };
 
-export type RelayAllocationWritable = {
+export type EstavelleAllocationWritable = {
     name: string;
     /**
      * Existing account-local infrastructure connection ID.
@@ -1344,8 +1344,8 @@ export type RolloutComponentWritable = {
     requires_gateway_ingress_schema?: number | null;
 };
 
-export type RelayWritable = RelayCreate & {
-    health: RelayHealth;
+export type EstavelleWritable = EstavelleCreate & {
+    health: EstavelleHealth;
 };
 
 /**
@@ -1407,7 +1407,7 @@ export type AuditSinkWritable = AuditSinkWrite;
 
 export type Handle = string;
 
-export type RelayId = string;
+export type EstavelleId = string;
 
 export type SinkId = string;
 
@@ -1438,32 +1438,32 @@ export type IfMatch = string;
 
 export type ExportFormat = 'json' | 'csv';
 
-export type GatewayInventoryData = {
+export type AvenInventoryData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/gateways';
+    url: '/avens';
 };
 
-export type GatewayInventoryErrors = {
+export type AvenInventoryErrors = {
     /**
      * Caller lacks source permissions
      */
     403: unknown;
     /**
-     * Gateway inventory sources unavailable
+     * Aven inventory sources unavailable
      */
     412: unknown;
 };
 
-export type GatewayInventoryResponses = {
+export type AvenInventoryResponses = {
     /**
      * Unified subnet and default-route offers per enrolled node
      */
-    200: GatewayInventory;
+    200: AvenInventory;
 };
 
-export type GatewayInventoryResponse = GatewayInventoryResponses[keyof GatewayInventoryResponses];
+export type AvenInventoryResponse = AvenInventoryResponses[keyof AvenInventoryResponses];
 
 export type SoftwareVersionsData = {
     body?: never;
@@ -1658,127 +1658,127 @@ export type GetDeviceUsageResponses = {
 
 export type GetDeviceUsageResponse = GetDeviceUsageResponses[keyof GetDeviceUsageResponses];
 
-export type GetRelayUsageData = {
+export type GetEstavelleUsageData = {
     body?: never;
     path?: never;
     query: {
         start: string;
         end: string;
     };
-    url: '/usage/relays';
+    url: '/usage/estavelles';
 };
 
-export type GetRelayUsageErrors = {
+export type GetEstavelleUsageErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type GetRelayUsageError = GetRelayUsageErrors[keyof GetRelayUsageErrors];
+export type GetEstavelleUsageError = GetEstavelleUsageErrors[keyof GetEstavelleUsageErrors];
 
-export type GetRelayUsageResponses = {
+export type GetEstavelleUsageResponses = {
     /**
-     * Received relay usage snapshot with explicit coverage limitations
+     * Received estavelle usage snapshot with explicit coverage limitations
      */
-    200: RelayUsageReport;
+    200: EstavelleUsageReport;
 };
 
-export type GetRelayUsageResponse = GetRelayUsageResponses[keyof GetRelayUsageResponses];
+export type GetEstavelleUsageResponse = GetEstavelleUsageResponses[keyof GetEstavelleUsageResponses];
 
-export type GetRelayBillingAlertsData = {
+export type GetEstavelleBillingAlertsData = {
     body?: never;
     path?: never;
     query: {
         period: string;
     };
-    url: '/usage/relay-alerts';
+    url: '/usage/estavelle-alerts';
 };
 
-export type GetRelayBillingAlertsErrors = {
+export type GetEstavelleBillingAlertsErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type GetRelayBillingAlertsError = GetRelayBillingAlertsErrors[keyof GetRelayBillingAlertsErrors];
+export type GetEstavelleBillingAlertsError = GetEstavelleBillingAlertsErrors[keyof GetEstavelleBillingAlertsErrors];
 
-export type GetRelayBillingAlertsResponses = {
+export type GetEstavelleBillingAlertsResponses = {
     /**
      * Account-scoped alert feed with usage coverage status
      */
-    200: RelayAlertFeed;
+    200: EstavelleAlertFeed;
 };
 
-export type GetRelayBillingAlertsResponse = GetRelayBillingAlertsResponses[keyof GetRelayBillingAlertsResponses];
+export type GetEstavelleBillingAlertsResponse = GetEstavelleBillingAlertsResponses[keyof GetEstavelleBillingAlertsResponses];
 
-export type GetRelaySpendingCapData = {
+export type GetEstavelleSpendingCapData = {
     body?: never;
     path?: never;
     query: {
         period: string;
     };
-    url: '/billing/relay-cap';
+    url: '/billing/estavelle-cap';
 };
 
-export type GetRelaySpendingCapErrors = {
+export type GetEstavelleSpendingCapErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type GetRelaySpendingCapError = GetRelaySpendingCapErrors[keyof GetRelaySpendingCapErrors];
+export type GetEstavelleSpendingCapError = GetEstavelleSpendingCapErrors[keyof GetEstavelleSpendingCapErrors];
 
-export type GetRelaySpendingCapResponses = {
+export type GetEstavelleSpendingCapResponses = {
     /**
      * Current cap setting
      */
-    200: RelayCap;
+    200: EstavelleCap;
 };
 
-export type GetRelaySpendingCapResponse = GetRelaySpendingCapResponses[keyof GetRelaySpendingCapResponses];
+export type GetEstavelleSpendingCapResponse = GetEstavelleSpendingCapResponses[keyof GetEstavelleSpendingCapResponses];
 
-export type SetRelaySpendingCapData = {
-    body: RelayCapDraft;
+export type SetEstavelleSpendingCapData = {
+    body: EstavelleCapDraft;
     path?: never;
     query?: never;
-    url: '/billing/relay-cap';
+    url: '/billing/estavelle-cap';
 };
 
-export type SetRelaySpendingCapErrors = {
+export type SetEstavelleSpendingCapErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type SetRelaySpendingCapError = SetRelaySpendingCapErrors[keyof SetRelaySpendingCapErrors];
+export type SetEstavelleSpendingCapError = SetEstavelleSpendingCapErrors[keyof SetEstavelleSpendingCapErrors];
 
-export type SetRelaySpendingCapResponses = {
+export type SetEstavelleSpendingCapResponses = {
     /**
      * Saved cap setting
      */
-    200: RelayCap;
+    200: EstavelleCap;
 };
 
-export type SetRelaySpendingCapResponse = SetRelaySpendingCapResponses[keyof SetRelaySpendingCapResponses];
+export type SetEstavelleSpendingCapResponse = SetEstavelleSpendingCapResponses[keyof SetEstavelleSpendingCapResponses];
 
-export type RequestRelayCreditsData = {
-    body: RelayCreditRequest;
+export type RequestEstavelleCreditsData = {
+    body: EstavelleCreditRequest;
     path?: never;
     query?: never;
-    url: '/billing/relay-credits';
+    url: '/billing/estavelle-credits';
 };
 
-export type RequestRelayCreditsErrors = {
+export type RequestEstavelleCreditsErrors = {
     /**
      * Cap activation is waiting for existing uncapped leases
      */
     425: unknown;
     /**
-     * Account-wide relay byte budget is exhausted
+     * Account-wide estavelle byte budget is exhausted
      */
     429: unknown;
     /**
@@ -1787,33 +1787,33 @@ export type RequestRelayCreditsErrors = {
     default: Error;
 };
 
-export type RequestRelayCreditsError = RequestRelayCreditsErrors[keyof RequestRelayCreditsErrors];
+export type RequestEstavelleCreditsError = RequestEstavelleCreditsErrors[keyof RequestEstavelleCreditsErrors];
 
-export type RequestRelayCreditsResponses = {
+export type RequestEstavelleCreditsResponses = {
     /**
      * Account-wide reservation
      */
-    200: RelayCreditGrant;
+    200: EstavelleCreditGrant;
     /**
      * Short uncapped lease
      */
     204: void;
 };
 
-export type RequestRelayCreditsResponse = RequestRelayCreditsResponses[keyof RequestRelayCreditsResponses];
+export type RequestEstavelleCreditsResponse = RequestEstavelleCreditsResponses[keyof RequestEstavelleCreditsResponses];
 
-export type SurrenderRelayCreditsData = {
-    body: RelayCreditSurrender;
+export type SurrenderEstavelleCreditsData = {
+    body: EstavelleCreditSurrender;
     path: {
         grant_id: string;
     };
     query?: never;
-    url: '/billing/relay-credits/{grant_id}/surrender';
+    url: '/billing/estavelle-credits/{grant_id}/surrender';
 };
 
-export type SurrenderRelayCreditsErrors = {
+export type SurrenderEstavelleCreditsErrors = {
     /**
-     * Grant is unknown or does not belong to this relay generation
+     * Grant is unknown or does not belong to this estavelle generation
      */
     404: unknown;
     /**
@@ -1822,14 +1822,14 @@ export type SurrenderRelayCreditsErrors = {
     409: unknown;
 };
 
-export type SurrenderRelayCreditsResponses = {
+export type SurrenderEstavelleCreditsResponses = {
     /**
      * Grant surrendered; only unused bytes are released
      */
     204: void;
 };
 
-export type SurrenderRelayCreditsResponse = SurrenderRelayCreditsResponses[keyof SurrenderRelayCreditsResponses];
+export type SurrenderEstavelleCreditsResponse = SurrenderEstavelleCreditsResponses[keyof SurrenderEstavelleCreditsResponses];
 
 export type GetBillingPaymentData = {
     body?: never;
@@ -2848,39 +2848,39 @@ export type TestComplianceDraftResponses = {
 
 export type TestComplianceDraftResponse = TestComplianceDraftResponses[keyof TestComplianceDraftResponses];
 
-export type ListRelayServicesData = {
+export type ListEstavelleServicesData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/relay-services';
+    url: '/estavelle-services';
 };
 
-export type ListRelayServicesErrors = {
+export type ListEstavelleServicesErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type ListRelayServicesError = ListRelayServicesErrors[keyof ListRelayServicesErrors];
+export type ListEstavelleServicesError = ListEstavelleServicesErrors[keyof ListEstavelleServicesErrors];
 
-export type ListRelayServicesResponses = {
+export type ListEstavelleServicesResponses = {
     /**
-     * Relay services
+     * Estavelle services
      */
-    200: Array<RelayServiceView>;
+    200: Array<EstavelleServiceView>;
 };
 
-export type ListRelayServicesResponse = ListRelayServicesResponses[keyof ListRelayServicesResponses];
+export type ListEstavelleServicesResponse = ListEstavelleServicesResponses[keyof ListEstavelleServicesResponses];
 
-export type CreateRelayServiceData = {
-    body: RelayService;
+export type CreateEstavelleServiceData = {
+    body: EstavelleService;
     path?: never;
     query?: never;
-    url: '/relay-services';
+    url: '/estavelle-services';
 };
 
-export type CreateRelayServiceErrors = {
+export type CreateEstavelleServiceErrors = {
     /**
      * Validation error
      */
@@ -2891,130 +2891,130 @@ export type CreateRelayServiceErrors = {
     default: Error;
 };
 
-export type CreateRelayServiceError = CreateRelayServiceErrors[keyof CreateRelayServiceErrors];
+export type CreateEstavelleServiceError = CreateEstavelleServiceErrors[keyof CreateEstavelleServiceErrors];
 
-export type CreateRelayServiceResponses = {
+export type CreateEstavelleServiceResponses = {
     /**
      * Association created
      */
-    201: RelayService;
+    201: EstavelleService;
 };
 
-export type CreateRelayServiceResponse = CreateRelayServiceResponses[keyof CreateRelayServiceResponses];
+export type CreateEstavelleServiceResponse = CreateEstavelleServiceResponses[keyof CreateEstavelleServiceResponses];
 
-export type GetRelayPublicationData = {
+export type GetEstavellePublicationData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/relay-services/publication';
+    url: '/estavelle-services/publication';
 };
 
-export type GetRelayPublicationErrors = {
+export type GetEstavellePublicationErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type GetRelayPublicationError = GetRelayPublicationErrors[keyof GetRelayPublicationErrors];
+export type GetEstavellePublicationError = GetEstavellePublicationErrors[keyof GetEstavellePublicationErrors];
 
-export type GetRelayPublicationResponses = {
+export type GetEstavellePublicationResponses = {
     /**
      * Active publication authority
      */
-    200: RelayPublication;
+    200: EstavellePublication;
 };
 
-export type GetRelayPublicationResponse = GetRelayPublicationResponses[keyof GetRelayPublicationResponses];
+export type GetEstavellePublicationResponse = GetEstavellePublicationResponses[keyof GetEstavellePublicationResponses];
 
-export type SetRelayPublicationData = {
+export type SetEstavellePublicationData = {
     body: {
         mode: 'legacy' | 'services';
         acknowledge_connectivity_change: true;
     };
     path?: never;
     query?: never;
-    url: '/relay-services/publication';
+    url: '/estavelle-services/publication';
 };
 
-export type SetRelayPublicationErrors = {
+export type SetEstavellePublicationErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type SetRelayPublicationError = SetRelayPublicationErrors[keyof SetRelayPublicationErrors];
+export type SetEstavellePublicationError = SetEstavellePublicationErrors[keyof SetEstavellePublicationErrors];
 
-export type SetRelayPublicationResponses = {
+export type SetEstavellePublicationResponses = {
     /**
      * Publication authority changed
      */
-    200: RelayPublication;
+    200: EstavellePublication;
 };
 
-export type SetRelayPublicationResponse = SetRelayPublicationResponses[keyof SetRelayPublicationResponses];
+export type SetEstavellePublicationResponse = SetEstavellePublicationResponses[keyof SetEstavellePublicationResponses];
 
-export type PreviewRelayPublicationData = {
+export type PreviewEstavellePublicationData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/relay-services/publication/preview';
+    url: '/estavelle-services/publication/preview';
 };
 
-export type PreviewRelayPublicationErrors = {
+export type PreviewEstavellePublicationErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type PreviewRelayPublicationError = PreviewRelayPublicationErrors[keyof PreviewRelayPublicationErrors];
+export type PreviewEstavellePublicationError = PreviewEstavellePublicationErrors[keyof PreviewEstavellePublicationErrors];
 
-export type PreviewRelayPublicationResponses = {
+export type PreviewEstavellePublicationResponses = {
     /**
      * Validated service projection
      */
-    200: Array<RelayService>;
+    200: Array<EstavelleService>;
 };
 
-export type PreviewRelayPublicationResponse = PreviewRelayPublicationResponses[keyof PreviewRelayPublicationResponses];
+export type PreviewEstavellePublicationResponse = PreviewEstavellePublicationResponses[keyof PreviewEstavellePublicationResponses];
 
-export type DeleteRelayServiceData = {
+export type DeleteEstavelleServiceData = {
     body?: never;
     path: {
         serviceId: string;
     };
     query?: never;
-    url: '/relay-services/{serviceId}';
+    url: '/estavelle-services/{serviceId}';
 };
 
-export type DeleteRelayServiceErrors = {
+export type DeleteEstavelleServiceErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type DeleteRelayServiceError = DeleteRelayServiceErrors[keyof DeleteRelayServiceErrors];
+export type DeleteEstavelleServiceError = DeleteEstavelleServiceErrors[keyof DeleteEstavelleServiceErrors];
 
-export type DeleteRelayServiceResponses = {
+export type DeleteEstavelleServiceResponses = {
     /**
      * Association removed
      */
     204: void;
 };
 
-export type DeleteRelayServiceResponse = DeleteRelayServiceResponses[keyof DeleteRelayServiceResponses];
+export type DeleteEstavelleServiceResponse = DeleteEstavelleServiceResponses[keyof DeleteEstavelleServiceResponses];
 
-export type ListRelayAdmissionTargetsData = {
+export type ListEstavelleAdmissionTargetsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/relay-services/admission-targets';
+    url: '/estavelle-services/admission-targets';
 };
 
-export type ListRelayAdmissionTargetsResponses = {
+export type ListEstavelleAdmissionTargetsResponses = {
     /**
      * Registered backends with a live identity-bound admission writer.
      */
@@ -3024,9 +3024,9 @@ export type ListRelayAdmissionTargetsResponses = {
     }>;
 };
 
-export type ListRelayAdmissionTargetsResponse = ListRelayAdmissionTargetsResponses[keyof ListRelayAdmissionTargetsResponses];
+export type ListEstavelleAdmissionTargetsResponse = ListEstavelleAdmissionTargetsResponses[keyof ListEstavelleAdmissionTargetsResponses];
 
-export type UpdateRelayServiceAccessData = {
+export type UpdateEstavelleServiceAccessData = {
     body: {
         id?: string;
         ponor_id?: string;
@@ -3043,10 +3043,10 @@ export type UpdateRelayServiceAccessData = {
         serviceId: string;
     };
     query?: never;
-    url: '/relay-services/{serviceId}/access';
+    url: '/estavelle-services/{serviceId}/access';
 };
 
-export type UpdateRelayServiceAccessErrors = {
+export type UpdateEstavelleServiceAccessErrors = {
     /**
      * Service revision changed; reload before reapplying edits.
      */
@@ -3057,16 +3057,16 @@ export type UpdateRelayServiceAccessErrors = {
     422: unknown;
 };
 
-export type UpdateRelayServiceAccessResponses = {
+export type UpdateEstavelleServiceAccessResponses = {
     /**
      * Access and optional exit configuration committed atomically.
      */
-    200: RelayService;
+    200: EstavelleService;
 };
 
-export type UpdateRelayServiceAccessResponse = UpdateRelayServiceAccessResponses[keyof UpdateRelayServiceAccessResponses];
+export type UpdateEstavelleServiceAccessResponse = UpdateEstavelleServiceAccessResponses[keyof UpdateEstavelleServiceAccessResponses];
 
-export type SetRelayServiceModesData = {
+export type SetEstavelleServiceModesData = {
     body: {
         ponor_enabled: boolean;
         acknowledge_connectivity_change: true;
@@ -3075,60 +3075,60 @@ export type SetRelayServiceModesData = {
         serviceId: string;
     };
     query?: never;
-    url: '/relay-services/{serviceId}/modes';
+    url: '/estavelle-services/{serviceId}/modes';
 };
 
-export type SetRelayServiceModesErrors = {
+export type SetEstavelleServiceModesErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type SetRelayServiceModesError = SetRelayServiceModesErrors[keyof SetRelayServiceModesErrors];
+export type SetEstavelleServiceModesError = SetEstavelleServiceModesErrors[keyof SetEstavelleServiceModesErrors];
 
-export type SetRelayServiceModesResponses = {
+export type SetEstavelleServiceModesResponses = {
     /**
      * Updated mode configuration
      */
-    200: RelayService;
+    200: EstavelleService;
 };
 
-export type SetRelayServiceModesResponse = SetRelayServiceModesResponses[keyof SetRelayServiceModesResponses];
+export type SetEstavelleServiceModesResponse = SetEstavelleServiceModesResponses[keyof SetEstavelleServiceModesResponses];
 
-export type ListRelayAllocationsData = {
+export type ListEstavelleAllocationsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/relay-allocations';
+    url: '/estavelle-allocations';
 };
 
-export type ListRelayAllocationsErrors = {
+export type ListEstavelleAllocationsErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type ListRelayAllocationsError = ListRelayAllocationsErrors[keyof ListRelayAllocationsErrors];
+export type ListEstavelleAllocationsError = ListEstavelleAllocationsErrors[keyof ListEstavelleAllocationsErrors];
 
-export type ListRelayAllocationsResponses = {
+export type ListEstavelleAllocationsResponses = {
     /**
-     * Relay allocations
+     * Estavelle allocations
      */
-    200: Array<RelayAllocation>;
+    200: Array<EstavelleAllocation>;
 };
 
-export type ListRelayAllocationsResponse = ListRelayAllocationsResponses[keyof ListRelayAllocationsResponses];
+export type ListEstavelleAllocationsResponse = ListEstavelleAllocationsResponses[keyof ListEstavelleAllocationsResponses];
 
-export type CreateRelayAllocationData = {
-    body: RelayAllocationWritable;
+export type CreateEstavelleAllocationData = {
+    body: EstavelleAllocationWritable;
     path?: never;
     query?: never;
-    url: '/relay-allocations';
+    url: '/estavelle-allocations';
 };
 
-export type CreateRelayAllocationErrors = {
+export type CreateEstavelleAllocationErrors = {
     /**
      * Validation error
      */
@@ -3139,18 +3139,18 @@ export type CreateRelayAllocationErrors = {
     default: Error;
 };
 
-export type CreateRelayAllocationError = CreateRelayAllocationErrors[keyof CreateRelayAllocationErrors];
+export type CreateEstavelleAllocationError = CreateEstavelleAllocationErrors[keyof CreateEstavelleAllocationErrors];
 
-export type CreateRelayAllocationResponses = {
+export type CreateEstavelleAllocationResponses = {
     /**
      * Allocation requested
      */
-    201: RelayAllocation;
+    201: EstavelleAllocation;
 };
 
-export type CreateRelayAllocationResponse = CreateRelayAllocationResponses[keyof CreateRelayAllocationResponses];
+export type CreateEstavelleAllocationResponse = CreateEstavelleAllocationResponses[keyof CreateEstavelleAllocationResponses];
 
-export type DeleteRelayAllocationData = {
+export type DeleteEstavelleAllocationData = {
     body?: never;
     path: {
         id: string;
@@ -3158,10 +3158,10 @@ export type DeleteRelayAllocationData = {
     query: {
         revision: number;
     };
-    url: '/relay-allocations/{id}';
+    url: '/estavelle-allocations/{id}';
 };
 
-export type DeleteRelayAllocationErrors = {
+export type DeleteEstavelleAllocationErrors = {
     /**
      * Validation error
      */
@@ -3172,18 +3172,18 @@ export type DeleteRelayAllocationErrors = {
     default: Error;
 };
 
-export type DeleteRelayAllocationError = DeleteRelayAllocationErrors[keyof DeleteRelayAllocationErrors];
+export type DeleteEstavelleAllocationError = DeleteEstavelleAllocationErrors[keyof DeleteEstavelleAllocationErrors];
 
-export type DeleteRelayAllocationResponses = {
+export type DeleteEstavelleAllocationResponses = {
     /**
      * Allocation removed
      */
     204: void;
 };
 
-export type DeleteRelayAllocationResponse = DeleteRelayAllocationResponses[keyof DeleteRelayAllocationResponses];
+export type DeleteEstavelleAllocationResponse = DeleteEstavelleAllocationResponses[keyof DeleteEstavelleAllocationResponses];
 
-export type DeprovisionRelayAllocationData = {
+export type DeprovisionEstavelleAllocationData = {
     body: {
         revision: number;
         acknowledge_deprovision: true;
@@ -3192,10 +3192,10 @@ export type DeprovisionRelayAllocationData = {
         id: string;
     };
     query?: never;
-    url: '/relay-allocations/{id}/deprovision';
+    url: '/estavelle-allocations/{id}/deprovision';
 };
 
-export type DeprovisionRelayAllocationErrors = {
+export type DeprovisionEstavelleAllocationErrors = {
     /**
      * Allocation revision changed
      */
@@ -3206,43 +3206,43 @@ export type DeprovisionRelayAllocationErrors = {
     default: Error;
 };
 
-export type DeprovisionRelayAllocationError = DeprovisionRelayAllocationErrors[keyof DeprovisionRelayAllocationErrors];
+export type DeprovisionEstavelleAllocationError = DeprovisionEstavelleAllocationErrors[keyof DeprovisionEstavelleAllocationErrors];
 
-export type DeprovisionRelayAllocationResponses = {
+export type DeprovisionEstavelleAllocationResponses = {
     /**
      * Deprovision requested
      */
-    200: RelayAllocation;
+    200: EstavelleAllocation;
 };
 
-export type DeprovisionRelayAllocationResponse = DeprovisionRelayAllocationResponses[keyof DeprovisionRelayAllocationResponses];
+export type DeprovisionEstavelleAllocationResponse = DeprovisionEstavelleAllocationResponses[keyof DeprovisionEstavelleAllocationResponses];
 
-export type PollPendingRelayAllocationsData = {
+export type PollPendingEstavelleAllocationsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/relay-allocations/pending';
+    url: '/estavelle-allocations/pending';
 };
 
-export type PollPendingRelayAllocationsErrors = {
+export type PollPendingEstavelleAllocationsErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type PollPendingRelayAllocationsError = PollPendingRelayAllocationsErrors[keyof PollPendingRelayAllocationsErrors];
+export type PollPendingEstavelleAllocationsError = PollPendingEstavelleAllocationsErrors[keyof PollPendingEstavelleAllocationsErrors];
 
-export type PollPendingRelayAllocationsResponses = {
+export type PollPendingEstavelleAllocationsResponses = {
     /**
      * Pending allocations
      */
-    200: Array<RelayAllocation>;
+    200: Array<EstavelleAllocation>;
 };
 
-export type PollPendingRelayAllocationsResponse = PollPendingRelayAllocationsResponses[keyof PollPendingRelayAllocationsResponses];
+export type PollPendingEstavelleAllocationsResponse = PollPendingEstavelleAllocationsResponses[keyof PollPendingEstavelleAllocationsResponses];
 
-export type RecordRelayAllocationProvisioningData = {
+export type RecordEstavelleAllocationProvisioningData = {
     body: {
         expected_revision: number;
         instance_id: string;
@@ -3251,28 +3251,28 @@ export type RecordRelayAllocationProvisioningData = {
         id: string;
     };
     query?: never;
-    url: '/relay-allocations/{id}/provisioning';
+    url: '/estavelle-allocations/{id}/provisioning';
 };
 
-export type RecordRelayAllocationProvisioningErrors = {
+export type RecordEstavelleAllocationProvisioningErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type RecordRelayAllocationProvisioningError = RecordRelayAllocationProvisioningErrors[keyof RecordRelayAllocationProvisioningErrors];
+export type RecordEstavelleAllocationProvisioningError = RecordEstavelleAllocationProvisioningErrors[keyof RecordEstavelleAllocationProvisioningErrors];
 
-export type RecordRelayAllocationProvisioningResponses = {
+export type RecordEstavelleAllocationProvisioningResponses = {
     /**
      * Provisioning recorded
      */
-    200: RelayAllocation;
+    200: EstavelleAllocation;
 };
 
-export type RecordRelayAllocationProvisioningResponse = RecordRelayAllocationProvisioningResponses[keyof RecordRelayAllocationProvisioningResponses];
+export type RecordEstavelleAllocationProvisioningResponse = RecordEstavelleAllocationProvisioningResponses[keyof RecordEstavelleAllocationProvisioningResponses];
 
-export type GrantRelayAllocationData = {
+export type GrantEstavelleAllocationData = {
     body: {
         expected_revision: number;
         tls_server_name: string;
@@ -3281,12 +3281,12 @@ export type GrantRelayAllocationData = {
         id: string;
     };
     query?: never;
-    url: '/relay-allocations/{id}/grant';
+    url: '/estavelle-allocations/{id}/grant';
 };
 
-export type GrantRelayAllocationErrors = {
+export type GrantEstavelleAllocationErrors = {
     /**
-     * Relay has not registered yet; retry later.
+     * Estavelle has not registered yet; retry later.
      */
     404: unknown;
     /**
@@ -3295,18 +3295,18 @@ export type GrantRelayAllocationErrors = {
     default: Error;
 };
 
-export type GrantRelayAllocationError = GrantRelayAllocationErrors[keyof GrantRelayAllocationErrors];
+export type GrantEstavelleAllocationError = GrantEstavelleAllocationErrors[keyof GrantEstavelleAllocationErrors];
 
-export type GrantRelayAllocationResponses = {
+export type GrantEstavelleAllocationResponses = {
     /**
      * Granted (or already ready/granting -- idempotent retry)
      */
-    200: RelayAllocation;
+    200: EstavelleAllocation;
 };
 
-export type GrantRelayAllocationResponse = GrantRelayAllocationResponses[keyof GrantRelayAllocationResponses];
+export type GrantEstavelleAllocationResponse = GrantEstavelleAllocationResponses[keyof GrantEstavelleAllocationResponses];
 
-export type RevokeRelayAllocationData = {
+export type RevokeEstavelleAllocationData = {
     body: {
         expected_revision: number;
     };
@@ -3314,28 +3314,28 @@ export type RevokeRelayAllocationData = {
         id: string;
     };
     query?: never;
-    url: '/relay-allocations/{id}/revoke';
+    url: '/estavelle-allocations/{id}/revoke';
 };
 
-export type RevokeRelayAllocationErrors = {
+export type RevokeEstavelleAllocationErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type RevokeRelayAllocationError = RevokeRelayAllocationErrors[keyof RevokeRelayAllocationErrors];
+export type RevokeEstavelleAllocationError = RevokeEstavelleAllocationErrors[keyof RevokeEstavelleAllocationErrors];
 
-export type RevokeRelayAllocationResponses = {
+export type RevokeEstavelleAllocationResponses = {
     /**
      * Revoked (or already deprovisioning/deprovisioned -- idempotent retry)
      */
-    200: RelayAllocation;
+    200: EstavelleAllocation;
 };
 
-export type RevokeRelayAllocationResponse = RevokeRelayAllocationResponses[keyof RevokeRelayAllocationResponses];
+export type RevokeEstavelleAllocationResponse = RevokeEstavelleAllocationResponses[keyof RevokeEstavelleAllocationResponses];
 
-export type ConfirmRelayAllocationDeprovisionedData = {
+export type ConfirmEstavelleAllocationDeprovisionedData = {
     body: {
         expected_revision: number;
     };
@@ -3343,28 +3343,28 @@ export type ConfirmRelayAllocationDeprovisionedData = {
         id: string;
     };
     query?: never;
-    url: '/relay-allocations/{id}/deprovisioned';
+    url: '/estavelle-allocations/{id}/deprovisioned';
 };
 
-export type ConfirmRelayAllocationDeprovisionedErrors = {
+export type ConfirmEstavelleAllocationDeprovisionedErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type ConfirmRelayAllocationDeprovisionedError = ConfirmRelayAllocationDeprovisionedErrors[keyof ConfirmRelayAllocationDeprovisionedErrors];
+export type ConfirmEstavelleAllocationDeprovisionedError = ConfirmEstavelleAllocationDeprovisionedErrors[keyof ConfirmEstavelleAllocationDeprovisionedErrors];
 
-export type ConfirmRelayAllocationDeprovisionedResponses = {
+export type ConfirmEstavelleAllocationDeprovisionedResponses = {
     /**
      * Deprovisioned
      */
-    200: RelayAllocation;
+    200: EstavelleAllocation;
 };
 
-export type ConfirmRelayAllocationDeprovisionedResponse = ConfirmRelayAllocationDeprovisionedResponses[keyof ConfirmRelayAllocationDeprovisionedResponses];
+export type ConfirmEstavelleAllocationDeprovisionedResponse = ConfirmEstavelleAllocationDeprovisionedResponses[keyof ConfirmEstavelleAllocationDeprovisionedResponses];
 
-export type ReportRelayAllocationFailedData = {
+export type ReportEstavelleAllocationFailedData = {
     body: {
         expected_revision: number;
         reason: string;
@@ -3373,26 +3373,26 @@ export type ReportRelayAllocationFailedData = {
         id: string;
     };
     query?: never;
-    url: '/relay-allocations/{id}/failed';
+    url: '/estavelle-allocations/{id}/failed';
 };
 
-export type ReportRelayAllocationFailedErrors = {
+export type ReportEstavelleAllocationFailedErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type ReportRelayAllocationFailedError = ReportRelayAllocationFailedErrors[keyof ReportRelayAllocationFailedErrors];
+export type ReportEstavelleAllocationFailedError = ReportEstavelleAllocationFailedErrors[keyof ReportEstavelleAllocationFailedErrors];
 
-export type ReportRelayAllocationFailedResponses = {
+export type ReportEstavelleAllocationFailedResponses = {
     /**
      * Failure recorded
      */
-    200: RelayAllocation;
+    200: EstavelleAllocation;
 };
 
-export type ReportRelayAllocationFailedResponse = ReportRelayAllocationFailedResponses[keyof ReportRelayAllocationFailedResponses];
+export type ReportEstavelleAllocationFailedResponse = ReportEstavelleAllocationFailedResponses[keyof ReportEstavelleAllocationFailedResponses];
 
 export type ListRolloutsData = {
     body?: never;
@@ -3652,39 +3652,39 @@ export type RollBackRolloutResponses = {
 
 export type RollBackRolloutResponse = RollBackRolloutResponses[keyof RollBackRolloutResponses];
 
-export type ListRelaysData = {
+export type ListEstavellesData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/relays';
+    url: '/estavelles';
 };
 
-export type ListRelaysErrors = {
+export type ListEstavellesErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type ListRelaysError = ListRelaysErrors[keyof ListRelaysErrors];
+export type ListEstavellesError = ListEstavellesErrors[keyof ListEstavellesErrors];
 
-export type ListRelaysResponses = {
+export type ListEstavellesResponses = {
     /**
-     * Relay registry
+     * Estavelle registry
      */
-    200: Array<Relay>;
+    200: Array<Estavelle>;
 };
 
-export type ListRelaysResponse = ListRelaysResponses[keyof ListRelaysResponses];
+export type ListEstavellesResponse = ListEstavellesResponses[keyof ListEstavellesResponses];
 
-export type CreateRelayData = {
-    body: RelayCreate;
+export type CreateEstavelleData = {
+    body: EstavelleCreate;
     path?: never;
     query?: never;
-    url: '/relays';
+    url: '/estavelles';
 };
 
-export type CreateRelayErrors = {
+export type CreateEstavelleErrors = {
     /**
      * Validation error
      */
@@ -3695,70 +3695,70 @@ export type CreateRelayErrors = {
     default: Error;
 };
 
-export type CreateRelayError = CreateRelayErrors[keyof CreateRelayErrors];
+export type CreateEstavelleError = CreateEstavelleErrors[keyof CreateEstavelleErrors];
 
-export type CreateRelayResponses = {
+export type CreateEstavelleResponses = {
     /**
-     * Onboarded relay
+     * Onboarded estavelle
      */
-    201: Relay;
+    201: Estavelle;
 };
 
-export type CreateRelayResponse = CreateRelayResponses[keyof CreateRelayResponses];
+export type CreateEstavelleResponse = CreateEstavelleResponses[keyof CreateEstavelleResponses];
 
-export type DeleteRelayData = {
+export type DeleteEstavelleData = {
     body?: never;
     path: {
-        readonly relayId: string;
+        readonly estavelleId: string;
     };
     query?: never;
-    url: '/relays/{relayId}';
+    url: '/estavelles/{estavelleId}';
 };
 
-export type DeleteRelayErrors = {
+export type DeleteEstavelleErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type DeleteRelayError = DeleteRelayErrors[keyof DeleteRelayErrors];
+export type DeleteEstavelleError = DeleteEstavelleErrors[keyof DeleteEstavelleErrors];
 
-export type DeleteRelayResponses = {
+export type DeleteEstavelleResponses = {
     /**
-     * Relay removed
+     * Estavelle removed
      */
     204: void;
 };
 
-export type DeleteRelayResponse = DeleteRelayResponses[keyof DeleteRelayResponses];
+export type DeleteEstavelleResponse = DeleteEstavelleResponses[keyof DeleteEstavelleResponses];
 
-export type GetRelayHealthData = {
+export type GetEstavelleHealthData = {
     body?: never;
     path: {
-        readonly relayId: string;
+        readonly estavelleId: string;
     };
     query?: never;
-    url: '/relays/{relayId}/health';
+    url: '/estavelles/{estavelleId}/health';
 };
 
-export type GetRelayHealthErrors = {
+export type GetEstavelleHealthErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type GetRelayHealthError = GetRelayHealthErrors[keyof GetRelayHealthErrors];
+export type GetEstavelleHealthError = GetEstavelleHealthErrors[keyof GetEstavelleHealthErrors];
 
-export type GetRelayHealthResponses = {
+export type GetEstavelleHealthResponses = {
     /**
-     * Relay health derived from the roster
+     * Estavelle health derived from the roster
      */
-    200: RelayHealth;
+    200: EstavelleHealth;
 };
 
-export type GetRelayHealthResponse = GetRelayHealthResponses[keyof GetRelayHealthResponses];
+export type GetEstavelleHealthResponse = GetEstavelleHealthResponses[keyof GetEstavelleHealthResponses];
 
 export type NocComponentsData = {
     body?: never;
@@ -3969,7 +3969,7 @@ export type GetControlPlaneLocationResponses = {
     /**
      * Declared control-plane location
      */
-    200: RelayLocation;
+    200: EstavelleLocation;
     /**
      * No location declared yet
      */
@@ -3979,7 +3979,7 @@ export type GetControlPlaneLocationResponses = {
 export type GetControlPlaneLocationResponse = GetControlPlaneLocationResponses[keyof GetControlPlaneLocationResponses];
 
 export type SetControlPlaneLocationData = {
-    body: RelayLocation;
+    body: EstavelleLocation;
     path?: never;
     query?: never;
     url: '/control-plane/location';
@@ -4002,13 +4002,13 @@ export type SetControlPlaneLocationResponses = {
     /**
      * Declared control-plane location
      */
-    200: RelayLocation;
+    200: EstavelleLocation;
 };
 
 export type SetControlPlaneLocationResponse = SetControlPlaneLocationResponses[keyof SetControlPlaneLocationResponses];
 
 export type SetBedrockLocationData = {
-    body: RelayLocation;
+    body: EstavelleLocation;
     path?: never;
     query?: never;
     url: '/bedrock/location';
@@ -4031,37 +4031,37 @@ export type SetBedrockLocationResponses = {
     /**
      * Declared Bedrock location
      */
-    200: RelayLocation;
+    200: EstavelleLocation;
 };
 
 export type SetBedrockLocationResponse = SetBedrockLocationResponses[keyof SetBedrockLocationResponses];
 
-export type NocRelayData = {
+export type NocEstavelleData = {
     body?: never;
     path: {
-        readonly relayId: string;
+        readonly estavelleId: string;
     };
     query?: never;
-    url: '/noc/relays/{relayId}';
+    url: '/noc/estavelles/{estavelleId}';
 };
 
-export type NocRelayErrors = {
+export type NocEstavelleErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type NocRelayError = NocRelayErrors[keyof NocRelayErrors];
+export type NocEstavelleError = NocEstavelleErrors[keyof NocEstavelleErrors];
 
-export type NocRelayResponses = {
+export type NocEstavelleResponses = {
     /**
-     * One relay
+     * One estavelle
      */
-    200: Relay;
+    200: Estavelle;
 };
 
-export type NocRelayResponse = NocRelayResponses[keyof NocRelayResponses];
+export type NocEstavelleResponse = NocEstavelleResponses[keyof NocEstavelleResponses];
 
 export type DemandRegionsData = {
     body?: never;

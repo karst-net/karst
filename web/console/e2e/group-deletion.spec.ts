@@ -13,7 +13,7 @@ async function fixture(page: Page) {
     else await route.fulfill({ json: group() });
   });
   await page.route("**/api/karst/v1/policy", route => route.fulfill({ json: { version: 1, document: JSON.stringify(state.document) } }));
-  await page.route("**/api/karst/v1/relay-services", route => route.fulfill({ json: state.relays }));
+  await page.route("**/api/karst/v1/estavelle-services", route => route.fulfill({ json: state.relays }));
   await page.route("**/api/karst/v1/invitations", route => route.fulfill({ json: state.invitations }));
   await page.route("**/api/routes", route => route.fulfill({ json: [] }));
   await page.route("**/api/dns/nameservers", route => route.fulfill({ json: [] }));
@@ -35,7 +35,7 @@ test("group deletion names access and relay dependencies and provides owning-for
   await openReview(page);
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("link", { name: "Access grant: Production HTTPS" })).toHaveAttribute("href", "#/groups/access");
-  await expect(dialog.getByRole("link", { name: "Relay: Denver" })).toHaveAttribute("href", "#/relays");
+  await expect(dialog.getByRole("link", { name: "Estavelle: Denver" })).toHaveAttribute("href", "#/estavelles");
   await expect(dialog.getByRole("link", { name: "Legacy membership mapping: staff" })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Delete group", exact: true })).toBeDisabled();
   expect(state.deleted).toBe(0);
@@ -70,20 +70,20 @@ test("a new dependency added after review prevents deletion", async ({ page }) =
   await dialog.getByRole("checkbox").check();
   state.relays = [{ id: "New relay", allowed_groups: ["engineering"] }];
   await dialog.getByRole("button", { name: "Delete group", exact: true }).click();
-  await expect(dialog.getByRole("link", { name: "Relay: New relay" })).toBeVisible();
+  await expect(dialog.getByRole("link", { name: "Estavelle: New relay" })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Delete group", exact: true })).toBeDisabled();
   expect(state.deleted).toBe(0);
 });
 
 test("unavailable dependency data blocks deletion and a fresh review can recover", async ({ page }) => {
   const state = await fixture(page);
-  await page.route("**/api/karst/v1/relay-services", route => route.fulfill({ status: 503, json: { message: "Relay configuration unavailable" } }));
+  await page.route("**/api/karst/v1/estavelle-services", route => route.fulfill({ status: 503, json: { message: "Estavelle configuration unavailable" } }));
   await openReview(page);
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByRole("alert")).toContainText("Relay configuration unavailable");
+  await expect(dialog.getByRole("alert")).toContainText("Estavelle configuration unavailable");
   await expect(dialog.getByRole("button", { name: "Delete group", exact: true })).toBeDisabled();
-  await page.unroute("**/api/karst/v1/relay-services");
-  await page.route("**/api/karst/v1/relay-services", route => route.fulfill({ json: [] }));
+  await page.unroute("**/api/karst/v1/estavelle-services");
+  await page.route("**/api/karst/v1/estavelle-services", route => route.fulfill({ json: [] }));
   await dialog.getByRole("button", { name: "Refresh review" }).click();
   await expect(dialog).toContainText("No dependencies found");
   expect(state.deleted).toBe(0);

@@ -128,9 +128,9 @@ pub struct PeerEntry<'a> {
     /// other node would keep dialing a relay it had left.
     pub home_relay: &'a [u8],
     pub allowed_ips: &'a [String],
-    /// This peer's own self-reported AVEN candidate list —
+    /// This peer's own self-reported Resurgence candidate list —
     /// `karst_control.proto`'s `KarstNetmapPeer.candidates`, added
-    /// 2026-10-31 (`spec/aven-v1.md` §7.3.1). Routable content, covered by
+    /// 2026-10-31 (`spec/resurgence-v1.md` §7.3.1). Routable content, covered by
     /// both hashes below for the same reason `home_relay` is: a peer whose
     /// only change is this field must still be recognized as changed. A
     /// peer reporting none contributes nothing here, so a pre-existing
@@ -403,7 +403,7 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     push(&mut h, b"karst-ssh-filter");
     h.update(u32::from(content.ssh_filter_present).to_be_bytes());
     push_rules(&mut h, content.ssh_filter);
-    push(&mut h, b"karst-relays");
+    push(&mut h, b"karst-estavelles");
     for relay in content.relays {
         push(&mut h, relay.address.as_bytes());
         push(&mut h, relay.tls_server_name.as_bytes());

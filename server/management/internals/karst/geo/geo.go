@@ -5,15 +5,15 @@
 // position shares (ADR-0046 §1): a latitude/longitude pair, bounds-checked
 // the same way regardless of which component it is attached to.
 //
-// relayreg.Location/relayreg.ValidLocation predate this package and are now
-// aliases of the types here -- see relayreg.go -- so a relay's own wire
+// estavellereg.Location/estavellereg.ValidLocation predate this package and are now
+// aliases of the types here -- see estavellereg.go -- so a relay's own wire
 // shape (JSON, proto) is unchanged by this extraction.
 package geo
 
 import "fmt"
 
 // Location is a point an operator declares for a component, never derived
-// from an address, region code, or any other field -- matching relayreg's
+// from an address, region code, or any other field -- matching estavellereg's
 // existing no-inference rule (ADR-0046 §1, ADR-0048).
 type Location struct {
 	Lat   float64 `json:"lat"`

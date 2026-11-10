@@ -1,0 +1,348 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright the Karst contributors.
+
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gorilla/mux"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	"github.com/netbirdio/netbird/management/internals/karst/estavellealloc"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
+	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
+	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
+	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
+	nbcontext "github.com/netbirdio/netbird/management/server/context"
+	"github.com/netbirdio/netbird/management/server/types"
+	"github.com/netbirdio/netbird/shared/auth"
+)
+
+type estavelleAllocationEnv struct {
+	db         *gorm.DB
+	alloc      *estavellealloc.Store
+	registry   *estavellereg.Store
+	grants     *estavelleservice.Store
+	connection string
+	group      string
+}
+
+func estavelleAllocationFixture(t *testing.T) estavelleAllocationEnv {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	require.NoError(t, db.AutoMigrate(&infraconnections.Account{}, &types.Group{}, &karstpolicy.Version{}))
+	connection := infraconnections.Account{ID: "conn-1", AccountID: "a", Type: infraconnections.TypeAWS, Mode: infraconnections.ModeReadWrite, Label: "aws"}
+	require.NoError(t, db.Create(&connection).Error)
+	group := types.Group{ID: "engineering", AccountID: "a", Name: "Engineering"}
+	require.NoError(t, db.Create(&group).Error)
+	alloc, err := estavellealloc.NewStore(db)
+	require.NoError(t, err)
+	// Create refuses every request until this is set (ADR-0045 §6 bullet
+	// 4's "mandatory configuration, no unlimited value," applied to this
+	// actuator by that ADR's 2026-11-04 addendum) -- high enough that no
+	// existing test's own handful of allocations trips it.
+	alloc.SetMaxConcurrentAllocations(100)
+	registry, err := estavellereg.NewStore(db)
+	require.NoError(t, err)
+	grants, err := estavelleservice.NewStore(db)
+	require.NoError(t, err)
+	// Every test below allocates against "us-west-2" -- requireAuthorizedLocation
+	// rejects that unless it is already in the Authorized Locations registry.
+	// Coordinates match cloudcatalog's own entry for it exactly.
+	require.NoError(t, db.Create(&locationreg.StoredLocation{AccountID: "a", ID: "loc-1", Lat: 45.8696, Lon: -119.6880, Label: "US West (Oregon)"}).Error)
+	return estavelleAllocationEnv{db: db, alloc: alloc, registry: registry, grants: grants, connection: connection.ID, group: group.ID}
+}
+
+func estavelleAllocationRouter(e estavelleAllocationEnv, role types.UserRole) *mux.Router {
+	router := mux.NewRouter()
+	RegisterEstavelleAllocationEndpoints(router, scanPermissions{role: role}, e.alloc, e.registry, e.grants)
+	return router
+}
+
+func allocationRequest(router *mux.Router, method, path, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, "/karst/v1/estavelle-allocations"+path, strings.NewReader(body))
+	r = nbcontext.SetUserAuthInRequest(r, auth.UserAuth{AccountId: "a", UserId: "admin"})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+	return w
+}
+
+func decodeAllocation(t *testing.T, w *httptest.ResponseRecorder) estavellealloc.Allocation {
+	t.Helper()
+	var allocation estavellealloc.Allocation
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &allocation), w.Body.String())
+	return allocation
+}
+
+func assertAllocationResponseFields(t *testing.T, w *httptest.ResponseRecorder, path, method, status string) {
+	t.Helper()
+	var raw any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	spec := loadKarstOpenAPISchemas(t)
+	assertDeclaredResponseFields(t, spec, responseSchema(spec, path, method, status), raw, "Estavelle allocation "+method+" "+path)
+}
+
+// TestEstavelleAllocationAPIHappyPathToReadyAndBackToDeprovisioned drives one
+// allocation through every step of ADR-0063's state machine purely over
+// HTTP, using two routers against the same underlying stores -- one as the
+// console (Admin role) would reach it, one as the Scaler-role
+// reconciliation loop would. Confirms the grant step's relay lookup,
+// idempotent retries, and the reversed teardown order (revoke withdraws
+// the estavelleservice grant before anything reports compute torn down).
+func TestEstavelleAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
+
+	w := allocationRequest(admin, http.MethodPost, "", `{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	created := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.StateRequested, created.State)
+	assertAllocationResponseFields(t, w, "/estavelle-allocations", "post", "201")
+
+	// Scaler sees it as pending.
+	w = allocationRequest(scaler, http.MethodPost, "/pending", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var pending []estavellealloc.Allocation
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &pending))
+	require.Len(t, pending, 1)
+	// Scaler must never reach the console-only routes, though -- that
+	// direction of the allowlist is what actually keeps it narrow; see
+	// TestEstavelleAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither.
+	require.Equal(t, http.StatusForbidden, allocationRequest(scaler, http.MethodGet, "", "").Code)
+
+	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
+		fmt.Sprintf(`{"expected_revision":%d,"instance_id":"i-1"}`, created.Revision)))
+	require.Equal(t, estavellealloc.StateProvisioning, provisioning.State)
+	require.Equal(t, "i-1", provisioning.InstanceID)
+
+	// The relay has not registered yet -- not ready, not an error.
+	w = allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/grant",
+		fmt.Sprintf(`{"expected_revision":%d,"tls_server_name":"denver.aws.karst.internal"}`, provisioning.Revision))
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+
+	// It registers.
+	relay, err := e.registry.Create(estavellereg.WithAccount(context.Background(), "a"), estavellereg.Entry{
+		Address:       "203.0.113.5:443",
+		TLSServerName: "denver.aws.karst.internal",
+		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, estavellereg.IdentityKeySize)),
+	})
+	require.NoError(t, err)
+
+	// estavelleservice.configureAccess's own prerequisites, independent of
+	// this allocation -- a live admission writer and service publication
+	// mode, set up exactly as estavelleservice's own fixture does.
+	require.NoError(t, e.grants.RefreshAdmissionLease(relay.ID))
+	_, err = e.grants.SetPublication(estavelleservice.WithAccount(context.Background(), "a"), "services")
+	require.NoError(t, err)
+
+	// Retrying grant now succeeds -- note this reuses the SAME
+	// expected_revision as the failed attempt above: that attempt already
+	// advanced provisioning -> granting before the 404, so this is the
+	// idempotent-resume path, not a fresh transition.
+	w = allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/grant",
+		fmt.Sprintf(`{"expected_revision":%d,"tls_server_name":"denver.aws.karst.internal"}`, provisioning.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	ready := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.StateReady, ready.State)
+	require.Equal(t, relay.ID, ready.RelayID)
+	assertAllocationResponseFields(t, w, "/estavelle-allocations/{id}/grant", "post", "200")
+
+	var serviceCount int64
+	require.NoError(t, e.db.Model(&estavelleservice.Service{}).Where("id = ? AND ponor_id = ?", created.ID, relay.ID).Count(&serviceCount).Error)
+	require.EqualValues(t, 1, serviceCount)
+
+	// Retrying grant again (the loop re-polling an already-ready
+	// allocation) is a safe no-op, not a second estavelleservice.Create.
+	w = allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/grant",
+		fmt.Sprintf(`{"expected_revision":%d,"tls_server_name":"denver.aws.karst.internal"}`, ready.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, estavellealloc.StateReady, decodeAllocation(t, w).State)
+
+	// Console requests deprovision.
+	w = allocationRequest(admin, http.MethodPost, "/"+created.ID+"/deprovision",
+		fmt.Sprintf(`{"revision":%d,"acknowledge_deprovision":true}`, ready.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	revoking := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.StateRevoking, revoking.State)
+
+	// Scaler withdraws the grant -- before anything reports compute torn
+	// down.
+	w = allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/revoke", fmt.Sprintf(`{"expected_revision":%d}`, revoking.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	deprovisioning := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.StateDeprovisioning, deprovisioning.State)
+
+	require.NoError(t, e.db.Model(&estavelleservice.Service{}).Where("id = ?", created.ID).Count(&serviceCount).Error)
+	require.Zero(t, serviceCount, "the grant must be withdrawn before anything confirms compute deprovisioned")
+
+	w = allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/deprovisioned", fmt.Sprintf(`{"expected_revision":%d}`, deprovisioning.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	deprovisioned := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.StateDeprovisioned, deprovisioned.State)
+
+	w = allocationRequest(admin, http.MethodDelete, fmt.Sprintf("/%s?revision=%d", created.ID, deprovisioned.Revision), "")
+	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+
+	var remaining int64
+	require.NoError(t, e.db.Model(&estavellealloc.Allocation{}).Count(&remaining).Error)
+	require.Zero(t, remaining)
+}
+
+// TestEstavelleAllocationGrantReportsFailureWithoutLeavingAPartialGrant covers
+// the other branch of granting: estavelleservice rejects the attempt (no live
+// admission writer configured here), and the allocation must land in
+// StateFailed with no Service row ever created -- never a grant believed
+// to have failed while compute silently kept running unaccounted for.
+func TestEstavelleAllocationGrantReportsFailureWithoutLeavingAPartialGrant(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
+
+	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
+		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
+	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
+		fmt.Sprintf(`{"expected_revision":%d,"instance_id":"i-1"}`, created.Revision)))
+
+	_, err := e.registry.Create(estavellereg.WithAccount(context.Background(), "a"), estavellereg.Entry{
+		Address:       "203.0.113.6:443",
+		TLSServerName: "denver.aws.karst.internal",
+		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, estavellereg.IdentityKeySize)),
+	})
+	require.NoError(t, err)
+	// No RefreshAdmissionLease, no SetPublication -- configureAccess must
+	// refuse this grant.
+
+	w := allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/grant",
+		fmt.Sprintf(`{"expected_revision":%d,"tls_server_name":"denver.aws.karst.internal"}`, provisioning.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	failed := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.StateFailed, failed.State)
+	require.Equal(t, estavellealloc.StateGranting, failed.FailedStep)
+	require.NotEmpty(t, failed.FailureReason)
+
+	var serviceCount int64
+	require.NoError(t, e.db.Model(&estavelleservice.Service{}).Count(&serviceCount).Error)
+	require.Zero(t, serviceCount)
+}
+
+// TestEstavelleAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither is the
+// security property the hard allowlist exists for. It does not make the
+// Scaler and Admin/Owner roles mutually exclusive -- ADR-0045 §7 Phase 2's
+// own precedent (estavelleEnrollTokensPath: "Admin/Owner, who already hold
+// Create on KarstControl, may too") means Admin can also reach every
+// allocation-driving action. What the allowlist actually narrows is
+// Scaler: it may drive allocations but never reach the console-only
+// routes. A role with no KarstControl grant at all (User) reaches neither.
+func TestEstavelleAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	created := decodeAllocation(t, allocationRequest(estavelleAllocationRouter(e, types.UserRoleAdmin), http.MethodPost, "",
+		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
+
+	consoleOnlyRoutes := []struct{ method, path, body string }{
+		{http.MethodGet, "", ""},
+		{http.MethodPost, "", `{"name":"x","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`},
+		{http.MethodDelete, "/" + created.ID + "?revision=1", ""},
+		{http.MethodPost, "/" + created.ID + "/deprovision", `{"revision":1,"acknowledge_deprovision":true}`},
+	}
+	scalerOnlyRoutes := []struct{ method, path, body string }{
+		{http.MethodPost, "/pending", ""},
+		{http.MethodPost, "/" + created.ID + "/provisioning", `{"expected_revision":1,"instance_id":"i-1"}`},
+		{http.MethodPost, "/" + created.ID + "/grant", `{"expected_revision":1,"tls_server_name":"x"}`},
+		{http.MethodPost, "/" + created.ID + "/revoke", `{"expected_revision":1}`},
+		{http.MethodPost, "/" + created.ID + "/deprovisioned", `{"expected_revision":1}`},
+		{http.MethodPost, "/" + created.ID + "/failed", `{"expected_revision":1,"reason":"x"}`},
+	}
+
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
+	for _, call := range consoleOnlyRoutes {
+		w := allocationRequest(scaler, call.method, call.path, call.body)
+		require.Equal(t, http.StatusForbidden, w.Code, "scaler %s %s: %s", call.method, call.path, w.Body.String())
+	}
+
+	user := estavelleAllocationRouter(e, types.UserRoleUser)
+	for _, call := range append(append([]struct{ method, path, body string }{}, consoleOnlyRoutes...), scalerOnlyRoutes...) {
+		w := allocationRequest(user, call.method, call.path, call.body)
+		require.Equal(t, http.StatusForbidden, w.Code, "plain user %s %s: %s", call.method, call.path, w.Body.String())
+	}
+
+	// Admin reaches a Scaler-only route too -- the same relationship
+	// estavelleEnrollTokensPath already has with Admin, not a regression.
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	w := allocationRequest(admin, http.MethodPost, "/pending", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+// TestEstavelleAllocationFailedInfersFromStateAndIsIdempotent covers the
+// generic failure-report action: it reads the "from" state off the row
+// itself rather than trusting a caller-supplied one, and repeating it once
+// already failed is a safe no-op.
+func TestEstavelleAllocationFailedInfersFromStateAndIsIdempotent(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
+	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
+		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
+
+	w := allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/failed",
+		fmt.Sprintf(`{"expected_revision":%d,"reason":"quota exceeded"}`, created.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	failed := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.StateFailed, failed.State)
+	require.Equal(t, estavellealloc.StateRequested, failed.FailedStep)
+	require.Equal(t, "quota exceeded", failed.FailureReason)
+
+	// Idempotent retry -- same result, no error, no second Transition.
+	w = allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/failed",
+		fmt.Sprintf(`{"expected_revision":%d,"reason":"ignored"}`, failed.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, "quota exceeded", decodeAllocation(t, w).FailureReason)
+}
+
+// TestEstavelleAllocationDeleteRequiresDeprovisionFirst confirms the API layer
+// surfaces Store.Delete's own gating rather than papering over it: a
+// provisioning allocation cannot simply be deleted out from under the loop.
+func TestEstavelleAllocationDeleteRequiresDeprovisionFirst(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
+	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
+		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
+	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
+		fmt.Sprintf(`{"expected_revision":%d,"instance_id":"i-1"}`, created.Revision)))
+
+	w := allocationRequest(admin, http.MethodDelete, fmt.Sprintf("/%s?revision=%d", created.ID, provisioning.Revision), "")
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+
+	var remaining int64
+	require.NoError(t, e.db.Model(&estavellealloc.Allocation{}).Count(&remaining).Error)
+	require.EqualValues(t, 1, remaining)
+}
+
+// TestEstavelleAllocationAPIRejectsUnauthenticated mirrors every other karst
+// endpoint's own baseline: no user auth context, no access at all.
+func TestEstavelleAllocationAPIRejectsUnauthenticated(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	router := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	r := httptest.NewRequest(http.MethodGet, "/karst/v1/estavelle-allocations", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+	require.NotEqual(t, http.StatusOK, w.Code)
+}

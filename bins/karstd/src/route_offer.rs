@@ -21,7 +21,7 @@ pub enum Kind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
     Recipient,
-    Gateway,
+    Aven,
 }
 
 /// Groups an offer with its HA candidates — see [`Offer::group_key`]. Owned
@@ -140,8 +140,8 @@ impl Offer {
         };
         let role = match pb::KarstRouteRole::try_from(wire.role) {
             Ok(pb::KarstRouteRole::Recipient) if wire.gateway_id != self_id => Role::Recipient,
-            Ok(pb::KarstRouteRole::Gateway) if wire.gateway_id == self_id => Role::Gateway,
-            Ok(pb::KarstRouteRole::Recipient | pb::KarstRouteRole::Gateway) => {
+            Ok(pb::KarstRouteRole::Aven) if wire.gateway_id == self_id => Role::Aven,
+            Ok(pb::KarstRouteRole::Recipient | pb::KarstRouteRole::Aven) => {
                 return Err(format!(
                     "route {:?} role contradicts its gateway",
                     wire.route_id
@@ -203,7 +203,7 @@ impl Offer {
             keep_route: self.keep_route,
             role: match self.role {
                 Role::Recipient => pb::KarstRouteRole::Recipient as i32,
-                Role::Gateway => pb::KarstRouteRole::Gateway as i32,
+                Role::Aven => pb::KarstRouteRole::Aven as i32,
             },
             dns_zone: self.dns_zone_text.clone(),
             pinned_egress_ip: self.pinned_egress_ip_text.clone(),
@@ -239,7 +239,7 @@ impl Offer {
             keep_route: self.keep_route,
             role: match self.role {
                 Role::Recipient => 1,
-                Role::Gateway => 2,
+                Role::Aven => 2,
             },
             dns_zone: &self.dns_zone_text,
             pinned_egress_ip: &self.pinned_egress_ip_text,
@@ -421,7 +421,7 @@ mod tests {
             wire(
                 "10.20.0.0/16",
                 pb::KarstRouteKind::Subnet,
-                pb::KarstRouteRole::Gateway,
+                pb::KarstRouteRole::Aven,
             ),
         ] {
             assert!(Offer::from_wire(bad.clone(), b"client").is_err());
@@ -435,12 +435,12 @@ mod tests {
         let gateway = wire(
             "10.20.0.0/16",
             pb::KarstRouteKind::Subnet,
-            pb::KarstRouteRole::Gateway,
+            pb::KarstRouteRole::Aven,
         );
         assert!(Offer::from_wire(gateway.clone(), b"client").is_err());
         assert_eq!(
             Offer::from_wire(gateway, b"gateway").unwrap().role,
-            Role::Gateway
+            Role::Aven
         );
     }
 

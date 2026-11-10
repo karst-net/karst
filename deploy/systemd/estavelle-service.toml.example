@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+# Copy to estavelle-service.toml (default location: /etc/karst/estavelle-service.toml)
+# after GETTING-STARTED.md §6.1. Process configuration only: account
+# publication uses the Estavelle Services API.
+schema_version = 1
+
+[ponor]
+enabled = true

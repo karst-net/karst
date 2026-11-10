@@ -5,6 +5,9 @@
 - **Date:** 2026-10-24
 - **Related:** ADR-0056, issues #404, #408, #419, #421, #422
 
+> **Naming note (ADR-0069, 2026-11-08):** "Gateway" throughout this document
+> is now **Aven**; the decision below is otherwise unaffected.
+
 ## Context
 
 Specific and default prefixes already share route authority and forwarding.

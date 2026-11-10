@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 )
 
@@ -65,7 +65,7 @@ type Estimate struct {
 // Calculate computes graduated device prices and pooled relay overage with
 // exact rational arithmetic. It never estimates missing bytes, writes invoice
 // state, or contacts a payment provider. The period in both reports must match.
-func Calculate(deviceReport usage.DeviceReport, relayReport relayusage.Report, schedule RateSchedule) (Estimate, error) {
+func Calculate(deviceReport usage.DeviceReport, relayReport estavelleusage.Report, schedule RateSchedule) (Estimate, error) {
 	result := Estimate{
 		ScheduleVersion: schedule.Version,
 		Currency:        schedule.Currency,
@@ -89,7 +89,7 @@ func Calculate(deviceReport usage.DeviceReport, relayReport relayusage.Report, s
 	if validRelayReport(relayReport, deviceReport.Start, deviceReport.End) {
 		bytes, ok := new(big.Int).SetString(relayReport.ReportedBytes, 10)
 		if !ok || bytes.Sign() < 0 || bytes.String() != relayReport.ReportedBytes {
-			return Estimate{}, relayusage.ErrReportData
+			return Estimate{}, estavelleusage.ErrReportData
 		}
 		relayExact := relayCharge(bytes, schedule)
 		relayAmount = relayExact
@@ -165,7 +165,7 @@ func validDeviceReport(report usage.DeviceReport) bool {
 	return cursor == endUS
 }
 
-func validRelayReport(report relayusage.Report, start, end time.Time) bool {
+func validRelayReport(report estavelleusage.Report, start, end time.Time) bool {
 	if !report.Complete || !report.HistoryComplete || report.Coverage != "authorized_producers" ||
 		report.ExpectedWindows == 0 || report.MissingWindows != 0 || report.UnexpectedWindows != 0 ||
 		!validBillingTime(report.Start) || !validBillingTime(report.End) || !validBillingTime(report.AsOf) ||
