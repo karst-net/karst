@@ -601,7 +601,7 @@ The estavelle registry, `/etc/karst/estavelles.json` — `identity_key` is the
 
 ```json walkthrough=C step=estavelles-json file=/etc/karst/estavelles.json
 {
-  "estavelles": [
+  "relays": [
     {
       "address": "203.0.113.7:443",
       "tls_server_name": "estavelle.example.com",
