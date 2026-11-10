@@ -16,6 +16,6 @@ export function EstavelleReadiness({ service, targets, inventory, targetError, g
   const offers = exitObservations(service, gatewayError ? undefined : inventory);
   return <>
     <p><Status state={writer.state} label={writer.label} />{!targetError && refreshed && <> · <Observed at={refreshed} /></>}</p>
-    {offers.length ? <>{offers.map(offer => <p key={offer.family}>{offer.family} egress{offer.gateway && <> through <strong>{offer.gateway}</strong></>}: <Status state={offer.state} label={offer.label} /></p>)}<a href="#/gateways/metrics">Inspect Gateway observations</a></> : <p>Internet egress disabled</p>}
+    {offers.length ? <>{offers.map(offer => <p key={offer.family}>{offer.family} egress{offer.gateway && <> through <strong>{offer.gateway}</strong></>}: <Status state={offer.state} label={offer.label} /></p>)}<a href="#/avens/metrics">Inspect Aven observations</a></> : <p>Internet egress disabled</p>}
   </>;
 }

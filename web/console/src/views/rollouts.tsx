@@ -14,7 +14,7 @@ import { rolloutStatus } from "../rollout-status";
  * deployment needs a different order yet. */
 const componentOrder: Array<{ name: RolloutComponent["name"]; label: string }> = [
   { name: "control", label: "Control" },
-  { name: "relay_job", label: "Relay (this job's task group)" },
+  { name: "relay_job", label: "Estavelle (this job's task group)" },
   { name: "console", label: "Console" },
 ];
 
@@ -40,7 +40,7 @@ function toComponentDrafts(draft: Draft): RolloutComponentDraft[] {
 }
 
 /** ADR-0066/#484: an admin-tracked, sequenced rollout plan for the single
- * prod Nomad job's control/relay/console task groups. Control computes and
+ * prod Nomad job's control/estavelle/console task groups. Control computes and
  * tracks this plan -- including a live fleet-compatibility preview -- but
  * never calls Nomad, a registry, or cosign itself. The operator still runs
  * deploy/nomad/prod/README.md's documented steps by hand and marks each
@@ -131,7 +131,7 @@ export function Rollouts() {
     {!detail && <Notice message={message} />}
     {plans.error && <Failure message={plans.error} retry={plans.reload} />}
     {!plans.error && (plans.value ?? []).length === 0
-      ? <EmptyState title="No rollout plans">Create one to track a verified, sequenced update of control, relay and console.</EmptyState>
+      ? <EmptyState title="No rollout plans">Create one to track a verified, sequenced update of control, estavelle and console.</EmptyState>
       : <Rows head={<><th>Target release</th><th>Status</th><th>Actions</th></>}>
         {(plans.value ?? []).map(plan => {
           const status = rolloutStatus(plan);
@@ -194,8 +194,8 @@ export function Rollouts() {
             <label>Target digest<input required placeholder="sha256:…" value={input.target_digest} onChange={event => setField("target_digest", event.target.value)} /></label>
             <label>Verification reference<input required placeholder="cosign verify output / timestamp" value={input.verification_ref} onChange={event => setField("verification_ref", event.target.value)} /></label>
             {component.name === "control" && <>
-              <label>Requires Relay lifecycle schema (optional)<input type="number" min={0} value={input.requires_relay_lifecycle_schema} onChange={event => setField("requires_relay_lifecycle_schema", event.target.value)} /></label>
-              <label>Requires Gateway ingress schema (optional)<input type="number" min={0} value={input.requires_gateway_ingress_schema} onChange={event => setField("requires_gateway_ingress_schema", event.target.value)} /></label>
+              <label>Requires Estavelle lifecycle schema (optional)<input type="number" min={0} value={input.requires_relay_lifecycle_schema} onChange={event => setField("requires_relay_lifecycle_schema", event.target.value)} /></label>
+              <label>Requires Aven ingress schema (optional)<input type="number" min={0} value={input.requires_gateway_ingress_schema} onChange={event => setField("requires_gateway_ingress_schema", event.target.value)} /></label>
             </>}
           </fieldset>;
         })}

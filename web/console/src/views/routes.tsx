@@ -129,7 +129,7 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
             <td>{names(route.access_control_groups ?? [])}</td>
             <td><Status state={route.enabled ? "healthy" : "unknown"} label={route.enabled ? (isExit(route.network) ? "offered · client consent required" : "offered") : "disabled"} /></td>
             <td><div className="actions">
-              {route.id.startsWith("relay-exit-") ? <a href="#/relays">Configure in Relays</a> : <>
+              {route.id.startsWith("relay-exit-") ? <a href="#/estavelles">Configure in Estavelles</a> : <>
               <button onClick={() => edit(route)}>Edit</button>
               <button onClick={() => toggle(route)}>{route.enabled ? "Disable" : "Enable"}</button>
               <button className="danger" onClick={() => remove(route)}>Delete</button>

@@ -94,7 +94,7 @@ export function Groups() {
             <td>{group.peers_count}</td>
             <td>{group.resources_count}</td>
             <td>{group.issued ?? "api"}</td>
-            <td>{relayAccess.value?.filter(service => service.allowed_groups?.includes(group.id)).map(service => <p key={service.id}><a href="#/relays">Estavelle {service.id}</a></p>)}{related.length > 0
+            <td>{relayAccess.value?.filter(service => service.allowed_groups?.includes(group.id)).map(service => <p key={service.id}><a href="#/estavelles">Estavelle {service.id}</a></p>)}{related.length > 0
               ? <a href="#/groups/access">{related.length} access grant{related.length === 1 ? "" : "s"}</a>
               : <span className="lede">{policy.error ? "Access unavailable" : "None"}</span>}</td>
             <td>{location ? (location.label || `${location.lat}, ${location.lon}`) : <span className="lede">No location</span>}</td>

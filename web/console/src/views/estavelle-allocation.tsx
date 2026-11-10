@@ -8,14 +8,14 @@ import { api } from "../api";
 import { Failure, useResource } from "../common";
 import { GroupPicker } from "./access";
 
-/** Allocate a relay: name a host, pick its infrastructure connection and
+/** Allocate an estavelle: name a host, pick its infrastructure connection and
  * location, and choose the groups permitted to use it once ready — issue
- * #439's own example, scoped to ADR-0063's v1 (relay transport only;
+ * #439's own example, scoped to ADR-0063's v1 (estavelle transport only;
  * internet egress is not yet supported by this workflow, see
- * relayalloc.Store's own validation). Reuses locations.tsx's own
+ * estavellealloc.Store's own validation). Reuses locations.tsx's own
  * connection/discovery picker shape (not infrastructure-connections.tsx,
  * which is credential CRUD only) and access.tsx's GroupPicker, and follows
- * relay-access.tsx's review/apply dialog shape rather than building a new
+ * estavelle-access.tsx's review/apply dialog shape rather than building a new
  * one.
  *
  * Unlike locations.tsx's own picker, this one offers only resources already
@@ -23,7 +23,7 @@ import { GroupPicker } from "./access";
  * host, so (per the operator's own request alongside ADR-0063) it is
  * deliberately coupled to that registry rather than following locationreg's
  * usual "not a foreign key" default. The server enforces this independently
- * (relayalloc.requireAuthorizedLocation) -- this filtering is for a sane
+ * (estavellealloc.requireAuthorizedLocation) -- this filtering is for a sane
  * picker, not the actual guarantee.
  */
 export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => void; onAllocated: () => void }) {
@@ -32,7 +32,7 @@ export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => voi
   // (ADR-0067) -- every other connection stays visible for registration/
   // discovery on the Infrastructure connections page, but picking it here
   // would only fail, generically, the first time the worker ticks; the
-  // server enforces this independently (relayalloc.Store.Create), this is
+  // server enforces this independently (estavellealloc.Store.Create), this is
   // for a sane picker, not the actual guarantee.
   const infraConnections = { ...infraConnectionsResource, value: infraConnectionsResource.value?.filter(c => c.supports_allocation) };
   const groups = useResource(api.groups);
@@ -72,7 +72,7 @@ export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => voi
     finally { setBusy(false); }
   };
 
-  return <Dialog open title="Allocate a relay" onClose={() => { if (!busy) onClose(); }}>
+  return <Dialog open title="Allocate an estavelle" onClose={() => { if (!busy) onClose(); }}>
     {message && <p role="alert">{message}</p>}
     {infraConnections.error && <Failure message={infraConnections.error} retry={infraConnections.reload} />}
     {groups.error && <Failure message={groups.error} retry={groups.reload} />}
@@ -83,7 +83,7 @@ export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => voi
         <option value="">Choose one…</option>
         {(infraConnections.value ?? []).map(c => <option key={c.id} value={c.id}>{c.label || c.type} ({c.type.toUpperCase()})</option>)}
       </select></label>
-      {!infraConnections.loading && (infraConnections.value ?? []).length === 0 && <p className="lede">{(infraConnectionsResource.value ?? []).length === 0 ? "Add an infrastructure connection in Settings first." : "None of your infrastructure connections can provision a relay yet — only AWS and Nomad connections can. Add one in Settings, or install/register a relay instead."}</p>}
+      {!infraConnections.loading && (infraConnections.value ?? []).length === 0 && <p className="lede">{(infraConnectionsResource.value ?? []).length === 0 ? "Add an infrastructure connection in Settings first." : "None of your infrastructure connections can provision an estavelle yet — only AWS and Nomad connections can. Add one in Settings, or install/register an estavelle instead."}</p>}
       {connectionId && (resources.loading || authorizedLocations.loading
         ? <p>Loading regions/zones/namespaces…</p>
         : resources.error
@@ -98,7 +98,7 @@ export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => voi
       {notEnabled && selectedResource && <p className="lede">{selectedResource.name || selectedResource.code} is not opted into use yet — enable it on the Authorized locations page first.</p>}
       <fieldset><legend>Capabilities</legend>
         <label><input type="checkbox" checked readOnly disabled />Estavelle transport</label>
-        <p className="lede">Internet egress is not yet available through this workflow — it needs an explicitly bound Gateway identity this form does not collect yet. Configure access to this relay directly once it is ready if egress is needed.</p>
+        <p className="lede">Internet egress is not yet available through this workflow — it needs an explicitly bound Aven identity this form does not collect yet. Configure access to this estavelle directly once it is ready if egress is needed.</p>
       </fieldset>
       <GroupPicker label="Permitted groups" groups={groups.value ?? []} value={permittedGroups} onChange={setPermittedGroups} />
       <div className="actions"><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button className="primary" type="submit" disabled={!ready || busy || groups.loading}>Review allocation</button></div>

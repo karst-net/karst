@@ -24,15 +24,15 @@ export async function loadGroupDependencies(id: string): Promise<GroupDependency
   const dependencies: GroupDependencyReview["dependencies"] = [];
   const add = (key: string, label: string, href: string) => dependencies.push({ key, label, href });
   for (const grant of document.grants ?? []) {
-    if (grant.source_groups.includes(id) || grant.target_groups?.includes(id)) add(`grant:${grant.id}`, `Access grant: ${grant.name}`, grant.id.startsWith("relay-exit-") ? "#/relays" : "#/groups/access");
+    if (grant.source_groups.includes(id) || grant.target_groups?.includes(id)) add(`grant:${grant.id}`, `Access grant: ${grant.name}`, grant.id.startsWith("relay-exit-") ? "#/estavelles" : "#/groups/access");
   }
   for (const [name, bound] of Object.entries(document.groupBindings ?? {})) {
     if (bound === id) add(`binding:${name}`, `Legacy membership mapping: ${name.replace(/^group:/, "")}`, "#/groups/access");
   }
   const relatedRelays = relays.filter(relay => relay.allowed_groups?.includes(id)).sort((a, b) => a.id.localeCompare(b.id));
-  for (const relay of relatedRelays) add(`relay:${relay.id}`, `Estavelle: ${relay.id}`, "#/relays");
+  for (const relay of relatedRelays) add(`relay:${relay.id}`, `Estavelle: ${relay.id}`, "#/estavelles");
   const relatedRoutes = routes.filter(route => [...(route.peer_groups ?? []), ...(route.groups ?? []), ...(route.access_control_groups ?? [])].includes(id)).sort((a, b) => a.id.localeCompare(b.id));
-  for (const route of relatedRoutes) add(`route:${route.id}`, `Gateway route: ${route.network_id}`, route.id.startsWith("relay-exit-") ? "#/relays" : "#/routes");
+  for (const route of relatedRoutes) add(`route:${route.id}`, `Aven route: ${route.network_id}`, route.id.startsWith("relay-exit-") ? "#/estavelles" : "#/avens");
   for (const server of nameservers) if (server.groups.includes(id)) add(`dns:${server.id}`, `DNS servers: ${server.name}`, "#/dns");
   if (dns.disabled_management_groups.includes(id)) add("dns-settings", "DNS management exception", "#/dns");
   for (const user of users) if (user.auto_groups?.includes(id)) add(`user:${user.id}`, `Automatic assignment: ${user.name || user.email || "Unnamed user"}`, "#/users");

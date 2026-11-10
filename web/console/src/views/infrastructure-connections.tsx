@@ -178,7 +178,7 @@ export function InfrastructureConnections() {
 
   return <section>
     <h2>Infrastructure connections</h2>
-    <TutorialHint>Lets Authorized Locations offer real regions, local zones, Kubernetes namespaces, Nomad datacenters, and LXD cluster members instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces/datacenters/cluster-members) — they cannot place an order or create a workload. "Read-write" connections may make live changes and incur costs: enabling an AWS Local Zone that exists but isn't opted into use yet, and — once its own launch defaults below are set — actuating a relay allocated against it on the Relay allocations page. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</TutorialHint>
+    <TutorialHint>Lets Authorized Locations offer real regions, local zones, Kubernetes namespaces, Nomad datacenters, and LXD cluster members instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces/datacenters/cluster-members) — they cannot place an order or create a workload. "Read-write" connections may make live changes and incur costs: enabling an AWS Local Zone that exists but isn't opted into use yet, and — once its own launch defaults below are set — actuating an estavelle allocated against it on the Estavelle allocations page. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</TutorialHint>
     <div className="actions"><button className="primary" onClick={() => setConnectionDraft(blankConnectionDraft)}>Add infrastructure connection</button></div>
     <Notice message={message} />
     {infraConnections.loading ? <p>Loading infrastructure connections…</p> : infraConnections.error
@@ -275,7 +275,7 @@ export function InfrastructureConnections() {
     </Dialog>
 
     <Dialog open={Boolean(launchDefaultsFor)} title="Launch defaults" onClose={() => setLaunchDefaultsFor(undefined)}>
-      <p>The AWS shape a relay allocated against {launchDefaultsFor?.label || launchDefaultsFor?.type} on the Relay allocations page actually launches as — set once here, not on the allocation itself.</p>
+      <p>The AWS shape an estavelle allocated against {launchDefaultsFor?.label || launchDefaultsFor?.type} on the Estavelle allocations page actually launches as — set once here, not on the allocation itself.</p>
       {launchDefaultsDraft && <form onSubmit={(event) => { event.preventDefault(); void saveLaunchDefaults(); }}>
         <label>Region<input aria-label="Launch region" placeholder="us-east-1" required value={launchDefaultsDraft.region} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, region: event.target.value })} /></label>
         <label>AMI ID<input aria-label="Launch AMI ID" placeholder="ami-0123456789abcdef0" required value={launchDefaultsDraft.amiId} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, amiId: event.target.value })} /></label>
@@ -288,9 +288,9 @@ export function InfrastructureConnections() {
     </Dialog>
 
     <Dialog open={Boolean(nomadLaunchDefaultsFor)} title="Launch defaults" onClose={() => setNomadLaunchDefaultsFor(undefined)}>
-      <p>The Nomad job a relay allocated against {nomadLaunchDefaultsFor?.label || nomadLaunchDefaultsFor?.type} on the Relay allocations page actually dispatches — set once here, not on the allocation itself.</p>
+      <p>The Nomad job an estavelle allocated against {nomadLaunchDefaultsFor?.label || nomadLaunchDefaultsFor?.type} on the Estavelle allocations page actually dispatches — set once here, not on the allocation itself.</p>
       {nomadLaunchDefaultsDraft && <form onSubmit={(event) => { event.preventDefault(); void saveNomadLaunchDefaults(); }}>
-        <label>Job ID<input aria-label="Launch Nomad job ID" placeholder="karst-relay" required value={nomadLaunchDefaultsDraft.jobId} onChange={(event) => setNomadLaunchDefaultsDraft((current) => current && { ...current, jobId: event.target.value })} /></label>
+        <label>Job ID<input aria-label="Launch Nomad job ID" placeholder="karst-estavelle" required value={nomadLaunchDefaultsDraft.jobId} onChange={(event) => setNomadLaunchDefaultsDraft((current) => current && { ...current, jobId: event.target.value })} /></label>
         <p className="lede">A parameterized job already registered against this connection's Nomad cluster. This dialog does not register or validate it.</p>
         <label>Datacenter<input aria-label="Launch Nomad datacenter" placeholder="dc1" required value={nomadLaunchDefaultsDraft.datacenter} onChange={(event) => setNomadLaunchDefaultsDraft((current) => current && { ...current, datacenter: event.target.value })} /></label>
         <div className="actions"><button type="button" onClick={() => setNomadLaunchDefaultsFor(undefined)}>Cancel</button><button className="primary" type="submit">Save launch defaults</button></div>
@@ -298,10 +298,10 @@ export function InfrastructureConnections() {
     </Dialog>
 
     <Dialog open={Boolean(kubernetesLaunchDefaultsFor)} title="Launch defaults" onClose={() => setKubernetesLaunchDefaultsFor(undefined)}>
-      <p>The Pod a relay allocated against {kubernetesLaunchDefaultsFor?.label || kubernetesLaunchDefaultsFor?.type} on the Relay allocations page actually creates — set once here, not on the allocation itself.</p>
+      <p>The Pod an estavelle allocated against {kubernetesLaunchDefaultsFor?.label || kubernetesLaunchDefaultsFor?.type} on the Estavelle allocations page actually creates — set once here, not on the allocation itself.</p>
       {kubernetesLaunchDefaultsDraft && <form onSubmit={(event) => { event.preventDefault(); void saveKubernetesLaunchDefaults(); }}>
         <label>Namespace<input aria-label="Launch Kubernetes namespace" placeholder="default" required value={kubernetesLaunchDefaultsDraft.namespace} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, namespace: event.target.value })} /></label>
-        <label>Image<input aria-label="Launch Kubernetes image" placeholder="ghcr.io/karst-net/karst-relay:dev" required value={kubernetesLaunchDefaultsDraft.image} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, image: event.target.value })} /></label>
+        <label>Image<input aria-label="Launch Kubernetes image" placeholder="ghcr.io/karst-net/karst-estavelle:dev" required value={kubernetesLaunchDefaultsDraft.image} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, image: event.target.value })} /></label>
         <label>CPU<input aria-label="Launch Kubernetes CPU" placeholder="250m" required value={kubernetesLaunchDefaultsDraft.cpu} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, cpu: event.target.value })} /></label>
         <label>Memory<input aria-label="Launch Kubernetes memory" placeholder="256Mi" required value={kubernetesLaunchDefaultsDraft.memory} onChange={(event) => setKubernetesLaunchDefaultsDraft((current) => current && { ...current, memory: event.target.value })} /></label>
         <p className="lede">CPU and memory use Kubernetes's own quantity syntax, and are used as both the Pod's request and its limit.</p>

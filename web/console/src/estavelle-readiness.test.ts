@@ -20,7 +20,7 @@ test("writer observations expire at the server lease boundary and reject unknown
   expect(admissionObservation(new Date(now + 1).toISOString(), now).state).toBe("unknown");
 });
 
-test("each family uses its owned offer on the explicitly bound Gateway", () => {
+test("each family uses its owned offer on the explicitly bound Aven", () => {
   const result = exitObservations(service, inventory());
   expect(result.map(offer => [offer.family, offer.label])).toEqual([["IPv4", "Forwarding reported ready"], ["IPv6", "Forwarding reported degraded"]]);
 });
@@ -41,7 +41,7 @@ test("a matching name or native node ID is not proof of the selected public iden
 
 test("offline, disabled and unreported offers cannot use aggregate ready status", () => {
   const data = inventory(); data.avens[0].control_connected = false;
-  expect(exitObservations(service, data)[0].label).toBe("Gateway disconnected");
+  expect(exitObservations(service, data)[0].label).toBe("Aven disconnected");
   data.avens[0].control_connected = true; data.avens[0].offers[0].enabled = false;
   expect(exitObservations(service, data)[0].label).toBe("Exit offer disabled");
   data.avens[0].offers[0].enabled = true; data.avens[0].offers[0].forwarding_readiness = "unreported";
@@ -50,7 +50,7 @@ test("offline, disabled and unreported offers cannot use aggregate ready status"
 
 test("missing sources, bindings and unresolved routes stay unknown", () => {
   expect(exitObservations(service)[0].state).toBe("unknown");
-  expect(exitObservations({ ...service, gateway_handle: "" }, inventory())[0].label).toBe("Gateway not bound");
+  expect(exitObservations({ ...service, gateway_handle: "" }, inventory())[0].label).toBe("Aven not bound");
   const data = inventory(); data.avens[0].offers = []; data.unresolved_routes.push("relay-exit-denver-0");
   expect(exitObservations(service, data)[0].label).toBe("Exit route unresolved");
   expect(exitObservations({ ...service, exit_ipv4: false, exit_ipv6: false }, data)).toEqual([]);

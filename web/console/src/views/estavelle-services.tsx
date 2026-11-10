@@ -24,7 +24,7 @@ export function EstavelleServices() {
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5_000); return () => clearInterval(timer); }, []);
   const reload = () => { resource.reload(); endpoints.reload(); groups.reload(); gateways.reload(); admission.reload(); allocations.reload(); setNow(Date.now()); };
   const { message, setMessage, run } = useMutation(reload);
-  // One "Add relay" entry point (ADR-0067), not three differently shaped
+  // One "Add estavelle" entry point (ADR-0067), not three differently shaped
   // pages: "choice" is the branching question, the other three steps are
   // today's unchanged dialogs, just reached from here instead of their
   // own buttons. "install" can hand off directly into "register" once its
@@ -38,7 +38,7 @@ export function EstavelleServices() {
   const [acknowledged, setAcknowledged] = useState(false);
   const [modeDraft, setModeDraft] = useState<{ service: EstavelleService; ponor: boolean }>();
   const [modeAcknowledged, setModeAcknowledged] = useState(false);
-  if (resource.loading || endpoints.loading) return <p>Loading relays…</p>;
+  if (resource.loading || endpoints.loading) return <p>Loading estavelles…</p>;
   const { services, publication } = resource.value ?? { services: [], publication: { mode: "legacy" } };
   const ponor = endpoints.value ?? [];
   const unconfigured = ponor.filter(endpoint => !services.some(service => service.ponor_id === endpoint.id));
@@ -59,25 +59,25 @@ export function EstavelleServices() {
   };
 
   return <section>
-    <h2>Relays</h2>
-    <p>Manage relay endpoints, group access, internet egress and health in one place. Ponor is the relay transport; a service stores the endpoint's access and publication settings.</p>
-    <div className="actions"><button className="primary" onClick={() => setAddRelayStep("choice")}>Add relay</button><button onClick={reload}>Refresh relays</button></div>
-    <p className="lede">One workflow covers all three situations: a relay already running somewhere, a host with nothing on it yet, or no host at all. <strong>Add relay</strong> asks which applies, then takes you through the right steps — only the last one, provisioning a new host, actually creates anything.</p>
+    <h2>Estavelles</h2>
+    <p>Manage estavelle endpoints, group access, internet egress and health in one place. Ponor is the estavelle transport; a service stores the endpoint's access and publication settings.</p>
+    <div className="actions"><button className="primary" onClick={() => setAddRelayStep("choice")}>Add estavelle</button><button onClick={reload}>Refresh estavelles</button></div>
+    <p className="lede">One workflow covers all three situations: an estavelle already running somewhere, a host with nothing on it yet, or no host at all. <strong>Add estavelle</strong> asks which applies, then takes you through the right steps — only the last one, provisioning a new host, actually creates anything.</p>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {endpoints.error && <Failure message={endpoints.error} retry={endpoints.reload} />}
     {admission.error && services.some(service => service.access_managed) && <p role="alert">Admission writer observations unavailable: {admission.error}</p>}
-    {gateways.error && services.some(service => service.exit_ipv4 || service.exit_ipv6) && <p role="alert">Gateway observations unavailable: {gateways.error}</p>}
-    <p className="lede">Operational status shows the last reported observations, separate from saved configuration. Writer refresh does not prove a particular policy revision has reached the relay. Gateway readiness is self-reported, and clients still choose whether to use internet egress.</p>
+    {gateways.error && services.some(service => service.exit_ipv4 || service.exit_ipv6) && <p role="alert">Aven observations unavailable: {gateways.error}</p>}
+    <p className="lede">Operational status shows the last reported observations, separate from saved configuration. Writer refresh does not prove a particular policy revision has reached the estavelle. Aven readiness is self-reported, and clients still choose whether to use internet egress.</p>
     <details><summary>Advanced publication and legacy settings</summary>
-    <p>Endpoint publication: <strong>{resource.error ? "Unknown" : publication.mode === "services" ? "Configured relays" : "Legacy registries"}</strong>.</p>
-    <p className="lede">{resource.error ? "Publication status could not be loaded." : publication.mode === "services" ? "Only enabled, associated endpoints are sent to clients." : "Legacy registry endpoints are published account-wide. Preview the configured relays before switching publication."}</p>
+    <p>Endpoint publication: <strong>{resource.error ? "Unknown" : publication.mode === "services" ? "Configured estavelles" : "Legacy registries"}</strong>.</p>
+    <p className="lede">{resource.error ? "Publication status could not be loaded." : publication.mode === "services" ? "Only enabled, associated endpoints are sent to clients." : "Legacy registry endpoints are published account-wide. Preview the configured estavelles before switching publication."}</p>
     <div className="actions">
       <button disabled={saving || Boolean(resource.error)} onClick={async () => { setMessage(undefined); setSaving(true); try { setPreview(await api.previewEstavellePublication()); setAcknowledged(false); } catch (error) { setMessage((error as Error).message); } finally { setSaving(false); } }}>Preview service publication</button>
       {publication.mode === "services" && <button disabled={saving || Boolean(resource.error)} onClick={async () => { if (!confirm("Return to legacy registry publication? Previously unassociated legacy endpoints may become available to clients again.")) return; setSaving(true); await run(() => api.setEstavellePublication("legacy"), "Legacy registry publication restored."); setSaving(false); }}>Restore legacy publication</button>}
     </div>
     </details>
     {!modeDraft && !details && !addRelayStep && preview === undefined && <Notice message={message} />}
-    {!resource.error && !endpoints.error && services.length === 0 && ponor.length === 0 ? <EmptyState title="No relays configured">Add a running relay, then choose its allowed groups and optional internet egress.</EmptyState> :
+    {!resource.error && !endpoints.error && services.length === 0 && ponor.length === 0 ? <EmptyState title="No estavelles configured">Add a running estavelle, then choose its allowed groups and optional internet egress.</EmptyState> :
       <Rows head={<><th>Estavelle</th><th>Endpoint and health</th><th>Access</th><th>Operational status</th><th>Actions</th></>}>
         {services.map((service) => {
           const p = ponor.find((entry) => entry.id === service.ponor_id);
@@ -93,11 +93,11 @@ export function EstavelleServices() {
           </tr>;
         })}
         {!endpoints.error && unconfigured.map(endpoint => <tr key={`endpoint-${endpoint.id}`}>
-          <td>{endpoint.region || "Unnamed relay"}<br /><span className="lede">{resource.error ? "Configuration unavailable" : "Not configured"}</span></td>
+          <td>{endpoint.region || "Unnamed estavelle"}<br /><span className="lede">{resource.error ? "Configuration unavailable" : "Not configured"}</span></td>
           <td><code>{endpoint.address}</code><br /><Status state={endpoint.health.admission_state === "confirmed" ? "healthy" : endpoint.health.admission_state === "stale" ? "warning" : "unknown"} label={`Admission: ${endpoint.health.admission_state}`} /></td>
           <td>{resource.error ? "Unknown" : publication.mode === "legacy" ? "Legacy account-wide access" : "Not published"}</td>
           <td>Configure group access to track managed admission and egress.</td>
-          <td><button onClick={() => { setMessage(undefined); setDetails(endpoint); }}>Endpoint details</button><button disabled={Boolean(resource.error)} onClick={() => { setRelayId(endpoint.id); setConfiguring("new"); }}>Configure relay</button></td>
+          <td><button onClick={() => { setMessage(undefined); setDetails(endpoint); }}>Endpoint details</button><button disabled={Boolean(resource.error)} onClick={() => { setRelayId(endpoint.id); setConfiguring("new"); }}>Configure estavelle</button></td>
         </tr>)}
       </Rows>}
 
@@ -105,7 +105,7 @@ export function EstavelleServices() {
     <p className="lede">ADR-0063: name a host, pick its infrastructure connection and location, and choose the permitted groups — provisioning and granting access happen in the background. Internet egress is not yet supported by this workflow.</p>
     {allocations.error && <Failure message={allocations.error} retry={allocations.reload} />}
     {!allocations.error && (allocations.value ?? []).length === 0
-      ? <EmptyState title="No relay allocations">Use Add relay — "No, provision one for me" — to provision a new host through a real infrastructure connection.</EmptyState>
+      ? <EmptyState title="No estavelle allocations">Use Add estavelle — "No, provision one for me" — to provision a new host through a real infrastructure connection.</EmptyState>
       : <Rows head={<><th>Name</th><th>Location</th><th>Permitted groups</th><th>Status</th><th>Actions</th></>}>
         {(allocations.value ?? []).map(allocation => {
           const status = allocationStatus(allocation);
@@ -121,8 +121,8 @@ export function EstavelleServices() {
         })}
       </Rows>}
 
-    {addRelayStep === "choice" && <Dialog open title="Add relay" onClose={() => setAddRelayStep(undefined)}>
-      <p>Is this relay already running somewhere?</p>
+    {addRelayStep === "choice" && <Dialog open title="Add estavelle" onClose={() => setAddRelayStep(undefined)}>
+      <p>Is this estavelle already running somewhere?</p>
       <div className="actions">
         <button className="primary" onClick={() => setAddRelayStep("register")}>Yes — register it</button>
         <button onClick={() => setAddRelayStep("install")}>I have a host, but nothing is running on it yet</button>
@@ -136,16 +136,16 @@ export function EstavelleServices() {
     {addRelayStep === "allocate" && <AllocateEstavelle onClose={() => setAddRelayStep(undefined)} onAllocated={() => { setAddRelayStep(undefined); reload(); setMessage("Estavelle allocation requested. It will show as pending until it registers and access is granted."); }} />}
     <Dialog open={Boolean(details)} title="Estavelle endpoint details" onClose={() => setDetails(undefined)}>
       {details && <><Notice message={message} /><dl><dt>Address</dt><dd>{details.address}</dd><dt>TLS server name</dt><dd>{details.tls_server_name}</dd><dt>Region</dt><dd>{details.region}</dd><dt>Location</dt><dd>{details.location?.label || (details.location ? `${details.location.lat}, ${details.location.lon}` : "No location")}</dd><dt>Last confirmed</dt><dd><Observed at={details.health.last_confirmed_at} /></dd></dl>
-      <p>Health is the relay's signed report. A stale report does not prove the process stopped forwarding traffic.</p>
-      {services.some(service => service.ponor_id === details.id) ? <p>Remove all relay configurations using this endpoint before deleting its registration.</p> : <button className="danger" disabled={Boolean(resource.error)} onClick={async () => { if (!confirm(`Remove the endpoint at ${details.address}? Clients relying on it may lose connectivity. The running process will remain intact.`)) return; if (await run(() => api.removeEstavelle(details.id), "Estavelle endpoint removed.")) setDetails(undefined); }}>Remove endpoint</button>}
+      <p>Health is the estavelle's signed report. A stale report does not prove the process stopped forwarding traffic.</p>
+      {services.some(service => service.ponor_id === details.id) ? <p>Remove all estavelle configurations using this endpoint before deleting its registration.</p> : <button className="danger" disabled={Boolean(resource.error)} onClick={async () => { if (!confirm(`Remove the endpoint at ${details.address}? Clients relying on it may lose connectivity. The running process will remain intact.`)) return; if (await run(() => api.removeEstavelle(details.id), "Estavelle endpoint removed.")) setDetails(undefined); }}>Remove endpoint</button>}
       <button onClick={() => setDetails(undefined)}>Close</button></>}
     </Dialog>
     {configuring && <EstavelleAccess relayId={relayId} service={configuring === "new" ? undefined : configuring} onClose={() => { setConfiguring(undefined); setRelayId(undefined); }} onSaved={() => { setConfiguring(undefined); setRelayId(undefined); reload(); setMessage("Estavelle configuration saved. Operational observations below show reported admission and forwarding status."); }} />}
-    <Dialog open={Boolean(modeDraft)} title="Change relay availability" onClose={() => { if (!saving) setModeDraft(undefined); }}>
+    <Dialog open={Boolean(modeDraft)} title="Change estavelle availability" onClose={() => { if (!saving) setModeDraft(undefined); }}>
       {modeDraft && <><Notice message={message} />
         <p>Estavelle: <strong>{modeDraft.service.id}</strong></p>
         <p>{publication.mode === "services" ? "Mode changes update endpoints sent to clients. Shared endpoints remain available while another service enables them." : "This mode is staged while legacy registries still publish endpoints. Switch to service publication to apply it to clients."}</p>
-        <label><input type="checkbox" checked={modeDraft.ponor} onChange={(event) => setModeDraft({ ...modeDraft, ponor: event.target.checked })} />Enable relay</label>
+        <label><input type="checkbox" checked={modeDraft.ponor} onChange={(event) => setModeDraft({ ...modeDraft, ponor: event.target.checked })} />Enable estavelle</label>
         <label><input type="checkbox" checked={modeAcknowledged} onChange={(event) => setModeAcknowledged(event.target.checked)} />I understand mode changes may interrupt client connectivity.</label>
         <div className="actions"><button disabled={saving} onClick={() => setModeDraft(undefined)}>Cancel</button><button disabled={!modeAcknowledged || saving} onClick={async () => { setSaving(true); if (await run(() => api.setEstavelleServiceModes(modeDraft.service.id, modeDraft.ponor), `Estavelle modes for ${modeDraft.service.id} were updated.`)) setModeDraft(undefined); setSaving(false); }}>Apply availability</button></div>
       </>}

@@ -3,7 +3,7 @@
 
 // The NOC view, Phase 1a (#241, ADR-0046/ADR-0047), extended to ADR-0046
 // §1's full component list plus the admin-authorized "possible locations"
-// registry: a map of every relay, exit-node/subnet-router gateway group,
+// registry: a map of every estavelle, exit-node/subnet-router aven group,
 // and the account's control-plane/Bedrock declared locations, each colored
 // by health where it has one, plus every
 // authorized-but-possibly-unoccupied location as a hollow marker. History,
@@ -58,15 +58,15 @@ function token(name: string): string {
 // what makes the chart-4/chart-5 slots' relaxed CVD floor acceptable for
 // this use (see the token comment).
 const kindGlyph: Record<string, string> = { estavelle: "●", route: "▲", control_plane: "■", bedrock: "★" };
-const kindLabel: Record<string, string> = { estavelle: "Estavelle", route: "Exit/subnet gateway", control_plane: "Control plane", bedrock: "Bedrock" };
+const kindLabel: Record<string, string> = { estavelle: "Estavelle", route: "Exit/subnet aven", control_plane: "Control plane", bedrock: "Bedrock" };
 const kindChartToken: Record<string, string> = { estavelle: "--chart-1", route: "--chart-3", control_plane: "--chart-4", bedrock: "--chart-5" };
 const kinds = Object.keys(kindGlyph);
 
 const healthState = (health?: string): StatusState => health === "confirmed" ? "healthy" : health === "stale" ? "warning" : "unknown";
 
-// Matches the Relays page's own mapping (views/relay-services.tsx) -- the drill-down
-// dialog for a relay shows the same health ADR-0021 already derives, not a
-// second opinion on it. Only relays carry this richer, telemetry-backed
+// Matches the Estavelles page's own mapping (views/estavelle-services.tsx) -- the drill-down
+// dialog for an estavelle shows the same health ADR-0021 already derives, not a
+// second opinion on it. Only estavelles carry this richer, telemetry-backed
 // shape; every other kind's detail comes straight from the NocComponent
 // already in hand.
 const estavelleHealthState = (estavelle: Estavelle): StatusState =>
@@ -142,7 +142,7 @@ export function Noc() {
         paint: { "line-color": token("--muted"), "line-width": 1.2 },
       });
 
-      // Relays: clustered, exactly as Phase 1a shipped it -- untouched
+      // Estavelles: clustered, exactly as Phase 1a shipped it -- untouched
       // except for the added glyph layer, which carries this marker's kind
       // the same secondary-channel way every other kind below does.
       instance.addSource("estavelles", { type: "geojson", data: { type: "FeatureCollection", features: [] }, cluster: true, clusterRadius: 40 });
@@ -173,7 +173,7 @@ export function Noc() {
       // Every other component kind (ADR-0046 §1): one shared source, not
       // clustered -- route/control_plane/bedrock are infrastructure, never
       // numerous enough in one deployment to need it the way a
-      // client-peer-scale fleet of relays can be.
+      // client-peer-scale fleet of estavelles can be.
       instance.addSource("components", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       instance.addLayer({
         id: "component-points", type: "circle", source: "components",
@@ -245,7 +245,7 @@ export function Noc() {
   // actually contains -- a fleet concentrated in one region, or a set of
   // authorized-but-unoccupied locations on another continent, can each sit
   // entirely outside an arbitrary initial viewport, and the two load
-  // independently (one is a relay/component poll, the other an admin
+  // independently (one is an estavelle/component poll, the other an admin
   // registry fetch). Takes the current snapshot of both every time either
   // effect below calls it, so whichever loads first does not fit a bounds
   // that then ignores the other arriving later.
@@ -290,7 +290,7 @@ export function Noc() {
 
   return <section className="noc-view">
     <h2>NOC view</h2>
-    <TutorialHint>A read-only map of this account's physical components (relays) and logical ones (exit-node/subnet-router gateways, the control plane itself, Bedrock) plotted wherever each has a location — detected, declared, or just authorized but not yet occupied (the hollow markers). Every relay, exit-node/subnet-router gateway, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</TutorialHint>
+    <TutorialHint>A read-only map of this account's physical components (estavelles) and logical ones (exit-node/subnet-router avens, the control plane itself, Bedrock) plotted wherever each has a location — detected, declared, or just authorized but not yet occupied (the hollow markers). Every estavelle, exit-node/subnet-router aven, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</TutorialHint>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {locations.error && <Failure message={locations.error} retry={locations.reload} />}
     <div ref={container} className="noc-map" role="application" aria-label="Component map" />

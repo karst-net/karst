@@ -29,7 +29,7 @@ test("all Gateway group roles and DNS/user assignments are dependencies, includi
   vi.mocked(api.users).mockResolvedValue([{ id: "owner", name: "Operator", auto_groups: ["g"] }] as Awaited<ReturnType<typeof api.users>>);
   const review = await loadGroupDependencies("g");
   expect(review.dependencies).toHaveLength(6);
-  expect(review.dependencies.find(link => link.key === "route:relay-exit-denver-0")?.href).toBe("#/relays");
+  expect(review.dependencies.find(link => link.key === "route:relay-exit-denver-0")?.href).toBe("#/estavelles");
   expect(review.dependencies.map(link => link.label)).toContain("Automatic assignment: Operator");
 });
 
