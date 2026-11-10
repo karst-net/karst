@@ -738,27 +738,27 @@ path_c() {
 	WT_SUBST=$subst run_step C install
 
 	# ── 6.1 the estavelle ───────────────────────────────────────────────────
-	WT_SUBST=$subst run_step C relay-install
-	WT_SUBST=$subst run_step C relay-cert
+	WT_SUBST=$subst run_step C estavelle-install
+	WT_SUBST=$subst run_step C estavelle-cert
 	assert_mode /etc/karst/tls/estavelle.key 600 "the estavelle's TLS key is mode 600"
-	WT_SUBST=$subst run_step C relay-cert-verify
+	WT_SUBST=$subst run_step C estavelle-cert-verify
 	assert_file_has "$WORK/.out" "CA:FALSE" \
 		"the estavelle certificate is an end-entity leaf, not a CA"
-	WT_SUBST=$subst run_step C relay-config
-	WT_SUBST=$subst run_step C relay-check
+	WT_SUBST=$subst run_step C estavelle-config
+	WT_SUBST=$subst run_step C estavelle-check
 	# §6.1 prints this line and it is the whole point of seeding a placeholder:
 	# an empty roster is a legitimate state that admits nobody, and the check
 	# has to say so rather than call the file valid and stop.
 	assert_file_has "$WORK/.out" "no nodes admitted" \
 		"the check reports that an empty roster admits nobody"
 
-	WT_SUBST=$subst run_step C relay-pubkey
+	WT_SUBST=$subst run_step C estavelle-pubkey
 	local identity_pk
 	identity_pk=$(sed -n 's/^identity_pk *//p' "$WORK/.out" | tr -d ' \r\n')
 	[ -n "$identity_pk" ] || die "karst-estavelle pubkey printed no identity_pk"
 	ok "the estavelle's registry entry is ${#identity_pk} base64 characters"
 
-	WT_SUBST=$subst run_step C relay-start
+	WT_SUBST=$subst run_step C estavelle-start
 	wait_for 30 "karst-estavelle is active under systemd" -- \
 		systemctl is-active --quiet karst-estavelle
 
@@ -768,7 +768,7 @@ path_c() {
 	# §6.2: identity_key is the identity_pk printed above, verbatim and base64.
 	# It is the one value in the walkthrough that is *not* converted to hex,
 	# and pasting it through unchanged is the property being tested.
-	WT_SUBST=$subst WTP_identity_key=$identity_pk run_step C relays-json
+	WT_SUBST=$subst WTP_identity_key=$identity_pk run_step C estavelles-json
 	WT_SUBST=$subst run_step C policy
 	WT_SUBST=$subst \
 		WTP_Secret="$(openssl rand -hex 16)" \
