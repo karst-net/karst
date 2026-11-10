@@ -22,9 +22,9 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
+use karst_estavelle_proto::consts::ID_LEN;
 use karst_resurgence::consts::{REFLECT_KEY_LEN, TAG_LEN};
 use karst_resurgence::{msg, DiscoKey, Endpoint, Message};
-use karst_estavelle_proto::consts::ID_LEN;
 
 use crate::limits::{Budget, Meter};
 

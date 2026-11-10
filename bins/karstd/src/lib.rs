@@ -20,6 +20,7 @@
 //! below cannot tell where a peer came from.
 
 pub mod anchor_probe;
+pub mod aven;
 pub mod bedrock;
 pub mod build_identity;
 pub mod compliance;
@@ -35,7 +36,6 @@ pub mod exit_policy;
 pub mod filetransfer;
 pub mod filter;
 pub mod flow;
-pub mod aven;
 pub mod home;
 pub mod ipc;
 mod metrics_http;

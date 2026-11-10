@@ -318,8 +318,10 @@ impl Meshable {
             std::fs::write(&ca, them.harness.ca_pem.clone()).expect("write ca");
             let tls = karst_estavelle::tls::client_config(&ca).expect("client tls");
             let quic_tls = karst_estavelle::quic::client_config(&tls).expect("client quic tls");
-            let dialer =
-                karst_estavelle::mesh::Dialer::new(me.harness.relay.relay_id(), "default".to_owned());
+            let dialer = karst_estavelle::mesh::Dialer::new(
+                me.harness.relay.relay_id(),
+                "default".to_owned(),
+            );
             tokio::spawn(karst_estavelle::server::mesh_loop(
                 Arc::clone(&me.ctx),
                 tls,

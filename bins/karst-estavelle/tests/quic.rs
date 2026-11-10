@@ -586,7 +586,8 @@ async fn two_relays_mesh_over_quic_and_a_packet_crosses() {
         let ca_path = them_h.ca_path.clone();
         let tls = tls::client_config(&ca_path).expect("client tls");
         let quic_tls = karst_estavelle::quic::client_config(&tls).expect("client quic tls");
-        let dialer = karst_estavelle::mesh::Dialer::new(me_h.relay.relay_id(), "default".to_owned());
+        let dialer =
+            karst_estavelle::mesh::Dialer::new(me_h.relay.relay_id(), "default".to_owned());
         tokio::spawn(karst_estavelle::server::mesh_loop(
             Arc::clone(ctx),
             tls,

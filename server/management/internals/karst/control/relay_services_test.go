@@ -9,9 +9,9 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
+	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/shared/management/proto"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"

@@ -962,7 +962,10 @@ fn pasted_invitation_enrolls_without_a_credential_file() {
     // The invitation's relay anchors land in the state directory, named by
     // the config, and are exactly what relay TLS then loads.
     let anchors = state.join("relay-ca.pem");
-    assert_eq!(section.estavelle_ca_file.as_deref(), Some(anchors.as_path()));
+    assert_eq!(
+        section.estavelle_ca_file.as_deref(),
+        Some(anchors.as_path())
+    );
     assert_eq!(std::fs::read_to_string(&anchors).unwrap(), relay_ca);
     karstd::relay_tls::client_config(Some(&anchors)).expect("anchors usable for relay TLS");
     let mut client = Client::new(&section, &state, &keys).unwrap();

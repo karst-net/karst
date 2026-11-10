@@ -102,8 +102,8 @@ impl RelaySetup {
         std::fs::write(&key_path, cert.signing_key.serialize_pem()).expect("write key");
 
         let relay_key_path = dir.join("relay.key");
-        let relay_identity =
-            karst_estavelle::sign::Identity::load_or_create(&relay_key_path).expect("relay identity");
+        let relay_identity = karst_estavelle::sign::Identity::load_or_create(&relay_key_path)
+            .expect("relay identity");
         let public_key_hex = hex(relay_identity.public_key());
 
         let address = format!("127.0.0.1:{port}");

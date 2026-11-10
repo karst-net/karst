@@ -10,10 +10,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
-	"github.com/netbirdio/netbird/management/internals/karst/infraprovision"
 	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
+	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
+	"github.com/netbirdio/netbird/management/internals/karst/infraprovision"
 )
 
 // fakeDriver is a trivial in-memory infraprovision.Driver -- the ADR-0067

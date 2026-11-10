@@ -414,10 +414,7 @@ mod tests {
     #[test]
     fn aven_status_is_read_only_and_supports_custom_socket() {
         let args = ["status", "-s", "/tmp/aven.sock"];
-        assert_eq!(
-            parse_command("aven", &args),
-            Some(Command::AvenStatus)
-        );
+        assert_eq!(parse_command("aven", &args), Some(Command::AvenStatus));
         assert_eq!(
             socket_arg(command_args("aven", &args)).expect("socket"),
             std::path::PathBuf::from("/tmp/aven.sock")
@@ -443,10 +440,7 @@ mod tests {
             vec!["exit", "list", "--unknown"],
         ] {
             assert!(parse_command("aven", &args).is_some());
-            assert!(
-                socket_arg(command_args("aven", &args)).is_err(),
-                "{args:?}"
-            );
+            assert!(socket_arg(command_args("aven", &args)).is_err(), "{args:?}");
         }
     }
 }

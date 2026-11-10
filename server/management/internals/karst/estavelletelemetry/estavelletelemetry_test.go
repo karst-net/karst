@@ -15,8 +15,8 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
+	"github.com/netbirdio/netbird/management/internals/karst/identity"
 )
 
 // fakeStore is an in-memory stand-in for estavellereg.Store's two methods this

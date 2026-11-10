@@ -15,9 +15,9 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
-	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
+	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/auth"

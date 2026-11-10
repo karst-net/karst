@@ -18,8 +18,8 @@ use karst_estavelle::hub::{Config as HubConfig, ConnId, Hub};
 use karst_estavelle::roster::FileRoster;
 use karst_estavelle::sign::{node_id, Identity, PonorVerifier, SEED_LEN};
 use karst_estavelle_proto::{
-    frame::decode, Admitted, AquiferId, ClientHandshake, Error as ProtoError, Frame,
-    EstavelleHandshake, Role,
+    frame::decode, Admitted, AquiferId, ClientHandshake, Error as ProtoError, EstavelleHandshake,
+    Frame, Role,
 };
 
 fn identity(seed: u8) -> Identity {

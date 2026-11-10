@@ -22,8 +22,8 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/netbirdio/netbird/management/internals/karst/billing"
-	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
+	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 )
 

@@ -325,7 +325,10 @@ fn command_enroll(args: &[&str]) -> ExitCode {
     };
     match enroll(&bundle.control_api_base, &bundle.token, &entry) {
         Ok(()) => {
-            println!("karst-estavelle: enrolled (identity_pk {})", entry.identity_key);
+            println!(
+                "karst-estavelle: enrolled (identity_pk {})",
+                entry.identity_key
+            );
             ExitCode::SUCCESS
         }
         Err(e) => {

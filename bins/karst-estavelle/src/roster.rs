@@ -336,7 +336,10 @@ impl FileRoster {
                 });
             }
             region.insert(id, row.region.clone());
-            if mesh.insert(id, EstavelleEntry { identity_pk: pk }).is_some() {
+            if mesh
+                .insert(id, EstavelleEntry { identity_pk: pk })
+                .is_some()
+            {
                 return Err(Error::Duplicate(format!(
                     "roster: mesh peer #{n} repeats an identity already listed"
                 )));

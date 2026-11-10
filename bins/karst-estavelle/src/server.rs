@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 use karst_estavelle_proto::consts::{
     FRAME_HEADER, FRAME_PAYLOAD_MAX, HANDSHAKE_TIMEOUT_SECS, IDLE_TIMEOUT_SECS,
 };
-use karst_estavelle_proto::{frame::decode, Admitted, Frame, Reason, EstavelleHandshake, Roster};
+use karst_estavelle_proto::{frame::decode, Admitted, EstavelleHandshake, Frame, Reason, Roster};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{watch, Notify};

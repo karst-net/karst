@@ -26,12 +26,12 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/compliance"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/server/account"
@@ -351,7 +351,9 @@ func (scanRelays) DeleteByTLSServerName(context.Context, string) error { return 
 func (scanRelays) LatestTelemetry(context.Context, string) (*estavellereg.EstavelleTelemetryRecord, error) {
 	return nil, nil
 }
-func (scanRelays) DemandByRegion(context.Context) ([]estavellereg.RegionDemand, error) { return nil, nil }
+func (scanRelays) DemandByRegion(context.Context) ([]estavellereg.RegionDemand, error) {
+	return nil, nil
+}
 func (scanRelays) DemandHistory(context.Context, time.Time, time.Time) ([]estavellereg.RegionDemandSample, error) {
 	return nil, nil
 }

@@ -1941,7 +1941,8 @@ fn spawn_relay(net: &mut Aquifer, tag: &str, port: u16, reflect: bool) -> String
 
     // Created here so the server can advertise it. The registry entry names the
     // key and the id is *derived* from it (§5.2), so the two cannot disagree.
-    let identity = karst_estavelle::sign::Identity::load_or_create(&relay_key).expect("relay identity");
+    let identity =
+        karst_estavelle::sign::Identity::load_or_create(&relay_key).expect("relay identity");
     let relay_pk = hex(identity.public_key());
 
     let executable =
@@ -5315,15 +5316,7 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
     let socket = net.dir.join("run").join("b.sock");
     let consent = |action: &str| {
         let mut command = Command::new("ip");
-        command.args([
-            "netns",
-            "exec",
-            NS_B,
-            &bin("karst"),
-            "aven",
-            "exit",
-            action,
-        ]);
+        command.args(["netns", "exec", NS_B, &bin("karst"), "aven", "exit", action]);
         if action == "use" {
             command.arg("internet");
         }
@@ -5420,15 +5413,7 @@ fn attach_ipv6_gateway_lan() {
 fn aven_exit_action(net: &Aquifer, action: &str, route_id: Option<&str>) {
     let socket = net.dir.join("run/b.sock");
     let mut command = Command::new("ip");
-    command.args([
-        "netns",
-        "exec",
-        NS_B,
-        &bin("karst"),
-        "aven",
-        "exit",
-        action,
-    ]);
+    command.args(["netns", "exec", NS_B, &bin("karst"), "aven", "exit", action]);
     if let Some(id) = route_id {
         command.arg(id);
     }

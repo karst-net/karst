@@ -31,11 +31,11 @@ type estavelleAlertUsageReporter interface {
 }
 
 type estavelleAlertFeed struct {
-	PeriodStart      time.Time                     `json:"period_start"`
-	PeriodEnd        time.Time                     `json:"period_end"`
-	AsOf             time.Time                     `json:"as_of"`
-	CoverageComplete bool                          `json:"coverage_complete"`
-	CoverageWarning  string                        `json:"coverage_warning,omitempty"`
+	PeriodStart      time.Time                         `json:"period_start"`
+	PeriodEnd        time.Time                         `json:"period_end"`
+	AsOf             time.Time                         `json:"as_of"`
+	CoverageComplete bool                              `json:"coverage_complete"`
+	CoverageWarning  string                            `json:"coverage_warning,omitempty"`
 	Alerts           []billing.EstavelleAlertCandidate `json:"alerts"`
 }
 

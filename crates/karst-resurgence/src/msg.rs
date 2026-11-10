@@ -324,7 +324,9 @@ pub fn peek(datagram: &[u8]) -> Result<Header, Error> {
     }
     let msg_type = *datagram.get(5).ok_or(Error::NotResurgence)?;
     let tag_bytes = datagram.get(6..6 + TAG_LEN).ok_or(Error::NotResurgence)?;
-    let tag = *tag_bytes.first_chunk::<TAG_LEN>().ok_or(Error::NotResurgence)?;
+    let tag = *tag_bytes
+        .first_chunk::<TAG_LEN>()
+        .ok_or(Error::NotResurgence)?;
     let epoch_bytes = datagram
         .get(6 + TAG_LEN..HEADER)
         .ok_or(Error::NotResurgence)?
@@ -349,8 +351,13 @@ pub fn peek(datagram: &[u8]) -> Result<Header, Error> {
 pub fn open(datagram: &[u8], key: &DiscoKey) -> Result<Message, Error> {
     let header = peek(datagram)?;
 
-    let split = datagram.len().checked_sub(MAC_LEN).ok_or(Error::NotResurgence)?;
-    let (signed, mac) = datagram.split_at_checked(split).ok_or(Error::NotResurgence)?;
+    let split = datagram
+        .len()
+        .checked_sub(MAC_LEN)
+        .ok_or(Error::NotResurgence)?;
+    let (signed, mac) = datagram
+        .split_at_checked(split)
+        .ok_or(Error::NotResurgence)?;
     // Authenticated before the body is looked at, so a malformed body is only
     // ever something a key holder sent.
     if !key.verify(signed, mac) {
@@ -806,7 +813,10 @@ mod tests {
     fn a_runt_is_not_aven() {
         for n in 0..HEADER + MAC_LEN {
             let junk = vec![0u8; n];
-            assert!(matches!(peek(&junk), Err(Error::NotResurgence)), "{n} bytes");
+            assert!(
+                matches!(peek(&junk), Err(Error::NotResurgence)),
+                "{n} bytes"
+            );
         }
     }
 

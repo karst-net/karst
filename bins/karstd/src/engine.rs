@@ -90,8 +90,9 @@ const COOKIE_ROTATION_MS: u64 = 120_000;
 /// Asserted rather than assumed: `PAYLOAD_MAX` was sized from
 /// `TRANSPORT_DATAGRAM_MAX` and the two live in different crates, so nothing
 /// but this would notice if either moved.
-const _: () =
-    assert!(karst_proto::consts::TRANSPORT_DATAGRAM_MAX <= karst_estavelle_proto::consts::PAYLOAD_MAX);
+const _: () = assert!(
+    karst_proto::consts::TRANSPORT_DATAGRAM_MAX <= karst_estavelle_proto::consts::PAYLOAD_MAX
+);
 
 /// How a peer's traffic currently leaves this node, for `karst status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2699,7 +2700,9 @@ pub struct Reconfigured {
 /// encoding produces means a relayed stream and a direct stream from the same
 /// peer cannot land in the same reassembly slot — which matters exactly during
 /// an upgrade, when both are briefly in flight.
-fn relay_source_key(id: &[u8; karst_estavelle_proto::consts::ID_LEN]) -> karst_transport::SourceKey {
+fn relay_source_key(
+    id: &[u8; karst_estavelle_proto::consts::ID_LEN],
+) -> karst_transport::SourceKey {
     let mut key = [0u8; 18];
     // 0xFF cannot begin a source key: an IPv6 address starting FF00::/8 is
     // multicast, which is not a source address a datagram can arrive from.

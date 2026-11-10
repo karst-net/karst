@@ -352,7 +352,10 @@ async fn tcp_forward_bench(h: &Harness, alice: &Identity, bob: &Identity) -> Dur
     start.elapsed()
 }
 
-async fn quic_next_frame(stream: &mut karst_estavelle::quic::BiStream, buf: &mut Vec<u8>) -> Vec<u8> {
+async fn quic_next_frame(
+    stream: &mut karst_estavelle::quic::BiStream,
+    buf: &mut Vec<u8>,
+) -> Vec<u8> {
     loop {
         if let Some((_, used)) = decode(buf).expect("decodes") {
             return buf.drain(..used).collect();

@@ -102,8 +102,9 @@ fn start_relay(
     ))
     .expect("config");
     cfg.validate().expect("valid");
-    let identity =
-        Arc::new(karst_estavelle::sign::Identity::load_or_create(&cfg.identity_key).expect("identity"));
+    let identity = Arc::new(
+        karst_estavelle::sign::Identity::load_or_create(&cfg.identity_key).expect("identity"),
+    );
     let roster = Arc::new(karst_estavelle::roster::FileRoster::load(&cfg.roster).expect("roster"));
     let tls = karst_estavelle::tls::server_config(&cfg.tls_cert, &cfg.tls_key).expect("tls");
     let ctx = Ctx::new(&cfg, Arc::clone(&identity), roster, tls);

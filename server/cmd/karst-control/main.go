@@ -39,9 +39,9 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/bootstrap"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
-	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
@@ -669,7 +669,7 @@ type scopedEstavelleRoster struct {
 	store  interface {
 		AllowedOnRelay(context.Context, string, string, string) (bool, error)
 	}
-	estavelleID        string
+	estavelleID    string
 	requireManaged bool
 }
 

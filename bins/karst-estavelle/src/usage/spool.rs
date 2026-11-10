@@ -15,7 +15,8 @@ use sha2::{Digest, Sha256};
 
 pub const MAX_SPOOL_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_BATCHES: usize = 1024;
-const MAX_SPOOLED_BATCH_BYTES: usize = MAX_BATCH_BYTES + 68 + karst_estavelle_proto::consts::SIG_LEN;
+const MAX_SPOOLED_BATCH_BYTES: usize =
+    MAX_BATCH_BYTES + 68 + karst_estavelle_proto::consts::SIG_LEN;
 
 /// Names contain only encoded epoch bytes and a sequence, never external paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

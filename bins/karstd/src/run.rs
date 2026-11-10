@@ -23,10 +23,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use karst_control_client::transport::pb;
-use karst_resurgence::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
 use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
+use karst_resurgence::TxId;
 use karst_transport::{Received, UdpTransport, BATCH, MAX_GRO_READ};
 use karst_tun::{Tun, TunConfig, Userspace};
 
@@ -2374,7 +2374,10 @@ const HOME_RELAY_ATTEMPTS: u32 = 3;
 /// **Registry order, wrapping.** A node with one relay has nowhere to go and
 /// must keep trying the one it has: the roster it is missing from may be
 /// updated, and abandoning the only relay would make that unrecoverable.
-fn next_relay(current: RelayId, registry: &[crate::netmap::Estavelle]) -> Option<crate::netmap::Estavelle> {
+fn next_relay(
+    current: RelayId,
+    registry: &[crate::netmap::Estavelle],
+) -> Option<crate::netmap::Estavelle> {
     let at = registry.iter().position(|r| r.relay_id == current);
     match at {
         // Not in the registry at all — withdrawn while this node was on it.

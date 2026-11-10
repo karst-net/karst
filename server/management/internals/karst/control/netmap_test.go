@@ -23,11 +23,11 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
-	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )

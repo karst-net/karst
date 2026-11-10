@@ -1083,20 +1083,20 @@ jobs:
           python-version: '3.12'
       - name: Observed Compose image identities
         run: python3 -m unittest discover -s scripts -p test_compose_versions.py -v
-      - name: Relay deployment adapter and isolated process lifecycle
+      - name: Estavelle deployment adapter and isolated process lifecycle
         env:
           KARST_COMPOSE_LIFECYCLE_TEST: '1'
         run: |
           docker pull alpine:latest
-          python3 -m unittest discover -s deploy/compose -p test_relay_service.py -v
-          python3 -m unittest discover -s deploy/compose -p test_relay_installation.py -v
+          python3 -m unittest discover -s deploy/compose -p test_estavelle_service.py -v
+          python3 -m unittest discover -s deploy/compose -p test_estavelle_installation.py -v
       # ubuntu-latest runners are full VMs with systemd as PID 1 (see the
       # walkthrough-c job above), so the lifecycle test's transient unit is
       # real systemd, not a stand-in for it.
-      - name: Relay systemd deployment adapter and isolated process lifecycle
+      - name: Estavelle systemd deployment adapter and isolated process lifecycle
         env:
           KARST_SYSTEMD_LIFECYCLE_TEST: '1'
-        run: sudo -E python3 -m unittest discover -s deploy/systemd -p test_relay_service.py -v
+        run: sudo -E python3 -m unittest discover -s deploy/systemd -p test_estavelle_service.py -v
       - name: bootstrap.sh parses, and is executable
         run: |
           sh -n deploy/compose/bootstrap.sh
@@ -1113,7 +1113,7 @@ jobs:
           # deployment without it comes up perfectly and can enroll nothing,
           # because a setup key needs an account and an account needs an
           # identity provider (§8.1).
-          for var in KARST_RELAY_ROSTER_FILE KARST_RELAY_REGISTRY_FILE KARST_AQUIFER \
+          for var in KARST_ESTAVELLE_ROSTER_FILE KARST_ESTAVELLE_REGISTRY_FILE KARST_AQUIFER \
                      KARST_BOOTSTRAP_SETUP_KEY_FILE; do
             grep -q "$var" deploy/compose/docker-compose.yml \
               || { echo "::error::docker-compose.yml no longer sets $var"; fail=1; }
@@ -1139,7 +1139,7 @@ jobs:
           # bootstrap.key is a standing enrollment credential for the whole
           # deployment (§8.1) and is generated into this directory on first
           # boot, so it belongs in this list beside the TLS key.
-          for f in tls/relay.key management.json relay.toml bootstrap.key; do
+          for f in tls/estavelle.key management.json estavelle.toml bootstrap.key; do
             git check-ignore -q "deploy/compose/state/$f" \
               || { echo "::error::deploy/compose/state/$f is not gitignored"; fail=1; }
           done

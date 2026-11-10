@@ -13,9 +13,9 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
+	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
-	"github.com/netbirdio/netbird/management/internals/karst/estavellereg"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 

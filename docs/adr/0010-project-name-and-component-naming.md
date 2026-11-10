@@ -1,18 +1,24 @@
 # ADR-0010: Project name and component naming
 
-- **Status:** Accepted; component model partially superseded by ADR-0056
+- **Status:** Accepted; component model partially superseded by ADR-0056 and ADR-0069
 - **Date:** 2026-08-09
 - **Deciders:** TBD
 - **Related:** ADR-0007 (licensing — makes trademark the sole defensive lever), ADR-0009 (prior-art review that surfaced the collision), PLAN.md §13 Q5
 
 ---
 
-> **Component naming partially superseded by [ADR-0056](0056-four-component-families.md).**
+> **Component naming partially superseded by [ADR-0056](0056-four-component-families.md)
+> and [ADR-0069](0069-resurgence-estavelle-aven-renaming.md).**
 > Ponor names the Karst relay protocol, not the whole combined Relay service.
 > Relay supports Ponor and TURN modes. Gateway names the node capability for
 > subnet and exit behavior. The four families are node agent, transport
 > infrastructure, control services and trust tooling. Historical names below
 > are retained; this does not rename binaries, crates or wire protocols.
+>
+> **As of ADR-0069 (2026-11-08):** the AVEN path-discovery protocol is
+> **Resurgence**; the Relay component is **Estavelle**; the Gateway capability
+> is **Aven**. That rename *is* a clean-break rename of binaries, crates, wire
+> strings and the console — unlike the terminology-only note above.
 
 ## Context
 
@@ -73,7 +79,7 @@ for it:
 | Project, CLI, daemon | **Karst** — `karst`, `karstd` | |
 | Handshake and encrypted transport | **PHREATIC** (was SPORE) | Cave passages below the water table, permanently submerged |
 | Relay protocol and service | **Ponor** | Where a surface stream vanishes into the karst system — precisely a relay's role |
-| Path discovery / NAT traversal (§6) | **AVEN** (added 2026-08-14) | A shaft connecting the cave system upward to the surface — what cavers look for to find a way out |
+| Path discovery / NAT traversal (§6) | **AVEN** (added 2026-08-14; renamed **Resurgence** by ADR-0069, 2026-11-08) | A shaft connecting the cave system upward to the surface — what cavers look for to find a way out |
 | Network lock (§4.5) | **Bedrock** (was Mycelium Lock) | The rock karst forms in; anchoring trust |
 | Name service (§7) | **KarstDNS** (was MycoDNS) | |
 | Mesh DNS suffix | `.karst.` | |

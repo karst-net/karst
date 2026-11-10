@@ -71,14 +71,14 @@ type avenNode struct {
 	Name                string                          `json:"name"`
 	ControlConnected    bool                            `json:"control_connected"`
 	ForwardingReadiness string                          `json:"forwarding_readiness"`
-	Offers              []avenOffer                  `json:"offers"`
+	Offers              []avenOffer                     `json:"offers"`
 }
 
 type avenInventory struct {
-	SchemaVersion     int           `json:"schema_version"`
-	Avens          []avenNode `json:"avens"`
-	UnresolvedRoutes  []string      `json:"unresolved_routes"`
-	UnsupportedRoutes []string      `json:"unsupported_routes"`
+	SchemaVersion     int        `json:"schema_version"`
+	Avens             []avenNode `json:"avens"`
+	UnresolvedRoutes  []string   `json:"unresolved_routes"`
+	UnsupportedRoutes []string   `json:"unsupported_routes"`
 }
 
 // avens projects existing account route/group/peer records; it owns no

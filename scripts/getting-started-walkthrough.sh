@@ -454,7 +454,7 @@ path_a() {
 	assert_file_has "$WORK/.out" 'state = "established"' "the peer is established"
 	# §4: "A pair with no relay configured has only one honest answer."
 	assert_file_has "$WORK/.out" 'transport = "direct"' \
-		"the transport is direct — there is no relay in this path to fall back to"
+		"the transport is direct — there is no estavelle in this path to fall back to"
 	# A static roster carries no policy, and §11's own status listing says so.
 	# The distinction matters: `enforcing = false` and a filter with no rules
 	# are opposite things that look identical from outside.
@@ -494,7 +494,7 @@ path_b() {
 	path_b_cleanup
 	mkdir -p "$WORK"
 
-	bold "Path B — a coordination server and a relay, with containers (§5)"
+	bold "Path B — a coordination server and an estavelle, with containers (§5)"
 
 	# `127.0.0.1` is what the document offers for "try it on one machine", and
 	# it is the only substitution this path needs: everything else in §5 is
@@ -558,7 +558,7 @@ path_b() {
 	# ── a node ──────────────────────────────────────────────────────────────
 	cd "$REPO"
 	WT_SUBST=$subst run_step B node-install
-	install -m 0644 "$COMPOSE_DIR/state/tls/relay.crt" /etc/karst/relay.crt
+	install -m 0644 "$COMPOSE_DIR/state/tls/estavelle.crt" /etc/karst/estavelle.crt
 	mkdir -p /var/lib/karst
 
 	WT_CTX=()
@@ -592,14 +592,14 @@ path_b() {
 	say "bootstrap.sh is idempotent (deploy/compose/bootstrap.sh)"
 	local before after
 	before=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["relays"][0]["identity_key"])' \
-		"$COMPOSE_DIR/state/relays.json")
-	(cd "$COMPOSE_DIR" && KARST_RELAY_IP=127.0.0.1 ./bootstrap.sh >"$WORK/.bootstrap" 2>&1) \
+		"$COMPOSE_DIR/state/estavelles.json")
+	(cd "$COMPOSE_DIR" && KARST_ESTAVELLE_IP=127.0.0.1 ./bootstrap.sh >"$WORK/.bootstrap" 2>&1) \
 		|| { cat "$WORK/.bootstrap" >&2; die "re-running bootstrap.sh failed"; }
 	after=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["relays"][0]["identity_key"])' \
-		"$COMPOSE_DIR/state/relays.json")
+		"$COMPOSE_DIR/state/estavelles.json")
 	[ "$before" = "$after" ] \
-		|| die "bootstrap.sh regenerated the relay identity; every node's pinned registry is now wrong"
-	ok "a second bootstrap.sh kept the relay identity and the registry"
+		|| die "bootstrap.sh regenerated the estavelle identity; every node's pinned registry is now wrong"
+	ok "a second bootstrap.sh kept the estavelle identity and the registry"
 
 	bold "Path B: the deployment came up, enrolled a node, and failed closed on schedule."
 }
@@ -654,7 +654,7 @@ b_roster_lease() {
 	# the stability check below would pass just as contentedly over a file that
 	# never had anything in it — which is the placeholder bootstrap.sh writes,
 	# and a roster admitting nobody is the failure this section is about.
-	wait_for 90 "the enrolled node reached the relay's roster" -- \
+	wait_for 90 "the enrolled node reached the estavelle's roster" -- \
 		grep -q '^\[\[client\]\]' "$roster"
 
 	# §5's claim is about *steady state*: the file is rewritten every 25s
@@ -674,7 +674,7 @@ b_roster_lease() {
 		mtime2=$(stat -c '%Y' "$roster")
 		sum2=$(sha256sum "$roster" | cut -d' ' -f1)
 		[ "$mtime2" -gt "$mtime1" ] \
-			|| die "roster.toml was not rewritten within 30s; the relay's lease expires at 90s"
+			|| die "roster.toml was not rewritten within 30s; the estavelle's lease expires at 90s"
 		if [ "$sum1" = "$sum2" ]; then
 			ok "the roster's mtime advances while its bytes stay identical"
 			break
@@ -685,11 +685,11 @@ b_roster_lease() {
 	done
 
 	(cd "$COMPOSE_DIR" && docker compose stop control >/dev/null)
-	wait_for 150 "the relay failed closed once nothing was maintaining the roster" -- \
-		bash -c "cd '$COMPOSE_DIR' && docker compose logs relay 2>&1 | grep -qi 'lease expired'"
+	wait_for 150 "the estavelle failed closed once nothing was maintaining the roster" -- \
+		bash -c "cd '$COMPOSE_DIR' && docker compose logs estavelle 2>&1 | grep -qi 'lease expired'"
 	(cd "$COMPOSE_DIR" && docker compose start control >/dev/null)
-	wait_for 120 "the relay recovered when the roster was rewritten again" -- \
-		bash -c "cd '$COMPOSE_DIR' && docker compose logs relay 2>&1 | grep -qi 'roster reloaded'"
+	wait_for 120 "the estavelle recovered when the roster was rewritten again" -- \
+		bash -c "cd '$COMPOSE_DIR' && docker compose logs estavelle 2>&1 | grep -qi 'roster reloaded'"
 }
 
 # ── path C ──────────────────────────────────────────────────────────────────
@@ -699,9 +699,9 @@ path_c_cleanup() {
 		note "WT_KEEP=1: leaving the systemd units running"
 		return
 	}
-	systemctl stop karstd karst-control karst-relay 2>/dev/null || true
-	systemctl disable karstd karst-control karst-relay 2>/dev/null || true
-	rm -f /etc/systemd/system/{karstd,karst-control,karst-relay}.service
+	systemctl stop karstd karst-control karst-estavelle 2>/dev/null || true
+	systemctl disable karstd karst-control karst-estavelle 2>/dev/null || true
+	rm -f /etc/systemd/system/{karstd,karst-control,karst-estavelle}.service
 	systemctl daemon-reload 2>/dev/null || true
 	# The same argument as path B's: a leftover /etc/karst would supply a relay
 	# identity, a registry and a bootstrap key this run never created, and every
@@ -722,14 +722,14 @@ path_c() {
 	bold "Path C — bare metal, with systemd (§6)"
 
 	# The document is written for a relay at 203.0.113.7 answering to
-	# relay.example.com, and a coordination server at karst.example.com. On one
+	# estavelle.example.com, and a coordination server at karst.example.com. On one
 	# host all three are the loopback, and the certificate's SAN has to agree
 	# with the name the node is told to expect — which is why the name is
 	# substituted rather than left to resolve.
 	local subst
 	subst=$(json_subst \
 		203.0.113.7 127.0.0.1 \
-		relay.example.com localhost \
+		estavelle.example.com localhost \
 		karst.example.com 127.0.0.1)
 
 	WT_CTX=()
@@ -737,13 +737,13 @@ path_c() {
 	WT_SUBST='{}' run_step C build-control
 	WT_SUBST=$subst run_step C install
 
-	# ── 6.1 the relay ───────────────────────────────────────────────────────
+	# ── 6.1 the estavelle ───────────────────────────────────────────────────
 	WT_SUBST=$subst run_step C relay-install
 	WT_SUBST=$subst run_step C relay-cert
-	assert_mode /etc/karst/tls/relay.key 600 "the relay's TLS key is mode 600"
+	assert_mode /etc/karst/tls/estavelle.key 600 "the estavelle's TLS key is mode 600"
 	WT_SUBST=$subst run_step C relay-cert-verify
 	assert_file_has "$WORK/.out" "CA:FALSE" \
-		"the relay certificate is an end-entity leaf, not a CA"
+		"the estavelle certificate is an end-entity leaf, not a CA"
 	WT_SUBST=$subst run_step C relay-config
 	WT_SUBST=$subst run_step C relay-check
 	# §6.1 prints this line and it is the whole point of seeding a placeholder:
@@ -755,12 +755,12 @@ path_c() {
 	WT_SUBST=$subst run_step C relay-pubkey
 	local identity_pk
 	identity_pk=$(sed -n 's/^identity_pk *//p' "$WORK/.out" | tr -d ' \r\n')
-	[ -n "$identity_pk" ] || die "karst-relay pubkey printed no identity_pk"
-	ok "the relay's registry entry is ${#identity_pk} base64 characters"
+	[ -n "$identity_pk" ] || die "karst-estavelle pubkey printed no identity_pk"
+	ok "the estavelle's registry entry is ${#identity_pk} base64 characters"
 
 	WT_SUBST=$subst run_step C relay-start
-	wait_for 30 "karst-relay is active under systemd" -- \
-		systemctl is-active --quiet karst-relay
+	wait_for 30 "karst-estavelle is active under systemd" -- \
+		systemctl is-active --quiet karst-estavelle
 
 	# ── 6.2 the coordination server ─────────────────────────────────────────
 	WT_SUBST=$subst run_step C control-install
@@ -777,7 +777,7 @@ path_c() {
 	chmod 600 /etc/netbird/management.json
 	WT_SUBST=$subst run_step C control-env
 
-	# §6.2 claims relays.json is validated at startup rather than on fetch,
+	# §6.2 claims estavelles.json is validated at startup rather than on fetch,
 	# "because one malformed entry fails the *whole* netmap and a startup error
 	# naming the field beats every node failing to apply a netmap it just
 	# authenticated". Checked before the real start, so a regression here is
@@ -816,7 +816,7 @@ path_c() {
 	# ── 6.3 the node ────────────────────────────────────────────────────────
 	WT_SUBST=$subst run_step C node-install
 	assert_mode /etc/karst/node.key 600 "the node's data-plane key is mode 600"
-	install -m 0644 /etc/karst/tls/relay.crt /etc/karst/relay.crt
+	install -m 0644 /etc/karst/tls/estavelle.crt /etc/karst/estavelle.crt
 
 	WT_SUBST=$subst \
 		WTP_server_kem_pin=$kem_hex \
@@ -858,10 +858,10 @@ one of them is not what §6.3 says it is"
 
 # c_reject_dns_name_in_registry — §6.2's startup-validation claim.
 c_reject_dns_name_in_registry() {
-	say "a DNS name in relays.json is refused at startup, not at fetch (§6.2)"
-	cp /etc/karst/relays.json "$WORK/relays.json.bak"
-	sed 's|"address": "[^"]*"|"address": "relay.example.com:443"|' \
-		"$WORK/relays.json.bak" >/etc/karst/relays.json
+	say "a DNS name in estavelles.json is refused at startup, not at fetch (§6.2)"
+	cp /etc/karst/estavelles.json "$WORK/relays.json.bak"
+	sed 's|"address": "[^"]*"|"address": "estavelle.example.com:443"|' \
+		"$WORK/relays.json.bak" >/etc/karst/estavelles.json
 	set +e
 	# shellcheck disable=SC2046 # the env file is KEY=VALUE lines, split on purpose
 	env $(grep -v '^#' /etc/karst/control.env | xargs) \
@@ -870,7 +870,7 @@ c_reject_dns_name_in_registry() {
 		--port 33073 --log-file console >"$WORK/.badrelay" 2>&1
 	local status=$?
 	set -e
-	cp "$WORK/relays.json.bak" /etc/karst/relays.json
+	cp "$WORK/relays.json.bak" /etc/karst/estavelles.json
 
 	# **124 is `timeout` killing a server that was still running**, and it is
 	# non-zero — so a bare `-ne 0` here would read "the server refused to
@@ -878,9 +878,9 @@ c_reject_dns_name_in_registry() {
 	# claim being tested is that this fails *at startup*, so it has to fail
 	# fast as well as fail.
 	[ "$status" -ne 124 ] \
-		|| die "karst-control ran for 30s with a DNS name in relays.json; §6.2 says it must refuse at startup"
+		|| die "karst-control ran for 30s with a DNS name in estavelles.json; §6.2 says it must refuse at startup"
 	[ "$status" -ne 0 ] \
-		|| die "karst-control exited cleanly with a DNS name in relays.json"
+		|| die "karst-control exited cleanly with a DNS name in estavelles.json"
 	assert_file_has "$WORK/.badrelay" "address" \
 		"the startup error names the field rather than failing every node's netmap later"
 }

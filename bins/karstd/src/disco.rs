@@ -1039,7 +1039,8 @@ impl Disco {
                     // probe tests the same path liveness rides over, and a
                     // relay knows nothing about Resurgence either way.
                     karst_resurgence::Action::ProbeMtu { addr, tx, size } => {
-                        let padding = size.saturating_sub(karst_resurgence::consts::MTU_PROBE_OVERHEAD);
+                        let padding =
+                            size.saturating_sub(karst_resurgence::consts::MTU_PROBE_OVERHEAD);
                         let bytes = Message::MtuProbe { tx, padding }.encode(
                             &peer.key,
                             &peer.our_tag,
@@ -2185,7 +2186,10 @@ mod tests {
             observed: Endpoint(mapped()),
         }
         .encode(&stranger, &stranger.reflect_tag(), 0);
-        assert_eq!(d.inbound(&forged, reflector_addr(), 0), Verdict::NotResurgence);
+        assert_eq!(
+            d.inbound(&forged, reflector_addr(), 0),
+            Verdict::NotResurgence
+        );
     }
 
     #[test]
@@ -2198,7 +2202,10 @@ mod tests {
         assert!(d.set_reflector(RELAY_ID, REFLECT_KEY, reflector_addr()));
         let out = d.poll(0, || TxId([0x42; 12]));
         let ours = out.datagrams[0].0.clone();
-        assert_eq!(d.inbound(&ours, reflector_addr(), 1), Verdict::NotResurgence);
+        assert_eq!(
+            d.inbound(&ours, reflector_addr(), 1),
+            Verdict::NotResurgence
+        );
     }
 
     #[test]

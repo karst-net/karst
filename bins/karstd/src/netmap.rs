@@ -413,7 +413,9 @@ impl fmt::Debug for Estavelle {
 impl Estavelle {
     fn from_wire(relay: &pb::KarstEstavelle) -> Result<Self, Error> {
         if relay.address.parse::<std::net::SocketAddr>().is_err() {
-            return Err(Error::Estavelle("address is not a socket address".to_owned()));
+            return Err(Error::Estavelle(
+                "address is not a socket address".to_owned(),
+            ));
         }
         if relay.tls_server_name.is_empty()
             || !relay.tls_server_name.is_ascii()
@@ -1953,14 +1955,20 @@ mod tests {
             region: "test".to_owned(),
             location: None,
         };
-        assert!(matches!(Estavelle::from_wire(&relay), Err(Error::Estavelle(_))));
+        assert!(matches!(
+            Estavelle::from_wire(&relay),
+            Err(Error::Estavelle(_))
+        ));
     }
 
     #[test]
     fn a_relay_without_a_tls_server_name_is_refused() {
         let mut relay = wire_relay(0x91);
         relay.tls_server_name.clear();
-        assert!(matches!(Estavelle::from_wire(&relay), Err(Error::Estavelle(_))));
+        assert!(matches!(
+            Estavelle::from_wire(&relay),
+            Err(Error::Estavelle(_))
+        ));
     }
 
     #[test]
