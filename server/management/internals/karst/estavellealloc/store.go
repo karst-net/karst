@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-// Package estavellealloc stores an administrator's manual relay allocation
+// Package estavellealloc stores an administrator's manual estavelle allocation
 // request (ADR-0063, issue #455): name, infrastructure connection,
 // location, requested capabilities, and permitted groups, plus a durable
 // state machine (requested -> provisioning -> granting -> ready, or ->
@@ -36,10 +36,10 @@ import (
 )
 
 var (
-	ErrNoAccount = errors.New("relay allocation: account scope missing")
-	ErrInvalid   = errors.New("relay allocation: invalid allocation")
-	ErrExists    = errors.New("relay allocation: allocation changed; reload before saving")
-	ErrNotFound  = errors.New("relay allocation: allocation not found")
+	ErrNoAccount = errors.New("estavelle allocation: account scope missing")
+	ErrInvalid   = errors.New("estavelle allocation: invalid allocation")
+	ErrExists    = errors.New("estavelle allocation: allocation changed; reload before saving")
+	ErrNotFound  = errors.New("estavelle allocation: allocation not found")
 )
 
 // State is the allocation's own lifecycle, independent of both the
@@ -125,7 +125,7 @@ type Store struct {
 
 func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
-		return nil, fmt.Errorf("relay allocation: nil database")
+		return nil, fmt.Errorf("estavelle allocation: nil database")
 	}
 	ctx := context.Background()
 	// ADR-0069's clean-break Relay->Estavelle rename: idempotent, no-op once
@@ -193,7 +193,7 @@ func validateDraft(draft Allocation) error {
 		return fmt.Errorf("%w: location is required", ErrInvalid)
 	}
 	if !draft.RelayTransport {
-		return fmt.Errorf("%w: relay transport capability is required", ErrInvalid)
+		return fmt.Errorf("%w: estavelle transport capability is required", ErrInvalid)
 	}
 	// ADR-0063's own field list has no Gateway-identity picker, but
 	// estavelleservice.configureAccess -- the exact function "granting" must
@@ -204,7 +204,7 @@ func validateDraft(draft Allocation) error {
 	// issue designs how a freshly-provisioned host's own Gateway identity
 	// gets bound.
 	if draft.EgressV4 || draft.EgressV6 {
-		return fmt.Errorf("%w: egress is not yet supported by relay allocation", ErrInvalid)
+		return fmt.Errorf("%w: egress is not yet supported by estavelle allocation", ErrInvalid)
 	}
 	if len(draft.PermittedGroups) == 0 {
 		return fmt.Errorf("%w: choose at least one permitted group -- default is no access", ErrInvalid)
@@ -286,7 +286,7 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 		UpdatedAt:         now,
 	}
 	if s.maxConcurrentAllocations <= 0 {
-		return nil, fmt.Errorf("%w: KARST_RELAY_ALLOCATE_MAX_CONCURRENT is not configured -- set a per-account concurrency ceiling before allocating a relay (ADR-0045 §6)", ErrInvalid)
+		return nil, fmt.Errorf("%w: KARST_ESTAVELLE_ALLOCATE_MAX_CONCURRENT is not configured -- set a per-account concurrency ceiling before allocating an estavelle (ADR-0045 §6)", ErrInvalid)
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var connection infraconnections.Account
@@ -303,7 +303,7 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 		// `requested` allocation the worker can never move (see
 		// docs/adr/0067-unified-relay-provisioning-workflow.md's Context).
 		if !connection.Type.SupportsActuation() {
-			return fmt.Errorf("%w: connection type %q does not support relay allocation yet", ErrInvalid, connection.Type)
+			return fmt.Errorf("%w: connection type %q does not support estavelle allocation yet", ErrInvalid, connection.Type)
 		}
 		if err := requireAuthorizedLocation(tx, account, connection, allocation.Location); err != nil {
 			return err
@@ -318,7 +318,7 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 			return err
 		}
 		if nonTerminal >= int64(s.maxConcurrentAllocations) {
-			return fmt.Errorf("%w: this account already has %d non-terminal relay allocation(s), at or above the configured ceiling of %d", ErrInvalid, nonTerminal, s.maxConcurrentAllocations)
+			return fmt.Errorf("%w: this account already has %d non-terminal estavelle allocation(s), at or above the configured ceiling of %d", ErrInvalid, nonTerminal, s.maxConcurrentAllocations)
 		}
 		for _, id := range allocation.PermittedGroups {
 			var count int64
@@ -543,8 +543,8 @@ func (s *Store) Delete(ctx context.Context, id string, expectedRevision uint64) 
 // the deployment, that still needs a reconciliation step -- the
 // in-process allocate worker's own entry point (awsdrive_loop.go),
 // replacing what used to be an external process's own
-// POST /relay-allocations/pending poll (still served, deprecated, by
-// api/relay_allocations.go, for any consumer that already built against
+// POST /estavelle-allocations/pending poll (still served, deprecated, by
+// api/estavelle_allocations.go, for any consumer that already built against
 // it). Deliberately unscoped by account: driving an allocation forward is
 // not a per-tenant-request operation the way every other method on this
 // Store is.
@@ -555,7 +555,7 @@ func (s *Store) PendingAcrossAccounts(ctx context.Context) ([]Allocation, error)
 		Order("created_at, id").
 		Find(&rows).Error
 	if err != nil {
-		return nil, fmt.Errorf("relay allocation: list pending across accounts: %w", err)
+		return nil, fmt.Errorf("estavelle allocation: list pending across accounts: %w", err)
 	}
 	return rows, nil
 }

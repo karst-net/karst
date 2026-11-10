@@ -466,7 +466,7 @@ func TestCreateRefusesWhenConcurrencyCeilingNotConfigured(t *testing.T) {
 
 	_, err := e.store.Create(ctx, e.draft())
 	require.ErrorIs(t, err, ErrInvalid)
-	require.ErrorContains(t, err, "KARST_RELAY_ALLOCATE_MAX_CONCURRENT")
+	require.ErrorContains(t, err, "KARST_ESTAVELLE_ALLOCATE_MAX_CONCURRENT")
 }
 
 // TestCreateRefusesOverTheConfiguredConcurrencyCeiling checks the ceiling

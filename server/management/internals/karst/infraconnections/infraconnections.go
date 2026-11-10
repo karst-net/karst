@@ -89,7 +89,7 @@ var (
 	// registered yet -- see SupportsActuation and ADR-0067. Distinct from
 	// ErrInvalid so a caller (estavellealloc.Store.Create) can give a clearer,
 	// type-naming message than ErrInvalid's generic one.
-	ErrUnsupportedType = errors.New("cloud accounts: this connection type does not support relay allocation yet")
+	ErrUnsupportedType = errors.New("cloud accounts: this connection type does not support estavelle allocation yet")
 )
 
 // Type identifies what kind of infrastructure a connection authenticates
@@ -139,7 +139,7 @@ func (t Type) IsLegacy() bool {
 
 // Mode says what a credential may be used for. ModeReadOnly stays
 // discovery-only, provably incapable of actuating anything. ModeReadWrite
-// may additionally drive an ADR-0063 relay allocation against this
+// may additionally drive an ADR-0063 estavelle allocation against this
 // connection's own LaunchDefaults (ADR-0045's 2026-11-04 addendum) -- but
 // only once those defaults are set; a read_write connection with no launch
 // defaults configured yet is not distinguishable in behavior from
@@ -194,14 +194,14 @@ func accountFromContext(ctx context.Context) (string, error) {
 //
 // LaunchRegion/LaunchAMIID/LaunchInstanceType/LaunchSubnetID/
 // LaunchSecurityGroupIDs (ADR-0045's 2026-11-04 addendum) are the AWS
-// launch shape ADR-0063's reconciliation loop actuates a named relay
+// launch shape ADR-0063's reconciliation loop actuates a named estavelle
 // allocation against -- set once here, in Settings, never by an allocation
 // request itself. Meaningful only for Type TypeAWS, Mode ModeReadWrite;
 // zero value on every other row, including pre-existing ones, which is
 // exactly "no launch defaults configured yet".
 //
 // LaunchNomadJobID/LaunchNomadDatacenter (ADR-0067) are the Nomad analog:
-// a pre-registered, parameterized job this connection dispatches a relay
+// a pre-registered, parameterized job this connection dispatches an estavelle
 // instance from, plus an optional datacenter passed through as dispatch
 // Meta. Meaningful only for Type TypeNomad, Mode ModeReadWrite, the same
 // gating the AWS fields already follow.
@@ -244,7 +244,7 @@ type Account struct {
 func (Account) TableName() string { return "karst_cloud_accounts" }
 
 // AllocationReferenceChecker lets Delete refuse to remove a connection a
-// live ADR-0063 relay allocation still depends on, without this package
+// live ADR-0063 estavelle allocation still depends on, without this package
 // importing estavellealloc -- estavellealloc already imports infraconnections the
 // other way, for its own Create's reverse validation, so the dependency
 // has to run through a narrow interface instead. nil (the default) means
@@ -252,7 +252,7 @@ func (Account) TableName() string { return "karst_cloud_accounts" }
 // existed. Wired once, at boot, by SetAllocationReferenceChecker.
 type AllocationReferenceChecker interface {
 	// HasNonTerminalAllocations reports whether accountID has any
-	// relay allocation referencing connectionID that is not yet fully
+	// estavelle allocation referencing connectionID that is not yet fully
 	// deprovisioned. accountID is passed explicitly rather than carried on
 	// ctx: estavellealloc's own WithAccount uses a different, unexported
 	// context key than this package's, so ctx alone cannot carry it across
@@ -472,7 +472,7 @@ func (s *Store) List(ctx context.Context) ([]Account, error) {
 // account can never delete another's row by guessing an id. Deliberately
 // type-agnostic: unlike List/Create/Discover, delete never echoes the row's
 // type back on the wire, so there is no legacy-schema compatibility concern
-// to gate here. Refuses while a relay allocation (ADR-0063) still
+// to gate here. Refuses while an estavelle allocation (ADR-0063) still
 // references this connection and has not finished deprovisioning -- see
 // AllocationReferenceChecker; a nil checker (nothing wired yet) skips this
 // check entirely, unchanged from before it existed.
@@ -484,10 +484,10 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if s.allocations != nil {
 		inUse, err := s.allocations.HasNonTerminalAllocations(ctx, accountID, id)
 		if err != nil {
-			return fmt.Errorf("cloud accounts: checking relay allocation references: %w", err)
+			return fmt.Errorf("cloud accounts: checking estavelle allocation references: %w", err)
 		}
 		if inUse {
-			return fmt.Errorf("%w: a relay allocation still references this connection; deprovision it first", ErrInvalid)
+			return fmt.Errorf("%w: an estavelle allocation still references this connection; deprovision it first", ErrInvalid)
 		}
 	}
 	result := s.db.WithContext(ctx).Where("account_id = ? AND id = ?", accountID, id).Delete(&Account{})
@@ -501,7 +501,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 }
 
 // UpdateLaunchDefaultsRequest is Settings' own way to set or change the AWS
-// launch shape (ADR-0063; ADR-0045's 2026-11-04 addendum) a named relay
+// launch shape (ADR-0063; ADR-0045's 2026-11-04 addendum) a named estavelle
 // allocation actuates against -- deliberately separate from CreateRequest
 // so an admin can change these without re-entering the connection's secret.
 // Every field replaces the stored value, including to empty; there is no
@@ -554,7 +554,7 @@ func (s *Store) UpdateLaunchDefaults(ctx context.Context, id string, req UpdateL
 }
 
 // UpdateNomadLaunchDefaultsRequest is Settings' own way to set or change
-// the Nomad launch shape (ADR-0067) a named relay allocation actuates
+// the Nomad launch shape (ADR-0067) a named estavelle allocation actuates
 // against -- the Nomad analog of UpdateLaunchDefaultsRequest, same
 // full-replace semantics.
 type UpdateNomadLaunchDefaultsRequest struct {
@@ -594,7 +594,7 @@ func (s *Store) UpdateNomadLaunchDefaults(ctx context.Context, id string, req Up
 }
 
 // UpdateKubernetesLaunchDefaultsRequest is Settings' own way to set or
-// change the Kubernetes launch shape (ADR-0067) a named relay allocation
+// change the Kubernetes launch shape (ADR-0067) a named estavelle allocation
 // actuates against -- the Kubernetes analog of UpdateLaunchDefaultsRequest,
 // same full-replace semantics. CPU/Memory are parsed with Kubernetes's own
 // resource.Quantity syntax (e.g. "250m", "256Mi") by
