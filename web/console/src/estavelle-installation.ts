@@ -13,7 +13,7 @@ export function validateInstallationSettings(settings: InstallationSettings) {
   try { new URL(`https://${settings.address}`); } catch { throw new Error("Use a valid IP address and port."); }
   if (settings.tls_server_name.length > 253 || !settings.tls_server_name.split(".").every(label => /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(label))) throw new Error("Use a valid TLS DNS server name.");
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(settings.region)) throw new Error("Use a valid region name.");
-  if (!/^ghcr\.io\/karst-net\/karst-relay(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$/.test(settings.image)) throw new Error("Use a Karst relay image tag or sha256 digest.");
+  if (!/^ghcr\.io\/karst-net\/karst-estavelle(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$/.test(settings.image)) throw new Error("Use a Karst estavelle image tag or sha256 digest.");
   if (!/^ghcr\.io\/karst-net\/karst-control(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$/.test(settings.control_image)) throw new Error("Use a Karst control image tag or sha256 digest.");
 }
 
@@ -28,9 +28,9 @@ export function installationScript(settings: InstallationSettings) {
 // the API entry explicitly: unknown file fields cannot become request fields.
 export function parseInstallationReceipt(source: string): InstallationReceipt {
   const value = JSON.parse(source);
-  if (value?.schema_version !== 1 || value?.kind !== "karst-estavelle-installation" || !/^[a-f0-9]{64}$/.test(value.relay_id) || !value.entry) throw new Error("Choose a relay installation receipt generated on the control host.");
+  if (value?.schema_version !== 1 || value?.kind !== "karst-estavelle-installation" || !/^[a-f0-9]{64}$/.test(value.relay_id) || !value.entry) throw new Error("Choose an estavelle installation receipt generated on the control host.");
   const { address, tls_server_name, identity_key, region, location } = value.entry;
-  if (![address, tls_server_name, identity_key, region].every(field => typeof field === "string" && field.length > 0) || !/^[A-Za-z0-9+/]{3456}$/.test(identity_key)) throw new Error("The receipt is missing valid relay identity or endpoint fields.");
+  if (![address, tls_server_name, identity_key, region].every(field => typeof field === "string" && field.length > 0) || !/^[A-Za-z0-9+/]{3456}$/.test(identity_key)) throw new Error("The receipt is missing valid estavelle identity or endpoint fields.");
   if (location != null && (typeof location !== "object" || !Number.isFinite(location.lat) || !Number.isFinite(location.lon) || location.lat < -90 || location.lat > 90 || location.lon < -180 || location.lon > 180 || (location.label !== undefined && typeof location.label !== "string"))) throw new Error("The receipt has an invalid declared location.");
   return { schema_version: 1, kind: "karst-estavelle-installation", relay_id: value.relay_id, entry: { address, tls_server_name, identity_key, region, ...(location ? { location: { lat: location.lat, lon: location.lon, ...(location.label ? { label: location.label } : {}) } } : {}) } };
 }

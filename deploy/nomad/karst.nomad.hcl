@@ -2,8 +2,8 @@
 # Copyright the Karst contributors.
 #
 # The co-located deployment, run under Nomad instead of docker compose: one
-# coordination server and one relay, on one host, sharing one directory. This
-# is a direct Nomad translation of ../compose/docker-compose.yml -- same
+# coordination server and one estavelle, on one host, sharing one directory.
+# This is a direct Nomad translation of ../compose/docker-compose.yml -- same
 # images, same env vars, same ./state layout, same bootstrap.sh. Run
 # ./bootstrap.sh (../compose/bootstrap.sh -- it is orchestrator-agnostic,
 # nothing compose-specific in it) once before `nomad job run` here.
@@ -64,9 +64,9 @@ job "karst" {
 
       env {
         NB_DISABLE_GEOLOCATION        = "true"
-        KARST_RELAY_ROSTER_FILE       = "/var/lib/karst/roster.toml"
+        KARST_ESTAVELLE_ROSTER_FILE   = "/var/lib/karst/roster.toml"
         KARST_AQUIFER                 = var.karst_aquifer
-        KARST_RELAY_REGISTRY_FILE     = "/var/lib/karst/relays.json"
+        KARST_ESTAVELLE_REGISTRY_FILE = "/var/lib/karst/estavelles.json"
         KARST_POLICY_FILE             = "/var/lib/karst/policy.json"
         KARST_BOOTSTRAP_SETUP_KEY_FILE = "/var/lib/karst/bootstrap.key"
       }
@@ -78,7 +78,7 @@ job "karst" {
     }
   }
 
-  group "relay" {
+  group "estavelle" {
     count = 1
 
     constraint {
@@ -86,13 +86,13 @@ job "karst" {
       value     = var.node_name
     }
 
-    task "relay" {
+    task "estavelle" {
       driver = "docker"
 
       config {
-        image        = "ghcr.io/karst-net/karst-relay:dev"
+        image        = "ghcr.io/karst-net/karst-estavelle:dev"
         network_mode = "host"
-        args         = ["--config", "/var/lib/karst/relay.toml"]
+        args         = ["--config", "/var/lib/karst/estavelle.toml"]
         volumes = [
           "${var.deploy_dir}/state:/var/lib/karst",
         ]

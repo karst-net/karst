@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright the Karst contributors.
-"""Manage the reference Compose Relay's Ponor process.
+"""Manage the reference Compose Estavelle's Ponor process.
 
 Python 3.11+. Existing bootstrap material is reused, never regenerated. This
 local process adapter does not change control's account publication authority.
@@ -39,17 +39,17 @@ def require_file(path):
 def validate_material(directory, desired):
     state = directory / "state"
     if desired["ponor"]["enabled"]:
-        if (state / "relay-install" / "compose.json").exists():
-            names = ("relay-install/relay.toml", "relay.key", "roster.toml", "tls/relay.crt", "tls/relay.key")
+        if (state / "estavelle-install" / "compose.json").exists():
+            names = ("estavelle-install/estavelle.toml", "estavelle.key", "roster.toml", "tls/estavelle.crt", "tls/estavelle.key")
         else:
-            names = ("relay.toml", "relay.key", "relays.json", "roster.toml", "tls/relay.crt", "tls/relay.key")
+            names = ("estavelle.toml", "estavelle.key", "estavelles.json", "roster.toml", "tls/estavelle.crt", "tls/estavelle.key")
         for name in names:
             require_file(state / name)
 
 
 def operations(desired):
-    enabled = ["relay"] if desired["ponor"]["enabled"] else []
-    disabled = [] if desired["ponor"]["enabled"] else ["relay"]
+    enabled = ["estavelle"] if desired["ponor"]["enabled"] else []
+    disabled = [] if desired["ponor"]["enabled"] else ["estavelle"]
     return ([ ["up", "-d", "--no-deps", *enabled] ] if enabled else []) + ([ ["stop", *disabled] ] if disabled else [])
 
 
@@ -58,7 +58,7 @@ def compose_command(directory, args):
     # another stack. Docker's normal environment/.env image and port settings
     # are retained. Never print resolved configuration or container env values.
     command = ["docker", "compose", "--project-directory", str(directory), "-f", str(directory / "docker-compose.yml")]
-    installed = directory / "state" / "relay-install" / "compose.json"
+    installed = directory / "state" / "estavelle-install" / "compose.json"
     if installed.exists():
         command.extend(["-f", str(installed)])
     return [*command, *args]
@@ -69,7 +69,7 @@ def compose(directory, args, capture=False):
 
 
 def save_applied(directory, source):
-    target = directory / "state" / "relay-service.applied.toml"
+    target = directory / "state" / "estavelle-service.applied.toml"
     target.parent.mkdir(exist_ok=True)
     if target.exists():
         atomic_write(target.with_suffix(".toml.previous"), target.read_bytes())
@@ -91,7 +91,7 @@ def status(directory, desired):
     raw = compose(directory, ["ps", "--all", "--format", "json"], capture=True).stdout.strip()
     rows = json.loads(raw) if raw.startswith("[") else [json.loads(line) for line in raw.splitlines() if line]
     states = {row["Service"]: {"state": row.get("State", "unknown"), "health": row.get("Health") or "unprobed"} for row in rows}
-    return {"ponor": {"enabled": desired["ponor"]["enabled"], **states.get("relay", {"state": "absent", "health": "unprobed"})},
+    return {"ponor": {"enabled": desired["ponor"]["enabled"], **states.get("estavelle", {"state": "absent", "health": "unprobed"})},
             "readiness": "Use control Relay Services observations for admission/allocation readiness; container state alone is not readiness."}
 
 
@@ -99,11 +99,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("plan", "apply", "status"))
     parser.add_argument("--directory", type=Path, default=Path(__file__).resolve().parent)
-    parser.add_argument("--manifest", type=Path, help="defaults to relay-service.toml in the Compose directory")
+    parser.add_argument("--manifest", type=Path, help="defaults to estavelle-service.toml in the Compose directory")
     parser.add_argument("--acknowledge-process-change", action="store_true", help="apply can interrupt active allocations and connections")
     args = parser.parse_args()
     directory = args.directory.resolve()
-    path = args.manifest or directory / "relay-service.toml"
+    path = args.manifest or directory / "estavelle-service.toml"
     try:
         source = path.read_bytes()
         desired = manifest(path, source)
@@ -123,7 +123,7 @@ def main():
         for command in commands:
             compose(directory, command)
         save_applied(directory, source)
-        print("Relay processes reconciled; publication unchanged. Use status and control readiness observations.")
+        print("Estavelle processes reconciled; publication unchanged. Use status and control readiness observations.")
     except (Invalid, OSError, ValueError, subprocess.CalledProcessError) as error:
         # Do not echo arbitrary Docker output or config parse values: these can
         # include secret-bearing configuration. Partial actions are not undone.
@@ -131,7 +131,7 @@ def main():
             message = str(error)
         else:
             message = f"{type(error).__name__}; inspect local files or Docker diagnostics"
-        print(f"relay-service: {message}. No automatic rollback; earlier actions may have completed.", file=sys.stderr)
+        print(f"estavelle-service: {message}. No automatic rollback; earlier actions may have completed.", file=sys.stderr)
         sys.exit(1)
 
 

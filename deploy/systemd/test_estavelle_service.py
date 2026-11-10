@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-spec = importlib.util.spec_from_file_location("relay_service", Path(__file__).with_name("relay-service.py"))
+spec = importlib.util.spec_from_file_location("estavelle_service", Path(__file__).with_name("estavelle-service.py"))
 relay = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(relay)
 
@@ -19,14 +19,14 @@ class DeploymentTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
-        for name, contents in {"relay.key": "private", "relays.json": "{}", "roster.toml": "# empty", "tls/relay.crt": "cert", "tls/relay.key": "private"}.items():
+        for name, contents in {"estavelle.key": "private", "estavelles.json": "{}", "roster.toml": "# empty", "tls/estavelle.crt": "cert", "tls/estavelle.key": "private"}.items():
             path = self.directory / name
             path.parent.mkdir(exist_ok=True)
             path.write_text(contents)
         self.desired = {"schema_version": 1, "ponor": {"enabled": True}}
 
     def write_manifest(self, ponor="true"):
-        path = self.directory / "relay-service.toml"
+        path = self.directory / "estavelle-service.toml"
         path.write_text(f'schema_version=1\n[ponor]\nenabled={ponor}\n')
         return path
 
@@ -48,14 +48,14 @@ class DeploymentTests(unittest.TestCase):
         before = {str(path): path.read_bytes() for path in self.directory.rglob("*") if path.is_file()}
         relay.validate_material(self.directory, self.desired)
         self.assertEqual(before, {str(path): path.read_bytes() for path in self.directory.rglob("*") if path.is_file()})
-        (self.directory / "relay.key").unlink()
+        (self.directory / "estavelle.key").unlink()
         with self.assertRaises(relay.Invalid):
             relay.validate_material(self.directory, self.desired)
 
     def test_snapshot_preserves_previous_success_and_private_permissions(self):
         relay.save_applied(self.directory, b"old manifest")
         relay.save_applied(self.directory, b"new manifest")
-        target = self.directory / "relay-service.applied.toml"
+        target = self.directory / "estavelle-service.applied.toml"
         self.assertEqual(target.read_bytes(), b"new manifest")
         self.assertEqual(target.with_suffix(".toml.previous").read_bytes(), b"old manifest")
         self.assertEqual(target.stat().st_mode & 0o777, 0o600)
@@ -78,16 +78,16 @@ class DeploymentTests(unittest.TestCase):
         plan = json.loads(result.stdout)
         self.assertEqual(plan["desired"], relay.manifest(path))
         self.assertIn(relay.DEFAULT_UNIT, plan["commands"][0])
-        self.assertFalse((self.directory / "relay-service.applied.toml").exists())
+        self.assertFalse((self.directory / "estavelle-service.applied.toml").exists())
 
     @unittest.skipUnless(os.environ.get("KARST_SYSTEMD_LIFECYCLE_TEST") == "1", "requires root and real systemd")
     def test_real_systemd_lifecycle(self):
         import json
         import uuid
-        unit = f"karst-relay-test-{uuid.uuid4().hex[:12]}.service"
+        unit = f"karst-estavelle-test-{uuid.uuid4().hex[:12]}.service"
         unit_path = Path("/etc/systemd/system") / unit
         unit_path.write_text(
-            "[Unit]\nDescription=karst relay test stand-in\n"
+            "[Unit]\nDescription=karst estavelle test stand-in\n"
             "[Service]\nExecStart=/bin/sleep 600\n"
             "[Install]\nWantedBy=multi-user.target\n")
         subprocess.run(["systemctl", "daemon-reload"], check=True)
@@ -126,7 +126,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn("earlier actions may have completed", failed.stderr)
         self.assertIn("stop", log.read_text())
-        self.assertEqual((self.directory / "relay-service.applied.toml").read_bytes(), b"previous success")
+        self.assertEqual((self.directory / "estavelle-service.applied.toml").read_bytes(), b"previous success")
 
     def test_cli_failure_never_records_success_or_leaks_systemd_diagnostics(self):
         self.write_manifest()
@@ -137,7 +137,7 @@ class DeploymentTests(unittest.TestCase):
         result = subprocess.run(["python3", str(Path(relay.__file__)), "apply", "--directory", str(self.directory), "--acknowledge-process-change"], env={**os.environ, "PATH": str(self.directory) + os.pathsep + os.environ["PATH"]}, text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn(secret, result.stdout + result.stderr)
-        self.assertFalse((self.directory / "relay-service.applied.toml").exists())
+        self.assertFalse((self.directory / "estavelle-service.applied.toml").exists())
 
 
 if __name__ == "__main__":

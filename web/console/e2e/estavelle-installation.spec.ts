@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 
 const key = "A".repeat(3456);
 const entry = { address: "203.0.113.7:443", tls_server_name: "relay.example.com", identity_key: key, region: "denver" };
-const receipt = { schema_version: 1, kind: "karst-relay-installation", relay_id: "ab".repeat(32), entry };
+const receipt = { schema_version: 1, kind: "karst-estavelle-installation", relay_id: "ab".repeat(32), entry };
 
 async function fixture(page: import("@playwright/test").Page, existing = false) {
   let created = false;
@@ -41,7 +41,7 @@ test("downloaded installation handoff contains settings without reporting deploy
   const downloadEvent = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download installation handoff" }).click();
   const download = await downloadEvent;
-  expect(download.suggestedFilename()).toBe("karst-relay-install.py");
+  expect(download.suggestedFilename()).toBe("karst-estavelle-install.py");
   const script = await readFile((await download.path())!, "utf8");
   expect(script).toContain('"KARST_RELAY_REQUIRE_MANAGED": "true"');
   expect(script).not.toContain("SETTINGS = None");

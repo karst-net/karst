@@ -2,7 +2,7 @@
 # Copyright the Karst contributors.
 
 # The co-located deployment PLAN.md §5 makes the default: one coordination
-# server and one relay, on one host, sharing one directory.
+# server and one estavelle, on one host, sharing one directory.
 #
 # Run ./bootstrap.sh once before `docker compose up -d`. It generates the key
 # material and the two files below that neither service can invent for itself.
@@ -11,13 +11,14 @@
 #
 # They are counterparts and are easy to confuse:
 #
-#   roster.toml   control WRITES, relay READS — which nodes the relay admits
-#   relays.json   bootstrap WRITES, control READS — which relays nodes are told about
+#   roster.toml      control WRITES, estavelle READS — which nodes the estavelle admits
+#   estavelles.json  bootstrap WRITES, control READS — which estavelles nodes are told about
 #
-# A deployment with only the first has a relay that admits nobody who ever
-# arrives, because nobody was told to arrive. A deployment with only the second
-# has nodes that dial a relay which refuses them. Neither failure logs anything
-# resembling its cause, which is why bootstrap.sh writes both or neither.
+# A deployment with only the first has an estavelle that admits nobody who
+# ever arrives, because nobody was told to arrive. A deployment with only the
+# second has nodes that dial an estavelle which refuses them. Neither failure
+# logs anything resembling its cause, which is why bootstrap.sh writes both or
+# neither.
 
 name: karst
 
@@ -37,24 +38,25 @@ services:
       # owns.
       NB_DISABLE_GEOLOCATION: "true"
       # Rewrites roster.toml every 25s. **Not optional in this deployment.**
-      # The relay's admission lease is refreshed by the file's modification
-      # time and expires after 90 seconds, so without this the relay stops
-      # admitting nodes a minute and a half after it starts (GitHub issue [#47](https://github.com/karst-net/karst/issues/47)).
-      KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
-      KARST_RELAY_ROSTER_ID_FILE: /var/lib/karst/relay-roster.id
-      # §5.4 scopes relay forwarding by aquifer. Each node's aquifer is now
-      # derived from its own account (ADR-0033), which is what actually stops
-      # a relay becoming a message bus between any two keys it has heard of
-      # once a deployment has more than one account. This variable is now
-      # only an optional deployment-namespace prefix on top of that — leave
-      # it unset unless you're running more than one karst-control
-      # deployment against a shared relay pool and want relay-side logs
-      # legible by deployment.
+      # The estavelle's admission lease is refreshed by the file's
+      # modification time and expires after 90 seconds, so without this the
+      # estavelle stops admitting nodes a minute and a half after it starts
+      # (GitHub issue [#47](https://github.com/karst-net/karst/issues/47)).
+      KARST_ESTAVELLE_ROSTER_FILE: /var/lib/karst/roster.toml
+      KARST_ESTAVELLE_ROSTER_ID_FILE: /var/lib/karst/estavelle-roster.id
+      # §5.4 scopes estavelle forwarding by aquifer. Each node's aquifer is
+      # now derived from its own account (ADR-0033), which is what actually
+      # stops an estavelle becoming a message bus between any two keys it
+      # has heard of once a deployment has more than one account. This
+      # variable is now only an optional deployment-namespace prefix on top
+      # of that — leave it unset unless you're running more than one
+      # karst-control deployment against a shared estavelle pool and want
+      # estavelle-side logs legible by deployment.
       KARST_AQUIFER: ${KARST_AQUIFER:-}
-      # Which relays every node is told about (§4.2). Without it the netmap
-      # carries no relays and nodes that cannot connect directly cannot
-      # connect at all — silently (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)).
-      KARST_RELAY_REGISTRY_FILE: /var/lib/karst/relays.json
+      # Which estavelles every node is told about (§4.2). Without it the
+      # netmap carries no estavelles and nodes that cannot connect directly
+      # cannot connect at all — silently (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)).
+      KARST_ESTAVELLE_REGISTRY_FILE: /var/lib/karst/estavelles.json
       # Absent would mean an empty filter, which is DEFAULT DENY. The file
       # bootstrap.sh writes is allow-all and says so in its first line; narrow
       # it before this is a real deployment.
@@ -76,22 +78,23 @@ services:
     ports:
       - "${KARST_CONTROL_PORT:-33073}:33073"
 
-  relay:
-    image: ghcr.io/karst-net/karst-relay:dev
+  estavelle:
+    image: ghcr.io/karst-net/karst-estavelle:dev
     restart: unless-stopped
-    command: ["--config", "/var/lib/karst/relay.toml"]
+    command: ["--config", "/var/lib/karst/estavelle.toml"]
     volumes:
       - ./state:/var/lib/karst
     ports:
-      # The relay's own listener. 443 inside the container because §4.1 wants a
-      # port that survives networks permitting only HTTPS; the host side is
-      # yours to choose, but whatever you choose must match the address in
-      # relays.json — nodes dial what the registry says, not what compose maps.
-      - "${KARST_RELAY_PORT:-443}:443"
+      # The estavelle's own listener. 443 inside the container because §4.1
+      # wants a port that survives networks permitting only HTTPS; the host
+      # side is yours to choose, but whatever you choose must match the
+      # address in estavelles.json — nodes dial what the registry says, not
+      # what compose maps.
+      - "${KARST_ESTAVELLE_PORT:-443}:443"
     depends_on:
       # Ordering only, not readiness: compose does not wait for the first
-      # roster to be written. The relay is built for that — it starts on the
-      # placeholder roster bootstrap.sh leaves, admitting nobody, and picks up
-      # the real one within 25 seconds. Nothing is lost because no node can be
-      # enrolled before the server is up either.
+      # roster to be written. The estavelle is built for that — it starts on
+      # the placeholder roster bootstrap.sh leaves, admitting nobody, and
+      # picks up the real one within 25 seconds. Nothing is lost because no
+      # node can be enrolled before the server is up either.
       - control

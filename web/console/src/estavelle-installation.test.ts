@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { installationScript, parseInstallationReceipt, type InstallationSettings } from "./estavelle-installation";
 
-const settings: InstallationSettings = { schema_version: 1, address: "203.0.113.7:443", tls_server_name: "relay.example.com", region: "denver", image: "ghcr.io/karst-net/karst-relay:dev", control_image: "ghcr.io/karst-net/karst-control:dev", location: null };
+const settings: InstallationSettings = { schema_version: 1, address: "203.0.113.7:443", tls_server_name: "relay.example.com", region: "denver", image: "ghcr.io/karst-net/karst-estavelle:dev", control_image: "ghcr.io/karst-net/karst-control:dev", location: null };
 const receipt = { schema_version: 1, kind: "karst-estavelle-installation", relay_id: "ab".repeat(32), entry: { address: settings.address, tls_server_name: settings.tls_server_name, identity_key: "A".repeat(3456), region: settings.region } };
 
 describe("relay installation handoff", () => {
@@ -16,7 +16,7 @@ describe("relay installation handoff", () => {
     const decoded = JSON.parse(new TextDecoder().decode(Uint8Array.from(encoded.match(/../g)!.map(byte => parseInt(byte, 16)))));
     expect(decoded.location.label).toContain("🏔");
     expect(decoded.address).toBe(settings.address);
-    expect(script).toContain('"KARST_RELAY_REQUIRE_MANAGED": "true"');
+    expect(script).toContain('"KARST_ESTAVELLE_REQUIRE_MANAGED": "true"');
   });
   it("imports only public registration fields", () => {
     expect(parseInstallationReceipt(JSON.stringify({ ...receipt, credential: "ignored", entry: { ...receipt.entry, token: "ignored" } }))).toEqual(receipt);

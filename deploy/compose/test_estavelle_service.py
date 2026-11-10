@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-spec = importlib.util.spec_from_file_location("relay_service", Path(__file__).with_name("relay-service.py"))
+spec = importlib.util.spec_from_file_location("estavelle_service", Path(__file__).with_name("estavelle-service.py"))
 relay = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(relay)
 
@@ -22,14 +22,14 @@ class DeploymentTests(unittest.TestCase):
         self.directory = Path(self.temp.name)
         self.state = self.directory / "state"
         self.state.mkdir()
-        for name, contents in {"relay.toml": "config", "relay.key": "private", "relays.json": "{}", "roster.toml": "# empty", "tls/relay.crt": "cert", "tls/relay.key": "private"}.items():
+        for name, contents in {"estavelle.toml": "config", "estavelle.key": "private", "estavelles.json": "{}", "roster.toml": "# empty", "tls/estavelle.crt": "cert", "tls/estavelle.key": "private"}.items():
             path = self.state / name
             path.parent.mkdir(exist_ok=True)
             path.write_text(contents)
         self.desired = {"schema_version": 1, "ponor": {"enabled": True}}
 
     def write_manifest(self, ponor="true"):
-        path = self.directory / "relay-service.toml"
+        path = self.directory / "estavelle-service.toml"
         path.write_text(f'schema_version=1\n[ponor]\nenabled={ponor}\n')
         return path
 
@@ -43,39 +43,39 @@ class DeploymentTests(unittest.TestCase):
             relay.manifest(path)
 
     def test_console_installation_overlay_is_preserved_in_lifecycle_commands(self):
-        installed = self.state / "relay-install" / "compose.json"
+        installed = self.state / "estavelle-install" / "compose.json"
         installed.parent.mkdir()
         installed.write_text("{}")
-        (installed.parent / "relay.toml").write_text("installed runtime config")
-        (self.state / "relay.toml").unlink()
-        (self.state / "relays.json").unlink()
+        (installed.parent / "estavelle.toml").write_text("installed runtime config")
+        (self.state / "estavelle.toml").unlink()
+        (self.state / "estavelles.json").unlink()
         relay.validate_material(self.directory, self.desired)
-        command = relay.compose_command(self.directory, ["up", "-d", "--no-deps", "relay"])
-        self.assertEqual(command[-6:], ["-f", str(installed), "up", "-d", "--no-deps", "relay"])
+        command = relay.compose_command(self.directory, ["up", "-d", "--no-deps", "estavelle"])
+        self.assertEqual(command[-6:], ["-f", str(installed), "up", "-d", "--no-deps", "estavelle"])
 
     def test_modes_reconcile_independently(self):
-        self.assertEqual(relay.operations(self.desired), [["up", "-d", "--no-deps", "relay"]])
+        self.assertEqual(relay.operations(self.desired), [["up", "-d", "--no-deps", "estavelle"]])
         self.desired["ponor"]["enabled"] = False
-        self.assertEqual(relay.operations(self.desired), [["stop", "relay"]])
+        self.assertEqual(relay.operations(self.desired), [["stop", "estavelle"]])
 
     def test_bootstrap_credentials_are_validated_without_rewriting_material(self):
         before = {str(path): path.read_bytes() for path in self.state.rglob("*") if path.is_file()}
         relay.validate_material(self.directory, self.desired)
         self.assertEqual(before, {str(path): path.read_bytes() for path in self.state.rglob("*") if path.is_file()})
-        (self.state / "relay.key").unlink()
+        (self.state / "estavelle.key").unlink()
         with self.assertRaises(relay.Invalid):
             relay.validate_material(self.directory, self.desired)
 
     def test_snapshot_preserves_previous_success_and_private_permissions(self):
         relay.save_applied(self.directory, b"old manifest")
         relay.save_applied(self.directory, b"new manifest")
-        target = self.state / "relay-service.applied.toml"
+        target = self.state / "estavelle-service.applied.toml"
         self.assertEqual(target.read_bytes(), b"new manifest")
         self.assertEqual(target.with_suffix(".toml.previous").read_bytes(), b"old manifest")
         self.assertEqual(target.stat().st_mode & 0o777, 0o600)
 
     def test_status_keeps_health_independent_and_unprobed(self):
-        rows = [{"Service": "relay", "State": "running"}]
+        rows = [{"Service": "estavelle", "State": "running"}]
         for output in [json.dumps(rows), "\n".join(json.dumps(row) for row in rows)]:
             with patch.object(relay, "compose", return_value=subprocess.CompletedProcess([], 0, stdout=output)):
                 status = relay.status(self.directory, self.desired)
@@ -88,16 +88,16 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["desired"], relay.manifest(path))
         self.assertIn(str(self.directory / "docker-compose.yml"), json.loads(result.stdout)["commands"][0])
-        self.assertFalse((self.state / "relay-service.applied.toml").exists())
+        self.assertFalse((self.state / "estavelle-service.applied.toml").exists())
 
     @unittest.skipUnless(os.environ.get("KARST_COMPOSE_LIFECYCLE_TEST") == "1", "requires Docker and local alpine:latest image")
     def test_real_compose_lifecycle_keeps_control_running(self):
         import uuid
-        project = "karst-relay-test-" + uuid.uuid4().hex[:12]
+        project = "karst-estavelle-test-" + uuid.uuid4().hex[:12]
         (self.directory / "docker-compose.yml").write_text(
             "name: " + project + "\nservices:\n" + "".join(
                 f"  {name}:\n    image: alpine:latest\n    command: [sleep, '600']\n"
-                for name in ("control", "relay")))
+                for name in ("control", "estavelle")))
         self.addCleanup(lambda: relay.compose(self.directory, ["down", "--remove-orphans"]))
         relay.compose(self.directory, ["up", "-d", "control"])
         self.write_manifest()
@@ -127,8 +127,8 @@ class DeploymentTests(unittest.TestCase):
         failed = subprocess.run([*argv, "--acknowledge-process-change"], env=env, capture_output=True, text=True)
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn("earlier actions may have completed", failed.stderr)
-        self.assertIn("stop relay", log.read_text())
-        self.assertEqual((self.state / "relay-service.applied.toml").read_bytes(), b"previous success")
+        self.assertIn("stop estavelle", log.read_text())
+        self.assertEqual((self.state / "estavelle-service.applied.toml").read_bytes(), b"previous success")
 
     def test_cli_failure_never_records_success_or_leaks_docker_diagnostics(self):
         self.write_manifest()
@@ -139,7 +139,7 @@ class DeploymentTests(unittest.TestCase):
         result = subprocess.run(["python3", str(Path(relay.__file__)), "apply", "--directory", str(self.directory), "--acknowledge-process-change"], env={**os.environ, "PATH": str(self.directory)+os.pathsep+os.environ["PATH"]}, text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn(secret, result.stdout + result.stderr)
-        self.assertFalse((self.state / "relay-service.applied.toml").exists())
+        self.assertFalse((self.state / "estavelle-service.applied.toml").exists())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright the Karst contributors.
-# Copy to relay-service.toml after bootstrap.sh.
+# Copy to estavelle-service.toml after bootstrap.sh.
 # Process configuration only: account publication uses the Relay Services API.
 schema_version = 1
 
