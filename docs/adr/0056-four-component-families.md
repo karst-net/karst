@@ -114,7 +114,7 @@ disclosure, and failover diagnostics under the shared Relay view.
 > "Reconsider if" condition below about an external TURN backend are now
 > moot rather than wrong — there is no TURN backend, embedded or external,
 > left to reconsider. [Component architecture](../COMPONENT-ARCHITECTURE.md)
-> and [Relay service associations](../relay-services.md) describe the
+> and [Estavelle service associations](../estavelle-services.md) describe the
 > resulting Ponor-only shape.
 >
 > **Addendum, 2026-10-23 — evaluated and reverted BYO external TURN

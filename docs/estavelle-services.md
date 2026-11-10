@@ -1,27 +1,27 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Relay service associations
+# Estavelle service associations
 
-ADR-0056's addendum settled on Relay-only transport fallback: standalone TURN
-support (a managed adapter to coturn or an external provider, the other
+ADR-0056's addendum settled on Estavelle-only transport fallback: standalone
+TURN support (a managed adapter to coturn or an external provider, the other
 option ADR-0056 originally left open) was dropped. The first control
 implementation adds explicit, account-scoped service associations;
 service-driven netmap publication is opt-in. The reference
-[Compose deployment adapter](../deploy/compose/README.md#relay-deployment-adapter)
-and the bare-metal [systemd adapter](../deploy/systemd/README.md#relay-deployment-adapter)
+[Compose deployment adapter](../deploy/compose/README.md#estavelle-deployment-adapter)
+and the bare-metal [systemd adapter](../deploy/systemd/README.md#estavelle-deployment-adapter)
 each manage the local Ponor process separately from account publication. A
 Kubernetes adapter and full transport verification remain tracked in #446.
 
 ## Console
 
-Open **Relays → Services** to inspect or create associations. Choose an
+Open **Estavelles → Services** to inspect or create associations. Choose an
 existing Ponor endpoint explicitly. No backend is selected based on region or
 address.
 
 The service table shows Ponor admission observations. The console refreshes
 observations once a minute.
 
-Use **Ponor endpoints** within Relays for existing backend administration. If
-an older control server lacks the service API, the Services view reports
+Use **Ponor endpoints** within Estavelles for existing backend administration.
+If an older control server lacks the service API, the Services view reports
 that error while the backend view remains accessible. Upgrade control before
 using associations. Removing an association does not remove the backend
 process or registry record. In service publication mode, endpoints used only
@@ -37,7 +37,7 @@ staged and does not change the legacy endpoint set. Disabling the mode
 retains the service for diagnosis and later re-enablement; it does not
 invoke provider process controls.
 
-`PUT /relay-services/{serviceId}/modes` requires `ponor_enabled`, plus
+`PUT /estavelle-services/{serviceId}/modes` requires `ponor_enabled`, plus
 `acknowledge_connectivity_change: true`. A missing boolean is rejected rather
 than interpreted as false. Active publication is validated transactionally,
 including an enabled Ponor bootstrap endpoint somewhere in the account. A
@@ -93,19 +93,19 @@ The authenticated management API exposes these additive endpoints under
 
 | Method and path | Effect |
 |---|---|
-| `GET /relay-services` | List this account's associations and Ponor registry presence |
-| `POST /relay-services` | Create a group-managed association to an existing account-local registry record |
-| `DELETE /relay-services/{serviceId}` | Delete the association; withdraw its otherwise unused endpoint when service publication is active |
-| `GET /relay-services/publication` | Read the persistent authority choice: `legacy` or `services` |
-| `POST /relay-services/publication/preview` | Validate and list the service associations without changing publication |
-| `PUT /relay-services/publication` | Change authority with `mode` and `acknowledge_connectivity_change: true` |
+| `GET /estavelle-services` | List this account's associations and Ponor registry presence |
+| `POST /estavelle-services` | Create a group-managed association to an existing account-local registry record |
+| `DELETE /estavelle-services/{serviceId}` | Delete the association; withdraw its otherwise unused endpoint when service publication is active |
+| `GET /estavelle-services/publication` | Read the persistent authority choice: `legacy` or `services` |
+| `POST /estavelle-services/publication/preview` | Validate and list the service associations without changing publication |
+| `PUT /estavelle-services/publication` | Change authority with `mode` and `acknowledge_connectivity_change: true` |
 
 Members and the narrowly scoped scaler role cannot manage these records. The
 request cannot supply an account ID, identity key, or credential. Unknown
 fields and multiple JSON documents are rejected. The referenced registry ID
 must belong to the caller's authenticated account.
 
-`POST /relay-services` always requires `access_managed: true` and at least
+`POST /estavelle-services` always requires `access_managed: true` and at least
 one entry in `allowed_groups`; there is no account-wide bypass. Service
 publication must already be active and the backend must have a live,
 identity-bound admission writer (ADR-0058) before the group-managed
@@ -139,12 +139,12 @@ address, region, or provider.
    registry files, and per-account ownership.
 2. Review the desired associations explicitly. A matching region or host does
    not prove association.
-3. Upgrade control before using `/relay-services`. Older control versions do
+3. Upgrade control before using `/estavelle-services`. Older control versions do
    not expose this API. Existing client wire projections remain unchanged,
    so this step requires no client upgrade.
 4. Install the identity-bound admission writer for each backend and confirm
-   its lease is live (`GET /relay-services/admission-targets`), and confirm
-   the account groups to grant already exist. `POST /relay-services` always
+   its lease is live (`GET /estavelle-services/admission-targets`), and confirm
+   the account groups to grant already exist. `POST /estavelle-services` always
    requires `access_managed: true` and at least one allowed group — there is
    no unmanaged bridge to create the association in before groups are
    chosen. Existing file-only registry entries must first be represented in
@@ -155,7 +155,7 @@ address, region, or provider.
 6. Review the acknowledgment and switch publication to `services` before
    creating any association: `configureAccess` requires that authority
    already be active. With no services created yet this briefly publishes no
-   Relay endpoints — it never falls back to legacy/global entries — so
+   Estavelle endpoints — it never falls back to legacy/global entries — so
    proceed straight to the next step.
 7. Create each association with its `allowed_groups`, then list it and
    inspect the presence field, to restore access without an extended gap. An
@@ -171,9 +171,9 @@ address, region, or provider.
    upgrade. Removing an association does not rotate keys. In service mode it
    does change the endpoint set sent to clients.
 
-This stage deliberately retains the legacy `/relays` API and separate client
-netmap field. It does not remove legacy configuration or introduce a new
-credential authority. Bulk configuration migration tooling and per-mode
+This stage deliberately retains the legacy `/estavelles` API and separate
+client netmap field. It does not remove legacy configuration or introduce a
+new credential authority. Bulk configuration migration tooling and per-mode
 health/accounting beyond what #440/#444 landed remain required by #446. See
 [relay-migration-verification.md](relay-migration-verification.md) for
 executed schema-compatibility and direct+Ponor transport verification, and
@@ -181,12 +181,12 @@ what it does not yet cover.
 
 ## Installation handoff
 
-Relays also offers a form-generated installer for the one-Relay co-located
-reference Compose deployment (ADR-0062). It delivers runtime configuration and
-an identity-bound managed-only roster writer without manual configuration
-editing. Host-generated public receipts fill registration, then the same access
-form controls groups and optional egress. Installation, registration and traffic
-readiness remain separate. See the reference Compose guide for prerequisites,
-retry stages and the required generated lifecycle overlay. Remote provisioning,
-Gateway installation and authenticated remote roster delivery remain outside
-this handoff.
+Estavelles also offers a form-generated installer for the one-Estavelle
+co-located reference Compose deployment (ADR-0062). It delivers runtime
+configuration and an identity-bound managed-only roster writer without manual
+configuration editing. Host-generated public receipts fill registration, then
+the same access form controls groups and optional egress. Installation,
+registration and traffic readiness remain separate. See the reference Compose
+guide for prerequisites, retry stages and the required generated lifecycle
+overlay. Remote provisioning, Aven installation and authenticated remote
+roster delivery remain outside this handoff.

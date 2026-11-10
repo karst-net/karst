@@ -57,7 +57,7 @@ escape paths to prevent recursion. Removing an offer withdraws active routing
 and forwarding, not the client's durable consent record. Reusing route IDs
 for a different destination or trust context must not silently reuse consent.
 
-The [Aven administration view](gateway-capability.md) resolves subnet and default
+The [Aven administration view](aven-capability.md) resolves subnet and default
 route declarations into one inventory row per visible enrolled node. It preserves
 existing route persistence and APIs, while distinguishing recorded connectivity
 from unreported forwarding readiness.
@@ -120,7 +120,7 @@ Operational requirements for the component:
   mode into an open relay.
 - Redact secrets from diagnostics. Ponor does not read overlay plaintext.
 
-The additive [Estavelle service association API](relay-services.md) stores an
+The additive [Estavelle service association API](estavelle-services.md) stores an
 explicit account-local Ponor link. Its presence field describes registry
 availability, not runtime health. Legacy credential minting and wire
 projections remain in use. Operators can preview and explicitly enable

@@ -253,7 +253,7 @@ then apply the deployment manifest. On enabling, start/check the process first,
 then activate publication after admission observations succeed. Neither the
 script nor its acknowledgment changes membership, policy, local Aven
 consent or control's publication authority. See
-[Relay Services](../../docs/relay-services.md) for version gates and rollback.
+[Estavelle Services](../../docs/estavelle-services.md) for version gates and rollback.
 
 Status exposes the Ponor process's state. Running containers with no
 healthcheck report `unprobed`, not healthy. Use control's fresh Ponor

@@ -79,7 +79,7 @@ Failed applies do not record success.
 As with the Compose adapter, local process state and account publication are
 distinct: withdraw endpoints through control's **Relay Services** mode/
 publication controls before stopping the unit, and see
-[Relay Services](../../docs/relay-services.md) for version gates and
+[Estavelle Services](../../docs/estavelle-services.md) for version gates and
 rollback. `status` reports the unit's `ActiveState` (`active`/`inactive`/
 `absent` when not installed); a unit with no health probe is `unprobed`, not
 healthy — use control's fresh Ponor admission observations for readiness.
