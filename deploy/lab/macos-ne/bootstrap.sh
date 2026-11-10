@@ -4,14 +4,14 @@
 #
 # Stand up (or refresh) the macOS NE lab's Linux half on this host. Idempotent:
 # existing state is kept, so a re-run after a reboot or an image rebuild
-# keeps the same pins, relay identity, account and enrolled peer.
+# keeps the same pins, estavelle identity, account and enrolled peer.
 #
 #   KARST_LAB_HOST_IP=192.168.68.101 \
 #   KARST_LAB_PEER_LAN_IP=192.168.71.200 \
 #   KARST_LAB_TAG=34573ec \
 #     ./bootstrap.sh
 #
-# The images karst-ne-lab/{karst-control,karst-relay,karstd}:$KARST_LAB_TAG
+# The images karst-ne-lab/{karst-control,karst-estavelle,karstd}:$KARST_LAB_TAG
 # must already exist (README.md shows the build). `./bootstrap.sh --reset`
 # discards all state first, which invalidates every enrolled Mac.
 set -euo pipefail
@@ -41,7 +41,7 @@ KARST_LAB_TAG=$KARST_LAB_TAG
 KARST_LAB_HOST_IP=$KARST_LAB_HOST_IP
 KARST_LAB_CONTROL_PORT=${KARST_LAB_CONTROL_PORT:-34073}
 KARST_LAB_KEYCLOAK_PORT=${KARST_LAB_KEYCLOAK_PORT:-34080}
-KARST_LAB_RELAY_PORT=${KARST_LAB_RELAY_PORT:-34443}
+KARST_LAB_ESTAVELLE_PORT=${KARST_LAB_ESTAVELLE_PORT:-34443}
 KARST_LAB_PEER_LAN_IP=$KARST_LAB_PEER_LAN_IP
 KARST_LAB_LAN_PARENT=$parent
 KARST_LAB_LAN_SUBNET=$lan_subnet
@@ -59,7 +59,7 @@ fi
 # rather than only written into a new one. labgw takes the LAN address after
 # the peer's, and peer2 (a second, non-gateway mesh peer) the one after
 # that — three consecutive static addresses, so the default `ip_range` below
-# covers a /30 rather than the original pair's /31. Control and relay get
+# covers a /30 rather than the original pair's /31. Control and estavelle get
 # fixed core addresses that the Mac can reach only through labgw.
 add_env() { grep -q "^$1=" .env || echo "$1=$2" >> .env; }
 gw_default=$(python3 -c "import ipaddress,sys; print(ipaddress.ip_address(sys.argv[1]) + 1)" "$KARST_LAB_PEER_LAN_IP")
@@ -70,24 +70,24 @@ add_env KARST_LAB_LAN_IP_RANGE "${KARST_LAB_LAN_IP_RANGE:-$KARST_LAB_PEER_LAN_IP
 add_env KARST_LAB_CORE_SUBNET 10.230.0.0/24
 add_env KARST_LAB_CORE_GW_IP 10.230.0.2
 add_env KARST_LAB_CORE_CONTROL_IP 10.230.0.10
-add_env KARST_LAB_CORE_RELAY_IP 10.230.0.11
+add_env KARST_LAB_CORE_ESTAVELLE_IP 10.230.0.11
 set -a
 # shellcheck disable=SC1091
 . ./.env
 set +a
 
-if [ ! -f "$state/tls/relay.crt" ]; then
+if [ ! -f "$state/tls/estavelle.crt" ]; then
     openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes \
-        -keyout "$state/tls/relay.key" -out "$state/tls/relay.crt" \
-        -subj "/CN=relay.karst-ne-lab" \
-        -addext "subjectAltName=DNS:relay.karst-ne-lab,IP:$KARST_LAB_HOST_IP" \
+        -keyout "$state/tls/estavelle.key" -out "$state/tls/estavelle.crt" \
+        -subj "/CN=estavelle.karst-ne-lab" \
+        -addext "subjectAltName=DNS:estavelle.karst-ne-lab,IP:$KARST_LAB_HOST_IP" \
         -addext "basicConstraints=critical,CA:FALSE" \
         -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
         -addext "extendedKeyUsage=serverAuth" >/dev/null 2>&1
-    chmod 600 "$state/tls/relay.key"
+    chmod 600 "$state/tls/estavelle.key"
 fi
-cp "$state/tls/relay.crt" "$state/peer/relay-ca.crt"
-cp "$state/tls/relay.crt" "$state/peer2/relay-ca.crt"
+cp "$state/tls/estavelle.crt" "$state/peer/estavelle-ca.crt"
+cp "$state/tls/estavelle.crt" "$state/peer2/estavelle-ca.crt"
 
 # The lab-only client key both peers' sshd fixtures trust (peer-entrypoint.sh).
 # Not security-sensitive: this lab's own README already runs everything else
@@ -97,27 +97,27 @@ if [ ! -f "$state/ssh_lab_client" ]; then
 fi
 cp "$state/ssh_lab_client.pub" "$state/peer/ssh_authorized_keys"
 cp "$state/ssh_lab_client.pub" "$state/peer2/ssh_authorized_keys"
-[ -f "$state/relay.toml" ] || cat > "$state/relay.toml" <<EOF
+[ -f "$state/estavelle.toml" ] || cat > "$state/estavelle.toml" <<EOF
 listen = "0.0.0.0:443"
-identity_key = "/var/lib/karst/relay.key"
+identity_key = "/var/lib/karst/estavelle.key"
 roster = "/var/lib/karst/roster.toml"
-tls_cert = "/var/lib/karst/tls/relay.crt"
-tls_key = "/var/lib/karst/tls/relay.key"
+tls_cert = "/var/lib/karst/tls/estavelle.crt"
+tls_key = "/var/lib/karst/tls/estavelle.key"
 region = "lab"
 EOF
 [ -f "$state/roster.toml" ] || printf '# karst-control overwrites this every 25s.\n' > "$state/roster.toml"
-if [ ! -f "$state/relays.json" ]; then
-    identity=$(docker run --rm -v "$state:/var/lib/karst" "karst-ne-lab/karst-relay:$KARST_LAB_TAG" \
-        pubkey --config /var/lib/karst/relay.toml | awk '/^identity_pk/ { print $2 }')
-    [ -n "$identity" ] || { echo "bootstrap: karst-relay printed no identity" >&2; exit 1; }
-    cat > "$state/relays.json" <<EOF
-{ "relays": [ { "address": "$KARST_LAB_CORE_RELAY_IP:443", "tls_server_name": "relay.karst-ne-lab", "identity_key": "$identity", "region": "lab" } ] }
+if [ ! -f "$state/estavelles.json" ]; then
+    identity=$(docker run --rm -v "$state:/var/lib/karst" "karst-ne-lab/karst-estavelle:$KARST_LAB_TAG" \
+        pubkey --config /var/lib/karst/estavelle.toml | awk '/^identity_pk/ { print $2 }')
+    [ -n "$identity" ] || { echo "bootstrap: karst-estavelle printed no identity" >&2; exit 1; }
+    cat > "$state/estavelles.json" <<EOF
+{ "relays": [ { "address": "$KARST_LAB_CORE_ESTAVELLE_IP:443", "tls_server_name": "estavelle.karst-ne-lab", "identity_key": "$identity", "region": "lab" } ] }
 EOF
 fi
-# Nodes dial the relay at its core address: the Mac through labgw, the peer
-# directly (it is attached to core). Rewritten in place for labs whose
+# Nodes dial the estavelle at its core address: the Mac through labgw, the
+# peer directly (it is attached to core). Rewritten in place for labs whose
 # registry predates the core network; the identity is kept.
-python3 - "$state/relays.json" "$KARST_LAB_CORE_RELAY_IP:443" <<'PY'
+python3 - "$state/estavelles.json" "$KARST_LAB_CORE_ESTAVELLE_IP:443" <<'PY'
 import json, sys
 path, address = sys.argv[1], sys.argv[2]
 registry = json.load(open(path))
@@ -127,7 +127,7 @@ if registry["relays"][0]["address"] != address:
 PY
 # "*:*" covers mesh nodes only; routed destinations need CIDR grants. The
 # subnet-route fixture is reachable only through its offer, and everything
-# behind the exit route (the exit probe, the control/relay core addresses as
+# behind the exit route (the exit probe, the control/estavelle core addresses as
 # other apps see them with the exit active, the internet) only through the
 # exit, so the lab grants the subnet and the whole IPv4 space.
 cat > "$state/policy.json" <<EOF
@@ -190,6 +190,6 @@ EOF
 fi
 
 docker compose build peer
-docker compose up -d control control-probe relay relay-probe keycloak labgw
+docker compose up -d control control-probe estavelle estavelle-probe keycloak labgw
 python3 "$here/labctl.py" init
 python3 "$here/labctl.py" status

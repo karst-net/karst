@@ -14,7 +14,7 @@ case "${1:-}" in prepare|mutate|status) ;; *) echo "labctl-ssh: refused" >&2; ex
 for arg in "$@"; do
     case "$arg" in
         prepare|mutate|status|--scenario|--route-churn|--exit-route|--route|--state) ;;
-        direct|relay|subnet|exit|add|remove|active|withdrawn) ;;
+        direct|estavelle|subnet|exit|add|remove|active|withdrawn) ;;
         *) echo "labctl-ssh: refused argument" >&2; exit 1 ;;
     esac
 done

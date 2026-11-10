@@ -1945,7 +1945,7 @@ fn spawn_relay(net: &mut Aquifer, tag: &str, port: u16, reflect: bool) -> String
     let relay_pk = hex(identity.public_key());
 
     let executable =
-        std::env::var("KARST_AQUIFER_RELAY_BIN").unwrap_or_else(|_| bin("karst-relay"));
+        std::env::var("KARST_AQUIFER_RELAY_BIN").unwrap_or_else(|_| bin("karst-estavelle"));
     net.spawn_service(
         NS_PUB,
         &executable,

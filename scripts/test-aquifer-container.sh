@@ -7,7 +7,7 @@ repo_dir=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_dir"
 products=$(mktemp -d "${TMPDIR:-/tmp}/karst-aquifer-products.XXXXXXXX")
 trap 'rm -rf "$products"' EXIT
-cargo build --locked -p karstd -p karst-cli -p karst-relay
+cargo build --locked -p karstd -p karst-cli -p karst-estavelle
 cargo test --locked -p karstd --test aquifer --no-run --message-format=json > "$products/artifacts.jsonl"
 python3 - "$products" <<'PY'
 import json
@@ -27,9 +27,9 @@ shutil.copy2(executables[0], products / "aquifer")
 profile = Path(executables[0]).parent.parent
 for name in ("karstd", "karst"):
     shutil.copy2(profile / name, products / name)
-source = Path(os.environ.get("KARST_AQUIFER_RELAY_BIN", profile / "karst-relay"))
+source = Path(os.environ.get("KARST_AQUIFER_RELAY_BIN", profile / "karst-estavelle"))
 if not source.is_file():
-    raise SystemExit(f"relay executable not found: {source}")
+    raise SystemExit(f"estavelle executable not found: {source}")
 shutil.copy2(source, products / "karst-relay")
 for node in ("A", "B"):
     source = Path(os.environ.get(f"KARST_AQUIFER_NODE_{node}_BIN", profile / "karstd"))

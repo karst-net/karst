@@ -3,7 +3,7 @@
 # Copyright the Karst contributors.
 #
 # labgw: the lab Mac's default gateway. Forwards the Mac's traffic to the
-# core network (control, relay) and to the LAN's own router, masquerading on
+# core network (control, estavelle) and to the LAN's own router, masquerading on
 # the way out of each so replies come back through here.
 set -eu
 lan_if=$(ip -o -4 addr show | awk -v a="$KARST_LAB_GW_LAN_IP" 'index($4, a"/") == 1 { print $2; exit }')

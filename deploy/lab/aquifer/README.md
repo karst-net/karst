@@ -29,7 +29,7 @@ sysctl setup; other sysctl paths keep Docker's restrictions. This grants
 substantial privileges to the fixture; use a trusted build and a disposable
 Linux test host/VM when that is your local testing policy.
 
-The runner builds `karstd`, `karst`, `karst-relay`, the aquifer test and a
+The runner builds `karstd`, `karst`, `karst-estavelle`, the aquifer test and a
 CGO-enabled `karst-testserver` from the current worktree. It stages those
 executables in a temporary directory and mounts only that directory read-only.
 It mounts no repository, deployment state, Go module cache, Docker socket or
