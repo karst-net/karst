@@ -8,6 +8,9 @@
   the identity this reuses), `docs/observability.md` (Phase 6 observability,
   which this extends), GitHub issues #128 (admin console), #147
 
+> **Naming note (ADR-0069, 2026-11-08):** "relay" throughout this document is
+> now **Estavelle**; the decision below is otherwise unaffected.
+
 ---
 
 ## Context

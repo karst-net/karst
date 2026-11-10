@@ -6,6 +6,9 @@
 - **Deciders:** Project owner direction in #453
 - **Related:** #453, ADR-0057, ADR-0058
 
+> **Naming note (ADR-0069, 2026-11-08):** "Gateway" throughout this document
+> is now **Aven**; the decision below is otherwise unaffected.
+
 ## Context
 
 ADR-0058's managed internet-egress grant named both destination prefixes and

@@ -78,7 +78,7 @@ for it:
 |---|---|---|
 | Project, CLI, daemon | **Karst** — `karst`, `karstd` | |
 | Handshake and encrypted transport | **PHREATIC** (was SPORE) | Cave passages below the water table, permanently submerged |
-| Relay protocol and service | **Ponor** | Where a surface stream vanishes into the karst system — precisely a relay's role |
+| Estavelle protocol and service (was Relay) | **Ponor** | Where a surface stream vanishes into the karst system — precisely an estavelle's role |
 | Path discovery / NAT traversal (§6) | **AVEN** (added 2026-08-14; renamed **Resurgence** by ADR-0069, 2026-11-08) | A shaft connecting the cave system upward to the surface — what cavers look for to find a way out |
 | Network lock (§4.5) | **Bedrock** (was Mycelium Lock) | The rock karst forms in; anchoring trust |
 | Name service (§7) | **KarstDNS** (was MycoDNS) | |
@@ -128,7 +128,8 @@ first-served and largely indifferent to trademark.** They are recorded
 separately below.
 
 **Ponor** was the designated fallback and is no longer needed for that purpose;
-it remains the relay protocol name.
+it remains the Estavelle protocol name (the component formerly named Relay;
+see ADR-0069).
 
 ### Namespace reservations
 

@@ -7,6 +7,9 @@
 - **Related:** ADR-0008 (relay infrastructure), ADR-0018 (relay/control TLS
   transport unchanged), `spec/ponor-v1.md`, GitHub issue #122
 
+> **Naming note (ADR-0069, 2026-11-08):** "relay" throughout this document is
+> now **Estavelle**; the decision below is otherwise unaffected.
+
 ---
 
 ## Context

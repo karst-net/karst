@@ -11,8 +11,8 @@ Start with [Getting started](GETTING-STARTED.md), and use the
 [operations manual](OPERATIONS.md) for production rollout and rollback.
 
 Karst's [four component families](COMPONENT-ARCHITECTURE.md) are node agent,
-transport infrastructure, control services and trust tooling. Gateway combines
-subnet and exit behavior within a node; Relay combines Ponor and TURN modes.
+transport infrastructure, control services and trust tooling. Aven combines
+subnet and exit behavior within a node; Estavelle combines Ponor and TURN modes.
 Unified configuration/API/UI consolidation is pending #404. Continue using
 the current commands and registries until its versioned migration is available.
 
@@ -21,23 +21,23 @@ the current commands and registries until its versioned migration is available.
 | Existing concept | Karst equivalent | Important difference |
 |---|---|---|
 | WireGuard peer public key and `AllowedIPs` | Bedrock-authorized node identity plus a server-compiled ACL | Identity authorization, address assignment, and traffic authorization are separate. ACLs are default deny and enforced at both endpoints. |
-| WireGuard endpoint and keepalive | AVEN-discovered direct path | Candidates change dynamically; a static endpoint is not the identity. |
+| WireGuard endpoint and keepalive | Resurgence-discovered direct path | Candidates change dynamically; a static endpoint is not the identity. |
 | WireGuard preshared key | Server-derived per-pair, per-epoch PSK | Operators do not copy pairwise PSKs between nodes. |
 | Tailscale coordination server | Self-hosted `karst-control` | The server distributes policy and secrets but does not hold node decryption keys; Bedrock constrains node admission. |
 | Tailscale ACL/tag owner | Karst `groups`, `tagOwners`, and `acls` | The policy shape is intentionally familiar, but only `accept` exists and unknown fields fail validation. |
-| DERP | Relay with Ponor and optional TURN modes | Ponor carries PHREATIC ciphertext and uses a signed roster; it is not DERP-compatible. TURN uses coturn or an external backend. |
+| DERP | Estavelle with Ponor and optional TURN modes | Ponor carries PHREATIC ciphertext and uses a signed roster; it is not DERP-compatible. TURN uses coturn or an external backend. |
 | Tailnet lock | Bedrock | Bedrock uses a hash-chained, quorum-signed authorization log and offline roots. |
-| Subnet router / exit node | Node-agent Gateway with specific-prefix / default-route behavior | Route use remains ACL-gated and default-route use requires client consent. |
+| Subnet router / exit node | Node-agent Aven with specific-prefix / default-route behavior | Route use remains ACL-gated and default-route use requires client consent. |
 
 ## 2. Inventory before changing traffic
 
 Export every WireGuard `wg0.conf` or Tailscale ACL, node/user list, tags,
-subnet routes, DNS settings, exit-node use, and relay/firewall exceptions.
+subnet routes, DNS settings, exit-node use, and estavelle/firewall exceptions.
 Record the applications and destination ports actually required; do not
 translate broad `AllowedIPs = 0.0.0.0/0` into an allow-all ACL by reflex.
 
 Choose stable Karst groups and tags, identify Bedrock root custodians, and
-deploy the control and relay services. Enroll a non-production canary for each
+deploy the control and estavelle services. Enroll a non-production canary for each
 OS and location. Confirm direct and relayed paths, DNS, policy enforcement,
 revocation, metrics, backup/restore, and your load-balanced control entry point
 before scheduling cutover.
@@ -93,7 +93,7 @@ the node netmap.
    through it. Avoid overlapping interface routes; use canary destinations.
 3. Enroll every node, attach users/tags, import and validate least-privilege
    ACLs, and verify Bedrock coverage before enabling network lock.
-4. Test each required flow, relay fallback, DNS, subnet routes, exit-route
+4. Test each required flow, estavelle fallback, DNS, subnet routes, exit-route
    consent, revocation, observability, backup/restore, and control failover.
 5. During the change window, stop the old VPN, remove its routes and DNS
    integration, start Karst, and verify `karst status` plus the acceptance
@@ -101,7 +101,7 @@ the node netmap.
 6. If checks fail, stop Karst, run `karst dns revert` if needed, restore the
    old client's routes/DNS, and investigate off the production path.
 7. After the observation window, revoke old WireGuard keys or Tailscale nodes,
-   remove obsolete firewall/relay rules, raise DNS TTLs, and retain the
+   remove obsolete firewall/estavelle rules, raise DNS TTLs, and retain the
    migration record for audit.
 
 ## 5. Tailscale-specific notes

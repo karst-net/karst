@@ -15,7 +15,7 @@ independently in marketing text.
 Architecture terminology follows [ADR-0056](adr/0056-four-component-families.md):
 node agent, transport infrastructure, control services and trust tooling.
 “Subnet router” and “exit node” below describe the specific-prefix and
-default-route behaviors of one **Gateway** node capability. **Relay** combines
+default-route behaviors of one **Aven** node capability. **Estavelle** combines
 Ponor and TURN modes; TURN uses a coturn/external-provider adapter. Existing
 CLI examples remain current; unified service configuration/UI is pending #404.
 
@@ -54,8 +54,8 @@ and maintain peer connectivity"](USE-CASE-ANALYSIS.md#uc-08--establish-and-maint
 The coffee-shop Wi-Fi is just an IP transport to the client; PHREATIC
 end-to-end encryption and Bedrock-anchored peer identity ([UC-09](USE-CASE-ANALYSIS.md#uc-09--govern-bedrock-network-membership))
 mean the local network's trustworthiness is irrelevant to the overlay's
-confidentiality or peer authentication. AVEN attempts a direct path first and
-falls back to the Ponor relay when the local NAT or a captive portal's
+confidentiality or peer authentication. Resurgence attempts a direct path first and
+falls back to the Ponor estavelle when the local NAT or a captive portal's
 filtering prevents that ([UC-08](USE-CASE-ANALYSIS.md#uc-08--establish-and-maintain-peer-connectivity);
 see the NAT matrix in the [README](../README.md)).
 
@@ -63,24 +63,24 @@ see the NAT matrix in the [README](../README.md)).
 flowchart LR
     WiFi["Untrusted Wi-Fi<br/>Internet transport"]
     Client["Karst Client<br/>karstd"]
-    AVEN["AVEN<br/>NAT traversal"]
-    Relay["Ponor Relay<br/>ciphertext only"]
+    Resurgence["Resurgence<br/>NAT traversal"]
+    Estavelle["Ponor Estavelle<br/>ciphertext only"]
     Peer["Internal Karst Peer<br/>wiki / DB / build server"]
     Control["karst-control<br/>netmap + policy"]
     Bedrock["Bedrock<br/>membership authority"]
 
     WiFi --> Client
-    Client --> AVEN
-    AVEN -->|"direct PHREATIC path"| Peer
-    AVEN -.->|"direct path unavailable"| Relay
-    Relay -.->|"encrypted relay path"| Peer
-    Control -->|"peer identity, policy,<br/>relay registry"| Client
+    Client --> Resurgence
+    Resurgence -->|"direct PHREATIC path"| Peer
+    Resurgence -.->|"direct path unavailable"| Estavelle
+    Estavelle -.->|"encrypted estavelle path"| Peer
+    Control -->|"peer identity, policy,<br/>estavelle registry"| Client
     Control --> Peer
     Bedrock -->|"signed membership state"| Control
 
     classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
     classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
-    class Client,AVEN,Relay,Peer focus;
+    class Client,Resurgence,Estavelle,Peer focus;
     class WiFi,Control,Bedrock context;
 ```
 
@@ -94,7 +94,7 @@ flowchart LR
   That is a deliberate default — see SC-02, where the same exit-node
   mechanism is used on purpose.
 - Per the [threat model §7](THREAT-MODEL.md), metadata (who talks to whom,
-  when, how much) is not hidden from an on-path relay operator, though it was
+  when, how much) is not hidden from an on-path estavelle operator, though it was
   never visible to the coffee shop's network to begin with once the overlay
   is up.
 
@@ -106,14 +106,14 @@ wants their traffic to appear to originate near their home ZIP code.
 **Goal:** route web traffic through a device on their home network so the
 destination sees a residential IP address from their normal region.
 
-**Mechanism:** a **Gateway providing exit egress** at home — a Karst client
+**Mechanism:** a **Aven providing exit egress** at home — a Karst client
 running on a home router or always-on machine, advertising a consented default route
 ([UC-07](USE-CASE-ANALYSIS.md#uc-07--configure-a-subnet-router-or-exit-node);
 [docs/subnet-routers-and-exit-nodes.md](subnet-routers-and-exit-nodes.md)).
 The traveling client explicitly consents to the `0.0.0.0/0`/`::/0` route,
 which Karst requires and never applies silently. Traffic exits to the
 Internet from the home network's own residential IP address, not from a
-relay or datacenter range — which is the practical difference from a
+estavelle or datacenter range — which is the practical difference from a
 commercial VPN's location-spoofing, whose IPs are datacenter ranges that
 streaming providers routinely detect and block.
 
@@ -125,7 +125,7 @@ least-privilege pattern in [UC-05](USE-CASE-ANALYSIS.md#uc-05--grant-and-validat
 ```mermaid
 flowchart LR
     Traveler["Traveling<br/>Karst Client"]
-    Path["AVEN / Ponor<br/>peer path"]
+    Path["Resurgence / Ponor<br/>peer path"]
     Exit["Home Karst Client<br/>Exit Node"]
     HomeWAN["Home Internet<br/>Residential IP"]
     Service["Internet /<br/>Streaming Service"]
@@ -165,7 +165,7 @@ LAN.
 vendor web UI) from outside the home network, without exposing the rest of
 the home LAN.
 
-**Mechanism:** a **Gateway providing subnet access** advertising the printer's
+**Mechanism:** a **Aven providing subnet access** advertising the printer's
 `/32` (or a narrow CIDR containing just the printer) rather than the whole home LAN
 ([UC-07](USE-CASE-ANALYSIS.md#uc-07--configure-a-subnet-router-or-exit-node)),
 scoped further by an access-policy rule limiting the flow to the printer's
@@ -179,28 +179,28 @@ it with policy rather than relying on network topology alone.
 flowchart LR
     Traveler["Traveling<br/>Karst Client"]
     Mesh["PHREATIC Mesh<br/>direct or Ponor"]
-    Gateway["Home Karst Client<br/>Subnet Router"]
+    Aven["Home Karst Client<br/>Subnet Router"]
     Printer["LAN Printer<br/>not a Karst node"]
     Control["karst-control"]
     Route["Scoped Route<br/>printer /32"]
     ACL["Access Policy<br/>traveler → printer:631"]
 
-    Traveler --> Mesh --> Gateway
-    Gateway -->|"IPP / TCP 631"| Printer
+    Traveler --> Mesh --> Aven
+    Aven -->|"IPP / TCP 631"| Printer
     Control --> Route
     Control --> ACL
     Route --> Traveler
-    Route --> Gateway
+    Route --> Aven
     ACL --> Traveler
-    ACL --> Gateway
+    ACL --> Aven
 
     classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
     classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
-    class Traveler,Gateway,Route,ACL,Printer focus;
+    class Traveler,Aven,Route,ACL,Printer focus;
     class Mesh,Control context;
 ```
 
-**Caveats:** the printer itself does not become a Karst node — a gateway
+**Caveats:** the printer itself does not become a Karst node — an aven
 device on the same LAN as the printer (a home router or always-on machine
 running `karstd`) is the one that advertises the route and forwards to it.
 
@@ -241,22 +241,22 @@ the file server also performs — the two controls are additive, per
 flowchart LR
     User["Authorized<br/>Karst Client"]
     Mesh["PHREATIC Mesh"]
-    Gateway["Subnet Router"]
+    Aven["Subnet Router"]
     NAS["File Server / NAS<br/>SMB or NFS"]
     Control["karst-control"]
     Group["group:family"]
     ACL["Default-deny ACL<br/>group:family → NAS:445"]
     ShareAuth["Native Share Auth<br/>SMB / NFS credentials"]
 
-    User --> Mesh --> Gateway --> NAS
+    User --> Mesh --> Aven --> NAS
     Control --> Group --> ACL
     ACL -->|"permits network reachability"| User
-    ACL --> Gateway
+    ACL --> Aven
     ShareAuth -->|"separate authorization"| NAS
 
     classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
     classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
-    class User,Gateway,Group,ACL,NAS,ShareAuth focus;
+    class User,Aven,Group,ACL,NAS,ShareAuth focus;
     class Mesh,Control context;
 ```
 
@@ -273,7 +273,7 @@ device is visiting while enrolled in the family's mesh.
 **Not currently supported.** Karst does not inspect, log, or report the
 content or destination hostnames of a client's traffic, by design — see the
 threat model's stated non-goal that "[metadata is not
-protected](THREAT-MODEL.md#7-accepted-risks-and-non-goals)" from a *relay*
+protected](THREAT-MODEL.md#7-accepted-risks-and-non-goals)" from a *estavelle*
 operator's perspective, which is a different thing from an admin console
 *feature* to surface that data to an account owner. No such feature exists.
 The [audit log](USE-CASE-ANALYSIS.md#uc-10--monitor-investigate-and-prove-administrative-activity)
@@ -294,7 +294,7 @@ extend a fleet-management primitive into surveillance over a person.
 
 **A concrete recipe exists, using an already-shipped feature.**
 [ADR-0024](adr/0024-exit-node-routing-reconsiders-adr-0023.md) revisited this
-after a proposal to force traffic through the *relay* — which cannot work;
+after a proposal to force traffic through the *estavelle* — which cannot work;
 Ponor is verified to derive no session key and never see payload content
 (`spec/ponor-v1.md` §11/§13.3), so it can only ever add the same
 mesh-peer-traffic metadata already disclosed in
@@ -309,28 +309,28 @@ separates two roles this scenario conflates: the *enrolled Karst user* of a
 device, and the *local operator* who holds administrator rights on it. A
 parent who sets up and administers a child's computer already **is** its
 local operator, distinct from the child's enrolled-user identity. The parent
-runs `karst gateway exit use <route-id>` once, as the machine's administrator,
+runs `karst aven exit use <route-id>` once, as the machine's administrator,
 pointing at an exit node they run — durable across restarts
 (`docs/subnet-routers-and-exit-nodes.md` §4) — and the child's own
 unprivileged OS account cannot reach the root-only control socket
 (`bins/karstd/src/ipc.rs`) needed to disable it. Visibility then comes from
 ordinary host-side tooling (DNS logs, SNI inspection, or a logging proxy) on
-the parent's own gateway — nothing Karst needs to build.
+the parent's own aven — nothing Karst needs to build.
 
 ```mermaid
 flowchart LR
     Child["Child's Computer<br/>Karst Client"]
     Mesh["PHREATIC Mesh"]
     Exit["Parent-operated<br/>Exit Node"]
-    Monitor["Gateway-side Visibility<br/>DNS / SNI / proxy logs"]
+    Monitor["Aven-side Visibility<br/>DNS / SNI / proxy logs"]
     Internet["Internet"]
-    Relay["Ponor Relay<br/>ciphertext only"]
+    Estavelle["Ponor Estavelle<br/>ciphertext only"]
     Parent["Parent<br/>Local OS Operator"]
     Control["karst-control"]
 
     Child --> Mesh --> Exit --> Monitor --> Internet
-    Mesh -.->|"fallback transport"| Relay
-    Relay -.->|"cannot inspect websites"| Exit
+    Mesh -.->|"fallback transport"| Estavelle
+    Estavelle -.->|"cannot inspect websites"| Exit
     Parent -->|"locally enables durable<br/>exit-node selection"| Child
     Parent --> Monitor
     Control -->|"route/policy distribution"| Child
@@ -340,7 +340,7 @@ flowchart LR
     classDef no fill:#ffe3e3,stroke:#c92a2a,stroke-width:2px,color:#212529;
     class Child,Exit,Monitor,Parent focus;
     class Mesh,Control,Internet context;
-    class Relay no;
+    class Estavelle no;
 ```
 
 This does not reach a device whose enrolled user is *also* its own local
@@ -445,27 +445,27 @@ just that port and that reviewer:
 }
 ```
 
-AVEN attempts a direct path between the two peers and falls back to the
-Ponor relay only if both are behind restrictive NATs
+Resurgence attempts a direct path between the two peers and falls back to the
+Ponor estavelle only if both are behind restrictive NATs
 ([README](../README.md) NAT matrix). Unlike a public tunneling service (e.g.,
 ngrok), the dev server is never exposed to the open Internet — reachability
-is limited to the named peer by the ACL, and the relay (when used) carries
+is limited to the named peer by the ACL, and the estavelle (when used) carries
 PHREATIC ciphertext, not a plaintext HTTP proxy.
 
 ```mermaid
 flowchart LR
     Reviewer["Reviewer<br/>Karst Client"]
-    AVEN["AVEN<br/>Path Selection"]
+    Resurgence["Resurgence<br/>Path Selection"]
     Dev["Developer Workstation<br/>tag:devbox"]
     App["Local Dev Server<br/>TCP 3000"]
-    Relay["Ponor Relay"]
+    Estavelle["Ponor Estavelle"]
     Control["karst-control"]
     ACL["Temporary ACL<br/>reviewer → devbox:3000"]
 
-    Reviewer --> AVEN
-    AVEN -->|"preferred direct<br/>PHREATIC path"| Dev
-    AVEN -.->|"fallback"| Relay
-    Relay -.->|"PHREATIC ciphertext"| Dev
+    Reviewer --> Resurgence
+    Resurgence -->|"preferred direct<br/>PHREATIC path"| Dev
+    Resurgence -.->|"fallback"| Estavelle
+    Estavelle -.->|"PHREATIC ciphertext"| Dev
     Dev --> App
     Control --> ACL
     ACL --> Reviewer
@@ -473,8 +473,8 @@ flowchart LR
 
     classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
     classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
-    class Reviewer,AVEN,Dev,App,ACL focus;
-    class Relay,Control context;
+    class Reviewer,Resurgence,Dev,App,ACL focus;
+    class Estavelle,Control context;
 ```
 
 **Caveats:** this scenario is intentionally ephemeral in practice — a tag or
@@ -483,40 +483,40 @@ should be removed once the review is done rather than left as a standing
 grant, per the least-privilege framing in
 [UC-05](USE-CASE-ANALYSIS.md#uc-05--grant-and-validate-connectivity-permissions).
 
-## SC-08 — IT sizing relay/coordination infrastructure by client geography
+## SC-08 — IT sizing estavelle/coordination infrastructure by client geography
 
-**Actor:** a company IT/infrastructure team deciding where to deploy relays
+**Actor:** a company IT/infrastructure team deciding where to deploy estavelles
 and how to size them, based on where its clients actually are and how much
 traffic they generate.
 **Goal:** understand the geographic distribution of client connections and
-traffic volume well enough to place and size relays.
+traffic volume well enough to place and size estavelles.
 
-**Mechanism:** the relay registry carries an optional `region` field per
-relay (`spec/karst-control-v1.md` §5.4), which an administrator sets when
-registering a relay ([UC-02](USE-CASE-ANALYSIS.md#uc-02--bootstrap-the-control-plane-and-relay)),
+**Mechanism:** the estavelle registry carries an optional `region` field per
+estavelle (`spec/karst-control-v1.md` §5.4), which an administrator sets when
+registering an estavelle ([UC-02](USE-CASE-ANALYSIS.md#uc-02--bootstrap-the-control-plane-and-estavelle)),
 and clients report bounded, authenticated last-known path observations
-(direct/relay/unreachable, endpoint, epoch) that control exposes as
+(direct/estavelle/unreachable, endpoint, epoch) that control exposes as
 telemetry ([UC-08](USE-CASE-ANALYSIS.md#uc-08--establish-and-maintain-peer-connectivity)).
-Combined with relay-side connection/admission metrics
-([docs/observability.md](observability.md)) and audit records of relay
+Combined with estavelle-side connection/admission metrics
+([docs/observability.md](observability.md)) and audit records of estavelle
 registration and roster freshness
 ([UC-10](USE-CASE-ANALYSIS.md#uc-10--monitor-investigate-and-prove-administrative-activity)),
-an IT team has the raw signal needed to see which relays are loaded, which
+an IT team has the raw signal needed to see which estavelles are loaded, which
 regions are underserved, and where a client's actual last-known endpoint sits.
 
 ```mermaid
 flowchart LR
     Clients["Karst Clients"]
-    Relay["Ponor Relays"]
+    Estavelle["Ponor Estavelles"]
     Control["karst-control"]
-    Registry["Relay Registry<br/>operator-set region"]
+    Registry["Estavelle Registry<br/>operator-set region"]
     Paths["Last-known Path<br/>Telemetry"]
-    Metrics["Relay Metrics<br/>load / admission"]
+    Metrics["Estavelle Metrics<br/>load / admission"]
     GeoIP["External GeoIP<br/>Correlation"]
     IT["IT / Capacity Planning"]
 
-    Clients -->|"endpoint + direct/relay/<br/>unreachable observations"| Paths
-    Relay --> Metrics
+    Clients -->|"endpoint + direct/estavelle/<br/>unreachable observations"| Paths
+    Estavelle --> Metrics
     Control --> Registry
     Paths --> Control
     Metrics --> Control
@@ -529,20 +529,20 @@ flowchart LR
 
     classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
     classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
-    class Control,Registry,Paths,Metrics,GeoIP,IT,Relay focus;
+    class Control,Registry,Paths,Metrics,GeoIP,IT,Estavelle focus;
     class Clients context;
 ```
 
 **Caveats:**
 - **Karst does not itself do GeoIP resolution of client public IP addresses
   as a built-in analytics feature.** The `region` field is an operator-set
-  label on a *relay*, not a computed property of a *client*. Turning observed
+  label on a *estavelle*, not a computed property of a *client*. Turning observed
   client endpoint IPs into geography is the IT team's own correlation step
   (an external GeoIP source), not something the control plane computes today.
-- Per the threat model, relay/path telemetry is "last-known," not
+- Per the threat model, estavelle/path telemetry is "last-known," not
   proof of current state ([UC-08](USE-CASE-ANALYSIS.md#uc-08--establish-and-maintain-peer-connectivity));
   treat sizing decisions as directional, not as a real-time traffic map.
-- This is exactly the kind of visibility the threat model discloses relay
+- This is exactly the kind of visibility the threat model discloses estavelle
   operators have by default (peer identifiers, timing, volume — [§7](THREAT-MODEL.md#7-accepted-risks-and-non-goals)):
   useful for capacity planning, not evidence of payload content.
 
@@ -557,11 +557,11 @@ retaining the old system's protocol.
 
 **Mechanism:** this is the same shape as the existing
 [migration guide](MIGRATING-FROM-WIREGUARD-TAILSCALE.md), generalized: an
-OpenVPN server or AWS VPN Gateway is conceptually replaced by
-`karst-control` plus a `karst-relay`
-([UC-02](USE-CASE-ANALYSIS.md#uc-02--bootstrap-the-control-plane-and-relay)),
+OpenVPN server or AWS VPN Aven is conceptually replaced by
+`karst-control` plus a `karst-estavelle`
+([UC-02](USE-CASE-ANALYSIS.md#uc-02--bootstrap-the-control-plane-and-estavelle)),
 and reachability into resources the old VPN gave access to (a VPC, an
-on-prem subnet) is replaced by a **Gateway with exit or subnet routes**
+on-prem subnet) is replaced by a **Aven with exit or subnet routes**
 ([UC-07](USE-CASE-ANALYSIS.md#uc-07--configure-a-subnet-router-or-exit-node))
 placed inside that network, gated by the same default-deny access-policy
 model as every other scenario in this document
@@ -578,8 +578,8 @@ flowchart LR
     IdP["IdP / Enrollment"]
     Policy["Groups + ACLs<br/>Default Deny"]
     Mesh["PHREATIC Mesh"]
-    Relay["Ponor Relay"]
-    Gateway["Karst Subnet Router<br/>inside VPC / LAN"]
+    Estavelle["Ponor Estavelle"]
+    Aven["Karst Subnet Router<br/>inside VPC / LAN"]
     Private["Private Resources<br/>VPC / On-Prem"]
     Legacy["OpenVPN / AWS VPN<br/>Legacy System"]
     Bridge["Protocol Bridge<br/>NOT SUPPORTED"]
@@ -588,12 +588,12 @@ flowchart LR
     Control -->|"netmap / identities / routes"| User
     Control --> Policy
     Policy --> User
-    Policy --> Gateway
+    Policy --> Aven
     User --> Mesh
-    Mesh -->|"direct when possible"| Gateway
-    Mesh -.-> Relay
-    Relay -.-> Gateway
-    Gateway --> Private
+    Mesh -->|"direct when possible"| Aven
+    Mesh -.-> Estavelle
+    Estavelle -.-> Aven
+    Aven --> Private
     Legacy -.->|"migration / clean cutover"| Control
     Legacy -.-> Bridge
     Bridge -.-> Mesh
@@ -601,7 +601,7 @@ flowchart LR
     classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
     classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
     classDef no fill:#ffe3e3,stroke:#c92a2a,stroke-width:2px,color:#212529;
-    class User,Control,IdP,Policy,Mesh,Relay,Gateway,Private focus;
+    class User,Control,IdP,Policy,Mesh,Estavelle,Aven,Private focus;
     class Legacy context;
     class Bridge no;
 ```
@@ -615,7 +615,7 @@ one is real:**
   **no dedicated OpenVPN or AWS VPN migration guide exists yet**; today's
   guide only covers WireGuard and Tailscale concept mapping. Writing an
   OpenVPN/AWS-specific version of that guide (translating OpenVPN's
-  certificate-based peer model or AWS's VPN Gateway/route-table model into
+  certificate-based peer model or AWS's VPN Aven/route-table model into
   Karst groups, tags, ACLs, and routes) is a documentation gap this scenario
   should be used to close.
 - **Protocol-level facade (Karst terminating OpenVPN or IPsec/AWS VPN
@@ -639,5 +639,5 @@ one is real:**
 | SC-05 Monitor child's browsing | Exit node run by the machine's local operator | UC-07 | Supported today if the admin is also the device's local operator — see [ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md) / [ADR-0024](adr/0024-exit-node-routing-reconsiders-adr-0023.md) |
 | SC-06 Web filtering + time-of-day | KarstDNS group-scoped global upstream, pointed at a filtering resolver | UC-06 | Recipe covers the scenario — see [ADR-0025](adr/0025-dns-scoped-filtering-resolves-sc-06.md); general ACL time-of-day primitive still not built |
 | SC-07 Coworker dev-server review | Peer connectivity, narrow ACL | UC-08, UC-05 | Supported |
-| SC-08 Geo sizing of relays | Relay `region` field, path telemetry, metrics | UC-02, UC-08, UC-10 | Supported, with caveats |
-| SC-09 Replace OpenVPN/AWS VPN | Control services + Relay + node-agent Gateway, migration procedure | UC-02, UC-05, UC-07 | Supported (needs a dedicated migration guide); protocol-level facade not possible |
+| SC-08 Geo sizing of estavelles | Estavelle `region` field, path telemetry, metrics | UC-02, UC-08, UC-10 | Supported, with caveats |
+| SC-09 Replace OpenVPN/AWS VPN | Control services + Estavelle + node-agent Aven, migration procedure | UC-02, UC-05, UC-07 | Supported (needs a dedicated migration guide); protocol-level facade not possible |

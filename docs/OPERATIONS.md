@@ -8,7 +8,7 @@ behind an operational choice, use the [security whitepaper](SECURITY-WHITEPAPER.
 
 [Component architecture](COMPONENT-ARCHITECTURE.md) groups operations into
 node agent, transport infrastructure, control services and trust tooling.
-Gateway is the node's subnet/exit forwarding capability. Relay is Ponor only
+Aven is the node's subnet/exit forwarding capability. Estavelle is Ponor only
 — standalone TURN support was dropped (ADR-0056's addendum); unified
 configuration/lifecycle is pending #404. The commands below remain current.
 
@@ -17,7 +17,7 @@ configuration/lifecycle is pending #404. The commands below remain current.
 ### Container deployment
 
 Use [`deploy/compose/README.md`](../deploy/compose/README.md) as the canonical
-procedure for co-located control services and the Relay's Ponor process. Keep
+procedure for co-located control services and the Estavelle's Ponor process. Keep
 `state/` private and backed up off-host; it contains the server keys pinned by
 every node. Verify release images with `cosign`, record their immutable
 digests, and deploy those digests rather than mutable tags. Re-running
@@ -72,7 +72,7 @@ separate process/trust domain from the control server (ADR-0045 §6) — see
 `[driver]` config and each `Driver` implementation's own operational
 caveats (verified/not-verified against a real cluster or EC2 account).
 
-ADR-0063's admin-triggered, one-off named relay allocation used to have its
+ADR-0063's admin-triggered, one-off named estavelle allocation used to have its
 own sibling loop, `karst-scaler allocate`, polling the control server as a
 separate process. ADR-0045's 2026-11-04 addendum moved that reconciliation
 **in-process**, into the control server itself, because the external
@@ -84,9 +84,9 @@ signal why (the exact gap #525 tried, and failed, to close by adding that
 opt-in task). See that addendum and
 [ADR-0063's own addendum](adr/0063-admin-triggered-relay-allocation.md) for
 the security-boundary reasoning, and
-[`deploy/nomad/prod/README.md`](../deploy/nomad/prod/README.md)'s "Relay
+[`deploy/nomad/prod/README.md`](../deploy/nomad/prod/README.md)'s "Estavelle
 allocation" section for the two operator-configured values
-(`relay_allocate_control_api_base`, `relay_allocate_max_concurrent`) and the
+(`KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE`, `KARST_ESTAVELLE_ALLOCATE_MAX_CONCURRENT`) and the
 AWS launch defaults now set once in the console's Settings page instead of
 a separate config file. `drive`'s own continuous pool autoscaling is
 unaffected by this change and keeps the separate-process boundary above.

@@ -11,6 +11,10 @@
   ADR-0033 (per-account aquifer scoping — the mechanism that makes "aquifer"
   the right unit to meter capacity by, rather than account or node)
 
+> **Naming note (ADR-0069, 2026-11-08):** "relay"/`karst-relay` throughout this
+> document is now **Estavelle**/`karst-estavelle`; the decision below is
+> otherwise unaffected.
+
 ---
 
 ## Context

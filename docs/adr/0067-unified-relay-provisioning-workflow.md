@@ -6,6 +6,10 @@
 - **Deciders:** Project owner
 - **Related:** ADR-0045, ADR-0058, ADR-0059, ADR-0062, ADR-0063, ADR-0065, ADR-0066
 
+> **Naming note (ADR-0069, 2026-11-08):** "relay" (the console's "Add relay"
+> workflow included) is now **Estavelle**; the decision below is otherwise
+> unaffected.
+
 ---
 
 ## Context

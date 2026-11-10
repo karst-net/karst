@@ -1,6 +1,6 @@
 # ADR-0008: Relay infrastructure and funding model
 
-- **Status:** Accepted; component model partially superseded by ADR-0056
+- **Status:** Accepted; component model partially superseded by ADR-0056 and ADR-0069
 - **Date:** 2026-08-09
 - **Deciders:** TBD
 - **Related:** ADR-0007 (licensing), PLAN.md §5, §6, §13 Q4
@@ -16,6 +16,14 @@
 > compatibility, co-location defaults, admission, funding and fleet
 > restrictions remain in force. Implementation consolidation is tracked in
 > #404.
+>
+> **Partially superseded by [ADR-0069](0069-resurgence-estavelle-aven-renaming.md)
+> (2026-11-08), naming only.** "Relay" below is now **Estavelle** —
+> `karst-relay` is `karst-estavelle`, the relay registry is the Estavelle
+> registry, and so on throughout this document. ADR-0069 is a clean-break
+> rename of binaries, crates, wire strings, DB tables and the console; none of
+> the funding, presence, co-location, admission or fleet decisions below
+> change in substance.
 
 ## Context
 

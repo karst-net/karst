@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
-# Gateway operations: subnet access and exit egress
+# Aven operations: subnet access and exit egress
 
 <a id="subnet-routers-and-exit-nodes"></a>
 
-Gateway is one optional node-agent capability, with specific-prefix (subnet)
+Aven is one optional node-agent capability, with specific-prefix (subnet)
 and default-route (exit) behaviors. A node can provide both. See
 [ADR-0056](adr/0056-four-component-families.md) and
 [component architecture](COMPONENT-ARCHITECTURE.md) for the four-family model.
@@ -13,19 +13,19 @@ commands remain valid. Unified configuration/API/UI work is pending #404;
 this reference describes the current implementation.
 
 Operations reference for the feature `plans/phase-6/06-subnet-routers-and-exit-nodes.md`
-implements: advertising an IPv4 or IPv6 subnet through one or more gateway
+implements: advertising an IPv4 or IPv6 subnet through one or more aven
 nodes, and offering `0.0.0.0/0`/`::/0` as a client-consented default route.
 For how it fits together end to end, see that plan; this document is what an
-operator needs once it is running — what a gateway host needs, what actually
+operator needs once it is running — what an aven host needs, what actually
 crosses the wire, how to recover it, and how to see its effective state.
 
 ## Route ownership, DNS and platform scope
 
 Control approves/distributes route offers to authorized recipients; local
-agents enforce policy and select the effective Gateway. Default-route offers
-need durable local consent. A Gateway must not install its own advertised
+agents enforce policy and select the effective Aven. Default-route offers
+need durable local consent. An Aven must not install its own advertised
 prefix back through its tunnel; recipients must preserve more-specific routes
-and control/peer/Relay escape paths. Do not reuse a consented route ID for a
+and control/peer/Estavelle escape paths. Do not reuse a consented route ID for a
 different destination or trust context during migration.
 
 Choosing an exit route alone does not select a private DNS resolver or promise
@@ -35,17 +35,17 @@ their local handling; failed split DNS must not leak to a global resolver.
 
 The forwarding prerequisites below are for Linux. macOS recipient consent is
 described in §3. Supported client platforms and userspace networking do not
-imply support for hosting a forwarding Gateway; #404 must validate and publish
+imply support for hosting a forwarding Aven; #404 must validate and publish
 the hosting/recipient platform matrix. Existing recovery timing is in §4.
 
-## 1. Gateway host prerequisites
+## 1. Aven host prerequisites
 
-A node advertised as a route's gateway needs, on Linux:
+A node advertised as a route's aven needs, on Linux:
 
 - **`CAP_NET_ADMIN`** — the same capability `karstd` already needs to manage
   its own TUN device and cryptokey routes. Nothing additional to grant if the
   node is already running as a subnet recipient or an ordinary peer.
-- **`nft` on `PATH`** — `karstd` shells out to it (`gateway.rs`), atomically,
+- **`nft` on `PATH`** — `karstd` shells out to it (`aven.rs`), atomically,
   once per reconciliation (`nft -f -`, one transaction: a flushed table plus
   every current grant), never once per packet. It probes `nft --version`
   before touching anything else, so a missing binary is reported as a
@@ -65,9 +65,9 @@ A node advertised as a route's gateway needs, on Linux:
   the host's own accept rules to `DOCKER-USER`, which runs before Docker's
   own rules. The outbound leg needs `iifname "karst0" accept`; the **return**
   leg needs the mirror, `oifname "karst0" accept` — easy to add only the
-  first and consider the host fixed, since outbound (client → gateway →
+  first and consider the host fixed, since outbound (client → aven →
   internet) now visibly works while the return leg fails silently (issue
-  #345): the gateway's own forwarding accept-rule counter increments, but
+  #345): the aven's own forwarding accept-rule counter increments, but
   `karst0`'s kernel TX counter never does, because Docker's table drops it
   one hook-priority later. `karstd` never touches `DOCKER-USER` itself — an
   operator table, same as any other.
@@ -78,9 +78,9 @@ reported per reconciliation, in `karst status`'s `[routing]` block
 
 ## 2. Forwarding and NAT behavior
 
-A gateway's forwarding grant lives in its own nftables table (`karst_routes`,
+A aven's forwarding grant lives in its own nftables table (`karst_routes`,
 family `inet`), never touching an operator's own tables or rules. For each
-route the node is the gateway for, it installs:
+route the node is the aven for, it installs:
 
 - a `forward` hook rule accepting traffic whose **inbound interface is the
   Karst tunnel**, sourced from the tunnel's own overlay range, destined for
@@ -88,12 +88,12 @@ route the node is the gateway for, it installs:
 - a matching return-path accept for established/related connections leaving
   the tunnel;
 - a final `drop` for anything else arriving on the tunnel interface that
-  reached the chain — a gateway forwards authenticated overlay traffic to the
+  reached the chain — an aven forwards authenticated overlay traffic to the
   one prefix it was authorized for, and nothing else. Enabling kernel
   forwarding does not turn the host into a general router.
 
 **With `masquerade = true`** (the common case), a `postrouting` NAT rule
-rewrites the source address of forwarded packets to the gateway's own address
+rewrites the source address of forwarded packets to the aven's own address
 on the destination network. The destination host sees ordinary traffic from
 an on-link neighbor and needs nothing beyond its own default route to answer
 it — this is what every namespace integration row in `bins/karstd/tests/
@@ -103,8 +103,8 @@ subnet it does not otherwise know how to route back to.
 **With `masquerade = false`**, no NAT rule is installed. Forwarded packets
 keep the client's real overlay source address (`100.64.0.0/10` or the
 account's IPv6 ULA range). The destination network must have an explicit
-route back to that range through the gateway, or replies never arrive —
-requests would appear to succeed at the gateway and simply vanish. This is
+route back to that range through the aven, or replies never arrive —
+requests would appear to succeed at the aven and simply vanish. This is
 the *return-route mode* the plan's own console work warns about: turning off
 masquerade is a statement that the destination network's own routing already
 accounts for the overlay, not merely "send packets as themselves." Confirm
@@ -113,27 +113,27 @@ the return route exists before disabling masquerade on anything that matters.
 ## 3. Exit-node privacy
 
 Consenting to a `0.0.0.0/0` or `::/0` offer routes this device's general
-Internet traffic through the selected gateway. The gateway is a full traffic
+Internet traffic through the selected aven. The aven is a full traffic
 intermediary for that traffic in exactly the sense any VPN exit node is: it
 sees cleartext destinations and, for unencrypted protocols, cleartext
 payloads. It does **not** see this device's Karst control-plane traffic, its
-connections to other overlay peers, or its relay/TURN traffic — those are
+connections to other overlay peers, or its estavelle/TURN traffic — those are
 carved out from the default route before it is ever installed
 (`exit_policy.rs`'s escape rules, computed from the current control server,
-relay, TURN, and peer underlay endpoints, and recomputed whenever those
+estavelle, TURN, and peer underlay endpoints, and recomputed whenever those
 endpoints change), specifically so consenting to an exit route cannot
 recursively capture the tunnel's own transport.
 
 Consent is local and durable (§3.2 of the plan): the control server can
 *offer* `0.0.0.0/0`/`::/0`, never activate it. A route ID accepted with
-`karst gateway exit use <route-id>` survives config reload, daemon restart, and
+`karst aven exit use <route-id>` survives config reload, daemon restart, and
 a missed netmap push; the console can report an offered or active exit route
 but cannot manufacture consent on a client's behalf. Nothing this section
 describes bypasses that gate — routing and privacy exposure begin only after
 the local operator has explicitly opted in.
 
 On macOS (ADR-0036, revised 2026-11-02), a self-service install has two
-front doors that no longer require the same credential: `sudo karst gateway
+front doors that no longer require the same credential: `sudo karst aven
 exit use <route-id>` / `disable` still needs an administrator (the CLI
 talks to the Network Extension's root-only socket, as on Linux/Windows),
 but Karst.app's **Exit node** menu — which still shows this section's
@@ -154,94 +154,94 @@ way to consent, always unmanaged.
 
 | Situation | What restores it |
 |---|---|
-| A client no longer wants its exit route active | `karst gateway exit disable` — withdraws the kernel default route immediately and clears the durable consent record. Re-selecting the same or a different route needs `exit-node use` again. |
-| An operator disables or deletes a route in the console | The next pushed netmap withdraws the kernel route on every affected recipient and the forwarding grant on the gateway — no restart needed on either side. Both leave dormant consent in place for that route ID: the wire carries no distinction between "temporarily disabled" and "gone for good" (a disabled route is simply absent from the offer list, the same as a deleted one), and a recipient cannot safely treat "the server stopped mentioning this ID" as authorization to discard its own durable consent record — §3.2's client-owned-consent boundary cuts both ways. Re-enabling a disabled route never needs re-consent, by construction. Clearing consent for an ID that is gone for good is always available locally: `karst gateway exit disable`. |
-| The gateway's `karstd` crashes or is restarted | Reconciliation is idempotent at every layer that installs anything, tolerating exactly what a crashed prior instance would have left behind (`Drop` does not run under `SIGKILL`): `nft add table` tolerates the table already existing, a recipient's kernel route is installed with replace semantics, and the exit-policy `ip route`/`ip rule` installs each delete the same spec first. The fresh process rebuilds everything from the current netmap on its own, with no operator action — but see the row below for how long a *recipient already connected to that gateway* takes to notice. |
-| A recipient's `karstd` crashes or is restarted | Exit-route consent is read back from the configured Gateway consent file at startup and re-applied without re-running `exit-node use`; subnet routes reappear from the next netmap fetch, the same as any other cryptokey route. |
-| A gateway crashes and restarts while a recipient's own session stays up | Slower than every other row in this table, and not a routing-layer property: the recipient's session with the gateway looks established right up until the crash, and PHREATIC's own rule that only the initiator rekeys (`spec/phreatic-v1.md` §7) means the surviving recipient has no reason to dial a fresh handshake until its session reaches `REKEY_AFTER_TIME` (120s). Measured in practice at a little over two minutes end to end. A route or policy change on an already-live session reaches it in seconds (the row above); a peer's own process dying is a session-liveness question, not a route-push one. |
+| A client no longer wants its exit route active | `karst aven exit disable` — withdraws the kernel default route immediately and clears the durable consent record. Re-selecting the same or a different route needs `exit-node use` again. |
+| An operator disables or deletes a route in the console | The next pushed netmap withdraws the kernel route on every affected recipient and the forwarding grant on the aven — no restart needed on either side. Both leave dormant consent in place for that route ID: the wire carries no distinction between "temporarily disabled" and "gone for good" (a disabled route is simply absent from the offer list, the same as a deleted one), and a recipient cannot safely treat "the server stopped mentioning this ID" as authorization to discard its own durable consent record — §3.2's client-owned-consent boundary cuts both ways. Re-enabling a disabled route never needs re-consent, by construction. Clearing consent for an ID that is gone for good is always available locally: `karst aven exit disable`. |
+| The aven's `karstd` crashes or is restarted | Reconciliation is idempotent at every layer that installs anything, tolerating exactly what a crashed prior instance would have left behind (`Drop` does not run under `SIGKILL`): `nft add table` tolerates the table already existing, a recipient's kernel route is installed with replace semantics, and the exit-policy `ip route`/`ip rule` installs each delete the same spec first. The fresh process rebuilds everything from the current netmap on its own, with no operator action — but see the row below for how long a *recipient already connected to that aven* takes to notice. |
+| A recipient's `karstd` crashes or is restarted | Exit-route consent is read back from the configured Aven consent file at startup and re-applied without re-running `exit-node use`; subnet routes reappear from the next netmap fetch, the same as any other cryptokey route. |
+| A aven crashes and restarts while a recipient's own session stays up | Slower than every other row in this table, and not a routing-layer property: the recipient's session with the aven looks established right up until the crash, and PHREATIC's own rule that only the initiator rekeys (`spec/phreatic-v1.md` §7) means the surviving recipient has no reason to dial a fresh handshake until its session reaches `REKEY_AFTER_TIME` (120s). Measured in practice at a little over two minutes end to end. A route or policy change on an already-live session reaches it in seconds (the row above); a peer's own process dying is a session-liveness question, not a route-push one. |
 | `karstd` is uninstalled or stopped for good | Only state Karst itself changed is undone: the `karst_routes` nftables table is removed, and a forwarding sysctl Karst flipped from `0` is restored to `0` — one it found already enabled is left alone. Any operator firewall rules and any forwarding sysctl already on before Karst ran are untouched. |
-| A route's gateway *group* has more than one member and the currently-effective one goes offline | The server excludes an offline gateway from the route's candidate set entirely once its control-channel session ends (not the row above's `REKEY_AFTER_TIME`, which is a *recipient's own* data-plane session-liveness question, not this one) — the next netmap push carries only the remaining, connected candidate(s), and every recipient's local HA selection (lowest metric, tied by gateway ID) converges on the same one deterministically. Recovery is bounded by netmap refresh latency, typically seconds, not the ~2-minute figure above. If every member of the group is offline, the route is withdrawn entirely rather than offered pointing at nothing reachable. This governs which gateway a route is offered through; it is not liveness-aware selection *within* an already-accepted netmap — a recipient does not re-run selection on its own between pushes. |
-| A freshly-selected exit route's gateway peer has no established session yet (consent recorded, but the handshake has not completed — a roaming peer, a relay that is temporarily unreachable) | `karstd` checks the gateway peer's live session state (`Engine::status()`) before touching policy routing at all, the same check `PacketTunnelProvider.swift` makes on macOS. Without an established peer carrying the route's own prefix in its allowed IPs, the policy is never applied (or is withdrawn if already applied) and the recipient stays on its main-table default — no window where the default route points at a session with nothing behind it. The next reconcile (netmap refresh, or the peer's session completing) picks it back up automatically; no operator action needed. This governs a *fresh* activation's precondition, not an already-active route's gateway losing its own upstream after the fact, which is not continuously re-checked and still needs `karst gateway exit disable` by hand. |
+| A route's aven *group* has more than one member and the currently-effective one goes offline | The server excludes an offline aven from the route's candidate set entirely once its control-channel session ends (not the row above's `REKEY_AFTER_TIME`, which is a *recipient's own* data-plane session-liveness question, not this one) — the next netmap push carries only the remaining, connected candidate(s), and every recipient's local HA selection (lowest metric, tied by aven ID) converges on the same one deterministically. Recovery is bounded by netmap refresh latency, typically seconds, not the ~2-minute figure above. If every member of the group is offline, the route is withdrawn entirely rather than offered pointing at nothing reachable. This governs which aven a route is offered through; it is not liveness-aware selection *within* an already-accepted netmap — a recipient does not re-run selection on its own between pushes. |
+| A freshly-selected exit route's aven peer has no established session yet (consent recorded, but the handshake has not completed — a roaming peer, an estavelle that is temporarily unreachable) | `karstd` checks the aven peer's live session state (`Engine::status()`) before touching policy routing at all, the same check `PacketTunnelProvider.swift` makes on macOS. Without an established peer carrying the route's own prefix in its allowed IPs, the policy is never applied (or is withdrawn if already applied) and the recipient stays on its main-table default — no window where the default route points at a session with nothing behind it. The next reconcile (netmap refresh, or the peer's session completing) picks it back up automatically; no operator action needed. This governs a *fresh* activation's precondition, not an already-active route's aven losing its own upstream after the fact, which is not continuously re-checked and still needs `karst aven exit disable` by hand. |
 
-### Gateway consent configuration migration
+### Aven consent configuration migration
 
-The canonical local capability surface is `[gateway]`: `forwarding` controls
+The canonical local capability surface is `[aven]`: `forwarding` controls
 specific-prefix and default-route forwarding together, and `exit_state_file`
 chooses durable client consent storage. The historical
 `node.gateway_exit_state_file` and `node.exit_node_state_file` keys remain
 supported for compatibility. Paths resolve against the configuration directory;
 omitting the path retains the existing platform default. Storage configuration
-never grants exit consent. See the [migration audit](gateway-migration-verification.md)
+never grants exit consent. See the [migration audit](aven-migration-verification.md)
 for diagnostics, rollback constraints and verification results.
 
 Before changing a deployed configuration:
 
 1. Back up the configuration and existing consent file with their owner-only
    permissions intact. Record the resolved path; do not change it.
-2. Move the existing node exit-state setting to `[gateway].exit_state_file`,
+2. Move the existing node exit-state setting to `[aven].exit_state_file`,
    keeping its value. Remove the old key; setting both is an error even if equal.
    Omit `forwarding` to retain existing behavior, or set it to `false` to refuse
    both forwarding behaviors locally without withdrawing client consent.
-3. Upgrade the daemon before using `[gateway]`. Older daemons reject unknown
+3. Upgrade the daemon before using `[aven]`. Older daemons reject unknown
    tables; the legacy node key works on both versions.
-4. After restarting, inspect `karst gateway exit list` and
-   `karst gateway status`. Existing selection is retained; actual exit use
+4. After restarting, inspect `karst aven exit list` and
+   `karst aven status`. Existing selection is retained; actual exit use
    still requires an eligible authenticated offer and the usual policy checks.
 
-For rollback, remove `[gateway]`, restore the legacy node key and keep the **current** consent
+For rollback, remove `[aven]`, restore the legacy node key and keep the **current** consent
 file at the same path. Do not restore an old consent backup over a later
-`gateway exit disable`, which would resurrect withdrawn consent. No file move,
+`aven exit disable`, which would resurrect withdrawn consent. No file move,
 route-ID conversion, permission change, or default-path change is required.
 Legacy settings remain supported; no removal version has been scheduled.
 This additive migration covers local consent storage naming only; unified
-control configuration, route persistence, APIs/UI and Relay migration remain
+control configuration, route persistence, APIs/UI and Estavelle migration remain
 tracked in #404.
 
 ## 5. Inspecting effective state
 
-The Gateway command group combines inspection of subnet and exit routing with
+The Aven command group combines inspection of subnet and exit routing with
 explicit exit-consent actions:
 
 | Command | Behavior |
 |---|---|
-| `karst gateway status` | Reports the current authenticated subnet/exit offers, local exit selection, forwarding readiness and errors; changes no routing or consent |
-| `karst gateway exit list` | Lists eligible exit offers and the current local selection |
-| `karst gateway exit use <route-id>` | Gives durable local consent to an eligible default-route offer |
-| `karst gateway exit disable` | Withdraws and forgets local exit consent; does not disable Gateway forwarding or subnet routing |
+| `karst aven status` | Reports the current authenticated subnet/exit offers, local exit selection, forwarding readiness and errors; changes no routing or consent |
+| `karst aven exit list` | Lists eligible exit offers and the current local selection |
+| `karst aven exit use <route-id>` | Gives durable local consent to an eligible default-route offer |
+| `karst aven exit disable` | Withdraws and forgets local exit consent; does not disable Aven forwarding or subnet routing |
 
 These commands use the protected administrative socket; use `sudo` where the
 installed service requires it, and `--socket PATH` for a custom installation.
-`gateway exit` actions retain the existing `exit-node` IPC requests, so older
-daemons support them. `gateway status` requires an updated daemon; an older
+`aven exit` actions retain the existing `exit-node` IPC requests, so older
+daemons support them. `aven status` requires an updated daemon; an older
 daemon rejects it explicitly and the CLI exits unsuccessfully. Use the existing
 `karst status` routing section until the daemon is upgraded. Existing
 `karst exit-node list|use|disable` commands remain supported aliases.
 
-`gateway status` uses the same routing report as `karst status`; it lists both
+`aven status` uses the same routing report as `karst status`; it lists both
 recipient and forwarding roles, not just exit offers. Its `active` field retains
-current status semantics: forwarding readiness for Gateway rows, installed,
+current status semantics: forwarding readiness for Aven rows, installed,
 consented exit use for recipient exit rows, and — since #521 — whether the
 recipient's own kernel route for the offer's prefix is actually installed for
 subnet recipient rows (there is no consent step for these, so "installed" is
 the whole signal). `ip route` remains the independent cross-check as below.
-Unified configuration, APIs/UI and Relay lifecycle remain pending in #404.
+Unified configuration, APIs/UI and Estavelle lifecycle remain pending in #404.
 
 - **`karst status`** — the `[routing]` block reports `gateway_active`,
-  `exit_route_active`, `selected_exit`, and the last gateway readiness error,
+  `exit_route_active`, `selected_exit`, and the last aven readiness error,
   if any; each `[[route]]` entry shows the route's role for this node
-  (`gateway` or `recipient`), its kind (`subnet` or `exit`), and whether it
+  (`aven` or `recipient`), its kind (`subnet` or `exit`), and whether it
   is currently active.
-- **`karst gateway exit list`** — every currently offered exit route and
+- **`karst aven exit list`** — every currently offered exit route and
   whether it is the one this device has consented to. `selected_offered`
   reports whether the selected route ID is still among them — `false` is
   the operator-visible sign of the dormant, dangling consent described in
-  the Recovery table above (§4), clearable with `karst gateway exit disable`.
-- **`nft list table inet karst_routes`** (root) — the gateway's own live
+  the Recovery table above (§4), clearable with `karst aven exit disable`.
+- **`nft list table inet karst_routes`** (root) — the aven's own live
   forwarding and NAT rules, including per-rule packet/byte counters. A table
   that is empty or missing on a node whose own `karst status` reports it as
-  an active gateway is the signature of the routing bug this feature's own
+  an active aven is the signature of the routing bug this feature's own
   W7 integration work found and fixed: `Routes::wanted` installing a tunnel
-  route over a prefix the node's own gateway forwarding already depended on
+  route over a prefix the node's own aven forwarding already depended on
   reaching by a real interface, silently destroying that interface's kernel
   route. Worth checking first if forwarding is reported ready but traffic is
   not actually moving. The same per-route egress and ingress counters are
@@ -253,9 +253,9 @@ Unified configuration, APIs/UI and Relay lifecycle remain pending in #404.
   route over the tunnel interface; a consented default route appears in a
   dedicated policy-routing table rather than the main table (`ip rule show`
   lists the priority it is installed at), which is what keeps it from
-  shadowing the host's own default route for control, relay, and TURN
+  shadowing the host's own default route for control, estavelle, and TURN
   traffic.
-- **The outbound leg works (`tcpdump` on the gateway's physical interface
+- **The outbound leg works (`tcpdump` on the aven's physical interface
   shows a complete round trip) but the client never gets a reply, and
   `ip -s link show karst0`'s `TX` counter never moves** even though
   `nft list table inet karst_routes`'s own per-route `oifname "karst0" ct

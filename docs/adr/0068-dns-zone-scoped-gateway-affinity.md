@@ -6,6 +6,9 @@
 - **Deciders:** Proposed in this session; follow-on work tracked in #553, #554.
 - **Related:** ADR-0056, ADR-0057, ADR-0064, ADR-0065, GitHub issues #109, #553, #554
 
+> **Naming note (ADR-0069, 2026-11-08):** "Gateway" throughout this document
+> is now **Aven**; the decision below is otherwise unaffected.
+
 ---
 
 ## Context

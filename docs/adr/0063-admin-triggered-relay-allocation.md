@@ -6,6 +6,9 @@
 - **Deciders:** Project owner (issue #439)
 - **Related:** [#439](https://github.com/karst-net/karst/issues/439), ADR-0045, ADR-0058, ADR-0059, ADR-0062
 
+> **Naming note (ADR-0069, 2026-11-08):** "relay" throughout this document is
+> now **Estavelle**; the decision below is otherwise unaffected.
+
 ---
 
 ## Context

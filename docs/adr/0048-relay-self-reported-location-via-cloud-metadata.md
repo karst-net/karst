@@ -17,6 +17,9 @@
   (AWS, as the most common)" is the precedent for scoping this to AWS first),
   ADR-0035 (pre-GA breaking-change precedent). Tracking: #241 follow-on.
 
+> **Naming note (ADR-0069, 2026-11-08):** "relay" throughout this document is
+> now **Estavelle**; the decision below is otherwise unaffected.
+
 ---
 
 ## Context
