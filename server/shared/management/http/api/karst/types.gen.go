@@ -1143,7 +1143,7 @@ func (e NodePostureStatus) Valid() bool {
 // Defines values for PathObservationKind.
 const (
 	PathObservationKindDirect      PathObservationKind = "direct"
-	PathObservationKindEstavelle   PathObservationKind = "estavelle"
+	PathObservationKindRelay       PathObservationKind = "relay"
 	PathObservationKindTurn        PathObservationKind = "turn"
 	PathObservationKindUnreachable PathObservationKind = "unreachable"
 )
@@ -1153,7 +1153,7 @@ func (e PathObservationKind) Valid() bool {
 	switch e {
 	case PathObservationKindDirect:
 		return true
-	case PathObservationKindEstavelle:
+	case PathObservationKindRelay:
 		return true
 	case PathObservationKindTurn:
 		return true

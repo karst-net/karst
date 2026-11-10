@@ -110,7 +110,7 @@ impl std::fmt::Display for Transport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Direct => "direct",
-            Self::Estavelle => "estavelle",
+            Self::Estavelle => "relay",
             Self::Unreachable => "none",
         })
     }

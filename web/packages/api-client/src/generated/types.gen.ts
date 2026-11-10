@@ -456,7 +456,7 @@ export type NodePaths = {
 
 export type PathObservation = {
     peer_handle: string;
-    kind: 'direct' | 'estavelle' | 'turn' | 'unreachable';
+    kind: 'direct' | 'relay' | 'turn' | 'unreachable';
     endpoint?: string | null;
     relay_id?: string | null;
     since?: string | null;
