@@ -43,7 +43,7 @@ Never substitute a local tag for `console_image_digest`.
 ## Rollout and rollback
 
 Keep a private `deployment.vars.hcl` outside version control containing the
-existing deployment variables (host, paths, passwords and control/relay
+existing deployment variables (host, paths, passwords and control/estavelle
 pins), plus `console_image_digest = "sha256:..."`. Save the previous verified
 console digest and vars before changing it. The console, control and
 Keycloak use the pre-created Docker network; all groups are pinned to
@@ -81,8 +81,8 @@ the console image and does not change persistent state. Before the first
 signed console release exists, leave the existing deployment running;
 local build validation alone does not complete a production rollout.
 
-Control and relay follow this exact same procedure -- verify their digest
-the same way, set `control_image_digest`/`relay_image_digest` in the vars
+Control and estavelle follow this exact same procedure -- verify their digest
+the same way, set `control_image_digest`/`estavelle_image_digest` in the vars
 file, and run the same `plan`/`run`/`status`/smoke-check sequence -- there
 is nothing console-specific about it. **Settings → Component rollout
 plans** in the console (ADR-0066, #484) tracks this for any of the three:
@@ -122,32 +122,32 @@ service changes, or schedule it on that host if ongoing observations are
 needed. Neither the Docker socket nor Nomad credentials are mounted into
 control. The snapshot contains no container environment or task configuration.
 
-## Relay allocation (ADR-0063; ADR-0045's 2026-11-04 addendum)
+## Estavelle allocation (ADR-0063; ADR-0045's 2026-11-04 addendum)
 
-An admin-triggered relay allocation (ADR-0063) — `requested` → provisioned →
+An admin-triggered estavelle allocation (ADR-0063) — `requested` → provisioned →
 granted, later → revoked → `deprovisioned` — is now driven **in-process**,
 inside the `control` task above, not by a separate `karst-scaler allocate`
 process. There used to be an opt-in `scaler-allocate` `raw_exec` group here
 (ADR-0063/#525) that ran an external binary; that binary, its Nomad task,
 its opt-in flag, and its hand-written `ALLOCATE_CONFIG.toml` are gone. The
 in-process allocate worker always runs, the same always-on posture
-control/relay/console already have — nothing to deploy or opt into.
+control/estavelle/console already have — nothing to deploy or opt into.
 
 Two things still need operator configuration before a real allocation
 reaches `ready`, neither of them a separate process or host:
 
-1. Set `relay_allocate_control_api_base` (this deployment's own
+1. Set `estavelle_allocate_control_api_base` (this deployment's own
    externally-reachable control API base — e.g.
-   `https://control.example.test/api`) and `relay_allocate_max_concurrent`
+   `https://control.example.test/api`) and `estavelle_allocate_max_concurrent`
    (a positive per-account ceiling on non-terminal allocations — ADR-0045
    §6 bullet 4 allows no "unlimited" value) in `deployment.vars.hcl`:
 
    ```hcl
-   relay_allocate_control_api_base = "https://control.example.test/api"
-   relay_allocate_max_concurrent   = 10
+   estavelle_allocate_control_api_base = "https://control.example.test/api"
+   estavelle_allocate_max_concurrent   = 10
    ```
 
-   Until both are set, every relay allocation request fails closed with a
+   Until both are set, every estavelle allocation request fails closed with a
    clear reason instead of silently doing nothing.
 
 2. In the console's Settings page, on the AWS infrastructure connection to

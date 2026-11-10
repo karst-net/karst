@@ -64,7 +64,7 @@ Without an identity provider, set `KARST_BOOTSTRAP_SETUP_KEY_FILE` in the
 `docker-compose.yml`. `/var/lib/karst` is read-only in this overlay, so the
 path must be under `/var/lib/netbird` (e.g.
 `/var/lib/netbird/bootstrap.key`); read it back the same way as
-[Getting started §5](../../../docs/GETTING-STARTED.md#5-path-b-a-coordination-server-and-a-relay-with-containers)'s
+[Getting started §5](../../../docs/GETTING-STARTED.md#5-path-b-a-coordination-server-and-an-estavelle-with-containers)'s
 single-host `cat state/bootstrap.key`, from that host's own `./state/netbird/`.
 
 Fence the old primary, update both replicas' DSNs, then promote on the standby:

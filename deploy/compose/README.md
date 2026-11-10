@@ -133,7 +133,7 @@ Estavelle component is transport infrastructure's only member — ADR-0056's
 addendum dropped the standalone TURN fallback this deployment used to also
 support, in favor of the co-located estavelle alone. The
 [Estavelle deployment adapter](#estavelle-deployment-adapter) uses one manifest to
-manage the reference Compose process. Gateway subnet/exit forwarding is a
+manage the reference Compose process. Aven subnet/exit forwarding is a
 capability of an enrolled node.
 
 `bootstrap.sh` is idempotent: every step skips if its output exists, so
@@ -245,7 +245,7 @@ rolling back to tooling without this adapter.
 ### Process modes and account publication
 
 Local process state and account publication are distinct. Before stopping the
-mode, withdraw the relevant endpoints through the control **Relay Services**
+mode, withdraw the relevant endpoints through the control **Estavelle Services**
 mode/publication controls and allow agents to refresh their netmaps. Coordinate
 all accounts using the shared process; disabling the association does not mean
 the backend is unused. Review fallback availability and active allocation loss,
@@ -273,7 +273,7 @@ KARST_COMPOSE_LIFECYCLE_TEST=1 python3 -m unittest discover -s deploy/compose -p
 ## Console-generated Estavelle installation/configuration handoff
 
 For an existing reference deployment with trusted Estavelle TLS material, the admin
-console's **Relays → Install a local relay** supplies a Python installer. This
+console's **Estavelles → Install a local estavelle** supplies a Python installer. This
 replaces manual Estavelle TOML and admission-writer environment editing for the
 supported local case. It supports one control replica and one co-located Estavelle
 on Linux, with Python 3.11+, OpenSSL and Docker Compose v2. It does not create a
@@ -300,7 +300,7 @@ without managed backend access are denied, including during the installation /
 registration / group-configuration gap. Adopting an unrestricted estavelle therefore
 interrupts its legacy access. Existing managed grants are evaluated normally.
 
-Import the generated `state/estavelle-install/receipt.json` in the console's Add relay
+Import the generated `state/estavelle-install/receipt.json` in the console's Add estavelle
 form. It contains public metadata only, not enrollment or administrator tokens.
 Review registration, choose groups and optional egress, then inspect operational
 observations. `runtime_started` in `state/estavelle-install/status.json` means that

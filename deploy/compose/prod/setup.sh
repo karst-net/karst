@@ -18,7 +18,7 @@
 #
 # Run this once, before `docker compose up -d`. It does not start anything
 # itself, and it does not run ../bootstrap.sh for you — run that first if
-# ../state/ (the relay identity and roster) doesn't exist yet.
+# ../state/ (the estavelle identity and roster) doesn't exist yet.
 
 set -eu
 
