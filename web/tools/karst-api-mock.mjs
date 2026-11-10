@@ -442,9 +442,9 @@ const server = http.createServer((request, response) => {
   if (nsMatch && method === "PUT") return readBody(request).then((body) => replace(nameservers, nsMatch[1], body, response));
   if (nsMatch && method === "DELETE") return remove(nameservers, nsMatch[1], response);
 
-  if (path === "/api/karst/v1/gateways" && method === "GET") return json(response, 200, {
+  if (path === "/api/karst/v1/avens" && method === "GET") return json(response, 200, {
     schema_version: 1,
-    gateways: [{ node_id: "gateway-fixture", name: "Gateway fixture", control_connected: true, forwarding_readiness: "unreported", offers: routes.filter((route) => route.peer_groups.includes("group-gateways")).map((route) => ({ id: route.id, network_id: route.network_id, prefix: route.network, kind: route.network === "0.0.0.0/0" ? "default_ipv4" : route.network === "::/0" ? "default_ipv6" : "subnet", enabled: route.enabled, masquerade: route.masquerade, metric: route.metric, requires_client_consent: route.network === "0.0.0.0/0" || route.network === "::/0", forwarding_readiness: "unreported" })) }],
+    avens: [{ node_id: "gateway-fixture", name: "Gateway fixture", control_connected: true, forwarding_readiness: "unreported", offers: routes.filter((route) => route.peer_groups.includes("group-gateways")).map((route) => ({ id: route.id, network_id: route.network_id, prefix: route.network, kind: route.network === "0.0.0.0/0" ? "default_ipv4" : route.network === "::/0" ? "default_ipv6" : "subnet", enabled: route.enabled, masquerade: route.masquerade, metric: route.metric, requires_client_consent: route.network === "0.0.0.0/0" || route.network === "::/0", forwarding_readiness: "unreported" })) }],
     unresolved_routes: [], unsupported_routes: [],
   });
   if (path === "/api/routes" && method === "GET") return json(response, 200, routes);
@@ -469,17 +469,17 @@ const server = http.createServer((request, response) => {
     const end = url.searchParams.get("end") ?? "";
     return json(response, 200, { start, end, as_of: new Date().toISOString(), complete: false, device_microseconds: "86400000000", segments: [{ start, end, coverage: "incomplete", devices: null }] });
   }
-  if (method === "GET" && karst === "/usage/relays") {
+  if (method === "GET" && karst === "/usage/estavelles") {
     const start = url.searchParams.get("start") ?? "";
     const end = url.searchParams.get("end") ?? "";
     return json(response, 200, { start, end, as_of: new Date().toISOString(), authorization_history_start: "2026-01-01T00:00:00Z", first_received_window_start: start, last_received_at: new Date().toISOString(), coverage: "authorized_producers", history_complete: true, complete: false, expected_windows: 60, missing_windows: 4, unexpected_windows: 0, reported_bytes: "15000000000", days: [], limitations: ["Some producer windows have not arrived."] });
   }
-  if (method === "GET" && karst === "/usage/relay-alerts") {
+  if (method === "GET" && karst === "/usage/estavelle-alerts") {
     const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
     const [year, month] = period.split("-").map(Number);
     const start = new Date(Date.UTC(year, month - 1, 1)).toISOString();
     const end = new Date(Date.UTC(year, month, 1)).toISOString();
-    return json(response, 200, { period_start: start, period_end: end, as_of: new Date().toISOString(), coverage_complete: false, coverage_warning: "Relay usage coverage is incomplete; threshold amounts are lower bounds.", alerts: [{ period_start: start, period_end: end, schedule_version: "pilot-v1", target: "included_allowance", threshold_percent: 75, reported_bytes: "15000000000", threshold_bytes: "11250000000", as_of: new Date().toISOString(), usage_complete: false }] });
+    return json(response, 200, { period_start: start, period_end: end, as_of: new Date().toISOString(), coverage_complete: false, coverage_warning: "Estavelle usage coverage is incomplete; threshold amounts are lower bounds.", alerts: [{ period_start: start, period_end: end, schedule_version: "pilot-v1", target: "included_allowance", threshold_percent: 75, reported_bytes: "15000000000", threshold_bytes: "11250000000", as_of: new Date().toISOString(), usage_complete: false }] });
   }
   if (karst === "/billing/payments" && method === "GET") {
     const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
@@ -497,12 +497,12 @@ const server = http.createServer((request, response) => {
     const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
     return json(response, 200, paymentNotices.get(period) ?? { notices: [] });
   }
-  if (karst === "/billing/relay-cap" && method === "GET") {
+  if (karst === "/billing/estavelle-cap" && method === "GET") {
     const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
     const [year, month] = period.split("-").map(Number);
     return json(response, 200, relayCaps.get(period) ?? { enabled: false, period_start: new Date(Date.UTC(year, month - 1, 1)).toISOString(), period_end: new Date(Date.UTC(year, month, 1)).toISOString(), currency: "USD", acknowledged_interruption: false });
   }
-  if (karst === "/billing/relay-cap" && method === "PUT") {
+  if (karst === "/billing/estavelle-cap" && method === "PUT") {
     return readBody(request).then((draft) => {
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(draft.period) || !Number.isSafeInteger(draft.overage_limit_minor) || draft.overage_limit_minor < 0 || draft.acknowledge_interruption !== true) return error(response, 400, "invalid_argument", "invalid relay cap settings");
       const [year, month] = draft.period.split("-").map(Number);
@@ -575,7 +575,7 @@ const server = http.createServer((request, response) => {
   if (memberDevice && method === "DELETE") { const index = memberDevices.findIndex((item) => item.handle === memberDevice[1]); if (index < 0) return error(response, 404, "not_found", "device not found"); memberDevices.splice(index, 1); return noContent(response); }
 
   const nodeMatch = karst.match(/^\/nodes\/([^/]+)(?:\/(paths|posture|compliance))?$/);
-  const relayMatch = karst.match(/^\/relays\/([^/]+)(?:\/health)?$/);
+  const relayMatch = karst.match(/^\/estavelles\/([^/]+)(?:\/health)?$/);
 
   if (method === "GET" && karst === "/nodes") return json(response, 200, page(fixture.nodes, url));
   if (nodeMatch) {
@@ -612,7 +612,7 @@ const server = http.createServer((request, response) => {
     if (method === "DELETE") { fixture.nodes.splice(index, 1); return noContent(response); }
   }
   if (method === "GET" && karst === "/policy/schema") return json(response, 200, policySchema);
-  if (method === "GET" && karst === "/relay-services/admission-targets") return json(response,200,[]);
+  if (method === "GET" && karst === "/estavelle-services/admission-targets") return json(response,200,[]);
   if (method === "GET" && karst === "/policy") return json(response, 200, fixture.policy);
   if (method === "GET" && karst === "/policy/versions") return json(response, 200, page(fixture.policyVersions, url));
   if (method === "GET" && /^\/policy\/versions\/\d+$/.test(karst)) {
@@ -645,26 +645,26 @@ const server = http.createServer((request, response) => {
   if ((method === "PUT" && karst === "/compliance/draft") || (method === "POST" && /^\/compliance\/draft\/rollback\/\d+$/.test(karst))) return json(response, 200, fixture.complianceDraft);
   if (method === "POST" && karst === "/compliance/draft/test") return json(response, 200, { passed: true, results: [{ name: "draft-valid", passed: true }] });
 
-  if (method === "GET" && karst === "/relay-services/publication") return json(response, 200, relayPublication);
-  if (method === "POST" && karst === "/relay-services/publication/preview") return json(response, 200, relayServices);
-  if (method === "PUT" && karst === "/relay-services/publication") return readBody(request).then((value) => {
+  if (method === "GET" && karst === "/estavelle-services/publication") return json(response, 200, relayPublication);
+  if (method === "POST" && karst === "/estavelle-services/publication/preview") return json(response, 200, relayServices);
+  if (method === "PUT" && karst === "/estavelle-services/publication") return readBody(request).then((value) => {
     if (!["legacy", "services"].includes(value.mode) || value.acknowledge_connectivity_change !== true) return error(response, 422, "invalid_argument", "valid publication mode and acknowledgment required");
     relayPublication = { mode: value.mode };
     return json(response, 200, relayPublication);
   });
-  if (method === "GET" && karst === "/relay-services") return json(response, 200, relayServices.map((service) => ({ ...service, ponor_present: fixture.relays.some((entry) => entry.id === service.ponor_id) })));
-  if (method === "POST" && karst === "/relay-services") return readBody(request).then((service) => {
+  if (method === "GET" && karst === "/estavelle-services") return json(response, 200, relayServices.map((service) => ({ ...service, ponor_present: fixture.relays.some((entry) => entry.id === service.ponor_id) })));
+  if (method === "POST" && karst === "/estavelle-services") return readBody(request).then((service) => {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(service.id ?? "") || !fixture.relays.some((entry) => entry.id === service.ponor_id)) return error(response, 422, "invalid_argument", "valid service name and registered Ponor endpoint required");
     if (relayServices.some((entry) => entry.id === service.id)) return error(response, 409, "already_exists", "service already exists");
     relayServices.push(service);
     return json(response, 201, service);
   });
-  const serviceMatch = karst.match(/^\/relay-services\/([^/]+)$/);
+  const serviceMatch = karst.match(/^\/estavelle-services\/([^/]+)$/);
   if (serviceMatch && method === "DELETE") return remove(relayServices, serviceMatch[1], response);
 
   // ADR-0063/#455: admin-triggered relay allocation.
-  if (method === "GET" && karst === "/relay-allocations") return json(response, 200, relayAllocations);
-  if (method === "POST" && karst === "/relay-allocations") {
+  if (method === "GET" && karst === "/estavelle-allocations") return json(response, 200, relayAllocations);
+  if (method === "POST" && karst === "/estavelle-allocations") {
     return readBody(request).then((draft) => {
       if (!draft.name || !infraConnections.some((entry) => entry.id === draft.infra_connection_id) || !draft.location) return error(response, 422, "invalid_argument", "name, a known infra_connection_id, and a location are required");
       if (!draft.relay_transport) return error(response, 422, "invalid_argument", "relay transport capability is required");
@@ -676,7 +676,7 @@ const server = http.createServer((request, response) => {
       return json(response, 201, allocation);
     });
   }
-  const allocationDeprovisionMatch = karst.match(/^\/relay-allocations\/([^/]+)\/deprovision$/);
+  const allocationDeprovisionMatch = karst.match(/^\/estavelle-allocations\/([^/]+)\/deprovision$/);
   if (allocationDeprovisionMatch && method === "POST") {
     return readBody(request).then((body) => {
       const allocation = relayAllocations.find((item) => item.id === allocationDeprovisionMatch[1]);
@@ -688,7 +688,7 @@ const server = http.createServer((request, response) => {
       return json(response, 200, allocation);
     });
   }
-  const allocationMatch = karst.match(/^\/relay-allocations\/([^/]+)$/);
+  const allocationMatch = karst.match(/^\/estavelle-allocations\/([^/]+)$/);
   if (allocationMatch && method === "DELETE") {
     const allocation = relayAllocations.find((item) => item.id === allocationMatch[1]);
     if (!allocation) return error(response, 404, "not_found", "relay allocation not found");
@@ -697,8 +697,8 @@ const server = http.createServer((request, response) => {
     return remove(relayAllocations, allocationMatch[1], response);
   }
 
-  if (method === "GET" && karst === "/relays") return json(response, 200, fixture.relays);
-  if (method === "POST" && karst === "/relays") {
+  if (method === "GET" && karst === "/estavelles") return json(response, 200, fixture.relays);
+  if (method === "POST" && karst === "/estavelles") {
     return readBody(request).then((entry) => {
       if (!entry.address || !entry.identity_key) return error(response, 422, "invalid_argument", "address and identity_key are required");
       if (fixture.relays.some((relay) => relay.address === entry.address)) return error(response, 412, "already_exists", "relay already exists");
@@ -728,7 +728,7 @@ const server = http.createServer((request, response) => {
     result.push({ kind: "bedrock", id: "bedrock", label: bedrock.location?.label || "Bedrock", location: bedrock.location });
     return json(response, 200, result);
   }
-  const nocRelayMatch = karst.match(/^\/noc\/relays\/([^/]+)$/);
+  const nocRelayMatch = karst.match(/^\/noc\/estavelles\/([^/]+)$/);
   if (nocRelayMatch && method === "GET") {
     const relay = fixture.relays.find((item) => item.id === nocRelayMatch[1]);
     if (!relay) return error(response, 404, "not_found", "relay not found");

@@ -33,7 +33,7 @@ test("downloaded installation handoff contains settings without reporting deploy
   await page.getByRole("button", { name: "Add estavelle", exact: true }).click();
   await page.getByRole("button", { name: "I have a host, but nothing is running on it yet" }).click();
   await expect(page.getByRole("button", { name: "Download installation handoff" })).toBeDisabled();
-  await page.getByLabel("Installation relay address").fill(entry.address);
+  await page.getByLabel("Installation estavelle address").fill(entry.address);
   await page.getByLabel("TLS server name", { exact: true }).fill(entry.tls_server_name);
   await page.getByLabel("Region", { exact: true }).fill(entry.region);
   await page.getByRole("checkbox", { name: "I reviewed the deployment scope" }).check();
@@ -43,7 +43,7 @@ test("downloaded installation handoff contains settings without reporting deploy
   const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe("karst-estavelle-install.py");
   const script = await readFile((await download.path())!, "utf8");
-  expect(script).toContain('"KARST_RELAY_REQUIRE_MANAGED": "true"');
+  expect(script).toContain('"KARST_ESTAVELLE_REQUIRE_MANAGED": "true"');
   expect(script).not.toContain("SETTINGS = None");
   const encoded = script.match(/bytes.fromhex\("([a-f0-9]+)"\)/)![1];
   expect(JSON.parse(Buffer.from(encoded, "hex").toString("utf8")).address).toBe(entry.address);
@@ -58,13 +58,13 @@ test("receipt registration leads to named group configuration without key entry"
   await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "receipt.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(receipt)) });
   await expect(page.getByText("Installation receipt loaded for", { exact: false })).toBeVisible();
-  await expect(page.getByLabel("Relay identity key")).toBeHidden();
+  await expect(page.getByLabel("Estavelle identity key")).toBeHidden();
   expect(requests()).toBe(0);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-  await page.getByRole("button", { name: "Register installed relay" }).click();
-  await expect(page.getByRole("dialog", { name: "Configure a relay" })).toBeVisible();
+  await page.getByRole("button", { name: "Register installed estavelle" }).click();
+  await expect(page.getByRole("dialog", { name: "Configure an estavelle" })).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Engineering", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Review relay configuration" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Review estavelle configuration" })).toBeDisabled();
   expect(requests()).toBe(1);
 });
 
@@ -74,8 +74,8 @@ test("reimporting an installed identity reuses its registration", async ({ page 
   await page.getByRole("button", { name: "Add estavelle", exact: true }).click();
   await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "receipt.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(receipt)) });
-  await page.getByRole("button", { name: "Register installed relay" }).click();
-  await expect(page.getByRole("dialog", { name: "Configure a relay" })).toBeVisible();
+  await page.getByRole("button", { name: "Register installed estavelle" }).click();
+  await expect(page.getByRole("dialog", { name: "Configure an estavelle" })).toBeVisible();
   expect(requests()).toBe(0);
 });
 
@@ -85,9 +85,9 @@ test("unrelated receipts show an error without registration or stale form data",
   await page.getByRole("button", { name: "Add estavelle", exact: true }).click();
   await page.getByRole("button", { name: "Yes — register it" }).click();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "receipt.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(receipt)) });
-  await expect(page.getByRole("button", { name: "Register installed relay" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Register installed estavelle" })).toBeVisible();
   await page.getByLabel("Installation receipt").setInputFiles({ name: "wrong.json", mimeType: "application/json", buffer: Buffer.from("{}") });
-  await expect(page.getByRole("alert")).toContainText("Choose a relay installation receipt");
-  await expect(page.getByLabel("Relay address")).toHaveValue("");
+  await expect(page.getByRole("alert")).toContainText("Choose an estavelle installation receipt");
+  await expect(page.getByLabel("Estavelle address")).toHaveValue("");
   expect(requests()).toBe(0);
 });

@@ -28,15 +28,15 @@ test("acknowledged mode withdrawal keeps Ponor and backend records intact", asyn
   });
   await page.goto("/#/estavelles");
   await page.getByRole("button", { name: "Change availability" }).click();
-  await page.getByRole("checkbox", { name: "Enable relay", exact: true }).uncheck();
+  await page.getByRole("checkbox", { name: "Enable estavelle", exact: true }).uncheck();
   await expect(page.getByRole("button", { name: "Apply availability" })).toBeDisabled();
   await page.getByRole("checkbox", { name: "I understand mode changes may interrupt client connectivity." }).check();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.getByRole("button", { name: "Apply availability" }).click();
-  await expect(page.getByText("Relay disabled", { exact: false })).toBeVisible();
+  await expect(page.getByText("Estavelle disabled", { exact: false })).toBeVisible();
   expect(submitted).toEqual({ ponor_enabled: false, acknowledge_connectivity_change: true });
   await page.getByRole("button", { name: "Change availability" }).click();
-  await expect(page.getByRole("checkbox", { name: "Enable relay", exact: true })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Enable estavelle", exact: true })).not.toBeChecked();
 });
 
 test("publication preview is read only and activation requires acknowledgment", async ({ page }) => {
@@ -60,12 +60,12 @@ test("publication preview is read only and activation requires acknowledgment", 
   await page.goto("/#/estavelles");
   await page.getByText("Advanced publication and legacy settings", { exact: true }).click();
   await page.getByRole("button", { name: "Preview service publication", exact: true }).click();
-  await expect(page.getByText("No services: all Relay endpoints will be withdrawn from clients.")).toBeVisible();
+  await expect(page.getByText("No services: all Estavelle endpoints will be withdrawn from clients.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Publish services" })).toBeDisabled();
   expect(updates).toBe(0);
   await page.getByRole("checkbox", { name: "I understand this changes client connectivity." }).check();
   await page.getByRole("button", { name: "Publish services" }).click();
-  await expect(page.getByText("Relay service publication enabled.")).toBeVisible();
+  await expect(page.getByText("Estavelle service publication enabled.")).toBeVisible();
   expect(updates).toBe(1);
   page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Restore legacy publication" }).click();
@@ -95,14 +95,14 @@ test("explicit Relay association preserves backend identity and supports removal
   });
   await page.goto("/#/estavelles");
   // issue #530: association creation always goes through group selection now.
-  await page.getByRole("button", { name: "Configure relay", exact: true }).click();
-  await expect(page.getByLabel("Registered relay")).toHaveValue(endpoint.id);
-  await page.getByLabel("Relay name").fill("primary");
-  await page.getByRole("group", { name: "Groups allowed to use this relay", exact: true }).getByRole("checkbox", { name: "sre", exact: true }).check();
+  await page.getByRole("button", { name: "Configure estavelle", exact: true }).click();
+  await expect(page.getByLabel("Registered estavelle")).toHaveValue(endpoint.id);
+  await page.getByLabel("Estavelle name").fill("primary");
+  await page.getByRole("group", { name: "Groups allowed to use this estavelle", exact: true }).getByRole("checkbox", { name: "sre", exact: true }).check();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-  await page.getByRole("button", { name: "Review relay configuration", exact: true }).click();
+  await page.getByRole("button", { name: "Review estavelle configuration", exact: true }).click();
   await page.getByRole("checkbox", { name: "I reviewed the allowed groups and internet access.", exact: true }).check();
-  await page.getByRole("button", { name: "Apply relay configuration", exact: true }).click();
+  await page.getByRole("button", { name: "Apply estavelle configuration", exact: true }).click();
   await expect(page.getByRole("cell", { name: "primary", exact: true })).toBeVisible();
   expect(submitted).toEqual({ id: "primary", ponor_id: endpoint.id, access_managed: true, allowed_groups: ["group-sre"], metric: 9999 });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
@@ -111,7 +111,7 @@ test("explicit Relay association preserves backend identity and supports removal
   await expect(page.getByRole("cell", { name: "primary", exact: true })).toHaveCount(0);
   const backend = page.locator("tbody tr").filter({ hasText: endpoint.address });
   await expect(backend).toHaveCount(1);
-  await expect(backend.getByRole("button", { name: "Configure relay", exact: true })).toBeVisible();
+  await expect(backend.getByRole("button", { name: "Configure estavelle", exact: true })).toBeVisible();
 });
 
 test("missing Ponor registration remains visible for diagnosis", async ({ page }) => {
@@ -125,7 +125,7 @@ test("an unavailable service API reports failure instead of an empty healthy vie
   await page.route("**/api/karst/v1/estavelle-services", (route) => route.fulfill({ status: 404, json: { message: "Service API unavailable; upgrade control" } }));
   await page.goto("/#/estavelles");
   await expect(page.getByRole("alert")).toContainText("upgrade control");
-  await expect(page.getByRole("heading", { name: "No relays configured" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "No estavelles configured" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add estavelle", exact: true })).toBeVisible();
 });
 
@@ -147,25 +147,25 @@ for (const scopedIngress of [true, false]) {
       await route.fulfill({json:services});
     });
     await page.goto("/#/estavelles");
-    await page.getByRole("button",{name:"Configure relay",exact:true}).click();
-    await page.getByLabel("Relay name",{exact:true}).fill("denver");
-    await page.getByLabel("Registered relay",{exact:true}).selectOption("ponor");
-    await page.getByRole("group",{name:"Groups allowed to use this relay",exact:true}).getByRole("checkbox",{name:"sre",exact:true}).check();
+    await page.getByRole("button",{name:"Configure estavelle",exact:true}).click();
+    await page.getByLabel("Estavelle name",{exact:true}).fill("denver");
+    await page.getByLabel("Registered estavelle",{exact:true}).selectOption("ponor");
+    await page.getByRole("group",{name:"Groups allowed to use this estavelle",exact:true}).getByRole("checkbox",{name:"sre",exact:true}).check();
     await page.getByRole("checkbox",{name:"Offer internet access over IPv4",exact:true}).check();
-    await page.getByLabel("Enrolled Gateway device",{exact:true}).selectOption("gateway-key");
+    await page.getByLabel("Enrolled Aven device",{exact:true}).selectOption("gateway-key");
     if (!scopedIngress) {
-      await expect(page.getByRole("alert")).toContainText("Upgrade the control service to support destination-scoped Gateway ingress");
-      await expect(page.getByRole("button",{name:"Review relay configuration",exact:true})).toBeDisabled();
+      await expect(page.getByRole("alert")).toContainText("Upgrade the control service to support destination-scoped Aven ingress");
+      await expect(page.getByRole("button",{name:"Review estavelle configuration",exact:true})).toBeDisabled();
       expect(submitted).toBeUndefined();
       return;
     }
     expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
-    await page.getByRole("button",{name:"Review relay configuration",exact:true}).click();
-    await expect(page.getByRole("dialog")).toContainText("destination-only forwarding through the Gateway");
-    await expect(page.getByRole("button",{name:"Apply relay configuration",exact:true})).toBeDisabled();
+    await page.getByRole("button",{name:"Review estavelle configuration",exact:true}).click();
+    await expect(page.getByRole("dialog")).toContainText("destination-only forwarding through the Aven");
+    await expect(page.getByRole("button",{name:"Apply estavelle configuration",exact:true})).toBeDisabled();
     await page.getByRole("checkbox",{name:"I reviewed the allowed groups and internet access.",exact:true}).check();
-    await page.getByRole("button",{name:"Apply relay configuration",exact:true}).click();
-    await expect(page.getByRole("status")).toContainText("Relay configuration saved");
+    await page.getByRole("button",{name:"Apply estavelle configuration",exact:true}).click();
+    await expect(page.getByRole("status")).toContainText("Estavelle configuration saved");
     expect(submitted).toMatchObject({id:"denver",ponor_id:"ponor",access_managed:true,allowed_groups:["group-sre"],exit_ipv4:true,gateway_handle:"gateway-key",metric:9999});
   });
 }
@@ -175,12 +175,12 @@ test("relay group restriction cannot be applied without admission enforcement", 
   await page.route("**/api/karst/v1/estavelles",route => route.fulfill({json:[{id:"ponor",address:"203.0.113.1:443",region:"Denver",health:{admission_state:"confirmed"}}]}));
   await page.route("**/api/karst/v1/estavelle-services**",route => route.fulfill({json:new URL(route.request().url()).pathname.endsWith("/publication")?{mode:"services"}:[]}));
   await page.goto("/#/estavelles");
-  await page.getByRole("button",{name:"Configure relay",exact:true}).click();
-  await page.getByLabel("Relay name",{exact:true}).fill("denver");
-  await page.getByLabel("Registered relay",{exact:true}).selectOption("ponor");
-  await page.getByRole("group",{name:"Groups allowed to use this relay",exact:true}).getByRole("checkbox",{name:"sre",exact:true}).check();
+  await page.getByRole("button",{name:"Configure estavelle",exact:true}).click();
+  await page.getByLabel("Estavelle name",{exact:true}).fill("denver");
+  await page.getByLabel("Registered estavelle",{exact:true}).selectOption("ponor");
+  await page.getByRole("group",{name:"Groups allowed to use this estavelle",exact:true}).getByRole("checkbox",{name:"sre",exact:true}).check();
   await expect(page.getByRole("alert")).toContainText("no live admission-management connection");
-  await expect(page.getByRole("button",{name:"Review relay configuration",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Review estavelle configuration",exact:true})).toBeDisabled();
 });
 
 test("one relay inventory joins configuration and endpoint health without duplicating the backend", async ({ page }) => {
@@ -200,14 +200,14 @@ test("one relay inventory joins configuration and endpoint health without duplic
   await expect(page.getByRole("button", { name: "Services", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Ponor endpoints", exact: true })).toHaveCount(0);
   await configured.getByRole("button", { name: "Endpoint details" }).click();
-  await expect(page.getByRole("dialog")).toContainText("Remove all relay configurations");
+  await expect(page.getByRole("dialog")).toContainText("Remove all estavelle configurations");
   await expect(page.getByRole("button", { name: "Remove endpoint" })).toHaveCount(0);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.getByRole("button", { name: "Close", exact: true }).click();
   const unconfigured = page.locator("tbody tr").filter({ hasText: "203.0.113.11:443" });
   await expect(unconfigured).toContainText("Not published");
-  await unconfigured.getByRole("button", { name: "Configure relay", exact: true }).click();
-  await expect(page.getByLabel("Registered relay", { exact: true })).toHaveValue("unused");
+  await unconfigured.getByRole("button", { name: "Configure estavelle", exact: true }).click();
+  await expect(page.getByLabel("Registered estavelle", { exact: true })).toHaveValue("unused");
 });
 
 test("endpoint diagnosis stays available when relay configuration cannot be loaded", async ({ page }) => {
@@ -218,7 +218,7 @@ test("endpoint diagnosis stays available when relay configuration cannot be load
   await page.goto("/#/estavelles");
   await expect(page.getByRole("alert")).toContainText("Configuration unavailable");
   const row = page.locator("tbody tr").filter({ hasText: "203.0.113.12:443" });
-  await expect(row.getByRole("button", { name: "Configure relay", exact: true })).toBeDisabled();
+  await expect(row.getByRole("button", { name: "Configure estavelle", exact: true })).toBeDisabled();
   await expect(row).toContainText("Unknown");
   await row.getByRole("button", { name: "Endpoint details" }).click();
   await expect(page.getByRole("dialog")).toContainText("203.0.113.12:443");

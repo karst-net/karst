@@ -32,18 +32,18 @@ test("legacy route links and canonical Aven navigation remain usable", async ({ 
   await expect(page.getByRole("heading", { name: "Avens", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Add subnet route" })).toBeVisible();
   await page.getByRole("link", { name: "Avens", exact: true }).click();
-  await expect(page).toHaveURL(/#\/gateways$/);
+  await expect(page).toHaveURL(/#\/avens$/);
   await expect(page.getByRole("link", { name: "Avens", exact: true })).toHaveAttribute("aria-current", "page");
 });
 
 test("older control inventory errors do not remove route administration", async ({ page }) => {
   await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ status: 404, json: { message: "not supported" } }));
   await page.goto("/#/avens/metrics");
-  await expect(page.getByText(/Gateway inventory unavailable:/)).toBeVisible();
+  await expect(page.getByText(/Aven inventory unavailable:/)).toBeVisible();
   await page.getByRole("button", { name: "Manage", exact: true }).click();
   await page.getByRole("button", { name: "Add IPv4 exit route" }).click();
   await expect(page.getByLabel("Route network (CIDR)")).toHaveValue("0.0.0.0/0");
-  await expect(page.getByText("karst gateway exit use <route-id>")).toBeVisible();
+  await expect(page.getByText("karst aven exit use <route-id>")).toBeVisible();
   await expect(page.getByText(/IPv4 and IPv6 consent are independent/)).toBeVisible();
 });
 
@@ -51,17 +51,17 @@ test("unresolved and unsupported declarations remain visible", async ({ page }) 
   await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: { ...inventory, avens: [], unresolved_routes: ["empty-routing-group"], unsupported_routes: ["legacy-domain-route"] } }));
   await page.goto("/#/avens/metrics");
   await expect(page.getByText(/Routes without a visible eligible node: empty-routing-group/)).toBeVisible();
-  await expect(page.getByText(/Routes outside the CIDR Gateway model: legacy-domain-route/)).toBeVisible();
+  await expect(page.getByText(/Routes outside the CIDR Aven model: legacy-domain-route/)).toBeVisible();
 });
 
 test("refresh preserves independent control connectivity and readiness", async ({ page }) => {
   let connected = true;
-  await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: { ...inventory, avens: inventory.gateways.map((node) => ({ ...node, control_connected: connected })) } }));
+  await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: { ...inventory, avens: inventory.avens.map((node) => ({ ...node, control_connected: connected })) } }));
   await page.goto("/#/avens/metrics");
   const section = page.getByRole("region", { name: "Configured Aven nodes" });
   await expect(section).toContainText("Connected");
   connected = false;
-  await page.getByRole("button", { name: "Refresh Gateway inventory" }).click();
+  await page.getByRole("button", { name: "Refresh Aven inventory" }).click();
   await expect(section).toContainText("Disconnected");
   await expect(section).toContainText("Unreported");
 });
@@ -69,12 +69,12 @@ test("refresh preserves independent control connectivity and readiness", async (
 
 test("real forwarding readiness is shown per offer and aggregated per node", async ({ page }) => {
   await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: { ...inventory, avens: [{
-    ...inventory.gateways[0],
+    ...inventory.avens[0],
     forwarding_readiness: "degraded",
     offers: [
-      { ...inventory.gateways[0].offers[0], forwarding_readiness: "ready" },
-      { ...inventory.gateways[0].offers[1], forwarding_readiness: "degraded" },
-      inventory.gateways[0].offers[2],
+      { ...inventory.avens[0].offers[0], forwarding_readiness: "ready" },
+      { ...inventory.avens[0].offers[1], forwarding_readiness: "degraded" },
+      inventory.avens[0].offers[2],
     ],
   }] } }));
   await page.goto("/#/avens/metrics");
@@ -89,24 +89,24 @@ test("real forwarding readiness is shown per offer and aggregated per node", asy
 test("an unknown inventory schema fails explicitly while routes remain available", async ({ page }) => {
   await page.route("**/api/karst/v1/avens", (route) => route.fulfill({ json: { ...inventory, schema_version: 2 } }));
   await page.goto("/#/avens/metrics");
-  await expect(page.getByText(/Unsupported Gateway inventory schema/)).toBeVisible();
+  await expect(page.getByText(/Unsupported Aven inventory schema/)).toBeVisible();
   await page.getByRole("button", { name: "Manage", exact: true }).click();
   await expect(page.getByRole("button", { name: "Add subnet route" })).toBeVisible();
 });
 
-test("one Gateway behavior editor switches prefix and default-route behaviors", async ({ page }) => {
+test("one Aven behavior editor switches prefix and default-route behaviors", async ({ page }) => {
   await page.goto("/#/avens");
-  await page.getByRole("button", { name: "Add Gateway behavior", exact: true }).click();
-  const behavior = page.getByLabel("Gateway behavior", { exact: true });
+  await page.getByRole("button", { name: "Add Aven behavior", exact: true }).click();
+  const behavior = page.getByLabel("Aven behavior", { exact: true });
   await expect(behavior).toHaveValue("subnet");
   await behavior.selectOption("::/0");
   await expect(page.getByLabel("Route network (CIDR)")).toHaveValue("::/0");
-  await expect(page.getByText("karst gateway exit use <route-id>")).toBeVisible();
+  await expect(page.getByText("karst aven exit use <route-id>")).toBeVisible();
   await behavior.selectOption("0.0.0.0/0");
   await expect(page.getByLabel("Route network (CIDR)")).toHaveValue("0.0.0.0/0");
   await behavior.selectOption("subnet");
   await expect(page.getByLabel("Route network (CIDR)")).toHaveValue("");
-  await expect(page.getByText("karst gateway exit use <route-id>")).toHaveCount(0);
+  await expect(page.getByText("karst aven exit use <route-id>")).toHaveCount(0);
 });
 
 test("default behavior keeps explicit client consent and existing route writes", async ({ page }) => {
@@ -117,8 +117,8 @@ test("default behavior keeps explicit client consent and existing route writes",
     await route.fulfill({ status: 201, json: { ...submitted, id: "new-default" } });
   });
   await page.goto("/#/avens");
-  await page.getByRole("button", { name: "Add Gateway behavior", exact: true }).click();
-  await page.getByLabel("Gateway behavior", { exact: true }).selectOption("::/0");
+  await page.getByRole("button", { name: "Add Aven behavior", exact: true }).click();
+  await page.getByLabel("Aven behavior", { exact: true }).selectOption("::/0");
   await page.getByLabel("Route identifier", { exact: true }).fill("ipv6-egress");
   await page.getByLabel("Routing groups", { exact: true }).selectOption(["group-gateways"]);
   await page.getByLabel("Distribution groups", { exact: true }).selectOption(["group-all"]);
@@ -141,10 +141,10 @@ test("DNS zone affinity is offered for a subnet route, hidden for a default rout
   await page.getByRole("button", { name: "Add subnet route", exact: true }).click();
   await expect(page.getByLabel("Route DNS zone", { exact: true })).toBeVisible();
 
-  await page.getByLabel("Gateway behavior", { exact: true }).selectOption("0.0.0.0/0");
+  await page.getByLabel("Aven behavior", { exact: true }).selectOption("0.0.0.0/0");
   await expect(page.getByLabel("Route DNS zone", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Route pinned egress IP", { exact: true })).toBeVisible();
-  await page.getByLabel("Gateway behavior", { exact: true }).selectOption("subnet");
+  await page.getByLabel("Aven behavior", { exact: true }).selectOption("subnet");
 
   await page.getByLabel("Route identifier", { exact: true }).fill("legacy-net");
   await page.getByLabel("Route network (CIDR)", { exact: true }).fill("10.40.0.0/16");

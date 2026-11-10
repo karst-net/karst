@@ -21,7 +21,7 @@ async function fixture(page: Page) {
   });
   await page.route("**/api/peers", route => route.fulfill({ json: [{ id: "laptop", name: "Old laptop" }, { id: "new", name: "New laptop" }] }));
   await page.route("**/api/karst/v1/policy", route => route.fulfill({ json: { version: 1, document: JSON.stringify({ grants: state.grants }) } }));
-  await page.route("**/api/karst/v1/relay-services", route => route.fulfill({ json: [{ id: "Denver", allowed_groups: ["engineering"] }] }));
+  await page.route("**/api/karst/v1/estavelle-services", route => route.fulfill({ json: [{ id: "Denver", allowed_groups: ["engineering"] }] }));
   await page.route("**/api/karst/v1/invitations", route => route.fulfill({ json: [] }));
   await page.route("**/api/routes", route => route.fulfill({ json: [] }));
   await page.route("**/api/dns/nameservers", route => route.fulfill({ json: [] }));
@@ -44,7 +44,7 @@ test("membership review names added and removed devices, resource assignments an
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Devices gaining group accessNew laptop");
   await expect(dialog).toContainText("Devices losing group accessOld laptop");
-  await expect(dialog.getByRole("link", { name: "Relay: Denver" })).toBeVisible();
+  await expect(dialog.getByRole("link", { name: "Estavelle: Denver" })).toBeVisible();
   await expect(dialog.getByRole("link", { name: "Access grant: Production web" })).toBeVisible();
   const apply = dialog.getByRole("button", { name: "Apply membership changes" });
   await expect(apply).toBeDisabled(); expect(state.puts).toBe(0);
@@ -85,10 +85,10 @@ test("changed assignments require another review and dependency failures cannot 
   await dialog.getByRole("button", { name: "Apply membership changes" }).click();
   await expect(dialog.getByRole("alert")).toContainText("assignments changed");
   await expect(dialog.getByRole("checkbox", { name: "I reviewed the devices and group assignments.", exact: true })).not.toBeChecked(); expect(state.puts).toBe(0);
-  await page.route("**/api/karst/v1/relay-services", route => route.fulfill({ status: 503, json: { message: "Relay inventory unavailable" } }));
+  await page.route("**/api/karst/v1/estavelle-services", route => route.fulfill({ status: 503, json: { message: "Estavelle inventory unavailable" } }));
   await dialog.getByRole("checkbox", { name: "I reviewed the devices and group assignments.", exact: true }).check();
   await dialog.getByRole("button", { name: "Apply membership changes" }).click();
-  await expect(dialog.getByRole("alert")).toContainText("Relay inventory unavailable"); expect(state.puts).toBe(0);
+  await expect(dialog.getByRole("alert")).toContainText("Estavelle inventory unavailable"); expect(state.puts).toBe(0);
 });
 
 test("rename preserves the opened assignments and handles a conflict", async ({ page }) => {

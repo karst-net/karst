@@ -14,7 +14,7 @@ async function fixture(page: Page) {
     if (path.endsWith("/admission-targets")) return state.failed ? route.fulfill({ status: 503, json: { message: "Roster source unavailable" } }) : route.fulfill({ json: [{ relay_id: "backend", refreshed_at: state.lease }] });
     return route.fulfill({ json: [{ id: "denver", ponor_id: "backend", ponor_present: true, access_managed: true, allowed_groups: ["engineering"], gateway_handle: "bound-key", exit_ipv4: state.exits, exit_ipv6: state.exits }] });
   });
-  await page.route("**/api/karst/v1/avens", route => state.failed ? route.fulfill({ status: 503, json: { message: "Gateway source unavailable" } }) : route.fulfill({ json: { schema_version: 1, unresolved_routes: [], unsupported_routes: [], avens: [{ node_id: "bound-key", node_handle: state.handle, name: "Selected host", control_connected: state.connected, forwarding_readiness: "ready", offers: [
+  await page.route("**/api/karst/v1/avens", route => state.failed ? route.fulfill({ status: 503, json: { message: "Aven source unavailable" } }) : route.fulfill({ json: { schema_version: 1, unresolved_routes: [], unsupported_routes: [], avens: [{ node_id: "bound-key", node_handle: state.handle, name: "Selected host", control_connected: state.connected, forwarding_readiness: "ready", offers: [
     { id: "relay-exit-denver-0", kind: "default_ipv4", prefix: "0.0.0.0/0", enabled: true, forwarding_readiness: "ready" },
     { id: "relay-exit-denver-1", kind: "default_ipv6", prefix: "::/0", enabled: true, forwarding_readiness: "degraded" },
   ] }] } }));
@@ -28,7 +28,7 @@ test("estavelle row shows named group access, writer observation and per-family 
   await expect(row).toContainText("Admission writer recently refreshed");
   await expect(row.locator("p").filter({ hasText: "IPv4 egress through Selected host:" })).toContainText("Forwarding reported ready");
   await expect(row.locator("p").filter({ hasText: "IPv6 egress through Selected host:" })).toContainText("Forwarding reported degraded");
-  await expect(page.getByRole("link", { name: "Inspect Aven observations" })).toHaveAttribute("href", "#/gateways/metrics");
+  await expect(page.getByRole("link", { name: "Inspect Aven observations" })).toHaveAttribute("href", "#/avens/metrics");
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 

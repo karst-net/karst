@@ -49,7 +49,7 @@ struct Pins {
     verify: String,
 }
 
-/// A real `karst-relay` process — direct candidate punching between two
+/// A real `karst-estavelle` process — direct candidate punching between two
 /// nodes that share one host's actual network interfaces (no namespaces,
 /// unlike `aquifer.rs`) is not something this test can assume will converge
 /// quickly, if at all; the relay is the one documented, proven fallback
@@ -144,18 +144,18 @@ impl RelaySetup {
     /// node's ML-DSA control-plane identity — `bins/karst-estavelle/src/roster.rs`'s
     /// `identity_pk`, not a Noise session key) into one aquifer, `"t1"`,
     /// matching `bins/karstd/tests/aquifer.rs`'s own convention — then spawn
-    /// the real `karst-relay` binary against it.
+    /// the real `karst-estavelle` binary against it.
     fn spawn(&self, identity_pks: &[Vec<u8>]) -> Relay {
         let repo = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-        let relay_bin = format!("{repo}/target/debug/karst-relay");
+        let relay_bin = format!("{repo}/target/debug/karst-estavelle");
         let build = Command::new("cargo")
-            .args(["build", "-p", "karst-relay"])
+            .args(["build", "-p", "karst-estavelle"])
             .current_dir(repo)
             .output()
-            .expect("run `cargo build -p karst-relay`");
+            .expect("run `cargo build -p karst-estavelle`");
         assert!(
             build.status.success(),
-            "building karst-relay failed: {}",
+            "building karst-estavelle failed: {}",
             String::from_utf8_lossy(&build.stderr)
         );
 
@@ -199,7 +199,7 @@ impl RelaySetup {
                 std::fs::File::create(&stderr_log).expect("relay stderr log"),
             ))
             .spawn()
-            .expect("spawn karst-relay");
+            .expect("spawn karst-estavelle");
         // No readiness handshake from the relay binary itself to wait on; a
         // short, fixed sleep before nodes start is simpler than a retry loop
         // for a process that either binds its listener almost immediately or
