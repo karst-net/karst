@@ -33,15 +33,15 @@ type customerPaymentStore interface {
 }
 
 type customerPaymentView struct {
-	PeriodStart time.Time `json:"period_start"`
-	PeriodEnd   time.Time `json:"period_end"`
-	Currency    string    `json:"currency"`
-	DeviceMinor int64     `json:"device_minor"`
-	EstavelleMinor  int64     `json:"estavelle_minor"`
-	TotalMinor  int64     `json:"total_minor"`
-	State       string    `json:"state"`
-	CheckoutURL string    `json:"checkout_url,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	PeriodStart    time.Time `json:"period_start"`
+	PeriodEnd      time.Time `json:"period_end"`
+	Currency       string    `json:"currency"`
+	DeviceMinor    int64     `json:"device_minor"`
+	EstavelleMinor int64     `json:"estavelle_minor"`
+	TotalMinor     int64     `json:"total_minor"`
+	State          string    `json:"state"`
+	CheckoutURL    string    `json:"checkout_url,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // RegisterPaymentEndpoints lets an account owner or admin explicitly queue

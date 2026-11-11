@@ -79,7 +79,7 @@ func TestSharedCreditRequestSigningVectorMatchesRust(t *testing.T) {
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	var vector struct {
-		EstavelleID        string `json:"estavelle_id"`
+		EstavelleID    string `json:"estavelle_id"`
 		DeploymentID   string `json:"deployment_id"`
 		MappingVersion string `json:"mapping_version"`
 		Generation     string `json:"generation"`
@@ -131,7 +131,7 @@ func TestSharedCreditSurrenderSigningVectorMatchesRust(t *testing.T) {
 	require.NoError(t, err)
 	var vector struct {
 		GrantID        string `json:"grant_id"`
-		EstavelleID        string `json:"estavelle_id"`
+		EstavelleID    string `json:"estavelle_id"`
 		DeploymentID   string `json:"deployment_id"`
 		MappingVersion string `json:"mapping_version"`
 		Generation     string `json:"generation"`

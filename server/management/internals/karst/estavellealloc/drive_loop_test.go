@@ -138,10 +138,10 @@ func newDriveEnv(t *testing.T, driver *fakeDriver, relay *estavellereg.StoredEst
 	deenr := &fakeDeenroll{}
 	base := context.Background()
 	ctx := scopedContexts{
-		alloc: WithAccount(base, "a"),
-		infra: infraconnections.WithAccount(base, "a"),
+		alloc:     WithAccount(base, "a"),
+		infra:     infraconnections.WithAccount(base, "a"),
 		estavelle: estavellereg.WithAccount(base, "a"),
-		grant: estavelleservice.WithAccount(estavelleservice.WithActor(base, "test"), "a"),
+		grant:     estavelleservice.WithAccount(estavelleservice.WithActor(base, "test"), "a"),
 	}
 	deps := AllocateDeps{
 		InfraConnections: fakeInfraConnections{driver: driver},

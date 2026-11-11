@@ -485,7 +485,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		go estavellealloc.RunAllocateWorker(context.Background(), relayAllocationStore, estavellealloc.AllocateDeps{
 			InfraConnections: infraConnectionStore,
 			Enroll:           enroller,
-			Estavelles:           relayStore,
+			Estavelles:       relayStore,
 			Deenroll:         relayStore,
 			Grants:           relayServiceStore,
 			ControlAPIBase:   relayAllocateControlAPIBase,
@@ -569,7 +569,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			Routes:              accounts,
 			Policy:              pol,
 			PolicyStore:         policyStore,
-			Estavelles:              relays,
+			Estavelles:          relays,
 			RelayStore:          relayStore,
 			RelayServices:       relayServiceStore,
 			Bedrock:             bedrockLog,

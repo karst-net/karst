@@ -62,7 +62,7 @@ type Report struct {
 
 type reportWindow struct {
 	DeploymentID string
-	EstavelleID      string
+	EstavelleID  string
 	Epoch        string
 	Sequence     string
 	StartUS      int64
@@ -77,7 +77,7 @@ type reportWindowRange struct {
 
 type reportTotal struct {
 	DeploymentID string
-	EstavelleID      string
+	EstavelleID  string
 	Epoch        string
 	Sequence     string
 	MappingKey   string

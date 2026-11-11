@@ -98,9 +98,9 @@ name-based migration is performed.
   control plane to keep more than the latest report per peer (today's
   `ReplaceSessionObservations` is a full replace, not an append), to compute
   a delta over time — a real feature, not a plumbing gap like the total was.
-- **Deferred, smaller: `relay_id` and `since` on a path observation.** Both
+- **Deferred, smaller: `estavelle_id` and `since` on a path observation.** Both
   fields exist on the API contract and are already read by the console, but
-  the server has never populated either — `relay_id` because a session
+  the server has never populated either — `estavelle_id` because a session
   observation does not yet say *which* estavelle a relayed path used (its own
   proto-field-sized gap, not yet scoped), and `since` because the
   full-replace storage above has nowhere to keep "when did this path

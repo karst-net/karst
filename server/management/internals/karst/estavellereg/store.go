@@ -614,7 +614,7 @@ func (s *Store) invalidateCompiled(accountID, id string) {
 func cloneRelay(relay *proto.KarstEstavelle) *proto.KarstEstavelle {
 	cloned := &proto.KarstEstavelle{
 		Address:       relay.Address,
-		EstavelleId:       append([]byte(nil), relay.EstavelleId...),
+		EstavelleId:   append([]byte(nil), relay.EstavelleId...),
 		IdentityKey:   append([]byte(nil), relay.IdentityKey...),
 		Region:        relay.Region,
 		TlsServerName: relay.TlsServerName,

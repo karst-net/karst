@@ -21,23 +21,23 @@ var ErrInvoiceNotFound = errors.New("billing: finalized invoice not found")
 // or payment workflow. Amounts are minor currency units; exact values retain
 // the calculator inputs, while line amounts are truncated down at finalization.
 type FinalInvoice struct {
-	SchemaVersion   string                `json:"schema_version"`
-	AccountID       string                `json:"account_id"`
-	PeriodStart     time.Time             `json:"period_start"`
-	PeriodEnd       time.Time             `json:"period_end"`
-	ScheduleVersion string                `json:"schedule_version"`
-	Currency        string                `json:"currency"`
-	DeviceUsage     usage.DeviceReport    `json:"device_usage"`
-	EstavelleUsage      estavelleusage.Report `json:"estavelle_usage"`
-	DeviceInputHash string                `json:"device_input_sha256"`
-	EstavelleInputHash  string                `json:"estavelle_input_sha256"`
-	DeviceExact     ExactAmount           `json:"device_exact_minor"`
-	EstavelleExact      ExactAmount           `json:"estavelle_exact_minor"`
-	TotalExact      ExactAmount           `json:"total_exact_minor"`
-	DeviceMinor     int64                 `json:"device_minor"`
-	EstavelleMinor      int64                 `json:"estavelle_minor"`
-	TotalMinor      int64                 `json:"total_minor"`
-	FinalizedAt     time.Time             `json:"finalized_at"`
+	SchemaVersion      string                `json:"schema_version"`
+	AccountID          string                `json:"account_id"`
+	PeriodStart        time.Time             `json:"period_start"`
+	PeriodEnd          time.Time             `json:"period_end"`
+	ScheduleVersion    string                `json:"schedule_version"`
+	Currency           string                `json:"currency"`
+	DeviceUsage        usage.DeviceReport    `json:"device_usage"`
+	EstavelleUsage     estavelleusage.Report `json:"estavelle_usage"`
+	DeviceInputHash    string                `json:"device_input_sha256"`
+	EstavelleInputHash string                `json:"estavelle_input_sha256"`
+	DeviceExact        ExactAmount           `json:"device_exact_minor"`
+	EstavelleExact     ExactAmount           `json:"estavelle_exact_minor"`
+	TotalExact         ExactAmount           `json:"total_exact_minor"`
+	DeviceMinor        int64                 `json:"device_minor"`
+	EstavelleMinor     int64                 `json:"estavelle_minor"`
+	TotalMinor         int64                 `json:"total_minor"`
+	FinalizedAt        time.Time             `json:"finalized_at"`
 }
 
 func parseExactNonnegative(amount ExactAmount) (*big.Rat, error) {

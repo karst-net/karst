@@ -69,7 +69,7 @@ type estavelleCreditGrantRow struct {
 	GrantID         string    `gorm:"primaryKey;size:32"`
 	AccountID       string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
 	PeriodStartUS   int64     `gorm:"not null;uniqueIndex:idx_credit_request"`
-	EstavelleID         string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
+	EstavelleID     string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
 	Generation      string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
 	RequestID       string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
 	MappingVersion  string    `gorm:"size:128;not null"`
@@ -92,7 +92,7 @@ func (estavelleCreditGrantRow) TableName() string { return "karst_billing_estave
 type estavelleUncappedLeaseRow struct {
 	AccountID      string `gorm:"primaryKey;size:128"`
 	PeriodStartUS  int64  `gorm:"primaryKey"`
-	EstavelleID        string `gorm:"primaryKey;size:64"`
+	EstavelleID    string `gorm:"primaryKey;size:64"`
 	Generation     string `gorm:"primaryKey;size:32"`
 	MappingVersion string `gorm:"primaryKey;size:64"`
 	ExpiresAtUS    int64  `gorm:"not null;index"`
@@ -125,7 +125,7 @@ type RelayCreditGrant struct {
 	AccountID       string    `json:"account_id"`
 	PeriodStart     time.Time `json:"period_start"`
 	PeriodEnd       time.Time `json:"period_end"`
-	EstavelleID         string    `json:"estavelle_id"`
+	EstavelleID     string    `json:"estavelle_id"`
 	Generation      string    `json:"generation"`
 	MappingVersion  string    `json:"mapping_version"`
 	ScheduleVersion string    `json:"schedule_version"`

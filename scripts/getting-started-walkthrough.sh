@@ -591,11 +591,11 @@ path_b() {
 	# node has pinned.
 	say "bootstrap.sh is idempotent (deploy/compose/bootstrap.sh)"
 	local before after
-	before=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["relays"][0]["identity_key"])' \
+	before=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["estavelles"][0]["identity_key"])' \
 		"$COMPOSE_DIR/state/estavelles.json")
 	(cd "$COMPOSE_DIR" && KARST_ESTAVELLE_IP=127.0.0.1 ./bootstrap.sh >"$WORK/.bootstrap" 2>&1) \
 		|| { cat "$WORK/.bootstrap" >&2; die "re-running bootstrap.sh failed"; }
-	after=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["relays"][0]["identity_key"])' \
+	after=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["estavelles"][0]["identity_key"])' \
 		"$COMPOSE_DIR/state/estavelles.json")
 	[ "$before" = "$after" ] \
 		|| die "bootstrap.sh regenerated the estavelle identity; every node's pinned registry is now wrong"

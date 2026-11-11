@@ -111,7 +111,7 @@ if [ ! -f "$state/estavelles.json" ]; then
         pubkey --config /var/lib/karst/estavelle.toml | awk '/^identity_pk/ { print $2 }')
     [ -n "$identity" ] || { echo "bootstrap: karst-estavelle printed no identity" >&2; exit 1; }
     cat > "$state/estavelles.json" <<EOF
-{ "relays": [ { "address": "$KARST_LAB_CORE_ESTAVELLE_IP:443", "tls_server_name": "estavelle.karst-ne-lab", "identity_key": "$identity", "region": "lab" } ] }
+{ "estavelles": [ { "address": "$KARST_LAB_CORE_ESTAVELLE_IP:443", "tls_server_name": "estavelle.karst-ne-lab", "identity_key": "$identity", "region": "lab" } ] }
 EOF
 fi
 # Nodes dial the estavelle at its core address: the Mac through labgw, the
@@ -121,8 +121,8 @@ python3 - "$state/estavelles.json" "$KARST_LAB_CORE_ESTAVELLE_IP:443" <<'PY'
 import json, sys
 path, address = sys.argv[1], sys.argv[2]
 registry = json.load(open(path))
-if registry["relays"][0]["address"] != address:
-    registry["relays"][0]["address"] = address
+if registry["estavelles"][0]["address"] != address:
+    registry["estavelles"][0]["address"] = address
     json.dump(registry, open(path, "w"))
 PY
 # "*:*" covers mesh nodes only; routed destinations need CIDR grants. The

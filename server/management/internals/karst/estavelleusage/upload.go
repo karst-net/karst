@@ -21,7 +21,7 @@ const maxAuthorizationBytes = 6400
 var ErrInvalidUploadAuth = errors.New("relay usage: invalid upload authentication")
 
 type UploadAuthorization struct {
-	EstavelleID         string
+	EstavelleID     string
 	TimestampMicros uint64
 	Nonce           [32]byte
 	Signature       []byte

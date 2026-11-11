@@ -169,7 +169,7 @@ type NetmapHandler struct {
 		Netmap(context.Context) (bool, []*proto.KarstEstavelle, error)
 		Publication(context.Context) (estavelleservice.Publication, error)
 	}
-	Estavelles     []*proto.KarstEstavelle
+	Estavelles []*proto.KarstEstavelle
 	RelayStore interface {
 		NetmapRelays(context.Context) ([]*proto.KarstEstavelle, error)
 	}
@@ -456,11 +456,11 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// netmap.
 	epoch := h.Epoch.Load()
 	resp := &proto.KarstNetmapResponse{
-		PskEpoch:  epoch,
-		NodeId:    []byte(self),
-		Addresses: addressesOf(selfPeer, v4Bits, v6Bits),
-		DnsName:   selfPeer.DNSLabel,
-		Estavelles:    relays,
+		PskEpoch:   epoch,
+		NodeId:     []byte(self),
+		Addresses:  addressesOf(selfPeer, v4Bits, v6Bits),
+		DnsName:    selfPeer.DNSLabel,
+		Estavelles: relays,
 	}
 	if h.ComplianceIngestion {
 		resp.ComplianceIngestionSchema = 1
@@ -1067,7 +1067,7 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 			continue
 		}
 		if err := h.RouteTelemetry.RecordRouteBytes(ctx, accountID, routeID, routetelemetry.RouteReport{
-			AvenID:         self,
+			AvenID:            self,
 			ReadinessReported: report.GetForwardingReadinessReported(),
 			Bytes:             report.GetBytes(),
 			Packets:           report.GetPackets(),

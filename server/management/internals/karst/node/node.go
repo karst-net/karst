@@ -47,9 +47,9 @@ const handleContext = "karst-node-handle-v1"
 const HandleLength = 44
 
 var (
-	ErrUnknownNode  = errors.New("node: unknown handle")
-	ErrKeyMismatch  = errors.New("node: handle is registered to a different identity key")
-	ErrBadPublicKey = errors.New("node: malformed identity public key")
+	ErrUnknownNode      = errors.New("node: unknown handle")
+	ErrKeyMismatch      = errors.New("node: handle is registered to a different identity key")
+	ErrBadPublicKey     = errors.New("node: malformed identity public key")
 	ErrBadHomeEstavelle = errors.New("node: malformed home estavelle id")
 )
 

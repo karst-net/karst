@@ -576,7 +576,7 @@ every node:
 
 ```sh walkthrough=C step=estavelle-pubkey
 sudo karst-estavelle pubkey --config /etc/karst/estavelle.toml
-# relay_id     f10dfc0d…
+# estavelle_id f10dfc0d…
 # identity_pk  rnKUFd9V3/L5PbvmvuWawzAMFNWcPAIkqNhyD2oP4dqg…
 ```
 
@@ -601,7 +601,7 @@ The estavelle registry, `/etc/karst/estavelles.json` — `identity_key` is the
 
 ```json walkthrough=C step=estavelles-json file=/etc/karst/estavelles.json
 {
-  "relays": [
+  "estavelles": [
     {
       "address": "203.0.113.7:443",
       "tls_server_name": "estavelle.example.com",

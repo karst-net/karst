@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleservice"
+	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"
 	"gorm.io/gorm"

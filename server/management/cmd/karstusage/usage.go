@@ -18,8 +18,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
-	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
+	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"

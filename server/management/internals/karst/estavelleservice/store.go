@@ -48,7 +48,7 @@ type Service struct {
 	Revision      uint64   `gorm:"not null;default:0" json:"revision,omitempty"`
 	AccessManaged bool     `gorm:"not null;default:false" json:"access_managed,omitempty"`
 	AllowedGroups []string `gorm:"serializer:json" json:"allowed_groups,omitempty"`
-	AvenHandle string   `json:"aven_handle,omitempty"`
+	AvenHandle    string   `json:"aven_handle,omitempty"`
 	ExitIPv4      bool     `json:"exit_ipv4,omitempty"`
 	ExitIPv6      bool     `json:"exit_ipv6,omitempty"`
 	Metric        int      `json:"metric,omitempty"`

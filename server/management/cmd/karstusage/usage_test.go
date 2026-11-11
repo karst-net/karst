@@ -19,8 +19,8 @@ import (
 
 	"github.com/netbirdio/netbird/management/cmd/karstusage"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
-	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/estavelleusage"
+	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/store"

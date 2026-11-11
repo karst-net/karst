@@ -15,7 +15,7 @@ func routeOffer() *proto.KarstRouteOffer {
 	return &proto.KarstRouteOffer{
 		RouteId:    "corp-lan",
 		Prefix:     "10.20.0.0/16",
-		AvenId:  []byte("gateway-a"),
+		AvenId:     []byte("gateway-a"),
 		Metric:     100,
 		Kind:       proto.KarstRouteKind_KARST_ROUTE_KIND_SUBNET,
 		Masquerade: true,

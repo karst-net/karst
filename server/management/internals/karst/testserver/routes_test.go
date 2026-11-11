@@ -19,12 +19,12 @@ func TestRouteRegistryUpsertAndDelete(t *testing.T) {
 	ctx := context.Background()
 
 	req := routeOfferRequest{
-		RouteID:       "subnet-a",
-		Prefix:        "10.20.0.0/16",
+		RouteID:    "subnet-a",
+		Prefix:     "10.20.0.0/16",
 		AvenHandle: "gateway-handle",
-		Metric:        50,
-		Masquerade:    true,
-		KeepRoute:     true,
+		Metric:     50,
+		Masquerade: true,
+		KeepRoute:  true,
 	}
 	if err := registry.upsert(ctx, req); err != nil {
 		t.Fatalf("upsert: %v", err)

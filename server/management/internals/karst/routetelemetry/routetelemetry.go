@@ -57,7 +57,7 @@ func (StoredRouteBytes) TableName() string { return "karst_route_telemetry" }
 type StoredAvenHealth struct {
 	ReadinessReported bool
 	AccountID         string `gorm:"primaryKey;size:64"`
-	AvenID         string `gorm:"primaryKey"`
+	AvenID            string `gorm:"primaryKey"`
 	RouteID           string `gorm:"primaryKey"`
 	ForwardingActive  bool
 	// ObservedEgressIP is issue #554's verification half of ADR-0068's
@@ -98,7 +98,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 type RouteReport struct {
 	ReadinessReported bool
 	// AvenID comes from the authenticated session, never the report payload.
-	AvenID        string
+	AvenID           string
 	Bytes            uint64
 	Packets          uint64
 	IngressBytes     uint64

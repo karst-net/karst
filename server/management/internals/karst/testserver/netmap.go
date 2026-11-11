@@ -381,7 +381,7 @@ func relayRow(address string, key []byte) *proto.KarstEstavelle {
 	return &proto.KarstEstavelle{
 		Address:       address,
 		TlsServerName: "relay.test",
-		EstavelleId:       h.Sum(nil),
+		EstavelleId:   h.Sum(nil),
 		IdentityKey:   key,
 		Region:        "test",
 	}

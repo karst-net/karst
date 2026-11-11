@@ -51,8 +51,8 @@ const (
 // third-party infra and out of scope). RelayJob is this job's own relay
 // task group specifically, not the broader scaler-managed/BYO relay fleet.
 const (
-	ComponentControl  = "control"
-	ComponentConsole  = "console"
+	ComponentControl      = "control"
+	ComponentConsole      = "console"
 	ComponentEstavelleJob = "estavelle_job"
 )
 
@@ -95,20 +95,20 @@ func (Plan) TableName() string { return "karst_rollout_plans" }
 // 0-based and must be contiguous across a plan's components (0, 1, 2, ...)
 // -- MarkComponentApplied enforces apply order against it directly.
 type PlanComponent struct {
-	ID                           uint       `gorm:"primaryKey" json:"-"`
-	PlanID                       string     `gorm:"not null;index;size:64" json:"-"`
-	AccountID                    string     `gorm:"not null;size:64" json:"-"`
-	Name                         string     `gorm:"not null" json:"name"`
-	Sequence                     int        `gorm:"not null" json:"sequence"`
-	CurrentDigest                string     `json:"current_digest,omitempty"`
-	TargetDigest                 string     `gorm:"not null" json:"target_digest"`
-	VerificationRef              string     `gorm:"not null" json:"verification_ref"`
+	ID                               uint       `gorm:"primaryKey" json:"-"`
+	PlanID                           string     `gorm:"not null;index;size:64" json:"-"`
+	AccountID                        string     `gorm:"not null;size:64" json:"-"`
+	Name                             string     `gorm:"not null" json:"name"`
+	Sequence                         int        `gorm:"not null" json:"sequence"`
+	CurrentDigest                    string     `json:"current_digest,omitempty"`
+	TargetDigest                     string     `gorm:"not null" json:"target_digest"`
+	VerificationRef                  string     `gorm:"not null" json:"verification_ref"`
 	RequiresEstavelleLifecycleSchema *uint32    `json:"requires_estavelle_lifecycle_schema,omitempty"`
-	RequiresAvenIngressSchema *uint32    `json:"requires_aven_ingress_schema,omitempty"`
-	Status                       string     `gorm:"not null;default:'pending'" json:"status"`
-	FailureReason                string     `json:"failure_reason,omitempty"`
-	ObservedDigest               string     `json:"observed_digest,omitempty"`
-	ObservedAt                   *time.Time `json:"observed_at,omitempty"`
+	RequiresAvenIngressSchema        *uint32    `json:"requires_aven_ingress_schema,omitempty"`
+	Status                           string     `gorm:"not null;default:'pending'" json:"status"`
+	FailureReason                    string     `json:"failure_reason,omitempty"`
+	ObservedDigest                   string     `json:"observed_digest,omitempty"`
+	ObservedAt                       *time.Time `json:"observed_at,omitempty"`
 }
 
 func (PlanComponent) TableName() string { return "karst_rollout_plan_components" }
@@ -243,16 +243,16 @@ func (s *Store) Create(ctx context.Context, draft Plan, components []PlanCompone
 	rows := make([]PlanComponent, len(components))
 	for i, component := range components {
 		rows[i] = PlanComponent{
-			PlanID:                       plan.ID,
-			AccountID:                    account,
-			Name:                         component.Name,
-			Sequence:                     component.Sequence,
-			CurrentDigest:                component.CurrentDigest,
-			TargetDigest:                 component.TargetDigest,
-			VerificationRef:              component.VerificationRef,
+			PlanID:                           plan.ID,
+			AccountID:                        account,
+			Name:                             component.Name,
+			Sequence:                         component.Sequence,
+			CurrentDigest:                    component.CurrentDigest,
+			TargetDigest:                     component.TargetDigest,
+			VerificationRef:                  component.VerificationRef,
 			RequiresEstavelleLifecycleSchema: component.RequiresEstavelleLifecycleSchema,
-			RequiresAvenIngressSchema: component.RequiresAvenIngressSchema,
-			Status:                       componentPending,
+			RequiresAvenIngressSchema:        component.RequiresAvenIngressSchema,
+			Status:                           componentPending,
 		}
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

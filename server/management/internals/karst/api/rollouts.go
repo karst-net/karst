@@ -49,13 +49,13 @@ type RolloutOptions struct {
 }
 
 type rolloutComponentRequest struct {
-	Name                         string  `json:"name"`
-	Sequence                     int     `json:"sequence"`
-	CurrentDigest                string  `json:"current_digest,omitempty"`
-	TargetDigest                 string  `json:"target_digest"`
-	VerificationRef              string  `json:"verification_ref"`
+	Name                             string  `json:"name"`
+	Sequence                         int     `json:"sequence"`
+	CurrentDigest                    string  `json:"current_digest,omitempty"`
+	TargetDigest                     string  `json:"target_digest"`
+	VerificationRef                  string  `json:"verification_ref"`
 	RequiresEstavelleLifecycleSchema *uint32 `json:"requires_estavelle_lifecycle_schema,omitempty"`
-	RequiresAvenIngressSchema *uint32 `json:"requires_aven_ingress_schema,omitempty"`
+	RequiresAvenIngressSchema        *uint32 `json:"requires_aven_ingress_schema,omitempty"`
 }
 
 // rolloutPlanPayload is the flat JSON shape every route below returns:
@@ -222,13 +222,13 @@ func handleRolloutsCreate(w http.ResponseWriter, r *http.Request, ctx context.Co
 	components := make([]rollout.PlanComponent, len(request.Components))
 	for i, component := range request.Components {
 		components[i] = rollout.PlanComponent{
-			Name:                         component.Name,
-			Sequence:                     component.Sequence,
-			CurrentDigest:                component.CurrentDigest,
-			TargetDigest:                 component.TargetDigest,
-			VerificationRef:              component.VerificationRef,
+			Name:                             component.Name,
+			Sequence:                         component.Sequence,
+			CurrentDigest:                    component.CurrentDigest,
+			TargetDigest:                     component.TargetDigest,
+			VerificationRef:                  component.VerificationRef,
 			RequiresEstavelleLifecycleSchema: component.RequiresEstavelleLifecycleSchema,
-			RequiresAvenIngressSchema: component.RequiresAvenIngressSchema,
+			RequiresAvenIngressSchema:        component.RequiresAvenIngressSchema,
 		}
 	}
 	draft := rollout.Plan{TargetRelease: request.TargetRelease, MaintenanceWindowNote: request.MaintenanceWindowNote}

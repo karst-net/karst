@@ -29,7 +29,7 @@ func WithActor(ctx context.Context, actor string) context.Context {
 }
 
 type AdmissionLease struct {
-	EstavelleID     string    `gorm:"primaryKey" json:"estavelle_id"`
+	EstavelleID string    `gorm:"primaryKey" json:"estavelle_id"`
 	RefreshedAt time.Time `json:"refreshed_at"`
 }
 
@@ -175,9 +175,9 @@ func writeDocument(tx *gorm.DB, account string, doc *policy.Document, version ui
 // BackendAccess survives deletion of the association: removing a managed
 // service must withdraw access rather than reopen legacy account-wide admission.
 type BackendAccess struct {
-	AccountID string   `gorm:"primaryKey"`
-	EstavelleID   string   `gorm:"primaryKey"`
-	Groups    []string `gorm:"serializer:json"`
+	AccountID   string   `gorm:"primaryKey"`
+	EstavelleID string   `gorm:"primaryKey"`
+	Groups      []string `gorm:"serializer:json"`
 }
 
 func (BackendAccess) TableName() string { return "karst_estavelle_backend_access" }

@@ -58,11 +58,11 @@ func fixture(t *testing.T) env {
 
 func (e env) draft() Allocation {
 	return Allocation{
-		Name:              "denver",
-		InfraConnectionID: e.connectionID,
-		Location:          "us-west-2",
-		EstavelleTransport:    true,
-		PermittedGroups:   []string{e.groupID},
+		Name:               "denver",
+		InfraConnectionID:  e.connectionID,
+		Location:           "us-west-2",
+		EstavelleTransport: true,
+		PermittedGroups:    []string{e.groupID},
 	}
 }
 

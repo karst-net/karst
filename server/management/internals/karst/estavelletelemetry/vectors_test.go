@@ -47,7 +47,7 @@ type vectorFile struct {
 }
 
 type signingInputCase struct {
-	EstavelleID       string `json:"estavelle_id"`
+	EstavelleID   string `json:"estavelle_id"`
 	Timestamp     int64  `json:"timestamp"`
 	LocalClients  int    `json:"local_clients"`
 	MeshPeers     int    `json:"mesh_peers"`
@@ -153,7 +153,7 @@ func TestVectors(t *testing.T) {
 			RTTOver100ms:  tc.rttOver100ms,
 		}
 		got.Cases = append(got.Cases, signingInputCase{
-			EstavelleID:       hex.EncodeToString(estavelleID),
+			EstavelleID:   hex.EncodeToString(estavelleID),
 			Timestamp:     tc.timestamp,
 			LocalClients:  tc.localClients,
 			MeshPeers:     tc.meshPeers,

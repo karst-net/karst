@@ -74,23 +74,23 @@ func accountFromContext(ctx context.Context) (string, error) {
 // FailureReason are only meaningful while State == StateFailed; every other
 // transition clears both rather than leaving a stale reason behind.
 type Allocation struct {
-	AccountID         string    `gorm:"primaryKey;size:64" json:"-"`
-	ID                string    `gorm:"primaryKey;size:64" json:"id"`
-	Name              string    `gorm:"not null" json:"name"`
-	InfraConnectionID string    `gorm:"not null" json:"infra_connection_id"`
-	Location          string    `gorm:"not null" json:"location"`
-	EstavelleTransport    bool      `json:"estavelle_transport,omitempty"`
-	EgressV4          bool      `json:"egress_v4,omitempty"`
-	EgressV6          bool      `json:"egress_v6,omitempty"`
-	PermittedGroups   []string  `gorm:"serializer:json" json:"permitted_groups,omitempty"`
-	State             string    `gorm:"not null;index" json:"state"`
-	FailedStep        string    `json:"failed_step,omitempty"`
-	FailureReason     string    `json:"failure_reason,omitempty"`
-	InstanceID        string    `json:"instance_id,omitempty"`
-	EstavelleID           string    `json:"estavelle_id,omitempty"`
-	Revision          uint64    `gorm:"not null;default:0" json:"revision"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	AccountID          string    `gorm:"primaryKey;size:64" json:"-"`
+	ID                 string    `gorm:"primaryKey;size:64" json:"id"`
+	Name               string    `gorm:"not null" json:"name"`
+	InfraConnectionID  string    `gorm:"not null" json:"infra_connection_id"`
+	Location           string    `gorm:"not null" json:"location"`
+	EstavelleTransport bool      `json:"estavelle_transport,omitempty"`
+	EgressV4           bool      `json:"egress_v4,omitempty"`
+	EgressV6           bool      `json:"egress_v6,omitempty"`
+	PermittedGroups    []string  `gorm:"serializer:json" json:"permitted_groups,omitempty"`
+	State              string    `gorm:"not null;index" json:"state"`
+	FailedStep         string    `json:"failed_step,omitempty"`
+	FailureReason      string    `json:"failure_reason,omitempty"`
+	InstanceID         string    `json:"instance_id,omitempty"`
+	EstavelleID        string    `json:"estavelle_id,omitempty"`
+	Revision           uint64    `gorm:"not null;default:0" json:"revision"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 func (Allocation) TableName() string { return "karst_estavelle_allocations" }
@@ -271,19 +271,19 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 	}
 	now := time.Now().UTC()
 	allocation := Allocation{
-		AccountID:         account,
-		ID:                xid.New().String(),
-		Name:              draft.Name,
-		InfraConnectionID: draft.InfraConnectionID,
-		Location:          draft.Location,
-		EstavelleTransport:    draft.EstavelleTransport,
-		EgressV4:          draft.EgressV4,
-		EgressV6:          draft.EgressV6,
-		PermittedGroups:   draft.PermittedGroups,
-		State:             StateRequested,
-		Revision:          1,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		AccountID:          account,
+		ID:                 xid.New().String(),
+		Name:               draft.Name,
+		InfraConnectionID:  draft.InfraConnectionID,
+		Location:           draft.Location,
+		EstavelleTransport: draft.EstavelleTransport,
+		EgressV4:           draft.EgressV4,
+		EgressV6:           draft.EgressV6,
+		PermittedGroups:    draft.PermittedGroups,
+		State:              StateRequested,
+		Revision:           1,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if s.maxConcurrentAllocations <= 0 {
 		return nil, fmt.Errorf("%w: KARST_ESTAVELLE_ALLOCATE_MAX_CONCURRENT is not configured -- set a per-account concurrency ceiling before allocating an estavelle (ADR-0045 §6)", ErrInvalid)

@@ -37,7 +37,7 @@ var ErrInvalidCreditRequest = errors.New("estavelle usage: invalid cap credit re
 // generation and one authorized customer mapping. Account ownership is always
 // resolved from the operator-approved mapping, never from this document.
 type CreditRequest struct {
-	EstavelleID        string `json:"estavelle_id"`
+	EstavelleID    string `json:"estavelle_id"`
 	DeploymentID   string `json:"deployment_id"`
 	MappingVersion string `json:"mapping_version"`
 	Generation     string `json:"generation"`
@@ -52,7 +52,7 @@ type CreditRequest struct {
 // an old grant; a crash therefore strands credits safely instead of guessing.
 type CreditSurrender struct {
 	GrantID        string `json:"grant_id"`
-	EstavelleID        string `json:"estavelle_id"`
+	EstavelleID    string `json:"estavelle_id"`
 	DeploymentID   string `json:"deployment_id"`
 	MappingVersion string `json:"mapping_version"`
 	Generation     string `json:"generation"`

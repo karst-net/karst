@@ -91,7 +91,7 @@ const enrollTokenExpiry = 10 * time.Minute
 type AllocateDeps struct {
 	InfraConnections infraConnections
 	Enroll           enrollMinter
-	Estavelles           estavelleFinder
+	Estavelles       estavelleFinder
 	Deenroll         estavelleDeenroller
 	Grants           estavelleGrantStore
 	// ControlAPIBase is the management server's own externally-reachable
@@ -146,10 +146,10 @@ func RunAllocateWorker(ctx context.Context, store *Store, deps AllocateDeps, int
 // per request (allocCtx/registryCtx/serviceCtx), just once per allocation
 // per tick instead of once per HTTP call.
 type scopedContexts struct {
-	alloc context.Context
-	infra context.Context
+	alloc     context.Context
+	infra     context.Context
 	estavelle context.Context
-	grant context.Context
+	grant     context.Context
 }
 
 func allocateTick(ctx context.Context, store *Store, deps AllocateDeps) error {
@@ -159,10 +159,10 @@ func allocateTick(ctx context.Context, store *Store, deps AllocateDeps) error {
 	}
 	for _, allocation := range pending {
 		scoped := scopedContexts{
-			alloc: WithAccount(ctx, allocation.AccountID),
-			infra: infraconnections.WithAccount(ctx, allocation.AccountID),
+			alloc:     WithAccount(ctx, allocation.AccountID),
+			infra:     infraconnections.WithAccount(ctx, allocation.AccountID),
 			estavelle: estavellereg.WithAccount(ctx, allocation.AccountID),
-			grant: estavelleservice.WithAccount(estavelleservice.WithActor(ctx, "estavelle-allocation"), allocation.AccountID),
+			grant:     estavelleservice.WithAccount(estavelleservice.WithActor(ctx, "estavelle-allocation"), allocation.AccountID),
 		}
 		if err := driveOne(scoped, store, deps, allocation); err != nil {
 			log.WithError(err).WithField("allocation_id", allocation.ID).Error("karst: estavelle allocation: drive step failed")

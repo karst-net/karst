@@ -234,7 +234,7 @@ func (e Entry) compile() (*proto.KarstEstavelle, error) {
 	return &proto.KarstEstavelle{
 		Address:       e.Address,
 		TlsServerName: e.TLSServerName,
-		EstavelleId:       EstavelleID(key),
+		EstavelleId:   EstavelleID(key),
 		IdentityKey:   key,
 		Region:        region,
 		Location:      location,

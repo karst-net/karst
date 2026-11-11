@@ -91,7 +91,7 @@ func (r testRelay) storedRelay() estavellereg.StoredEstavelle {
 func (r testRelay) validRequest(t *testing.T, at time.Time, tel estavellereg.Telemetry) report {
 	t.Helper()
 	req := report{
-		EstavelleID:       r.id,
+		EstavelleID:   r.id,
 		Timestamp:     at.Unix(),
 		LocalClients:  tel.LocalClients,
 		MeshPeers:     tel.MeshPeers,

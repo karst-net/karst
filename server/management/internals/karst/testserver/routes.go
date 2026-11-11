@@ -57,13 +57,13 @@ func (r *routeRegistry) GetNetworkMap(_ context.Context, _ string) (*types.Netwo
 // explicitly. `projectRouteOffers` already skips a disabled route entirely,
 // matching production.
 type routeOfferRequest struct {
-	RouteID       string `json:"route_id"`
-	Prefix        string `json:"prefix"`
+	RouteID    string `json:"route_id"`
+	Prefix     string `json:"prefix"`
 	AvenHandle string `json:"aven_handle"`
-	Metric        int    `json:"metric"`
-	Masquerade    bool   `json:"masquerade"`
-	KeepRoute     bool   `json:"keep_route"`
-	Enabled       *bool  `json:"enabled"`
+	Metric     int    `json:"metric"`
+	Masquerade bool   `json:"masquerade"`
+	KeepRoute  bool   `json:"keep_route"`
+	Enabled    *bool  `json:"enabled"`
 }
 
 // upsert creates or replaces a route offer by ID — `POST /routes`'s "create"

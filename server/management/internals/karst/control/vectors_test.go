@@ -186,10 +186,10 @@ type versionPeer struct {
 	NodeID       string `json:"node_id"`
 	KemPublicKey string `json:"kem_public_key"`
 
-	DNSName    string   `json:"dns_name"`
-	Endpoint   string   `json:"endpoint"`
-	HomeEstavelle  string   `json:"home_estavelle"`
-	AllowedIPs []string `json:"allowed_ips"`
+	DNSName       string   `json:"dns_name"`
+	Endpoint      string   `json:"endpoint"`
+	HomeEstavelle string   `json:"home_estavelle"`
+	AllowedIPs    []string `json:"allowed_ips"`
 	// Candidates is this peer's own self-reported AVEN candidate list —
 	// karst_control.proto's KarstNetmapPeer.candidates, added 2026-10-31
 	// (spec/aven-v1.md §7.3.1). Omitted (not merely empty) so a pre-change
@@ -224,10 +224,10 @@ type digestCase struct {
 	NodeID       string `json:"node_id"`
 	KemPublicKey string `json:"kem_public_key"`
 
-	DNSName    string   `json:"dns_name"`
-	Endpoint   string   `json:"endpoint"`
-	HomeEstavelle  string   `json:"home_estavelle"`
-	AllowedIPs []string `json:"allowed_ips"`
+	DNSName       string   `json:"dns_name"`
+	Endpoint      string   `json:"endpoint"`
+	HomeEstavelle string   `json:"home_estavelle"`
+	AllowedIPs    []string `json:"allowed_ips"`
 	// See versionPeer.Candidates' own doc comment — same field, same
 	// addition date, same omitempty discipline.
 	Candidates []string `json:"candidates,omitempty"`
@@ -299,7 +299,7 @@ func relayFor(address, serverName string, seed byte, region string) *proto.Karst
 	return &proto.KarstEstavelle{
 		Address:       address,
 		TlsServerName: serverName,
-		EstavelleId:       estavellereg.EstavelleID(key),
+		EstavelleId:   estavellereg.EstavelleID(key),
 		IdentityKey:   key,
 		Region:        region,
 	}
@@ -498,23 +498,23 @@ func TestVectors(t *testing.T) {
 			NodeId:       []byte(tc.nodeID),
 			KemPublicKey: pattern(1568, 0xD0),
 
-			DnsName:    tc.dnsName,
-			Endpoint:   tc.endpoint,
-			HomeEstavelle:  tc.home,
-			AllowedIps: tc.ips,
-			Candidates: tc.candidates,
+			DnsName:       tc.dnsName,
+			Endpoint:      tc.endpoint,
+			HomeEstavelle: tc.home,
+			AllowedIps:    tc.ips,
+			Candidates:    tc.candidates,
 		}
 		got.Cases.PeerDigest = append(got.Cases.PeerDigest, digestCase{
 			Epoch:        tc.epoch,
 			NodeID:       hex.EncodeToString(p.GetNodeId()),
 			KemPublicKey: hex.EncodeToString(p.GetKemPublicKey()),
 
-			DNSName:    tc.dnsName,
-			Endpoint:   tc.endpoint,
-			HomeEstavelle:  hex.EncodeToString(tc.home),
-			AllowedIPs: tc.ips,
-			Candidates: tc.candidates,
-			Digest:     control.PeerDigest(p, tc.epoch),
+			DNSName:       tc.dnsName,
+			Endpoint:      tc.endpoint,
+			HomeEstavelle: hex.EncodeToString(tc.home),
+			AllowedIPs:    tc.ips,
+			Candidates:    tc.candidates,
+			Digest:        control.PeerDigest(p, tc.epoch),
 		})
 	}
 
@@ -952,11 +952,11 @@ func TestVectors(t *testing.T) {
 				NodeID:       hex.EncodeToString(p.GetNodeId()),
 				KemPublicKey: hex.EncodeToString(p.GetKemPublicKey()),
 
-				DNSName:    p.GetDnsName(),
-				Endpoint:   p.GetEndpoint(),
-				HomeEstavelle:  hex.EncodeToString(p.GetHomeEstavelle()),
-				AllowedIPs: p.GetAllowedIps(),
-				Candidates: p.GetCandidates(),
+				DNSName:       p.GetDnsName(),
+				Endpoint:      p.GetEndpoint(),
+				HomeEstavelle: hex.EncodeToString(p.GetHomeEstavelle()),
+				AllowedIPs:    p.GetAllowedIps(),
+				Candidates:    p.GetCandidates(),
 			}
 			if i < len(tc.psks) {
 				vp.PSK = tc.psks[i]

@@ -123,7 +123,7 @@ class InstallationTests(unittest.TestCase):
                 self.config = original
 
     def test_registry_mismatch_and_changed_handoff_require_explicit_migration(self):
-        (self.state / "estavelles.json").write_text(json.dumps({"relays": [{**self.settings, "address": "203.0.113.8:443", "identity_key": self.public}]}))
+        (self.state / "estavelles.json").write_text(json.dumps({"estavelles": [{**self.settings, "address": "203.0.113.8:443", "identity_key": self.public}]}))
         with self.assertRaises(installer.Invalid):
             self.apply()
         self.assertFalse(any("stop" in call for call in self.calls))

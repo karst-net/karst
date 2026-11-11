@@ -40,7 +40,7 @@ var (
 // ManagedProducer is explicitly operator-authorized. The customer relay
 // registry is deliberately not consulted for billing authority.
 type ManagedProducer struct {
-	EstavelleID      string `gorm:"primaryKey;size:64"`
+	EstavelleID  string `gorm:"primaryKey;size:64"`
 	DeploymentID string `gorm:"size:128;not null;index"`
 	IdentityKey  string `gorm:"size:4096;not null"`
 	Enabled      bool   `gorm:"not null;index"`
@@ -53,7 +53,7 @@ func (ManagedProducer) TableName() string { return "karst_usage_managed_producer
 // historical deployment mapping reference. It never grants authority over an
 // arbitrary account or aquifer supplied by the relay.
 type AllowedMapping struct {
-	EstavelleID      string `gorm:"primaryKey;size:64"`
+	EstavelleID  string `gorm:"primaryKey;size:64"`
 	DeploymentID string `gorm:"primaryKey;size:128"`
 	Version      string `gorm:"primaryKey;size:64"`
 	Enabled      bool   `gorm:"not null;index"`
@@ -69,7 +69,7 @@ func (AllowedMapping) TableName() string { return "karst_usage_producer_mappings
 // every managed relay is enrolled.
 type producerMappingInterval struct {
 	ID           uint64 `gorm:"primaryKey"`
-	EstavelleID      string `gorm:"size:64;not null;uniqueIndex:idx_relay_usage_authorization_period"`
+	EstavelleID  string `gorm:"size:64;not null;uniqueIndex:idx_relay_usage_authorization_period"`
 	DeploymentID string `gorm:"size:128;not null;uniqueIndex:idx_relay_usage_authorization_period"`
 	Version      string `gorm:"size:64;not null;uniqueIndex:idx_relay_usage_authorization_period"`
 	AccountID    string `gorm:"size:128;not null;index"`
@@ -88,7 +88,7 @@ func (authorizationHistory) TableName() string { return "karst_usage_authorizati
 
 type receivedBatch struct {
 	DeploymentID string    `gorm:"primaryKey;size:128"`
-	EstavelleID      string    `gorm:"primaryKey;size:64"`
+	EstavelleID  string    `gorm:"primaryKey;size:64"`
 	Epoch        string    `gorm:"primaryKey;size:32"`
 	Sequence     string    `gorm:"primaryKey;size:20"`
 	Digest       []byte    `gorm:"size:32;not null"`
@@ -102,7 +102,7 @@ func (receivedBatch) TableName() string { return "karst_usage_estavelle_batches"
 
 type receivedTotal struct {
 	DeploymentID string `gorm:"primaryKey;size:128"`
-	EstavelleID      string `gorm:"primaryKey;size:64"`
+	EstavelleID  string `gorm:"primaryKey;size:64"`
 	Epoch        string `gorm:"primaryKey;size:32"`
 	Sequence     string `gorm:"primaryKey;size:20"`
 	MappingKey   string `gorm:"primaryKey;size:64"`
@@ -116,7 +116,7 @@ func (receivedTotal) TableName() string { return "karst_usage_estavelle_batch_to
 
 type receivedCoverage struct {
 	DeploymentID string `gorm:"primaryKey;size:128"`
-	EstavelleID      string `gorm:"primaryKey;size:64"`
+	EstavelleID  string `gorm:"primaryKey;size:64"`
 	Epoch        string `gorm:"primaryKey;size:32"`
 	Sequence     string `gorm:"primaryKey;size:20"`
 	AccountID    string `gorm:"primaryKey;size:128"`
@@ -128,9 +128,9 @@ type receivedCoverage struct {
 func (receivedCoverage) TableName() string { return "karst_usage_estavelle_batch_coverage" }
 
 type uploadNonce struct {
-	EstavelleID   string    `gorm:"primaryKey;size:64"`
-	Nonce     string    `gorm:"primaryKey;size:64"`
-	ExpiresAt time.Time `gorm:"not null;index"`
+	EstavelleID string    `gorm:"primaryKey;size:64"`
+	Nonce       string    `gorm:"primaryKey;size:64"`
+	ExpiresAt   time.Time `gorm:"not null;index"`
 }
 
 func (uploadNonce) TableName() string { return "karst_usage_upload_nonces" }

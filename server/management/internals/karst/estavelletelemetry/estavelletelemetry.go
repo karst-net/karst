@@ -76,7 +76,7 @@ type handler struct {
 // ADR-0021 for why the signed message is a separate, fixed binary layout
 // rather than these JSON bytes.
 type report struct {
-	EstavelleID       string `json:"estavelle_id"`
+	EstavelleID   string `json:"estavelle_id"`
 	Timestamp     int64  `json:"timestamp"`
 	LocalClients  int    `json:"local_clients"`
 	MeshPeers     int    `json:"mesh_peers"`

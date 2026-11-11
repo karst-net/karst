@@ -433,7 +433,7 @@ func TestVersionChangesWithContent(t *testing.T) {
 		f.handler.Estavelles = []*proto.KarstEstavelle{{
 			Address:       "127.0.0.1:443",
 			TlsServerName: "relay.test",
-			EstavelleId:       bytes.Repeat([]byte{0x91}, 32),
+			EstavelleId:   bytes.Repeat([]byte{0x91}, 32),
 			IdentityKey:   bytes.Repeat([]byte{0x92}, 2592),
 			Region:        "test",
 		}}
@@ -1584,7 +1584,7 @@ func TestNetmapCarriesRelaysFromTheStore(t *testing.T) {
 	f.handler.Estavelles = []*proto.KarstEstavelle{{
 		Address:       "127.0.0.1:443",
 		TlsServerName: "relay.static.example.com",
-		EstavelleId:       bytes.Repeat([]byte{0x91}, 32),
+		EstavelleId:   bytes.Repeat([]byte{0x91}, 32),
 		IdentityKey:   bytes.Repeat([]byte{0x92}, estavellereg.IdentityKeySize),
 		Region:        "us",
 	}}
@@ -1631,7 +1631,7 @@ func TestNetmapFallsBackToStaticRelaysWhenStoreIsEmpty(t *testing.T) {
 	f.handler.Estavelles = []*proto.KarstEstavelle{{
 		Address:       "127.0.0.1:443",
 		TlsServerName: "relay.static.example.com",
-		EstavelleId:       bytes.Repeat([]byte{0x91}, 32),
+		EstavelleId:   bytes.Repeat([]byte{0x91}, 32),
 		IdentityKey:   bytes.Repeat([]byte{0x92}, estavellereg.IdentityKeySize),
 		Region:        "us",
 	}}

@@ -56,7 +56,7 @@ type Estimate struct {
 	ScheduleVersion string
 	Currency        string
 	DeviceExact     *ExactAmount
-	EstavelleExact      *ExactAmount
+	EstavelleExact  *ExactAmount
 	TotalExact      *ExactAmount
 	UsageComplete   bool
 	Incomplete      []string

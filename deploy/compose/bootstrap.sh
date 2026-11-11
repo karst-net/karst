@@ -124,7 +124,7 @@ if [ ! -f "$state/estavelles.json" ]; then
     fi
     cat > "$state/estavelles.json" <<EOF
 {
-  "relays": [
+  "estavelles": [
     {
       "address": "$estavelle_address",
       "tls_server_name": "$server_name",
@@ -141,13 +141,13 @@ fi
 
 # Bind the admission writer to the actual local estavelle identity. The admin
 # UI can then configure group access without editing deployment configuration.
-relay_id=$(docker run --rm -v "$state:/var/lib/karst" "$estavelle_image" \
-    pubkey --config /var/lib/karst/estavelle.toml | awk '/^relay_id/ { print $2 }')
-if [ -z "$relay_id" ]; then
+estavelle_id=$(docker run --rm -v "$state:/var/lib/karst" "$estavelle_image" \
+    pubkey --config /var/lib/karst/estavelle.toml | awk '/^estavelle_id/ { print $2 }')
+if [ -z "$estavelle_id" ]; then
     echo "bootstrap: estavelle did not print its public identity" >&2
     exit 1
 fi
-printf '%s\n' "$relay_id" > "$state/estavelle-roster.id"
+printf '%s\n' "$estavelle_id" > "$state/estavelle-roster.id"
 
 
 # ---------------------------------------------------------------------------
