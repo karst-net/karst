@@ -311,11 +311,11 @@ async fn a_node_registers_and_receives_a_routable_netmap() {
     assert_eq!(config.peers.len(), 2);
     assert_eq!(config.psk_epoch, 7, "the epoch comes from the server");
     assert_eq!(
-        config.relays.len(),
+        config.estavelles.len(),
         1,
         "the relay registry was not retained"
     );
-    let relay = config.relays.first().expect("the fixture relay");
+    let relay = config.estavelles.first().expect("the fixture relay");
     assert_eq!(relay.address, "127.0.0.1:443");
     assert_eq!(relay.region, "test");
     assert_eq!(relay.identity_key.len(), 2592);

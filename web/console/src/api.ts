@@ -107,7 +107,7 @@ export type DomainDelegation = { id: string; domain_id: string; domain_path: str
 
 export type AccountUser = { id: string; name: string; email: string; role: string; status: string; is_current?: boolean; is_blocked: boolean; auto_groups?: string[]; issued?: string; last_login?: string | null };
 
-export type ManagedEstavelleService = EstavelleService & { access_managed?: boolean; allowed_groups?: string[]; gateway_handle?: string; exit_ipv4?: boolean; exit_ipv6?: boolean; metric?: number; revision?: number };
+export type ManagedEstavelleService = EstavelleService & { access_managed?: boolean; allowed_groups?: string[]; aven_handle?: string; exit_ipv4?: boolean; exit_ipv6?: boolean; metric?: number; revision?: number };
 /** The writable fields of an EstavelleAllocation — everything else on that
  * type (state, revision, failed_step, …) is server-derived and never
  * accepted from callers (karst-openapi.yml's own `readonly` markings). */
@@ -116,7 +116,7 @@ export type EstavelleAllocationDraft = { name: string; infra_connection_id: stri
 /** The writable fields of a RolloutComponent/RolloutPlan — status, observed_digest,
  * compatibility, etc. are server-derived (karst-openapi.yml's own `readOnly`
  * markings) and never accepted from callers. ADR-0066/#484. */
-export type RolloutComponentDraft = Pick<RolloutComponent, "name" | "sequence" | "current_digest" | "target_digest" | "verification_ref" | "requires_relay_lifecycle_schema" | "requires_gateway_ingress_schema">;
+export type RolloutComponentDraft = Pick<RolloutComponent, "name" | "sequence" | "current_digest" | "target_digest" | "verification_ref" | "requires_estavelle_lifecycle_schema" | "requires_aven_ingress_schema">;
 export type RolloutPlanDraft = { target_release: string; maintenance_window_note?: string; components: RolloutComponentDraft[] };
 export type Group = { id: string; name: string; peers_count: number; resources_count: number; issued?: string; peers?: Array<{ id: string; name: string }>; resources?: Array<{ id: string; type: string }> };
 
@@ -199,7 +199,7 @@ export const api = {
   // ── machines ───────────────────────────────────────────────────────────────
   nodes: (cursor?: string) => request<NodePage>(`/nodes?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
   node: (handle: string) => request<NodePage["items"][number]>(`/nodes/${encodeURIComponent(handle)}`),
-  nodePaths: (handle: string) => request<{ observed_at: string; paths: Array<{ peer_handle: string; kind: string; endpoint: string | null; relay_id: string | null; since: string | null; observed_at: string; tx_bytes: number; rx_bytes: number }> }>(`/nodes/${encodeURIComponent(handle)}/paths`),
+  nodePaths: (handle: string) => request<{ observed_at: string; paths: Array<{ peer_handle: string; kind: string; endpoint: string | null; estavelle_id: string | null; since: string | null; observed_at: string; tx_bytes: number; rx_bytes: number }> }>(`/nodes/${encodeURIComponent(handle)}/paths`),
   // ADR-0055: self-reported device evidence only, no pass/fail verdict.
   nodeCompliance: (handle: string) => request<NodeCompliance>(`/nodes/${encodeURIComponent(handle)}/compliance`),
   // Only name and domain_id (ADR-0032). The contract rejects a PATCH
@@ -267,7 +267,7 @@ export const api = {
   setEstavelleServiceModes: (id: string, ponorEnabled: boolean) => request<EstavelleService>(`/estavelle-services/${encodeURIComponent(id)}/modes`, { method: "PUT", body: body({ ponor_enabled: ponorEnabled, acknowledge_connectivity_change: true }) }),
   estavelleServices: () => request<Array<EstavelleServiceView & ManagedEstavelleService>>("/estavelle-services"),
   addEstavelleService: (service: ManagedEstavelleService) => request<EstavelleService>("/estavelle-services", { method: "POST", body: body(service) }),
-  estavelleAdmissionTargets: () => request<Array<{ relay_id: string; refreshed_at: string }>>("/estavelle-services/admission-targets"),
+  estavelleAdmissionTargets: () => request<Array<{ estavelle_id: string; refreshed_at: string }>>("/estavelle-services/admission-targets"),
   setEstavelleAccess: (service: ManagedEstavelleService) => request<ManagedEstavelleService>(`/estavelle-services/${encodeURIComponent(service.id)}/access`, { method: "PUT", body: body({ ...service, acknowledge_access_change: true }) }),
   removeEstavelleService: (id: string) => request<void>(`/estavelle-services/${encodeURIComponent(id)}`, { method: "DELETE" }),
   estavelles: () => request<Estavelle[]>("/estavelles"),

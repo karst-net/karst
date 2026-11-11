@@ -291,7 +291,7 @@ async fn handshake_quic(h: &Harness, conn: &mut QConn, node: &Identity) {
     let mut client = ClientHandshake::new(
         Role::Client,
         node_id(node.public_key()),
-        h.relay.relay_id(),
+        h.relay.estavelle_id(),
         h.relay.public_key().to_vec(),
         [0x5a; 32],
     );
@@ -416,7 +416,7 @@ async fn quic_and_tcp_clients_interoperate() {
     let mut client = ClientHandshake::new(
         Role::Client,
         node_id(bob.public_key()),
-        h.relay.relay_id(),
+        h.relay.estavelle_id(),
         h.relay.public_key().to_vec(),
         [0x5b; 32],
     );
@@ -484,7 +484,7 @@ async fn an_unrostered_node_over_quic_is_closed_without_a_reason() {
     let mut client = ClientHandshake::new(
         Role::Client,
         node_id(stranger.public_key()),
-        h.relay.relay_id(),
+        h.relay.estavelle_id(),
         h.relay.public_key().to_vec(),
         [0x5c; 32],
     );
@@ -587,7 +587,7 @@ async fn two_relays_mesh_over_quic_and_a_packet_crosses() {
         let tls = tls::client_config(&ca_path).expect("client tls");
         let quic_tls = karst_estavelle::quic::client_config(&tls).expect("client quic tls");
         let dialer =
-            karst_estavelle::mesh::Dialer::new(me_h.relay.relay_id(), "default".to_owned());
+            karst_estavelle::mesh::Dialer::new(me_h.relay.estavelle_id(), "default".to_owned());
         tokio::spawn(karst_estavelle::server::mesh_loop(
             Arc::clone(ctx),
             tls,

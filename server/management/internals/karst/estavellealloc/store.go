@@ -79,7 +79,7 @@ type Allocation struct {
 	Name              string    `gorm:"not null" json:"name"`
 	InfraConnectionID string    `gorm:"not null" json:"infra_connection_id"`
 	Location          string    `gorm:"not null" json:"location"`
-	RelayTransport    bool      `json:"relay_transport,omitempty"`
+	EstavelleTransport    bool      `json:"estavelle_transport,omitempty"`
 	EgressV4          bool      `json:"egress_v4,omitempty"`
 	EgressV6          bool      `json:"egress_v6,omitempty"`
 	PermittedGroups   []string  `gorm:"serializer:json" json:"permitted_groups,omitempty"`
@@ -87,7 +87,7 @@ type Allocation struct {
 	FailedStep        string    `json:"failed_step,omitempty"`
 	FailureReason     string    `json:"failure_reason,omitempty"`
 	InstanceID        string    `json:"instance_id,omitempty"`
-	RelayID           string    `json:"relay_id,omitempty"`
+	EstavelleID           string    `json:"estavelle_id,omitempty"`
 	Revision          uint64    `gorm:"not null;default:0" json:"revision"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
@@ -192,12 +192,12 @@ func validateDraft(draft Allocation) error {
 	if strings.TrimSpace(draft.Location) == "" {
 		return fmt.Errorf("%w: location is required", ErrInvalid)
 	}
-	if !draft.RelayTransport {
+	if !draft.EstavelleTransport {
 		return fmt.Errorf("%w: estavelle transport capability is required", ErrInvalid)
 	}
 	// ADR-0063's own field list has no Gateway-identity picker, but
 	// estavelleservice.configureAccess -- the exact function "granting" must
-	// reuse -- hard-requires a GatewayHandle bound to an already-enrolled
+	// reuse -- hard-requires a AvenHandle bound to an already-enrolled
 	// Linux peer whenever egress is requested, with no path around that.
 	// Rather than grant with no handle and let that validation fail the
 	// allocation every time, egress stays rejected up front until a later
@@ -276,7 +276,7 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 		Name:              draft.Name,
 		InfraConnectionID: draft.InfraConnectionID,
 		Location:          draft.Location,
-		RelayTransport:    draft.RelayTransport,
+		EstavelleTransport:    draft.EstavelleTransport,
 		EgressV4:          draft.EgressV4,
 		EgressV6:          draft.EgressV6,
 		PermittedGroups:   draft.PermittedGroups,
@@ -381,11 +381,11 @@ func (s *Store) List(ctx context.Context) ([]Allocation, error) {
 // match the row's current values, not just one, so a transition can never
 // silently skip a step a concurrent writer (the console's deprovision
 // request, or another tick of the same reconciliation loop after a
-// timeout) already advanced past. instanceID/relayID are recorded when
+// timeout) already advanced past. instanceID/estavelleID are recorded when
 // non-empty and otherwise left unchanged; transitioning to StateFailed
 // records expectedState as FailedStep and reason as FailureReason, and any
 // other transition clears both.
-func (s *Store) Transition(ctx context.Context, id string, expectedRevision uint64, expectedState, to, reason, instanceID, relayID string) (*Allocation, error) {
+func (s *Store) Transition(ctx context.Context, id string, expectedRevision uint64, expectedState, to, reason, instanceID, estavelleID string) (*Allocation, error) {
 	account, err := accountFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -416,8 +416,8 @@ func (s *Store) Transition(ctx context.Context, id string, expectedRevision uint
 		if instanceID != "" {
 			updates["instance_id"] = instanceID
 		}
-		if relayID != "" {
-			updates["relay_id"] = relayID
+		if estavelleID != "" {
+			updates["estavelle_id"] = estavelleID
 		}
 		result := tx.Model(&Allocation{}).Where("account_id = ? AND id = ? AND revision = ?", account, id, expectedRevision).Updates(updates)
 		if result.Error != nil {
@@ -442,8 +442,8 @@ func (s *Store) Transition(ctx context.Context, id string, expectedRevision uint
 		if instanceID != "" {
 			current.InstanceID = instanceID
 		}
-		if relayID != "" {
-			current.RelayID = relayID
+		if estavelleID != "" {
+			current.EstavelleID = estavelleID
 		}
 		return nil
 	})

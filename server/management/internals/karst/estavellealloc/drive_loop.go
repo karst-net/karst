@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-// The in-process reconciliation loop for ADR-0063's admin-triggered relay
+// The in-process reconciliation loop for ADR-0063's admin-triggered estavelle
 // allocation -- replaces bins/karst-scaler/src/allocate_loop.rs's own
 // poll loop (an external Rust binary, now removed) with a goroutine
 // inside server/management itself. See ADR-0045's 2026-11-04 addendum and
@@ -33,36 +33,36 @@ import (
 )
 
 // enrollMinter is MintEstavelleEnrollKey's own narrow shape -- the same
-// method api/nodes.go's relay-enroll-tokens handler already calls
+// method api/nodes.go's estavelle-enroll-tokens handler already calls
 // through an identically narrow inline interface, satisfied by
 // *server.DefaultAccountManager. Declared here, not imported from
 // package server, so this package never depends on it and this loop
 // never needs an HTTP/PAT round-trip to mint a token the Rust loop used
-// to fetch over POST /relays/enroll-tokens.
+// to fetch over POST /estavelles/enroll-tokens.
 type enrollMinter interface {
 	MintEstavelleEnrollKey(ctx context.Context, accountID, poolID string, expiresIn time.Duration) (string, error)
 }
 
-// relayFinder is estavellereg.Store's own FindByTLSServerName -- the exact
-// method api/relay_allocations.go's handleRelayAllocationGrant already
-// calls through its own relayAllocationRegistry interface, narrowed
+// estavelleFinder is estavellereg.Store's own FindByTLSServerName -- the exact
+// method api/estavelle_allocations.go's handleEstavelleAllocationGrant already
+// calls through its own estavelleAllocationRegistry interface, narrowed
 // identically here.
-type relayFinder interface {
+type estavelleFinder interface {
 	FindByTLSServerName(ctx context.Context, tlsServerName string) (*estavellereg.StoredEstavelle, error)
 }
 
-// relayDeenroller is estavellereg.Store's own DeleteByTLSServerName -- issue
+// estavelleDeenroller is estavellereg.Store's own DeleteByTLSServerName -- issue
 // #329's driver-teardown call, now made directly instead of through
 // enroll::deenroll's HTTP round-trip.
-type relayDeenroller interface {
+type estavelleDeenroller interface {
 	DeleteByTLSServerName(ctx context.Context, tlsServerName string) error
 }
 
-// relayGrantStore is estavelleservice.Store's own Create/Delete -- the exact
+// estavelleGrantStore is estavelleservice.Store's own Create/Delete -- the exact
 // transactional path ADR-0063 requires granting/revoking go through, not
-// a second one. Narrowed identically to api/relay_allocations.go's own
-// relayAllocationGrantStore.
-type relayGrantStore interface {
+// a second one. Narrowed identically to api/estavelle_allocations.go's own
+// estavelleAllocationGrantStore.
+type estavelleGrantStore interface {
 	Create(context.Context, estavelleservice.Service) (*estavelleservice.Service, error)
 	Delete(context.Context, string) error
 }
@@ -77,8 +77,8 @@ type infraConnections interface {
 
 // enrollTokenExpiry bounds how long the token minted for a newly created
 // instance stays usable -- the boot window between Create returning and
-// that instance's own `karst-relay enroll` redeeming it, not an
-// operator-facing window. Mirrors server.defaultRelayEnrollKeyExpiry's own
+// that instance's own `karst-estavelle enroll` redeeming it, not an
+// operator-facing window. Mirrors server.defaultEstavelleEnrollKeyExpiry's own
 // value; that constant is unexported, so this package keeps its own copy
 // rather than reaching into package server for it.
 const enrollTokenExpiry = 10 * time.Minute
@@ -91,12 +91,12 @@ const enrollTokenExpiry = 10 * time.Minute
 type AllocateDeps struct {
 	InfraConnections infraConnections
 	Enroll           enrollMinter
-	Relays           relayFinder
-	Deenroll         relayDeenroller
-	Grants           relayGrantStore
+	Estavelles           estavelleFinder
+	Deenroll         estavelleDeenroller
+	Grants           estavelleGrantStore
 	// ControlAPIBase is the management server's own externally-reachable
 	// API base URL, embedded in every created instance's enroll bundle so
-	// karst-relay enroll knows where to call back -- the Rust loop's own
+	// karst-estavelle enroll knows where to call back -- the Rust loop's own
 	// AllocateConfig.control_api_base, now an operator-configured value
 	// (KARST_RELAY_ALLOCATE_CONTROL_API_BASE) threaded down from
 	// cmd/karst-control/main.go the same way KARST_SCALER_ADVISOR_URL
@@ -106,10 +106,10 @@ type AllocateDeps struct {
 	ControlAPIBase string
 }
 
-// RunAllocateWorker drives every pending ADR-0063 relay allocation,
+// RunAllocateWorker drives every pending ADR-0063 estavelle allocation,
 // across every account, forward by exactly one step per tick. Started
 // once, unconditionally, at boot (internals/karst/bootstrap) -- no
-// feature flag, the same always-on posture control/relay/console already
+// feature flag, the same always-on posture control/estavelle/console already
 // have in the Nomad jobspec, replacing the opt-in `scaler_allocate_enabled`
 // var this loop's external predecessor needed.
 func RunAllocateWorker(ctx context.Context, store *Store, deps AllocateDeps, interval time.Duration, onError func(error)) {
@@ -142,13 +142,13 @@ func RunAllocateWorker(ctx context.Context, store *Store, deps AllocateDeps, int
 // scopedContexts carries one allocation's account scoped four different
 // ways -- estavellealloc's own WithAccount plus infraconnections'/estavellereg'/
 // estavelleservice's, each package's own unexported context key, the same
-// fan-out api/relay_allocations.go's own `handle` func already builds
+// fan-out api/estavelle_allocations.go's own `handle` func already builds
 // per request (allocCtx/registryCtx/serviceCtx), just once per allocation
 // per tick instead of once per HTTP call.
 type scopedContexts struct {
 	alloc context.Context
 	infra context.Context
-	relay context.Context
+	estavelle context.Context
 	grant context.Context
 }
 
@@ -161,11 +161,11 @@ func allocateTick(ctx context.Context, store *Store, deps AllocateDeps) error {
 		scoped := scopedContexts{
 			alloc: WithAccount(ctx, allocation.AccountID),
 			infra: infraconnections.WithAccount(ctx, allocation.AccountID),
-			relay: estavellereg.WithAccount(ctx, allocation.AccountID),
-			grant: estavelleservice.WithAccount(estavelleservice.WithActor(ctx, "relay-allocation"), allocation.AccountID),
+			estavelle: estavellereg.WithAccount(ctx, allocation.AccountID),
+			grant: estavelleservice.WithAccount(estavelleservice.WithActor(ctx, "estavelle-allocation"), allocation.AccountID),
 		}
 		if err := driveOne(scoped, store, deps, allocation); err != nil {
-			log.WithError(err).WithField("allocation_id", allocation.ID).Error("karst: relay allocation: drive step failed")
+			log.WithError(err).WithField("allocation_id", allocation.ID).Error("karst: estavelle allocation: drive step failed")
 		}
 	}
 	return nil
@@ -217,7 +217,7 @@ func provisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocati
 }
 
 // grantStep is allocate_loop.rs::grant plus the server-side half
-// handleRelayAllocationGrant already performed in-process, now one
+// handleEstavelleAllocationGrant already performed in-process, now one
 // function instead of an HTTP round trip between them. Reached from both
 // StateProvisioning (first attempt) and StateGranting (a resumed one
 // after this loop itself restarted) -- the Driver's own TLSServerName is
@@ -240,7 +240,7 @@ func grantStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocation A
 		// tick.
 		return nil
 	}
-	relay, err := deps.Relays.FindByTLSServerName(ctx.relay, name)
+	estavelle, err := deps.Estavelles.FindByTLSServerName(ctx.estavelle, name)
 	if err != nil {
 		if errors.Is(err, estavellereg.ErrNotFound) {
 			return nil // not registered yet -- not a failure, retry next tick
@@ -257,7 +257,7 @@ func grantStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocation A
 	}
 	service := estavelleservice.Service{
 		ID:            current.ID,
-		PonorID:       relay.ID,
+		PonorID:       estavelle.ID,
 		AccessManaged: true,
 		AllowedGroups: current.PermittedGroups,
 		ExitIPv4:      current.EgressV4,
@@ -265,17 +265,17 @@ func grantStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocation A
 	}
 	// ErrExists means a previous attempt's Create already landed and only
 	// the Transition below crashed or timed out -- resuming forward is
-	// correct, not a real failure, same as handleRelayAllocationGrant.
+	// correct, not a real failure, same as handleEstavelleAllocationGrant.
 	if _, err := deps.Grants.Create(ctx.grant, service); err != nil && !errors.Is(err, estavelleservice.ErrExists) {
 		return failAllocation(ctx.alloc, store, current, StateGranting, err)
 	}
-	_, err = store.Transition(ctx.alloc, current.ID, current.Revision, StateGranting, StateReady, "", "", relay.ID)
+	_, err = store.Transition(ctx.alloc, current.ID, current.Revision, StateGranting, StateReady, "", "", estavelle.ID)
 	return err
 }
 
 // revokeStep withdraws the grant estavelleservice.Store holds, then moves the
 // allocation into deprovisioning -- ADR-0063's reversed teardown order's
-// first half, the same call handleRelayAllocationRevoke already made
+// first half, the same call handleEstavelleAllocationRevoke already made
 // in-process.
 func revokeStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocation Allocation) error {
 	if err := deps.Grants.Delete(ctx.grant, allocation.ID); err != nil && !errors.Is(err, estavelleservice.ErrNotFound) {
@@ -309,7 +309,7 @@ func deprovisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, alloca
 		return failAllocation(ctx.alloc, store, allocation, StateDeprovisioning, err)
 	}
 	if tlsServerName != "" {
-		if err := deps.Deenroll.DeleteByTLSServerName(ctx.relay, tlsServerName); err != nil && !errors.Is(err, estavellereg.ErrNotFound) {
+		if err := deps.Deenroll.DeleteByTLSServerName(ctx.estavelle, tlsServerName); err != nil && !errors.Is(err, estavellereg.ErrNotFound) {
 			return failAllocation(ctx.alloc, store, allocation, StateDeprovisioning, err)
 		}
 	}
@@ -324,7 +324,7 @@ func deprovisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, alloca
 func failAllocation(ctx context.Context, store *Store, allocation Allocation, from string, cause error) error {
 	if _, err := store.Transition(ctx, allocation.ID, allocation.Revision, from, StateFailed, cause.Error(), "", ""); err != nil {
 		log.WithError(err).WithField("allocation_id", allocation.ID).
-			Error("karst: relay allocation: failed, and recording that failure also failed")
+			Error("karst: estavelle allocation: failed, and recording that failure also failed")
 	}
 	return cause
 }

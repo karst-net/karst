@@ -19,12 +19,12 @@ export function exitObservations(service: ManagedEstavelleService, inventory?: A
   const families = [service.exit_ipv4 && { family: "IPv4", kind: "default_ipv4", prefix: "0.0.0.0/0" }, service.exit_ipv6 && { family: "IPv6", kind: "default_ipv6", prefix: "::/0" }].filter(Boolean) as Array<{ family: string; kind: string; prefix: string }>;
   return families.map((family, index) => {
     const base = { family: family.family, state: "unknown" as const };
-    if (!service.gateway_handle) return { ...base, label: "Aven not bound" };
+    if (!service.aven_handle) return { ...base, label: "Aven not bound" };
     if (!inventory) return { ...base, label: "Aven readiness unavailable" };
     const routeID = `relay-exit-${service.id}-${index}`;
     if (inventory.unresolved_routes.includes(routeID)) return { ...base, label: "Exit route unresolved" };
     if (inventory.unsupported_routes.includes(routeID)) return { ...base, label: "Managed exit declaration unsupported" };
-    const matches = inventory.avens.filter(node => node.node_handle === service.gateway_handle);
+    const matches = inventory.avens.filter(node => node.node_handle === service.aven_handle);
     if (matches.length !== 1) return { ...base, label: "Bound Aven unavailable; refresh or upgrade control" };
     const gateway = matches[0];
     const offer = gateway.offers.find(offer => offer.id === routeID && offer.kind === family.kind && offer.prefix === family.prefix);

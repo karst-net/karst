@@ -118,7 +118,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str) -> Node {
         exit_node_state_file: None,
         aven_forwarding: true,
         node_id: handle(&[own; 2592]).into_bytes(),
-        relays: Vec::new(),
+        estavelles: Vec::new(),
         peers,
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
         zone_routes: karstd::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),

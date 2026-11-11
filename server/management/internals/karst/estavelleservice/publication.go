@@ -199,7 +199,7 @@ func project(tx *gorm.DB, account string, strict bool) ([]Service, []*proto.Kars
 			if err != nil {
 				return nil, nil, fmt.Errorf("%w: service %s Ponor configuration invalid", ErrInvalid, service.ID)
 			}
-			if base64.RawURLEncoding.EncodeToString(relay.RelayId) != service.PonorID {
+			if base64.RawURLEncoding.EncodeToString(relay.EstavelleId) != service.PonorID {
 				return nil, nil, fmt.Errorf("%w: service %s Ponor identity changed", ErrInvalid, service.ID)
 			}
 			relays = append(relays, relay)

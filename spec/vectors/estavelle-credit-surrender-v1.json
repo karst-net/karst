@@ -1,6 +1,6 @@
 {
   "grant_id": "0123456789abcdef0123456789abcdef",
-  "relay_id": "relay-123",
+  "estavelle_id": "relay-123",
   "deployment_id": "deployment-a",
   "mapping_version": "abababababababababababababababababababababababababababababababab",
   "generation": "01010101010101010101010101010101",

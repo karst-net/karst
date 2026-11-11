@@ -672,7 +672,7 @@ mod tests {
             pb::KarstRouteOffer {
                 route_id: id.to_owned(),
                 prefix: prefix.to_owned(),
-                gateway_id: if role == pb::KarstRouteRole::Aven {
+                aven_id: if role == pb::KarstRouteRole::Aven {
                     vec![7]
                 } else {
                     vec![8]
@@ -718,7 +718,7 @@ mod tests {
             ],
             psk_epoch: 1,
             node_id: vec![7],
-            relays: Vec::new(),
+            estavelles: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::<(Prefix, usize)>::new())
                 .expect("empty routes"),

@@ -50,7 +50,7 @@ var (
 	ErrUnknownNode  = errors.New("node: unknown handle")
 	ErrKeyMismatch  = errors.New("node: handle is registered to a different identity key")
 	ErrBadPublicKey = errors.New("node: malformed identity public key")
-	ErrBadHomeRelay = errors.New("node: malformed home relay id")
+	ErrBadHomeEstavelle = errors.New("node: malformed home estavelle id")
 )
 
 // Handle derives the stable string identifier for an ML-DSA-87 identity.
@@ -74,7 +74,7 @@ type Identity struct {
 	// The netmap distributes this key to peers.
 	KemPublicKey []byte
 
-	// HomeRelay is the Ponor relay this node reports holding a connection to
+	// HomeEstavelle is the Ponor relay this node reports holding a connection to
 	// (ponor-v1.md §9.1), or empty for a node holding none.
 	//
 	// Reported by the node rather than decided here: the choice is made from
@@ -83,17 +83,17 @@ type Identity struct {
 	// behind a symmetric NAT reachable at all — a peer that dials the wrong
 	// relay reaches nothing, so this being stale is not a slow path but a
 	// missing one.
-	HomeRelay            []byte
-	RelayLifecycleSchema uint32 `gorm:"not null;default:0"`
+	HomeEstavelle            []byte
+	EstavelleLifecycleSchema uint32 `gorm:"not null;default:0"`
 
-	// GatewayIngressSchema mirrors RelayLifecycleSchema above: a
+	// AvenIngressSchema mirrors EstavelleLifecycleSchema above: a
 	// netmap-time capability declaration, persisted so fleet-wide
 	// compatibility (e.g. a rollout plan's compatibility preview) can be
 	// queried without a live netmap round trip. See
-	// control/netmap.go's unconditional SetGatewayIngressSchema call.
-	GatewayIngressSchema uint32 `gorm:"not null;default:0"`
+	// control/netmap.go's unconditional SetAvenIngressSchema call.
+	AvenIngressSchema uint32 `gorm:"not null;default:0"`
 
-	// DnsZoneAffinitySchema mirrors GatewayIngressSchema exactly — ADR-0068's
+	// DnsZoneAffinitySchema mirrors AvenIngressSchema exactly — ADR-0068's
 	// netmap-time capability declaration for KarstRouteOffer.dns_zone/
 	// pinned_egress_ip, persisted for the same fleet-compatibility-preview
 	// reason. See control/netmap.go's unconditional
@@ -110,7 +110,7 @@ type Identity struct {
 	// JSON-encoded into a plain string column rather than through GORM's
 	// `serializer:json` tag (unlike `estavellealloc`/`estavelleservice`'s `[]string`
 	// fields): `SetCandidates`' own change-detection `WHERE` clause needs to
-	// compare it as ordinary text, the same way `SetHomeRelay`'s already
+	// compare it as ordinary text, the same way `SetHomeEstavelle`'s already
 	// does for `home_relay` — binding a raw `[]string` into that clause
 	// would have GORM try to expand it as a SQL `IN` list instead. Empty
 	// (the default, and the zero value a migration leaves on existing rows)
@@ -493,7 +493,7 @@ func (s *Store) Delete(handle string) error {
 	})
 }
 
-// SetHomeRelay records the relay a node reports holding a connection to.
+// SetHomeEstavelle records the estavelle a node reports holding a connection to.
 //
 // Writes only when the value actually moved. Every node reports this on every
 // netmap poll, so an unconditional write would be one row update per node per
@@ -502,20 +502,20 @@ func (s *Store) Delete(handle string) error {
 //
 // An unknown handle is not an error: the caller has already authenticated the
 // node, and a row that has not been registered yet has nothing to hold.
-func (s *Store) SetHomeRelay(handle string, relayID []byte) error {
-	if len(relayID) != 0 && len(relayID) != relayIDSize {
-		return fmt.Errorf("%w: %d bytes, want %d or 0", ErrBadHomeRelay, len(relayID), relayIDSize)
+func (s *Store) SetHomeEstavelle(handle string, estavelleID []byte) error {
+	if len(estavelleID) != 0 && len(estavelleID) != relayIDSize {
+		return fmt.Errorf("%w: %d bytes, want %d or 0", ErrBadHomeEstavelle, len(estavelleID), relayIDSize)
 	}
 	// Normalized to empty rather than nil so the comparison below has one
 	// representation of "no relay" to test against.
-	if relayID == nil {
-		relayID = []byte{}
+	if estavelleID == nil {
+		estavelleID = []byte{}
 	}
 	err := s.db.Model(&Identity{}).
-		Where("handle = ? AND (home_relay IS NULL OR home_relay <> ?)", handle, relayID).
-		Updates(map[string]any{"home_relay": relayID}).Error
+		Where("handle = ? AND (home_estavelle IS NULL OR home_estavelle <> ?)", handle, estavelleID).
+		Updates(map[string]any{"home_estavelle": estavelleID}).Error
 	if err != nil {
-		return fmt.Errorf("node: set home relay: %w", err)
+		return fmt.Errorf("node: set home estavelle: %w", err)
 	}
 	return nil
 }
@@ -524,14 +524,14 @@ func (s *Store) SetHomeRelay(handle string, relayID []byte) error {
 // see Identity.Candidates' own doc comment.
 //
 // Writes only when the value actually changed, the same reasoning
-// SetHomeRelay's own comment gives: every node reports this on every netmap
+// SetHomeEstavelle's own comment gives: every node reports this on every netmap
 // poll (`bins/karstd/src/run.rs`'s `refresh_netmap`, every tick, not only on
 // a real change — unlike `set_local_candidates`'s own client-side dedup,
 // which only governs when a `CallMeMaybe` goes out, not what this report
 // carries), so an unconditional write would be one row update per node per
 // refresh interval for no reason.
 //
-// An unknown handle is not an error, for the same reason SetHomeRelay's
+// An unknown handle is not an error, for the same reason SetHomeEstavelle's
 // is not: the caller has already authenticated the node, and a row that has
 // not been registered yet has nothing to hold.
 func (s *Store) SetCandidates(handle string, candidates []string) error {

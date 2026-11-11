@@ -59,11 +59,11 @@ fn handshake(
     relay_random: [u8; 32],
     client_random: [u8; 32],
 ) -> Result<Admitted, ProtoError> {
-    let mut server = EstavelleHandshake::new(relay.relay_id(), relay_random);
+    let mut server = EstavelleHandshake::new(relay.estavelle_id(), relay_random);
     let mut client = ClientHandshake::new(
         role,
         peer_id,
-        relay.relay_id(),
+        relay.estavelle_id(),
         relay.public_key().to_vec(),
         client_random,
     );
@@ -225,7 +225,7 @@ fn a_configured_mesh_peer_is_admitted_as_one() {
         &relay,
         &peer,
         Role::Mesh,
-        peer.relay_id(),
+        peer.estavelle_id(),
         &roster,
         [1; 32],
         [2; 32],
@@ -234,7 +234,7 @@ fn a_configured_mesh_peer_is_admitted_as_one() {
     assert_eq!(
         admitted,
         Admitted::Mesh {
-            relay_id: peer.relay_id()
+            estavelle_id: peer.estavelle_id()
         }
     );
 }
@@ -248,11 +248,11 @@ fn a_client_does_not_complete_against_the_wrong_relay() {
     let alice = identity(0x21);
     let roster = roster_for(&[(&alice, "acme")], &[]);
 
-    let mut server = EstavelleHandshake::new(impostor.relay_id(), [1; 32]);
+    let mut server = EstavelleHandshake::new(impostor.estavelle_id(), [1; 32]);
     let mut client = ClientHandshake::new(
         Role::Client,
         node_id(alice.public_key()),
-        real.relay_id(),
+        real.estavelle_id(),
         real.public_key().to_vec(),
         [2; 32],
     );
@@ -272,10 +272,10 @@ fn a_client_does_not_complete_against_the_wrong_relay() {
 
 #[test]
 fn a_rogue_relay_cannot_replay_a_clients_authentication() {
-    // The attack `spec/models/ponor-norelayid.pv` demonstrates when relay_id
+    // The attack `spec/models/ponor-norelayid.pv` demonstrates when estavelle_id
     // is unbound: the rogue copies the honest relay's relay_random into its
     // own hello, so the client's signature would be valid at the honest relay.
-    // Binding relay_id is what stops it, and this is that check against the
+    // Binding estavelle_id is what stops it, and this is that check against the
     // real signature scheme rather than the model's.
     let honest = identity(0x10);
     let rogue = identity(0x11);
@@ -283,11 +283,11 @@ fn a_rogue_relay_cannot_replay_a_clients_authentication() {
     let roster = roster_for(&[(&alice, "acme")], &[]);
 
     // The honest relay's hello, and so its relay_random.
-    let mut honest_server = EstavelleHandshake::new(honest.relay_id(), [7; 32]);
+    let mut honest_server = EstavelleHandshake::new(honest.estavelle_id(), [7; 32]);
     let honest_hello = honest_server.hello().to_vec();
     let (honest_hello, _) = decode(&honest_hello).expect("decodes").expect("complete");
-    let Frame::RelayHello { relay_random, .. } = honest_hello else {
-        panic!("expected RelayHello");
+    let Frame::EstavelleHello { relay_random, .. } = honest_hello else {
+        panic!("expected EstavelleHello");
     };
 
     // The rogue presents its own id with the honest relay's nonce. Alice
@@ -295,12 +295,12 @@ fn a_rogue_relay_cannot_replay_a_clients_authentication() {
     let mut alice_hs = ClientHandshake::new(
         Role::Client,
         node_id(alice.public_key()),
-        rogue.relay_id(),
+        rogue.estavelle_id(),
         rogue.public_key().to_vec(),
         [8; 32],
     );
-    let rogue_hello = Frame::RelayHello {
-        relay_id: rogue.relay_id(),
+    let rogue_hello = Frame::EstavelleHello {
+        estavelle_id: rogue.estavelle_id(),
         relay_random,
     };
     let auth_bytes = alice_hs
@@ -322,13 +322,13 @@ fn a_captured_client_auth_does_not_replay_onto_a_second_connection() {
     let alice = identity(0x21);
     let roster = roster_for(&[(&alice, "acme")], &[]);
 
-    let first = EstavelleHandshake::new(relay.relay_id(), [1; 32]);
+    let first = EstavelleHandshake::new(relay.estavelle_id(), [1; 32]);
     let hello = first.hello().to_vec();
     let (hello, _) = decode(&hello).expect("decodes").expect("complete");
     let mut client = ClientHandshake::new(
         Role::Client,
         node_id(alice.public_key()),
-        relay.relay_id(),
+        relay.estavelle_id(),
         relay.public_key().to_vec(),
         [2; 32],
     );
@@ -336,7 +336,7 @@ fn a_captured_client_auth_does_not_replay_onto_a_second_connection() {
     let (auth, _) = decode(&auth_bytes).expect("decodes").expect("complete");
 
     // Same relay, a new connection, so a fresh relay_random.
-    let mut second = EstavelleHandshake::new(relay.relay_id(), [99; 32]);
+    let mut second = EstavelleHandshake::new(relay.estavelle_id(), [99; 32]);
     assert_eq!(
         second.on_client_auth(&auth, &roster, &PonorVerifier, &relay),
         Err(ProtoError::Rejected)

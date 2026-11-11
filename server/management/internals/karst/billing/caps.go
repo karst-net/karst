@@ -69,7 +69,7 @@ type estavelleCreditGrantRow struct {
 	GrantID         string    `gorm:"primaryKey;size:32"`
 	AccountID       string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
 	PeriodStartUS   int64     `gorm:"not null;uniqueIndex:idx_credit_request"`
-	RelayID         string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
+	EstavelleID         string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
 	Generation      string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
 	RequestID       string    `gorm:"size:128;not null;uniqueIndex:idx_credit_request"`
 	MappingVersion  string    `gorm:"size:128;not null"`
@@ -92,7 +92,7 @@ func (estavelleCreditGrantRow) TableName() string { return "karst_billing_estave
 type estavelleUncappedLeaseRow struct {
 	AccountID      string `gorm:"primaryKey;size:128"`
 	PeriodStartUS  int64  `gorm:"primaryKey"`
-	RelayID        string `gorm:"primaryKey;size:64"`
+	EstavelleID        string `gorm:"primaryKey;size:64"`
 	Generation     string `gorm:"primaryKey;size:32"`
 	MappingVersion string `gorm:"primaryKey;size:64"`
 	ExpiresAtUS    int64  `gorm:"not null;index"`
@@ -125,7 +125,7 @@ type RelayCreditGrant struct {
 	AccountID       string    `json:"account_id"`
 	PeriodStart     time.Time `json:"period_start"`
 	PeriodEnd       time.Time `json:"period_end"`
-	RelayID         string    `json:"relay_id"`
+	EstavelleID         string    `json:"estavelle_id"`
 	Generation      string    `json:"generation"`
 	MappingVersion  string    `json:"mapping_version"`
 	ScheduleVersion string    `json:"schedule_version"`
@@ -267,13 +267,13 @@ func (s *Store) EstavelleSpendingCap(ctx context.Context, start, end time.Time) 
 // ReserveRelayCredits atomically reserves at most requestedBytes from the
 // organization-period budget. A stable request ID makes retries idempotent
 // across all relays in the account. Unreturned grants remain fully reserved.
-func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, relayID, generation, mappingVersion, requestID string, requestedBytes uint64) (RelayCreditGrant, error) {
+func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, estavelleID, generation, mappingVersion, requestID string, requestedBytes uint64) (RelayCreditGrant, error) {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
 		return RelayCreditGrant{}, err
 	}
 	startUS, endUS, err := billingPeriodMicros(start, end)
-	if err != nil || !isRelayCapMonth(startUS, endUS) || !validToken(relayID) || !validToken(generation) || !validToken(mappingVersion) || !validToken(requestID) || requestedBytes == 0 {
+	if err != nil || !isRelayCapMonth(startUS, endUS) || !validToken(estavelleID) || !validToken(generation) || !validToken(mappingVersion) || !validToken(requestID) || requestedBytes == 0 {
 		return RelayCreditGrant{}, ErrInvalidPeriod
 	}
 	returnGrant := RelayCreditGrant{}
@@ -295,7 +295,7 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 			return ErrEstavelleCapPending
 		}
 		var existing estavelleCreditGrantRow
-		err := tx.Where("account_id = ? AND period_start_us = ? AND relay_id = ? AND generation = ? AND request_id = ?", accountID, startUS, relayID, generation, requestID).Take(&existing).Error
+		err := tx.Where("account_id = ? AND period_start_us = ? AND estavelle_id = ? AND generation = ? AND request_id = ?", accountID, startUS, estavelleID, generation, requestID).Take(&existing).Error
 		if err == nil {
 			if existing.MappingVersion != mappingVersion || existing.RequestedBytes != new(big.Int).SetUint64(requestedBytes).String() || existing.ScheduleVersion != cap.ScheduleVersion {
 				return ErrCreditRequestConflict
@@ -350,7 +350,7 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 		now := time.Now().UTC()
 		row := estavelleCreditGrantRow{
 			GrantID: hex.EncodeToString(idBytes), AccountID: accountID, PeriodStartUS: startUS,
-			RelayID: relayID, Generation: generation, RequestID: requestID, MappingVersion: mappingVersion,
+			EstavelleID: estavelleID, Generation: generation, RequestID: requestID, MappingVersion: mappingVersion,
 			ScheduleVersion: schedule.Version, CapRevision: cap.Revision,
 			RequestedBytes: new(big.Int).SetUint64(requestedBytes).String(), GrantedBytes: grantBytes.String(), ConsumedBytes: "0",
 			State: "issued", CreatedAt: now, UpdatedAt: now,
@@ -384,7 +384,7 @@ func (s *Store) ReserveAuthorizedEstavelleCredits(ctx context.Context, relayStor
 		}
 		accountCtx := WithAccount(ctx, mapping.AccountID)
 		grant, err = (&Store{db: tx}).ReserveRelayCredits(accountCtx, start, end,
-			request.RelayID, request.Generation, request.MappingVersion, request.RequestID, requestedBytes)
+			request.EstavelleID, request.Generation, request.MappingVersion, request.RequestID, requestedBytes)
 		return err
 	})
 	return grant, err
@@ -429,10 +429,10 @@ func (s *Store) IssueAuthorizedEstavelleUncappedLease(ctx context.Context, relay
 		now := time.Now().UTC()
 		expiresAt = now.Add(estavelleUncappedLeaseDuration).Truncate(time.Microsecond)
 		lease := estavelleUncappedLeaseRow{AccountID: accountID, PeriodStartUS: startUS,
-			RelayID: request.RelayID, Generation: request.Generation, MappingVersion: request.MappingVersion,
+			EstavelleID: request.EstavelleID, Generation: request.Generation, MappingVersion: request.MappingVersion,
 			ExpiresAtUS: expiresAt.UnixMicro()}
 		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "account_id"}, {Name: "period_start_us"}, {Name: "relay_id"}, {Name: "generation"}, {Name: "mapping_version"}},
+			Columns:   []clause.Column{{Name: "account_id"}, {Name: "period_start_us"}, {Name: "estavelle_id"}, {Name: "generation"}, {Name: "mapping_version"}},
 			DoUpdates: clause.AssignmentColumns([]string{"expires_at_us"}),
 		}).Create(&lease).Error; err != nil {
 			return fmt.Errorf("billing: save uncapped relay lease: %w", err)
@@ -446,12 +446,12 @@ func (s *Store) IssueAuthorizedEstavelleUncappedLease(ctx context.Context, relay
 // authenticated the relay's durable surrender or generation fence. consumed
 // bytes remain charged to the cap budget. Replays with the same report digest
 // are idempotent; conflicting reports are rejected.
-func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, generation, mappingVersion, consumedBytes, surrenderDigest string) (RelayCreditGrant, error) {
+func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, estavelleID, generation, mappingVersion, consumedBytes, surrenderDigest string) (RelayCreditGrant, error) {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
 		return RelayCreditGrant{}, err
 	}
-	if !validLowerHex(grantID, 16) || !validToken(relayID) || !validToken(generation) || !validToken(mappingVersion) || !validLowerHex(surrenderDigest, 32) {
+	if !validLowerHex(grantID, 16) || !validToken(estavelleID) || !validToken(generation) || !validToken(mappingVersion) || !validLowerHex(surrenderDigest, 32) {
 		return RelayCreditGrant{}, ErrCreditGrantConflict
 	}
 	consumed, ok := new(big.Int).SetString(consumedBytes, 10)
@@ -470,7 +470,7 @@ func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, gen
 			}
 			return fmt.Errorf("billing: load relay credit grant: %w", err)
 		}
-		if row.RelayID != relayID || row.Generation != generation || row.MappingVersion != mappingVersion {
+		if row.EstavelleID != estavelleID || row.Generation != generation || row.MappingVersion != mappingVersion {
 			return ErrCreditGrantNotFound
 		}
 		granted, ok := new(big.Int).SetString(row.GrantedBytes, 10)
@@ -525,7 +525,7 @@ func (s *Store) SurrenderAuthorizedEstavelleCredits(ctx context.Context, relaySt
 			return err
 		}
 		accountCtx := WithAccount(ctx, mapping.AccountID)
-		output, err = (&Store{db: tx}).SurrenderRelayCredits(accountCtx, request.GrantID, request.RelayID,
+		output, err = (&Store{db: tx}).SurrenderRelayCredits(accountCtx, request.GrantID, request.EstavelleID,
 			request.Generation, request.MappingVersion, request.ConsumedBytes, digest)
 		return err
 	})
@@ -611,7 +611,7 @@ func estavelleCapDTO(row estavelleCapRow) EstavelleSpendingCap {
 
 func relayGrantDTO(row estavelleCreditGrantRow, endUS int64) RelayCreditGrant {
 	return RelayCreditGrant{GrantID: row.GrantID, AccountID: row.AccountID, PeriodStart: time.UnixMicro(row.PeriodStartUS).UTC(), PeriodEnd: time.UnixMicro(endUS).UTC(),
-		RelayID: row.RelayID, Generation: row.Generation, MappingVersion: row.MappingVersion, ScheduleVersion: row.ScheduleVersion,
+		EstavelleID: row.EstavelleID, Generation: row.Generation, MappingVersion: row.MappingVersion, ScheduleVersion: row.ScheduleVersion,
 		CapRevision: row.CapRevision, RequestedBytes: row.RequestedBytes, GrantedBytes: row.GrantedBytes, CreatedAt: row.CreatedAt}
 }
 

@@ -319,7 +319,7 @@ impl Meshable {
             let tls = karst_estavelle::tls::client_config(&ca).expect("client tls");
             let quic_tls = karst_estavelle::quic::client_config(&tls).expect("client quic tls");
             let dialer = karst_estavelle::mesh::Dialer::new(
-                me.harness.relay.relay_id(),
+                me.harness.relay.estavelle_id(),
                 "default".to_owned(),
             );
             tokio::spawn(karst_estavelle::server::mesh_loop(
@@ -337,7 +337,7 @@ async fn handshake(h: &Harness, conn: &mut Conn, node: &Identity) {
     let mut client = ClientHandshake::new(
         Role::Client,
         node_id(node.public_key()),
-        h.relay.relay_id(),
+        h.relay.estavelle_id(),
         h.relay.public_key().to_vec(),
         [0x5a; 32],
     );
@@ -567,7 +567,7 @@ async fn an_unrostered_node_is_closed_without_a_reason() {
     let mut client = ClientHandshake::new(
         Role::Client,
         nid(&stranger),
-        h.relay.relay_id(),
+        h.relay.estavelle_id(),
         h.relay.public_key().to_vec(),
         [7; 32],
     );
@@ -778,7 +778,7 @@ async fn a_frame_bundled_with_the_handshake_reply_is_delivered_without_further_t
     let mut client = ClientHandshake::new(
         Role::Client,
         nid(&alice),
-        h.relay.relay_id(),
+        h.relay.estavelle_id(),
         h.relay.public_key().to_vec(),
         [0x5a; 32],
     );

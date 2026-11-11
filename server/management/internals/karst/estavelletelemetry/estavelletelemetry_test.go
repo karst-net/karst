@@ -91,7 +91,7 @@ func (r testRelay) storedRelay() estavellereg.StoredEstavelle {
 func (r testRelay) validRequest(t *testing.T, at time.Time, tel estavellereg.Telemetry) report {
 	t.Helper()
 	req := report{
-		RelayID:       r.id,
+		EstavelleID:       r.id,
 		Timestamp:     at.Unix(),
 		LocalClients:  tel.LocalClients,
 		MeshPeers:     tel.MeshPeers,
@@ -116,7 +116,7 @@ func (r testRelay) sign(t *testing.T, req report) report {
 	if err != nil {
 		t.Fatalf("decode id: %v", err)
 	}
-	req.RelayID = r.id
+	req.EstavelleID = r.id
 	sig, err := r.key.Sign([]byte(identity.EstavelleTelemetryContext), signingInput(rawID, req))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
@@ -125,14 +125,14 @@ func (r testRelay) sign(t *testing.T, req report) report {
 	return req
 }
 
-func post(t *testing.T, h http.Handler, relayID string, req report) *httptest.ResponseRecorder {
+func post(t *testing.T, h http.Handler, estavelleID string, req report) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(req)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "/karst/v1/estavelles/"+relayID+"/telemetry", bytes.NewReader(body))
-	r = mux.SetURLVars(r, map[string]string{"estavelleId": relayID})
+	r := httptest.NewRequest(http.MethodPost, "/karst/v1/estavelles/"+estavelleID+"/telemetry", bytes.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"estavelleId": estavelleID})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
@@ -171,7 +171,7 @@ func TestAWrongSignatureIsRejected(t *testing.T) {
 
 	// Signed by the impostor's key, but claiming to be `relay`.
 	req := impostor.validRequest(t, time.Now(), estavellereg.Telemetry{})
-	req.RelayID = relay.id
+	req.EstavelleID = relay.id
 
 	w := post(t, newHandler(store), relay.id, req)
 

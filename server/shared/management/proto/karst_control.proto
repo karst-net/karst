@@ -90,19 +90,19 @@ message KarstNetmapRequest {
   // Empty means "send everything", which is also what a first connection does.
   repeated KarstPeerDigest holds = 2;
 
-  // The relay this node has chosen to hold a connection to — ponor-v1.md §9.1.
+  // The estavelle this node has chosen to hold a connection to — ponor-v1.md §9.1.
   //
   // Reported on every netmap request rather than through a separate call: the
   // node is already talking to the server on a cadence, and a dedicated RPC
   // would be a second path to the same fact, free to disagree with this one.
   //
-  // Empty means the node has no home relay — it is starting, or the netmap
+  // Empty means the node has no home estavelle — it is starting, or the netmap
   // listed none. That is distinct from "unchanged": a node that has released
-  // its relay must be able to say so, or peers keep being told to reach it
+  // its estavelle must be able to say so, or peers keep being told to reach it
   // somewhere nothing is listening.
   //
-  // 32 bytes, the SHA-256 relay handle of KarstEstavelle.relay_id.
-  bytes home_relay = 3;
+  // 32 bytes, the SHA-256 estavelle handle of KarstEstavelle.estavelle_id.
+  bytes home_estavelle = 3;
 
   // Last session facts measured by this node. These are observations, never
   // assertions by the control server; the receiver records its own timestamp.
@@ -150,11 +150,11 @@ message KarstNetmapRequest {
   // Schema 1 supports live Ponor/TURN activation/withdrawal and refreshing
   // TURN credentials on unchanged netmaps. Zero is legacy/unknown. This is
   // not an authorization grant or software attestation.
-  uint32 relay_lifecycle_schema = 8;
+  uint32 estavelle_lifecycle_schema = 8;
 
   // 1 understands conjunctive, forwarding-only KarstFilterRule.dst_cidrs.
   // Zero/unknown cannot receive a scoped ingress grant.
-  uint32 gateway_ingress_schema = 9;
+  uint32 aven_ingress_schema = 9;
 
   // Running agent identity, including agents serving as gateways. Advisory,
   // self-reported metadata, not attestation or a protocol compatibility grant.
@@ -162,12 +162,12 @@ message KarstNetmapRequest {
   // its receipt time. It must never be inferred from compliance or peer metadata.
   KarstSoftwareIdentity software = 10;
 
-  // This node's own current AVEN candidate list — the same ranked list
+  // This node's own current Resurgence candidate list — the same ranked list
   // `bins/karstd/src/disco.rs`'s `State::candidates()` already computes for
   // a relayed `CallMeMaybe`, reported here too so the server can
   // redistribute it to this account's other peers over the control
-  // channel, which stays reachable even when this node's relay does not
-  // (diagnosed on real hardware: with no relay, `CallMeMaybe` never ships,
+  // channel, which stays reachable even when this node's estavelle does not
+  // (diagnosed on real hardware: with no estavelle, `CallMeMaybe` never ships,
   // so a peer's local/LAN candidates otherwise cannot reach another peer by
   // any path at all, even one sharing its subnet — `KarstNetmapPeer.endpoint`
   // exists for exactly this and is simply never populated). Order is
@@ -180,8 +180,8 @@ message KarstNetmapRequest {
   // outright.
   repeated string candidates = 11;
 
-  // Additive compatibility declaration, the same pattern `relay_lifecycle_schema`/
-  // `gateway_ingress_schema` above use. 1 means this node both reports its
+  // Additive compatibility declaration, the same pattern `estavelle_lifecycle_schema`/
+  // `aven_ingress_schema` above use. 1 means this node both reports its
   // own `candidates` above and understands a `KarstNetmapPeer.candidates`
   // list pushed back to it. Zero/unknown gets neither: a server MUST NOT
   // send `KarstNetmapPeer.candidates` to a node declaring less than 1 — an
@@ -190,7 +190,7 @@ message KarstNetmapRequest {
   // sending it.
   uint32 candidate_distribution_schema = 12;
 
-  // Additive compatibility declaration, the same pattern `gateway_ingress_schema`
+  // Additive compatibility declaration, the same pattern `aven_ingress_schema`
   // above uses — ADR-0068. 1 means this node understands `KarstRouteOffer`'s
   // `dns_zone`/`pinned_egress_ip` fields and will refuse a route offer using
   // either one without this schema's exact declaration, rather than silently
@@ -320,17 +320,17 @@ message KarstNetmapPeer {
   string dns_name = 3;
   string endpoint = 4;
 
-  // The relay this peer holds a connection to — ponor-v1.md §9.1.
+  // The estavelle this peer holds a connection to — ponor-v1.md §9.1.
   //
   // How a node reaches a peer it has no direct path to and that is not on its
-  // own relay's mesh: §9.1's second rule, an on-demand connection to the peer's
-  // published home relay. Without it a cross-region pair has no rendezvous at
-  // all, because §8 confines a mesh to one region on purpose.
+  // own estavelle's mesh: §9.1's second rule, an on-demand connection to the
+  // peer's published home estavelle. Without it a cross-region pair has no
+  // rendezvous at all, because §8 confines a mesh to one region on purpose.
   //
   // Empty means the peer has not reported one. A node MUST treat that as "no
   // second option" rather than guessing, since a guess would send a handshake
-  // to a relay the peer is not connected to and wait out the timeout.
-  bytes home_relay = 10;
+  // to an estavelle the peer is not connected to and wait out the timeout.
+  bytes home_estavelle = 10;
 
   // PHREATIC keys (phreatic-v1.md §4).
   bytes kem_public_key = 5;   // S_pk, 1568 B
@@ -380,18 +380,18 @@ message KarstNetmapPeer {
   repeated string candidates = 11;
 }
 
-// KarstEstavelle is an authenticated Ponor relay registry entry. The node pins
-// the ML-DSA key and checks the derived relay id during the Ponor handshake;
-// TLS alone is deliberately not relay authentication (ponor-v1.md §4.2).
+// KarstEstavelle is an authenticated Ponor estavelle registry entry. The node pins
+// the ML-DSA key and checks the derived estavelle id during the Ponor handshake;
+// TLS alone is deliberately not estavelle authentication (ponor-v1.md §4.2).
 message KarstEstavelle {
   string address = 1;
-  bytes relay_id = 2;       // SHA-256 relay handle, 32 B
+  bytes estavelle_id = 2;       // SHA-256 estavelle handle, 32 B
   bytes identity_key = 3;   // ML-DSA-87 public key, 2592 B
   string region = 4;
   // DNS name used solely for TLS SNI and certificate validation. It is
-  // separate from `address`: self-hosters often reach a relay through an IP or
+  // separate from `address`: self-hosters often reach an estavelle through an IP or
   // load-balancer address while the certificate names the shared control host.
-  // Ponor still authenticates the relay by `identity_key`, never this name.
+  // Ponor still authenticates the estavelle by `identity_key`, never this name.
   string tls_server_name = 5;
   // Operator-declared location for the NOC view's map (ADR-0046 §1). Absent
   // means "location unknown" — never inferred from an address via GeoIP.
@@ -597,12 +597,12 @@ message KarstBedrockResponse {
 
 // KarstRouteOffer is an authenticated route projected specifically for the
 // receiving node. It is separate from a peer's allowed_ips because a default
-// route is only an offer until the client consents, and because gateway-only
-// state must not install the gateway's own prefix into its tunnel.
+// route is only an offer until the client consents, and because aven-only
+// state must not install the aven's own prefix into its tunnel.
 message KarstRouteOffer {
   string route_id = 1;
   string prefix = 2;
-  bytes gateway_id = 3;
+  bytes aven_id = 3;
   uint32 metric = 4;
   KarstRouteKind kind = 5;
   bool masquerade = 6;
@@ -611,7 +611,7 @@ message KarstRouteOffer {
 
   // Nonempty binds this offer's effective routing to a DNS zone instead of
   // to `prefix` by longest-prefix match alone — ADR-0068, for a legacy
-  // network reachable through more than one gateway candidate whose address
+  // network reachable through more than one aven candidate whose address
   // ranges are allowed to overlap (longest-prefix routing cannot disambiguate
   // those by address alone). `prefix` remains required and becomes the
   // authorized bound a resolved address must fall inside before a client may
@@ -626,15 +626,15 @@ message KarstRouteOffer {
   string dns_zone = 9;
 
   // Nonempty declares the stable address a legacy network's own firewall is
-  // expected to allowlist for this gateway candidate — ADR-0068. Candidates
+  // expected to allowlist for this aven candidate — ADR-0068. Candidates
   // in the same HA family (same `prefix`/`dns_zone` and `role`) MUST agree on
   // this value or the netmap is rejected, the same way they must already
   // agree on `kind`/`masquerade`/`keep_route`; HA failover among candidates
   // that genuinely share one externally-visible address (for example, a
-  // floating IP) is fine and uses the existing metric/gateway-id tiebreak.
+  // floating IP) is fine and uses the existing metric/aven-id tiebreak.
   // This field is a declaration for client-side consistency checking and
   // admin-facing drift detection, never itself a verification that the named
-  // gateway's real egress address matches — see ADR-0068's "Reconsider if".
+  // aven's real egress address matches — see ADR-0068's "Reconsider if".
   // Requires `dns_zone_affinity_schema >= 1`.
   string pinned_egress_ip = 10;
 }
@@ -679,12 +679,12 @@ message KarstNetmapResponse {
   string compliance_device_id = 26;
   string compliance_policy_revision = 27;
   // 1 when packet_filter contains forwarding-only destination-scoped rules.
-  uint32 gateway_ingress_schema = 28;
+  uint32 aven_ingress_schema = 28;
 
   // 1 when `routes` may contain a `KarstRouteOffer` using `dns_zone` or
   // `pinned_egress_ip` — ADR-0068. Sent even on unchanged responses, excluded
   // from the policy content hash, and reset on reconnect — same rules as
-  // `gateway_ingress_schema`. Before responding, including unchanged
+  // `aven_ingress_schema`. Before responding, including unchanged
   // responses, reject a node lacking this exact schema if it would receive
   // such an offer; the agent independently rejects one received without
   // having declared it, the same discipline `KarstNetmapRequest`'s own
@@ -718,11 +718,11 @@ message KarstNetmapResponse {
   // separate flag rather than being inferred from emptiness.
   repeated KarstFilterRule packet_filter = 9;
 
-  // Authenticated relay choices for this node. Replaced wholesale on every
+  // Authenticated estavelle choices for this node. Replaced wholesale on every
   // non-unchanged response, just like packet_filter.
-  repeated KarstEstavelle relays = 13;
+  repeated KarstEstavelle estavelles = 13;
 
-  // CIDR offers for a recipient, or forwarding grants for a gateway. Replaced
+  // CIDR offers for a recipient, or forwarding grants for an aven. Replaced
   // wholesale on every non-unchanged response. A recipient MUST require local
   // consent before activating an EXIT offer.
   repeated KarstRouteOffer routes = 17;

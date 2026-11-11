@@ -14,16 +14,16 @@ import (
 
 // fakeFleet is a minimal, hand-rolled fleetChecker double: no live DB
 // needed to test Preview's own logic, since the counting query itself is
-// already covered by node package's CheckRelayLifecycle tests.
+// already covered by node package's CheckEstavelleLifecycle tests.
 type fakeFleet struct {
 	relayBelow, gatewayBelow int64
 }
 
-func (f fakeFleet) CountRelayLifecycleBelow(_ context.Context, _ string, _ uint32, _ *gorm.DB) (int64, error) {
+func (f fakeFleet) CountEstavelleLifecycleBelow(_ context.Context, _ string, _ uint32, _ *gorm.DB) (int64, error) {
 	return f.relayBelow, nil
 }
 
-func (f fakeFleet) CountGatewayIngressBelow(_ context.Context, _ string, _ uint32, _ *gorm.DB) (int64, error) {
+func (f fakeFleet) CountAvenIngressBelow(_ context.Context, _ string, _ uint32, _ *gorm.DB) (int64, error) {
 	return f.gatewayBelow, nil
 }
 
@@ -38,7 +38,7 @@ func TestPreviewSkipsComponentsWithNoRequirement(t *testing.T) {
 }
 
 func TestPreviewNotBlockingWhenFleetIsCompatible(t *testing.T) {
-	components := []rollout.PlanComponent{{Name: rollout.ComponentControl, RequiresRelayLifecycleSchema: requireSchema(1)}}
+	components := []rollout.PlanComponent{{Name: rollout.ComponentControl, RequiresEstavelleLifecycleSchema: requireSchema(1)}}
 	result, err := rollout.Preview(context.Background(), "a", components, fakeFleet{relayBelow: 0})
 	require.NoError(t, err)
 	require.Len(t, result, 1)
@@ -49,40 +49,40 @@ func TestPreviewNotBlockingWhenFleetIsCompatible(t *testing.T) {
 }
 
 func TestPreviewBlocksAndExplainsWhenFleetIsIncompatible(t *testing.T) {
-	components := []rollout.PlanComponent{{Name: rollout.ComponentControl, RequiresRelayLifecycleSchema: requireSchema(2)}}
+	components := []rollout.PlanComponent{{Name: rollout.ComponentControl, RequiresEstavelleLifecycleSchema: requireSchema(2)}}
 	result, err := rollout.Preview(context.Background(), "a", components, fakeFleet{relayBelow: 7})
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	require.True(t, result[0].Blocking)
 	require.EqualValues(t, 7, result[0].IncompatiblePeerCount)
-	require.Equal(t, "relay_lifecycle_schema", result[0].Capability)
+	require.Equal(t, "estavelle_lifecycle_schema", result[0].Capability)
 	require.EqualValues(t, 2, result[0].Required)
 	require.Contains(t, result[0].Message, "7 enrolled Karst agents")
-	require.Contains(t, result[0].Message, "relay_lifecycle_schema 2")
+	require.Contains(t, result[0].Message, "estavelle_lifecycle_schema 2")
 	require.True(t, rollout.AnyBlocking(result))
 }
 
 func TestPreviewCoversMultipleComponentsAndBothCapabilitiesIndependently(t *testing.T) {
 	components := []rollout.PlanComponent{
-		{Name: rollout.ComponentControl, RequiresRelayLifecycleSchema: requireSchema(1), RequiresGatewayIngressSchema: requireSchema(1)},
-		{Name: rollout.ComponentRelayJob, RequiresRelayLifecycleSchema: requireSchema(1)},
+		{Name: rollout.ComponentControl, RequiresEstavelleLifecycleSchema: requireSchema(1), RequiresAvenIngressSchema: requireSchema(1)},
+		{Name: rollout.ComponentEstavelleJob, RequiresEstavelleLifecycleSchema: requireSchema(1)},
 		{Name: rollout.ComponentConsole},
 	}
 	result, err := rollout.Preview(context.Background(), "a", components, fakeFleet{relayBelow: 3, gatewayBelow: 0})
 	require.NoError(t, err)
-	require.Len(t, result, 3, "control contributes two rows, relay_job one, console none")
+	require.Len(t, result, 3, "control contributes two rows, estavelle_job one, console none")
 
 	byComponentAndCapability := map[string]rollout.ComponentCompatibility{}
 	for _, row := range result {
 		byComponentAndCapability[row.Component+"/"+row.Capability] = row
 	}
-	require.True(t, byComponentAndCapability[rollout.ComponentControl+"/relay_lifecycle_schema"].Blocking)
-	require.False(t, byComponentAndCapability[rollout.ComponentControl+"/gateway_ingress_schema"].Blocking, "gatewayBelow is 0")
-	require.True(t, byComponentAndCapability[rollout.ComponentRelayJob+"/relay_lifecycle_schema"].Blocking)
+	require.True(t, byComponentAndCapability[rollout.ComponentControl+"/estavelle_lifecycle_schema"].Blocking)
+	require.False(t, byComponentAndCapability[rollout.ComponentControl+"/aven_ingress_schema"].Blocking, "gatewayBelow is 0")
+	require.True(t, byComponentAndCapability[rollout.ComponentEstavelleJob+"/estavelle_lifecycle_schema"].Blocking)
 	require.True(t, rollout.AnyBlocking(result))
 }
 
 func TestPreviewRequiresAFleetChecker(t *testing.T) {
-	_, err := rollout.Preview(context.Background(), "a", []rollout.PlanComponent{{Name: rollout.ComponentControl, RequiresRelayLifecycleSchema: requireSchema(1)}}, nil)
+	_, err := rollout.Preview(context.Background(), "a", []rollout.PlanComponent{{Name: rollout.ComponentControl, RequiresEstavelleLifecycleSchema: requireSchema(1)}}, nil)
 	require.Error(t, err)
 }

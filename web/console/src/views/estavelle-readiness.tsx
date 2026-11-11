@@ -7,11 +7,11 @@ import type { ManagedEstavelleService } from "../api";
 import { admissionObservation, exitObservations } from "../estavelle-readiness";
 
 export function EstavelleReadiness({ service, targets, inventory, targetError, gatewayError, now }: {
-  service: ManagedEstavelleService; targets?: Array<{ relay_id: string; refreshed_at: string }>;
+  service: ManagedEstavelleService; targets?: Array<{ estavelle_id: string; refreshed_at: string }>;
   inventory?: AvenInventory; targetError?: string; gatewayError?: string; now: number;
 }) {
   if (!service.access_managed) return <span>Legacy configuration; group-managed admission not configured.</span>;
-  const refreshed = targets?.find(target => target.relay_id === service.ponor_id)?.refreshed_at;
+  const refreshed = targets?.find(target => target.estavelle_id === service.ponor_id)?.refreshed_at;
   const writer = targetError || !targets ? { label: "Admission writer observation unavailable", state: "unknown" as const } : admissionObservation(refreshed, now);
   const offers = exitObservations(service, gatewayError ? undefined : inventory);
   return <>

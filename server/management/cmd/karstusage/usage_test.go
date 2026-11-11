@@ -176,42 +176,42 @@ func TestManagedRelayAuthorizationIsExplicitAuditedAndRevocable(t *testing.T) {
 	_, err = estavelleusage.NewStore(s.GetDB())
 	require.NoError(t, err)
 
-	output, err := executeRaw(s, "relays", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(key.Public()), "--deployment-id", "deployment-a", "--actor", "operator-one")
+	output, err := executeRaw(s, "estavelles", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(key.Public()), "--deployment-id", "deployment-a", "--actor", "operator-one")
 	require.NoError(t, err)
 	var authorized struct {
-		RelayID string `json:"relay_id"`
+		EstavelleID string `json:"estavelle_id"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(output), &authorized))
-	require.NotEmpty(t, authorized.RelayID)
+	require.NotEmpty(t, authorized.EstavelleID)
 
-	_, err = executeRaw(s, "relays", "allow-mapping", "--relay-id", authorized.RelayID, "--deployment-id", mapping.DeploymentID, "--mapping-version", mapping.Version, "--actor", "operator-one")
+	_, err = executeRaw(s, "estavelles", "allow-mapping", "--estavelle-id", authorized.EstavelleID, "--deployment-id", mapping.DeploymentID, "--mapping-version", mapping.Version, "--actor", "operator-one")
 	require.NoError(t, err)
 	var allowed int64
-	require.NoError(t, s.GetDB().Table("karst_usage_producer_mappings").Where("relay_id = ? AND enabled = ?", authorized.RelayID, true).Count(&allowed).Error)
+	require.NoError(t, s.GetDB().Table("karst_usage_producer_mappings").Where("estavelle_id = ? AND enabled = ?", authorized.EstavelleID, true).Count(&allowed).Error)
 	require.EqualValues(t, 1, allowed)
 
-	_, err = executeRaw(s, "relays", "revoke-mapping", "--relay-id", authorized.RelayID, "--deployment-id", mapping.DeploymentID, "--mapping-version", mapping.Version, "--actor", "operator-two")
+	_, err = executeRaw(s, "estavelles", "revoke-mapping", "--estavelle-id", authorized.EstavelleID, "--deployment-id", mapping.DeploymentID, "--mapping-version", mapping.Version, "--actor", "operator-two")
 	require.NoError(t, err)
-	_, err = executeRaw(s, "relays", "revoke", "--relay-id", authorized.RelayID, "--actor", "operator-two")
+	_, err = executeRaw(s, "estavelles", "revoke", "--estavelle-id", authorized.EstavelleID, "--actor", "operator-two")
 	require.NoError(t, err)
 	var enabled int64
-	require.NoError(t, s.GetDB().Table("karst_usage_managed_producers").Where("relay_id = ? AND enabled = ?", authorized.RelayID, true).Count(&enabled).Error)
+	require.NoError(t, s.GetDB().Table("karst_usage_managed_producers").Where("estavelle_id = ? AND enabled = ?", authorized.EstavelleID, true).Count(&enabled).Error)
 	require.Zero(t, enabled)
 	var entries []audit.Entry
 	require.NoError(t, s.GetDB().Order("seq").Find(&entries).Error)
 	require.Len(t, entries, 4)
-	require.Equal(t, "karst.usage.relay.authorize", entries[0].Action)
-	require.Equal(t, "karst.usage.relay.allow-mapping", entries[1].Action)
+	require.Equal(t, "karst.usage.estavelle.authorize", entries[0].Action)
+	require.Equal(t, "karst.usage.estavelle.allow-mapping", entries[1].Action)
 	require.Equal(t, "operator:operator-two", entries[3].Actor)
-	require.Equal(t, "karst.usage.relay.revoke", entries[3].Action)
+	require.Equal(t, "karst.usage.estavelle.revoke", entries[3].Action)
 }
 
 func TestManagedRelayCommandsValidateBeforeOpeningStore(t *testing.T) {
 	for _, args := range [][]string{
-		{"relays", "authorize", "--identity-key", "not-base64", "--deployment-id", "deployment-a", "--actor", "operator"},
-		{"relays", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(make([]byte, identity.PublicKeySize)), "--deployment-id", "deployment-a"},
-		{"relays", "revoke", "--relay-id", "bad", "--actor", "operator"},
-		{"relays", "allow-mapping", "--relay-id", "bad", "--deployment-id", "deployment-a", "--mapping-version", "x", "--actor", "operator"},
+		{"estavelles", "authorize", "--identity-key", "not-base64", "--deployment-id", "deployment-a", "--actor", "operator"},
+		{"estavelles", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(make([]byte, identity.PublicKeySize)), "--deployment-id", "deployment-a"},
+		{"estavelles", "revoke", "--estavelle-id", "bad", "--actor", "operator"},
+		{"estavelles", "allow-mapping", "--estavelle-id", "bad", "--deployment-id", "deployment-a", "--mapping-version", "x", "--actor", "operator"},
 	} {
 		command := karstusage.NewCommands(func(*cobra.Command, func(context.Context, store.Store) error) error {
 			t.Fatal("invalid relay command must not open storage")
@@ -232,10 +232,10 @@ func TestManagedRelayAuditFailureRollsBackAuthorizationInterval(t *testing.T) {
 	require.NoError(t, err)
 	_, err = estavelleusage.NewStore(s.GetDB())
 	require.NoError(t, err)
-	output, err := executeRaw(s, "relays", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(key.Public()), "--deployment-id", "deployment-a", "--actor", "operator")
+	output, err := executeRaw(s, "estavelles", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(key.Public()), "--deployment-id", "deployment-a", "--actor", "operator")
 	require.NoError(t, err)
 	var authorized struct {
-		RelayID string `json:"relay_id"`
+		EstavelleID string `json:"estavelle_id"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(output), &authorized))
 
@@ -245,13 +245,13 @@ func TestManagedRelayAuditFailureRollsBackAuthorizationInterval(t *testing.T) {
 			tx.AddError(failure)
 		}
 	}))
-	_, err = executeRaw(s, "relays", "allow-mapping", "--relay-id", authorized.RelayID, "--deployment-id", mapping.DeploymentID, "--mapping-version", mapping.Version, "--actor", "operator")
+	_, err = executeRaw(s, "estavelles", "allow-mapping", "--estavelle-id", authorized.EstavelleID, "--deployment-id", mapping.DeploymentID, "--mapping-version", mapping.Version, "--actor", "operator")
 	require.ErrorIs(t, err, failure)
 	require.NoError(t, s.GetDB().Callback().Create().Remove("fail_relay_operator_audit"))
 
 	var allowed, intervals int64
-	require.NoError(t, s.GetDB().Table("karst_usage_producer_mappings").Where("relay_id = ?", authorized.RelayID).Count(&allowed).Error)
-	require.NoError(t, s.GetDB().Table("karst_usage_producer_mapping_periods").Where("relay_id = ?", authorized.RelayID).Count(&intervals).Error)
+	require.NoError(t, s.GetDB().Table("karst_usage_producer_mappings").Where("estavelle_id = ?", authorized.EstavelleID).Count(&allowed).Error)
+	require.NoError(t, s.GetDB().Table("karst_usage_producer_mapping_periods").Where("estavelle_id = ?", authorized.EstavelleID).Count(&intervals).Error)
 	require.Zero(t, allowed)
 	require.Zero(t, intervals, "authorization history must roll back with the unaudited grant")
 }

@@ -149,7 +149,7 @@ export function Billing() {
       {payment.error && <p role="alert">{payment.error}</p>}
       {payment.value === null && <p>Paddle billing is not enabled for this account.</p>}
       {payment.value && <>
-        <p>Finalized invoice for {reportMonth}: devices <strong>${formatUsdMinor(payment.value.device_minor)}</strong>, managed estavelle <strong>${formatUsdMinor(payment.value.relay_minor)}</strong>, total <strong>${formatUsdMinor(payment.value.total_minor)} USD before tax</strong>.</p>
+        <p>Finalized invoice for {reportMonth}: devices <strong>${formatUsdMinor(payment.value.device_minor)}</strong>, managed estavelle <strong>${formatUsdMinor(payment.value.estavelle_minor)}</strong>, total <strong>${formatUsdMinor(payment.value.total_minor)} USD before tax</strong>.</p>
         <p>Payment status: <strong>{payment.value.state.replaceAll("_", " ")}</strong>.</p>
         {payment.value.state === "past_due" && <p role="alert"><strong>Payment failed.</strong> Your service remains active during the 14-day grace period. Check this page for updated payment status or use the checkout link below.</p>}
         {payment.value.state === "not_queued" && <button type="button" onClick={() => { setMessage(undefined); void runPayment(() => api.queueBillingPayment(reportMonth), "Paddle checkout request queued. Refresh payment status to see the checkout link."); }}>Prepare Paddle checkout</button>}

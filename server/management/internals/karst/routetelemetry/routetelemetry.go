@@ -57,7 +57,7 @@ func (StoredRouteBytes) TableName() string { return "karst_route_telemetry" }
 type StoredAvenHealth struct {
 	ReadinessReported bool
 	AccountID         string `gorm:"primaryKey;size:64"`
-	GatewayID         string `gorm:"primaryKey"`
+	AvenID         string `gorm:"primaryKey"`
 	RouteID           string `gorm:"primaryKey"`
 	ForwardingActive  bool
 	// ObservedEgressIP is issue #554's verification half of ADR-0068's
@@ -97,8 +97,8 @@ func NewStore(db *gorm.DB) (*Store, error) {
 // cannot transpose egress and ingress by positional accident.
 type RouteReport struct {
 	ReadinessReported bool
-	// GatewayID comes from the authenticated session, never the report payload.
-	GatewayID        string
+	// AvenID comes from the authenticated session, never the report payload.
+	AvenID        string
 	Bytes            uint64
 	Packets          uint64
 	IngressBytes     uint64
@@ -135,13 +135,13 @@ func (s *Store) RecordRouteBytes(ctx context.Context, accountID, routeID string,
 	if err != nil {
 		return fmt.Errorf("route telemetry: record %s: %w", routeID, err)
 	}
-	if report.GatewayID != "" {
-		health := StoredAvenHealth{AccountID: accountID, GatewayID: report.GatewayID,
+	if report.AvenID != "" {
+		health := StoredAvenHealth{AccountID: accountID, AvenID: report.AvenID,
 			RouteID: routeID, ForwardingActive: report.ForwardingActive, ReportedAt: record.ReportedAt,
 			ReadinessReported: report.ReadinessReported || report.ForwardingActive,
 			ObservedEgressIP:  report.ObservedEgressIP}
 		if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "account_id"}, {Name: "gateway_id"}, {Name: "route_id"}},
+			Columns:   []clause.Column{{Name: "account_id"}, {Name: "aven_id"}, {Name: "route_id"}},
 			UpdateAll: true,
 		}).Create(&health).Error; err != nil {
 			return fmt.Errorf("gateway health: record: %w", err)
@@ -158,10 +158,10 @@ func (s *Store) LatestByAven(ctx context.Context, accountID string) (map[string]
 	}
 	result := make(map[string]map[string]StoredAvenHealth)
 	for _, row := range rows {
-		if result[row.GatewayID] == nil {
-			result[row.GatewayID] = make(map[string]StoredAvenHealth)
+		if result[row.AvenID] == nil {
+			result[row.AvenID] = make(map[string]StoredAvenHealth)
 		}
-		result[row.GatewayID][row.RouteID] = row
+		result[row.AvenID][row.RouteID] = row
 	}
 	return result, nil
 }

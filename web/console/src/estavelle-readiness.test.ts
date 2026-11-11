@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 import type { AvenInventory } from "@karst-net/api-client";
 import { admissionObservation, exitObservations } from "./estavelle-readiness";
 
-const service = { id: "denver", ponor_id: "backend", gateway_handle: "bound-key", exit_ipv4: true, exit_ipv6: true };
+const service = { id: "denver", ponor_id: "backend", aven_handle: "bound-key", exit_ipv4: true, exit_ipv6: true };
 const inventory = (): AvenInventory => ({ schema_version: 1, unresolved_routes: [], unsupported_routes: [], avens: [{ node_id: "native-id", node_handle: "bound-key", name: "Denver host", control_connected: true, forwarding_readiness: "ready", offers: [
   { id: "relay-exit-denver-0", network_id: "denver", prefix: "0.0.0.0/0", kind: "default_ipv4", enabled: true, masquerade: true, metric: 9999, requires_client_consent: true, forwarding_readiness: "ready", egress_drift: false },
   { id: "relay-exit-denver-1", network_id: "denver", prefix: "::/0", kind: "default_ipv6", enabled: true, masquerade: true, metric: 9999, requires_client_consent: true, forwarding_readiness: "degraded", egress_drift: false },
@@ -50,7 +50,7 @@ test("offline, disabled and unreported offers cannot use aggregate ready status"
 
 test("missing sources, bindings and unresolved routes stay unknown", () => {
   expect(exitObservations(service)[0].state).toBe("unknown");
-  expect(exitObservations({ ...service, gateway_handle: "" }, inventory())[0].label).toBe("Aven not bound");
+  expect(exitObservations({ ...service, aven_handle: "" }, inventory())[0].label).toBe("Aven not bound");
   const data = inventory(); data.avens[0].offers = []; data.unresolved_routes.push("relay-exit-denver-0");
   expect(exitObservations(service, data)[0].label).toBe("Exit route unresolved");
   expect(exitObservations({ ...service, exit_ipv4: false, exit_ipv6: false }, data)).toEqual([]);

@@ -56,7 +56,7 @@ type Estimate struct {
 	ScheduleVersion string
 	Currency        string
 	DeviceExact     *ExactAmount
-	RelayExact      *ExactAmount
+	EstavelleExact      *ExactAmount
 	TotalExact      *ExactAmount
 	UsageComplete   bool
 	Incomplete      []string
@@ -94,7 +94,7 @@ func Calculate(deviceReport usage.DeviceReport, relayReport estavelleusage.Repor
 		relayExact := relayCharge(bytes, schedule)
 		relayAmount = relayExact
 		amount := exactAmount(relayExact)
-		result.RelayExact = &amount
+		result.EstavelleExact = &amount
 	} else {
 		result.Incomplete = append(result.Incomplete, "relay_usage")
 	}

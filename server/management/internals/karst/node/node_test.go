@@ -200,40 +200,40 @@ func TestHomeRelayIsStoredAndReplaced(t *testing.T) {
 	}
 
 	first := bytes.Repeat([]byte{0x11}, 32)
-	if err := s.SetHomeRelay(h, first); err != nil {
+	if err := s.SetHomeEstavelle(h, first); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	rec, err := s.Get(h)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if !bytes.Equal(rec.HomeRelay, first) {
-		t.Fatalf("stored %x, want %x", rec.HomeRelay, first)
+	if !bytes.Equal(rec.HomeEstavelle, first) {
+		t.Fatalf("stored %x, want %x", rec.HomeEstavelle, first)
 	}
 
 	second := bytes.Repeat([]byte{0x22}, 32)
-	if err := s.SetHomeRelay(h, second); err != nil {
+	if err := s.SetHomeEstavelle(h, second); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	rec, err = s.Get(h)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if !bytes.Equal(rec.HomeRelay, second) {
-		t.Fatalf("a move left %x, want %x", rec.HomeRelay, second)
+	if !bytes.Equal(rec.HomeEstavelle, second) {
+		t.Fatalf("a move left %x, want %x", rec.HomeEstavelle, second)
 	}
 
 	// And a node that has lost its relay clears it. Keeping the last known
 	// value would send every peer to a relay this node is no longer on.
-	if err := s.SetHomeRelay(h, nil); err != nil {
+	if err := s.SetHomeEstavelle(h, nil); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	rec, err = s.Get(h)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if len(rec.HomeRelay) != 0 {
-		t.Fatalf("a withdrawal left %x", rec.HomeRelay)
+	if len(rec.HomeEstavelle) != 0 {
+		t.Fatalf("a withdrawal left %x", rec.HomeEstavelle)
 	}
 }
 
@@ -348,7 +348,7 @@ func TestRepeatingTheSameHomeRelayDoesNotWrite(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 	relay := bytes.Repeat([]byte{0x33}, 32)
-	if err := s.SetHomeRelay(h, relay); err != nil {
+	if err := s.SetHomeEstavelle(h, relay); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	first, err := s.Get(h)
@@ -357,7 +357,7 @@ func TestRepeatingTheSameHomeRelayDoesNotWrite(t *testing.T) {
 	}
 
 	time.Sleep(10 * time.Millisecond)
-	if err := s.SetHomeRelay(h, relay); err != nil {
+	if err := s.SetHomeEstavelle(h, relay); err != nil {
 		t.Fatalf("set again: %v", err)
 	}
 	again, err := s.Get(h)
@@ -380,16 +380,16 @@ func TestHomeRelayLengthIsChecked(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 	for _, n := range []int{1, 31, 33, 64} {
-		if err := s.SetHomeRelay(h, bytes.Repeat([]byte{1}, n)); !errors.Is(err, node.ErrBadHomeRelay) {
-			t.Fatalf("%d bytes gave %v, want ErrBadHomeRelay", n, err)
+		if err := s.SetHomeEstavelle(h, bytes.Repeat([]byte{1}, n)); !errors.Is(err, node.ErrBadHomeEstavelle) {
+			t.Fatalf("%d bytes gave %v, want ErrBadHomeEstavelle", n, err)
 		}
 	}
 	rec, err := s.Get(h)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if len(rec.HomeRelay) != 0 {
-		t.Fatalf("a refused value was stored anyway: %x", rec.HomeRelay)
+	if len(rec.HomeEstavelle) != 0 {
+		t.Fatalf("a refused value was stored anyway: %x", rec.HomeEstavelle)
 	}
 }
 
@@ -398,7 +398,7 @@ func TestHomeRelayLengthIsChecked(t *testing.T) {
 // here would turn a harmless race with registration into a refused netmap.
 func TestHomeRelayForUnknownHandleIsQuiet(t *testing.T) {
 	s := newStore(t)
-	if err := s.SetHomeRelay("nobody", bytes.Repeat([]byte{1}, 32)); err != nil {
+	if err := s.SetHomeEstavelle("nobody", bytes.Repeat([]byte{1}, 32)); err != nil {
 		t.Fatalf("unknown handle: %v", err)
 	}
 }

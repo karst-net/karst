@@ -37,19 +37,19 @@ func ingestionFixture(t *testing.T) (*gorm.DB, *Store, *identity.Key, string, us
 	require.NoError(t, err)
 	key, err := identity.FromSeed(bytes.Repeat([]byte{9}, identity.SeedSize))
 	require.NoError(t, err)
-	relayID, err := store.AuthorizeProducer(context.Background(), key.Public(), "deployment-a")
+	estavelleID, err := store.AuthorizeProducer(context.Background(), key.Public(), "deployment-a")
 	require.NoError(t, err)
-	require.NoError(t, store.AllowMapping(context.Background(), relayID, mapping.DeploymentID, mapping.Version))
-	return db, store, key, relayID, mapping
+	require.NoError(t, store.AllowMapping(context.Background(), estavelleID, mapping.DeploymentID, mapping.Version))
+	return db, store, key, estavelleID, mapping
 }
 
 func TestIngestIsScopedReplaySafeAndDurable(t *testing.T) {
-	db, store, key, relayID, mapping := ingestionFixture(t)
+	db, store, key, estavelleID, mapping := ingestionFixture(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	windowStart := now.UnixMicro() / int64(minuteMicros) * int64(minuteMicros)
 	body := makeSignedBatch(t, key, [16]byte{1, 2, 3}, 9, mappingPayloadAt(mapping, 123, uint64(windowStart)))
-	firstAuth := makeUploadAuth(t, key, relayID, body, now, [32]byte{1})
+	firstAuth := makeUploadAuth(t, key, estavelleID, body, now, [32]byte{1})
 
 	result, err := store.Ingest(ctx, "POST", UploadPath, firstAuth, body, now)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestIngestIsScopedReplaySafeAndDurable(t *testing.T) {
 	batches = nil
 	require.NoError(t, db.Find(&batches).Error)
 	require.Len(t, batches, 1)
-	require.Equal(t, relayID, batches[0].RelayID)
+	require.Equal(t, estavelleID, batches[0].EstavelleID)
 	var totals []receivedTotal
 	totals = nil
 	require.NoError(t, db.Find(&totals).Error)
@@ -75,7 +75,7 @@ func TestIngestIsScopedReplaySafeAndDurable(t *testing.T) {
 	if _, err := store.Ingest(ctx, "POST", UploadPath, firstAuth, body, now); err != ErrRequestReplay {
 		t.Fatalf("replayed authorization error = %v, want %v", err, ErrRequestReplay)
 	}
-	retryAuth := makeUploadAuth(t, key, relayID, body, now, [32]byte{2})
+	retryAuth := makeUploadAuth(t, key, estavelleID, body, now, [32]byte{2})
 	result, err = store.Ingest(ctx, "POST", UploadPath, retryAuth, body, now)
 	require.NoError(t, err)
 	require.True(t, result.Duplicate)
@@ -90,7 +90,7 @@ func TestIngestIsScopedReplaySafeAndDurable(t *testing.T) {
 	require.Len(t, coverage, 1)
 
 	conflict := makeSignedBatch(t, key, [16]byte{1, 2, 3}, 9, mappingPayloadAt(mapping, 124, uint64(windowStart)))
-	conflictAuth := makeUploadAuth(t, key, relayID, conflict, now, [32]byte{3})
+	conflictAuth := makeUploadAuth(t, key, estavelleID, conflict, now, [32]byte{3})
 	if _, err := store.Ingest(ctx, "POST", UploadPath, conflictAuth, conflict, now); err != ErrBatchConflict {
 		t.Fatalf("conflicting batch error = %v, want %v", err, ErrBatchConflict)
 	}
@@ -98,54 +98,54 @@ func TestIngestIsScopedReplaySafeAndDurable(t *testing.T) {
 	require.NoError(t, db.Model(&uploadNonce{}).Count(&nonceCount).Error)
 	require.EqualValues(t, 2, nonceCount, "failed conflicts must not consume their nonce")
 
-	require.NoError(t, store.RevokeProducer(ctx, relayID))
-	revokedAuth := makeUploadAuth(t, key, relayID, body, now, [32]byte{4})
+	require.NoError(t, store.RevokeProducer(ctx, estavelleID))
+	revokedAuth := makeUploadAuth(t, key, estavelleID, body, now, [32]byte{4})
 	if _, err := store.Ingest(ctx, "POST", UploadPath, revokedAuth, body, now); err != ErrProducerMissing {
 		t.Fatalf("revoked producer error = %v, want %v", err, ErrProducerMissing)
 	}
 }
 
 func TestIngestRejectsUnapprovedMappingAndStaleRequest(t *testing.T) {
-	_, store, key, relayID, _ := ingestionFixture(t)
+	_, store, key, estavelleID, _ := ingestionFixture(t)
 	ctx := context.Background()
 	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
 	unapproved, err := usage.PersistEstavelleMapping(ctx, store.db, "deployment-a", "aquifer-other", "account-2")
 	require.NoError(t, err)
 	body := makeSignedBatch(t, key, [16]byte{4}, 0, mappingPayload(unapproved, 25))
-	auth := makeUploadAuth(t, key, relayID, body, now, [32]byte{5})
+	auth := makeUploadAuth(t, key, estavelleID, body, now, [32]byte{5})
 	if _, err := store.Ingest(ctx, "POST", UploadPath, auth, body, now); err != ErrMappingNotAllowed {
 		t.Fatalf("unapproved mapping error = %v, want %v", err, ErrMappingNotAllowed)
 	}
-	stale := makeUploadAuth(t, key, relayID, body, now.Add(-uploadFreshness-time.Second), [32]byte{6})
+	stale := makeUploadAuth(t, key, estavelleID, body, now.Add(-uploadFreshness-time.Second), [32]byte{6})
 	if _, err := store.Ingest(ctx, "POST", UploadPath, stale, body, now); err != ErrUnauthorized {
 		t.Fatalf("stale upload error = %v, want %v", err, ErrUnauthorized)
 	}
 }
 
 func TestRevokedMappingStillAcceptsHistoricalBacklogOnly(t *testing.T) {
-	_, store, key, relayID, mapping := ingestionFixture(t)
+	_, store, key, estavelleID, mapping := ingestionFixture(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	windowStart := now.UnixMicro()/int64(minuteMicros)*int64(minuteMicros) - int64(minuteMicros)
 	var period producerMappingInterval
-	require.NoError(t, store.db.Where("relay_id = ? AND deployment_id = ? AND version = ?", relayID, mapping.DeploymentID, mapping.Version).Take(&period).Error)
+	require.NoError(t, store.db.Where("estavelle_id = ? AND deployment_id = ? AND version = ?", estavelleID, mapping.DeploymentID, mapping.Version).Take(&period).Error)
 	period.StartUS = windowStart
 	require.NoError(t, store.db.Save(&period).Error)
-	require.NoError(t, store.RevokeMapping(ctx, relayID, mapping.DeploymentID, mapping.Version))
+	require.NoError(t, store.RevokeMapping(ctx, estavelleID, mapping.DeploymentID, mapping.Version))
 
 	windowStartUint := uint64(windowStart)
 	oldBody := makeSignedBatch(t, key, [16]byte{6}, 0, mappingPayloadAt(mapping, 50, windowStartUint))
-	oldAuth := makeUploadAuth(t, key, relayID, oldBody, now, [32]byte{7})
+	oldAuth := makeUploadAuth(t, key, estavelleID, oldBody, now, [32]byte{7})
 	result, err := store.Ingest(ctx, "POST", UploadPath, oldAuth, oldBody, now)
 	require.NoError(t, err, "a delayed batch sealed before mapping revocation must remain ingestible")
 	require.False(t, result.Duplicate)
 
 	var allowed AllowedMapping
-	require.NoError(t, store.db.Where("relay_id = ? AND deployment_id = ? AND version = ?", relayID, mapping.DeploymentID, mapping.Version).Take(&allowed).Error)
+	require.NoError(t, store.db.Where("estavelle_id = ? AND deployment_id = ? AND version = ?", estavelleID, mapping.DeploymentID, mapping.Version).Take(&allowed).Error)
 	require.NotNil(t, allowed.RevokedAt)
 	futureStart := uint64((allowed.RevokedAt.UnixMicro()/int64(minuteMicros) + 1) * int64(minuteMicros))
 	futureBody := makeSignedBatch(t, key, [16]byte{7}, 0, mappingPayloadAt(mapping, 51, futureStart))
-	futureAuth := makeUploadAuth(t, key, relayID, futureBody, now, [32]byte{8})
+	futureAuth := makeUploadAuth(t, key, estavelleID, futureBody, now, [32]byte{8})
 	if _, err := store.Ingest(ctx, "POST", UploadPath, futureAuth, futureBody, now); err != ErrMappingNotAllowed {
 		t.Fatalf("post-revocation batch error = %v, want %v", err, ErrMappingNotAllowed)
 	}
@@ -179,18 +179,18 @@ func makeSignedBatch(t *testing.T, key *identity.Key, epoch [16]byte, sequence u
 	return encodeForTest(batch, signature)
 }
 
-func makeUploadAuth(t *testing.T, key *identity.Key, relayID string, body []byte, now time.Time, nonce [32]byte) UploadAuthorization {
+func makeUploadAuth(t *testing.T, key *identity.Key, estavelleID string, body []byte, now time.Time, nonce [32]byte) UploadAuthorization {
 	t.Helper()
 	timestamp := uint64(now.UnixMicro())
 	transcript, err := UploadSigningInput("POST", UploadPath, timestamp, nonce, body)
 	require.NoError(t, err)
 	signature, err := key.Sign([]byte(identity.EstavelleUsageUploadContext), transcript)
 	require.NoError(t, err)
-	return UploadAuthorization{RelayID: relayID, TimestampMicros: timestamp, Nonce: nonce, Signature: signature}
+	return UploadAuthorization{EstavelleID: estavelleID, TimestampMicros: timestamp, Nonce: nonce, Signature: signature}
 }
 
 func TestProducerMappingAuthorizationPeriodsAreRetainedAcrossRevocationAndReenable(t *testing.T) {
-	db, store, key, relayID, mapping := ingestionFixture(t)
+	db, store, key, estavelleID, mapping := ingestionFixture(t)
 	ctx := context.Background()
 
 	var periods []producerMappingInterval
@@ -199,31 +199,31 @@ func TestProducerMappingAuthorizationPeriodsAreRetainedAcrossRevocationAndReenab
 	require.Equal(t, "account-1", periods[0].AccountID)
 	require.Nil(t, periods[0].EndUS)
 	var allowedBefore AllowedMapping
-	require.NoError(t, db.Where("relay_id = ? AND deployment_id = ? AND version = ?", relayID, mapping.DeploymentID, mapping.Version).Take(&allowedBefore).Error)
-	require.NoError(t, store.AllowMapping(ctx, relayID, mapping.DeploymentID, mapping.Version))
+	require.NoError(t, db.Where("estavelle_id = ? AND deployment_id = ? AND version = ?", estavelleID, mapping.DeploymentID, mapping.Version).Take(&allowedBefore).Error)
+	require.NoError(t, store.AllowMapping(ctx, estavelleID, mapping.DeploymentID, mapping.Version))
 	var allowedAfter AllowedMapping
-	require.NoError(t, db.Where("relay_id = ? AND deployment_id = ? AND version = ?", relayID, mapping.DeploymentID, mapping.Version).Take(&allowedAfter).Error)
+	require.NoError(t, db.Where("estavelle_id = ? AND deployment_id = ? AND version = ?", estavelleID, mapping.DeploymentID, mapping.Version).Take(&allowedAfter).Error)
 	require.Equal(t, allowedBefore.AllowedAt, allowedAfter.AllowedAt, "an idempotent grant must not rewrite the authorization boundary")
 	require.NoError(t, db.Order("id").Find(&periods).Error)
 	require.Len(t, periods, 1)
 
-	require.NoError(t, store.RevokeMapping(ctx, relayID, mapping.DeploymentID, mapping.Version))
+	require.NoError(t, store.RevokeMapping(ctx, estavelleID, mapping.DeploymentID, mapping.Version))
 	require.NoError(t, db.Order("id").Find(&periods).Error)
 	require.Len(t, periods, 1)
 	require.NotNil(t, periods[0].EndUS)
 
-	require.NoError(t, store.AllowMapping(ctx, relayID, mapping.DeploymentID, mapping.Version))
-	require.NoError(t, store.RevokeProducer(ctx, relayID))
+	require.NoError(t, store.AllowMapping(ctx, estavelleID, mapping.DeploymentID, mapping.Version))
+	require.NoError(t, store.RevokeProducer(ctx, estavelleID))
 	require.NoError(t, db.Order("id").Find(&periods).Error)
 	require.Len(t, periods, 2)
 	require.NotNil(t, periods[1].EndUS)
 
 	gotRelayID, err := store.AuthorizeProducer(ctx, key.Public(), "deployment-a")
 	require.NoError(t, err)
-	require.Equal(t, relayID, gotRelayID)
+	require.Equal(t, estavelleID, gotRelayID)
 	gotRelayID, err = store.AuthorizeProducer(ctx, key.Public(), "deployment-a")
 	require.NoError(t, err, "repeating active authorization must not create a new interval")
-	require.Equal(t, relayID, gotRelayID)
+	require.Equal(t, estavelleID, gotRelayID)
 	require.NoError(t, db.Order("id").Find(&periods).Error)
 	require.Len(t, periods, 3)
 	require.Equal(t, "account-1", periods[2].AccountID)
@@ -243,10 +243,10 @@ func TestAuthorizationHistoryMigrationBaselinesExistingGrantsOnce(t *testing.T) 
 	require.NoError(t, err)
 	key, err := identity.FromSeed(bytes.Repeat([]byte{8}, identity.SeedSize))
 	require.NoError(t, err)
-	relayID := base64.RawURLEncoding.EncodeToString(estavellereg.EstavelleID(key.Public()))
+	estavelleID := base64.RawURLEncoding.EncodeToString(estavellereg.EstavelleID(key.Public()))
 	priorAuthorization := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Microsecond)
-	require.NoError(t, db.Create(&ManagedProducer{RelayID: relayID, DeploymentID: "deployment-a", IdentityKey: base64.StdEncoding.EncodeToString(key.Public()), Enabled: true, UpdatedAt: priorAuthorization}).Error)
-	require.NoError(t, db.Create(&AllowedMapping{RelayID: relayID, DeploymentID: mapping.DeploymentID, Version: mapping.Version, Enabled: true, AllowedAt: priorAuthorization}).Error)
+	require.NoError(t, db.Create(&ManagedProducer{EstavelleID: estavelleID, DeploymentID: "deployment-a", IdentityKey: base64.StdEncoding.EncodeToString(key.Public()), Enabled: true, UpdatedAt: priorAuthorization}).Error)
+	require.NoError(t, db.Create(&AllowedMapping{EstavelleID: estavelleID, DeploymentID: mapping.DeploymentID, Version: mapping.Version, Enabled: true, AllowedAt: priorAuthorization}).Error)
 
 	cutoverBefore := time.Now().UTC().Truncate(time.Microsecond).UnixMicro()
 	store, err := NewStore(db)
@@ -270,11 +270,11 @@ func TestAuthorizationHistoryMigrationBaselinesExistingGrantsOnce(t *testing.T) 
 }
 
 func TestIngestRejectsMappingWindowsOutsideAuthorizedPeriod(t *testing.T) {
-	db, store, key, relayID, mapping := ingestionFixture(t)
+	db, store, key, estavelleID, mapping := ingestionFixture(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	unauthorizedStart := now.UnixMicro()/int64(minuteMicros)*int64(minuteMicros) - 2*int64(minuteMicros)
 	body := makeSignedBatch(t, key, [16]byte{9}, 0, mappingPayloadAt(mapping, 7, uint64(unauthorizedStart)))
-	auth := makeUploadAuth(t, key, relayID, body, now, [32]byte{9})
+	auth := makeUploadAuth(t, key, estavelleID, body, now, [32]byte{9})
 	if _, err := store.Ingest(context.Background(), "POST", UploadPath, auth, body, now); err != ErrMappingNotAllowed {
 		t.Fatalf("unauthorized historical mapping error = %v, want %v", err, ErrMappingNotAllowed)
 	}

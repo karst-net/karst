@@ -44,7 +44,7 @@ func TestBuildPaddleTransactionRequestUsesTruncatedInvoiceLines(t *testing.T) {
 func TestBuildPaddleTransactionRequestOmitsZeroLines(t *testing.T) {
 	invoice := paddleTestInvoice()
 	invoice.DeviceMinor = 0
-	invoice.RelayMinor = 56
+	invoice.EstavelleMinor = 56
 	invoice.TotalMinor = 56
 	request, err := BuildPaddleTransactionRequest(invoice, "ctm_01grnn4zta5a1mf02jjze7y2ys", "pro_01gsz4t5hdjse848p5f9t9hf5h")
 	if err != nil {
@@ -66,7 +66,7 @@ func TestBuildPaddleTransactionRequestRejectsInvalidInvoices(t *testing.T) {
 	}{
 		{name: "non USD", invoice: func() FinalInvoice { i := base; i.Currency = "EUR"; return i }(), customerID: "ctm_01grnn4zta5a1mf02jjze7y2ys", productID: "pro_01gsz4t5hdjse848p5f9t9hf5h", want: ErrInvalidPaddleInvoice},
 		{name: "amount mismatch", invoice: func() FinalInvoice { i := base; i.TotalMinor++; return i }(), customerID: "ctm_01grnn4zta5a1mf02jjze7y2ys", productID: "pro_01gsz4t5hdjse848p5f9t9hf5h", want: ErrInvalidPaddleInvoice},
-		{name: "zero total", invoice: func() FinalInvoice { i := base; i.DeviceMinor = 0; i.RelayMinor = 0; i.TotalMinor = 0; return i }(), customerID: "ctm_01grnn4zta5a1mf02jjze7y2ys", productID: "pro_01gsz4t5hdjse848p5f9t9hf5h", want: ErrNoPaddleCharge},
+		{name: "zero total", invoice: func() FinalInvoice { i := base; i.DeviceMinor = 0; i.EstavelleMinor = 0; i.TotalMinor = 0; return i }(), customerID: "ctm_01grnn4zta5a1mf02jjze7y2ys", productID: "pro_01gsz4t5hdjse848p5f9t9hf5h", want: ErrNoPaddleCharge},
 		{name: "invalid customer id", invoice: base, customerID: "ctm_invalid", productID: "pro_01gsz4t5hdjse848p5f9t9hf5h", want: ErrInvalidPaddleInvoice},
 		{name: "invalid product id", invoice: base, customerID: "ctm_01grnn4zta5a1mf02jjze7y2ys", productID: "pro_invalid", want: ErrInvalidPaddleInvoice},
 	}
@@ -85,7 +85,7 @@ func paddleTestInvoice() FinalInvoice {
 	return FinalInvoice{
 		SchemaVersion: "invoice-inputs-v1", AccountID: "private-account-name",
 		PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), Currency: "USD",
-		DeviceMinor: 1234, RelayMinor: 56, TotalMinor: 1290,
+		DeviceMinor: 1234, EstavelleMinor: 56, TotalMinor: 1290,
 		FinalizedAt: time.Date(2026, time.October, 1, 0, 0, 0, 0, time.UTC),
 	}
 }

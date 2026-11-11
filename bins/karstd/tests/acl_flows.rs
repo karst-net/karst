@@ -82,7 +82,7 @@ fn config_for(
         addresses: vec![own_range.parse().expect("interface address")],
         psk_epoch: 1,
         node_id: Vec::new(),
-        relays: Vec::new(),
+        estavelles: Vec::new(),
         estavelle_ca_file: None,
         prefer_quic_estavelle: false,
         metrics_listen: None,

@@ -48,7 +48,7 @@ type Service struct {
 	Revision      uint64   `gorm:"not null;default:0" json:"revision,omitempty"`
 	AccessManaged bool     `gorm:"not null;default:false" json:"access_managed,omitempty"`
 	AllowedGroups []string `gorm:"serializer:json" json:"allowed_groups,omitempty"`
-	GatewayHandle string   `json:"gateway_handle,omitempty"`
+	AvenHandle string   `json:"aven_handle,omitempty"`
 	ExitIPv4      bool     `json:"exit_ipv4,omitempty"`
 	ExitIPv6      bool     `json:"exit_ipv6,omitempty"`
 	Metric        int      `json:"metric,omitempty"`
@@ -74,7 +74,7 @@ type View struct {
 type Store struct {
 	db              *gorm.DB
 	LifecycleAgents interface {
-		CheckRelayLifecycle(context.Context, string, *gorm.DB) error
+		CheckEstavelleLifecycle(context.Context, string, *gorm.DB) error
 	}
 }
 
@@ -106,7 +106,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 var validID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 func validate(service Service) error {
-	if !service.AccessManaged && (len(service.AllowedGroups) > 0 || service.GatewayHandle != "" || service.ExitIPv4 || service.ExitIPv6) {
+	if !service.AccessManaged && (len(service.AllowedGroups) > 0 || service.AvenHandle != "" || service.ExitIPv4 || service.ExitIPv6) {
 		return fmt.Errorf("%w: access settings require managed admission", ErrInvalid)
 	}
 	if !validID.MatchString(service.ID) || service.PonorID == "" {
@@ -205,7 +205,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 			return err
 		}
 		if current.AccessManaged {
-			access := BackendAccess{AccountID: account, RelayID: current.PonorID, Groups: []string{}}
+			access := BackendAccess{AccountID: account, EstavelleID: current.PonorID, Groups: []string{}}
 			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&access).Error; err != nil {
 				return err
 			}

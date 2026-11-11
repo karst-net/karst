@@ -186,7 +186,7 @@ export type BillingPayment = {
     period_end: string;
     currency: 'USD';
     device_minor: number;
-    relay_minor: number;
+    estavelle_minor: number;
     total_minor: number;
     state: 'not_queued' | 'ready' | 'submitting' | 'reconcile' | 'checkout' | 'paid' | 'past_due' | 'operator_hold';
     checkout_url?: string;
@@ -254,7 +254,7 @@ export type EstavelleCapDraft = {
 };
 
 export type EstavelleCreditRequest = {
-    relay_id: string;
+    estavelle_id: string;
     deployment_id: string;
     mapping_version: string;
     generation: string;
@@ -268,7 +268,7 @@ export type EstavelleCreditGrant = {
     account_id: string;
     period_start: string;
     period_end: string;
-    relay_id: string;
+    estavelle_id: string;
     generation: string;
     mapping_version: string;
     schedule_version: string;
@@ -280,7 +280,7 @@ export type EstavelleCreditGrant = {
 
 export type EstavelleCreditSurrender = {
     grant_id: string;
-    relay_id: string;
+    estavelle_id: string;
     deployment_id: string;
     mapping_version: string;
     generation: string;
@@ -367,7 +367,7 @@ export type Node = {
 export type NodeControlCheck = {
     status: 'accepted' | 'incompatible';
     observed_at: string;
-    capability?: 'relay_lifecycle_schema' | 'gateway_ingress_schema';
+    capability?: 'estavelle_lifecycle_schema' | 'aven_ingress_schema';
     required_schema?: number;
     reported_schema?: number;
 };
@@ -458,7 +458,7 @@ export type PathObservation = {
     peer_handle: string;
     kind: 'direct' | 'relay' | 'turn' | 'unreachable';
     endpoint?: string | null;
-    relay_id?: string | null;
+    estavelle_id?: string | null;
     since?: string | null;
     observed_at: string;
     /**
@@ -666,7 +666,7 @@ export type EstavelleService = {
     /**
      * Explicitly selected enrolled Linux machine providing internet egress.
      */
-    gateway_handle?: string;
+    aven_handle?: string;
     exit_ipv4?: boolean;
     exit_ipv6?: boolean;
     metric?: number;
@@ -704,13 +704,13 @@ export type EstavelleAllocation = {
     /**
      * The only capability this workflow grants in v1 -- required true.
      */
-    relay_transport?: boolean;
+    estavelle_transport?: boolean;
     /**
-     * Not yet supported; rejected if set until Gateway-identity binding is designed.
+     * Not yet supported; rejected if set until Aven-identity binding is designed.
      */
     egress_v4?: boolean;
     /**
-     * Not yet supported; rejected if set until Gateway-identity binding is designed.
+     * Not yet supported; rejected if set until Aven-identity binding is designed.
      */
     egress_v6?: boolean;
     /**
@@ -728,9 +728,9 @@ export type EstavelleAllocation = {
      */
     readonly instance_id?: string;
     /**
-     * The relay registry ID
+     * The estavelle registry ID
      */
-    readonly relay_id?: string;
+    readonly estavelle_id?: string;
     /**
      * Expected revision for the next compare-and-set action against this allocation.
      */
@@ -759,7 +759,7 @@ export type RolloutPlan = {
     /**
      * Only meaningful while state is failed.
      */
-    readonly failed_component?: 'control' | 'console' | 'relay_job';
+    readonly failed_component?: 'control' | 'console' | 'estavelle_job';
     readonly failure_reason?: string;
     /**
      * Expected revision for the next compare-and-set action against this plan.
@@ -773,9 +773,9 @@ export type RolloutPlan = {
 
 export type RolloutComponent = {
     /**
-     * relay_job is this job's own relay task group
+     * estavelle_job is this job's own relay task group
      */
-    name: 'control' | 'console' | 'relay_job';
+    name: 'control' | 'console' | 'estavelle_job';
     /**
      * 0-based apply order
      */
@@ -792,8 +792,8 @@ export type RolloutComponent = {
     /**
      * Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.
      */
-    requires_relay_lifecycle_schema?: number | null;
-    requires_gateway_ingress_schema?: number | null;
+    requires_estavelle_lifecycle_schema?: number | null;
+    requires_aven_ingress_schema?: number | null;
     readonly status?: 'pending' | 'applied' | 'failed';
     readonly failure_reason?: string;
     /**
@@ -804,8 +804,8 @@ export type RolloutComponent = {
 };
 
 export type RolloutComponentCompatibility = {
-    component: 'control' | 'console' | 'relay_job';
-    capability: 'relay_lifecycle_schema' | 'gateway_ingress_schema';
+    component: 'control' | 'console' | 'estavelle_job';
+    capability: 'estavelle_lifecycle_schema' | 'aven_ingress_schema';
     required: number;
     incompatible_peer_count: number;
     blocking: boolean;
@@ -1298,13 +1298,13 @@ export type EstavelleAllocationWritable = {
     /**
      * The only capability this workflow grants in v1 -- required true.
      */
-    relay_transport?: boolean;
+    estavelle_transport?: boolean;
     /**
-     * Not yet supported; rejected if set until Gateway-identity binding is designed.
+     * Not yet supported; rejected if set until Aven-identity binding is designed.
      */
     egress_v4?: boolean;
     /**
-     * Not yet supported; rejected if set until Gateway-identity binding is designed.
+     * Not yet supported; rejected if set until Aven-identity binding is designed.
      */
     egress_v6?: boolean;
     /**
@@ -1321,9 +1321,9 @@ export type RolloutPlanWritable = {
 
 export type RolloutComponentWritable = {
     /**
-     * relay_job is this job's own relay task group
+     * estavelle_job is this job's own relay task group
      */
-    name: 'control' | 'console' | 'relay_job';
+    name: 'control' | 'console' | 'estavelle_job';
     /**
      * 0-based apply order
      */
@@ -1340,8 +1340,8 @@ export type RolloutComponentWritable = {
     /**
      * Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.
      */
-    requires_relay_lifecycle_schema?: number | null;
-    requires_gateway_ingress_schema?: number | null;
+    requires_estavelle_lifecycle_schema?: number | null;
+    requires_aven_ingress_schema?: number | null;
 };
 
 export type EstavelleWritable = EstavelleCreate & {
@@ -3019,7 +3019,7 @@ export type ListEstavelleAdmissionTargetsResponses = {
      * Registered backends with a live identity-bound admission writer.
      */
     200: Array<{
-        relay_id: string;
+        estavelle_id: string;
         refreshed_at: string;
     }>;
 };
@@ -3032,7 +3032,7 @@ export type UpdateEstavelleServiceAccessData = {
         ponor_id?: string;
         access_managed?: boolean;
         allowed_groups: Array<string>;
-        gateway_handle?: string;
+        aven_handle?: string;
         exit_ipv4?: boolean;
         exit_ipv6?: boolean;
         metric?: number;
@@ -3554,7 +3554,7 @@ export type MarkRolloutComponentAppliedData = {
     };
     path: {
         id: string;
-        name: 'control' | 'console' | 'relay_job';
+        name: 'control' | 'console' | 'estavelle_job';
     };
     query?: never;
     url: '/rollouts/{id}/components/{name}/mark-applied';
@@ -3589,7 +3589,7 @@ export type MarkRolloutComponentFailedData = {
     };
     path: {
         id: string;
-        name: 'control' | 'console' | 'relay_job';
+        name: 'control' | 'console' | 'estavelle_job';
     };
     query?: never;
     url: '/rollouts/{id}/components/{name}/mark-failed';

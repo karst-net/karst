@@ -381,7 +381,7 @@ func relayRow(address string, key []byte) *proto.KarstEstavelle {
 	return &proto.KarstEstavelle{
 		Address:       address,
 		TlsServerName: "relay.test",
-		RelayId:       h.Sum(nil),
+		EstavelleId:       h.Sum(nil),
 		IdentityKey:   key,
 		Region:        "test",
 	}
@@ -473,7 +473,7 @@ func buildNetmapServer(preload int, dnsZone string, sshPolicy string, gatewayVer
 	// this gets a byte-identical netmap, and a routing row needs no extra
 	// flag to reach the admin surface below.
 	r.netmap.Routes = r.routes
-	r.netmap.Relays = relayEntries()
+	r.netmap.Estavelles = relayEntries()
 
 	// A prebuilt Bedrock log is the cross-implementation path: Rust produces
 	// the bytes an offline ceremony would import and this Go server only

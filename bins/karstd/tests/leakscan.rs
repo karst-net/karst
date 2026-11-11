@@ -139,7 +139,7 @@ fn netmap_with_psks() -> Netmap {
     let peer = |id: &str, ip: &str, seed: u8| {
         let (_, kem_pk) = keypair_from_seed(KemKind::MlKem1024, &[seed; 64]);
         pb::KarstNetmapPeer {
-            home_relay: Vec::new(),
+            home_estavelle: Vec::new(),
             node_id: id.as_bytes().to_vec(),
             allowed_ips: vec![format!("{ip}/32")],
             dns_name: id.to_owned(),
@@ -451,7 +451,7 @@ fn a_lattice_only_node_is_reported_as_such() {
             allowed_ips: vec!["100.64.0.2/32".to_owned()],
             dns_name: "alpha".to_owned(),
             endpoint: String::new(),
-            home_relay: Vec::new(),
+            home_estavelle: Vec::new(),
             kem_public_key: kem_pk.to_bytes().clone(),
             psk: Vec::new(),
             psk_previous: Vec::new(),

@@ -88,12 +88,12 @@ func validateKarstGroupDeletion(ctx context.Context, transaction store.Store, gr
 	// independently retained restriction even when the service row is absent.
 	if slices.Contains(tables, (estavelleservice.BackendAccess{}).TableName()) {
 		var access []estavelleservice.BackendAccess
-		if err := db.Select([]string{"relay_id", "groups"}).Where("account_id = ?", group.AccountID).Find(&access).Error; err != nil {
+		if err := db.Select([]string{"estavelle_id", "groups"}).Where("account_id = ?", group.AccountID).Find(&access).Error; err != nil {
 			return fmt.Errorf("cannot check relay admission dependencies: %w", err)
 		}
 		for _, backend := range access {
 			if slices.Contains(backend.Groups, group.ID) {
-				return &GroupLinkError{Resource: "relay admission", Name: backend.RelayID}
+				return &GroupLinkError{Resource: "relay admission", Name: backend.EstavelleID}
 			}
 		}
 	}

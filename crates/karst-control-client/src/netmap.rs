@@ -126,12 +126,12 @@ pub struct PeerEntry<'a> {
     /// Routable content, so it is covered by the digest: a peer that moved
     /// relay whose digest did not change would never be delivered, and every
     /// other node would keep dialing a relay it had left.
-    pub home_relay: &'a [u8],
+    pub home_estavelle: &'a [u8],
     pub allowed_ips: &'a [String],
     /// This peer's own self-reported Resurgence candidate list —
     /// `karst_control.proto`'s `KarstNetmapPeer.candidates`, added
     /// 2026-10-31 (`spec/resurgence-v1.md` §7.3.1). Routable content, covered by
-    /// both hashes below for the same reason `home_relay` is: a peer whose
+    /// both hashes below for the same reason `home_estavelle` is: a peer whose
     /// only change is this field must still be recognized as changed. A
     /// peer reporting none contributes nothing here, so a pre-existing
     /// digest/version for it is unaffected.
@@ -162,7 +162,7 @@ pub fn peer_digest(entry: &PeerEntry<'_>, epoch: u32) -> u64 {
     push(&mut h, entry.kem_public_key);
     push(&mut h, entry.dns_name.as_bytes());
     push(&mut h, entry.endpoint.as_bytes());
-    push(&mut h, entry.home_relay);
+    push(&mut h, entry.home_estavelle);
     for ip in entry.allowed_ips {
         push(&mut h, ip.as_bytes());
     }
@@ -201,7 +201,7 @@ pub struct FilterRuleView<'a> {
 pub struct RelayView<'a> {
     pub address: &'a str,
     pub tls_server_name: &'a str,
-    pub relay_id: &'a [u8],
+    pub estavelle_id: &'a [u8],
     pub identity_key: &'a [u8],
     pub region: &'a str,
 }
@@ -211,7 +211,7 @@ pub struct RelayView<'a> {
 pub struct RouteView<'a> {
     pub route_id: &'a str,
     pub prefix: &'a str,
-    pub gateway_id: &'a [u8],
+    pub aven_id: &'a [u8],
     pub metric: u32,
     pub kind: u32,
     pub masquerade: bool,
@@ -288,7 +288,7 @@ pub struct NetmapContent<'a> {
     /// grants nothing" (`true`, empty `ssh_filter`) — the same nil-vs-empty
     /// distinction `packet_filter`'s own emptiness carries via `unchanged`.
     pub ssh_filter_present: bool,
-    pub relays: &'a [RelayView<'a>],
+    pub estavelles: &'a [RelayView<'a>],
     pub routes: &'a [RouteView<'a>],
     /// Authenticated resolver policy. Changes must move the netmap version so
     /// a node cannot keep forwarding with an obsolete upstream list.
@@ -377,7 +377,7 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
         push(&mut h, p.kem_public_key);
         push(&mut h, p.dns_name.as_bytes());
         push(&mut h, p.endpoint.as_bytes());
-        push(&mut h, p.home_relay);
+        push(&mut h, p.home_estavelle);
         for ip in p.allowed_ips {
             push(&mut h, ip.as_bytes());
         }
@@ -404,10 +404,10 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     h.update(u32::from(content.ssh_filter_present).to_be_bytes());
     push_rules(&mut h, content.ssh_filter);
     push(&mut h, b"karst-estavelles");
-    for relay in content.relays {
+    for relay in content.estavelles {
         push(&mut h, relay.address.as_bytes());
         push(&mut h, relay.tls_server_name.as_bytes());
-        push(&mut h, relay.relay_id);
+        push(&mut h, relay.estavelle_id);
         push(&mut h, relay.identity_key);
         push(&mut h, relay.region.as_bytes());
     }
@@ -415,7 +415,7 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     for route in content.routes {
         push(&mut h, route.route_id.as_bytes());
         push(&mut h, route.prefix.as_bytes());
-        push(&mut h, route.gateway_id);
+        push(&mut h, route.aven_id);
         h.update(route.metric.to_be_bytes());
         h.update(route.kind.to_be_bytes());
         h.update(u32::from(route.masquerade).to_be_bytes());

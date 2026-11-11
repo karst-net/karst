@@ -27,7 +27,7 @@ type estavelleAllocationStore interface {
 	Create(context.Context, estavellealloc.Allocation) (*estavellealloc.Allocation, error)
 	List(context.Context) ([]estavellealloc.Allocation, error)
 	Get(context.Context, string) (*estavellealloc.Allocation, error)
-	Transition(ctx context.Context, id string, expectedRevision uint64, expectedState, to, reason, instanceID, relayID string) (*estavellealloc.Allocation, error)
+	Transition(ctx context.Context, id string, expectedRevision uint64, expectedState, to, reason, instanceID, estavelleID string) (*estavellealloc.Allocation, error)
 	RequestDeprovision(ctx context.Context, id string, expectedRevision uint64) (*estavellealloc.Allocation, error)
 	Delete(ctx context.Context, id string, expectedRevision uint64) error
 }

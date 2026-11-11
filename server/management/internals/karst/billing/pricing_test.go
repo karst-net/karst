@@ -34,7 +34,7 @@ func TestCalculateUsesGraduatedDeviceTiers(t *testing.T) {
 	require.Equal(t, "v7", estimate.ScheduleVersion)
 	require.Equal(t, "USD", estimate.Currency)
 	require.Equal(t, &ExactAmount{Numerator: "900", Denominator: "1"}, estimate.DeviceExact)
-	require.Equal(t, &ExactAmount{Numerator: "0", Denominator: "1"}, estimate.RelayExact)
+	require.Equal(t, &ExactAmount{Numerator: "0", Denominator: "1"}, estimate.EstavelleExact)
 	require.Equal(t, &ExactAmount{Numerator: "900", Denominator: "1"}, estimate.TotalExact)
 }
 
@@ -82,7 +82,7 @@ func TestCalculateRetainsTheExactCombinedAmount(t *testing.T) {
 	estimate, err := Calculate(devices, relays, schedule)
 	require.NoError(t, err)
 	require.Equal(t, &ExactAmount{Numerator: "1", Denominator: "3"}, estimate.DeviceExact)
-	require.Equal(t, &ExactAmount{Numerator: "2", Denominator: "3"}, estimate.RelayExact)
+	require.Equal(t, &ExactAmount{Numerator: "2", Denominator: "3"}, estimate.EstavelleExact)
 	require.Equal(t, &ExactAmount{Numerator: "1", Denominator: "1"}, estimate.TotalExact)
 }
 
@@ -102,7 +102,7 @@ func TestCalculateAppliesOrganizationRelayAllowanceToDecimalBytes(t *testing.T) 
 
 	overage, err := Calculate(devices, completeRelayReport(start, end, "14"), schedule)
 	require.NoError(t, err)
-	require.Equal(t, &ExactAmount{Numerator: "10", Denominator: "1"}, overage.RelayExact)
+	require.Equal(t, &ExactAmount{Numerator: "10", Denominator: "1"}, overage.EstavelleExact)
 	require.Equal(t, &ExactAmount{Numerator: "10", Denominator: "1"}, overage.TotalExact)
 }
 
@@ -122,7 +122,7 @@ func TestCalculateKeepsPartialComponentsOutOfFinalTotal(t *testing.T) {
 	require.False(t, estimate.UsageComplete)
 	require.Equal(t, []string{"relay_usage"}, estimate.Incomplete)
 	require.NotNil(t, estimate.DeviceExact)
-	require.Nil(t, estimate.RelayExact)
+	require.Nil(t, estimate.EstavelleExact)
 	require.Nil(t, estimate.TotalExact)
 }
 
@@ -217,7 +217,7 @@ func TestCalculateHandlesRelayBytesAboveUint64(t *testing.T) {
 
 	estimate, err := Calculate(devices, relays, schedule)
 	require.NoError(t, err)
-	require.Equal(t, &ExactAmount{Numerator: "2000000000000", Denominator: "1"}, estimate.RelayExact)
+	require.Equal(t, &ExactAmount{Numerator: "2000000000000", Denominator: "1"}, estimate.EstavelleExact)
 	require.Equal(t, &ExactAmount{Numerator: "2000000000000", Denominator: "1"}, estimate.TotalExact)
 }
 

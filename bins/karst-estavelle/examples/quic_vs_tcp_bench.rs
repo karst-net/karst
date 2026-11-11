@@ -159,7 +159,7 @@ async fn tcp_handshake(h: &Harness, node: &Identity) -> Duration {
     let mut client = ClientHandshake::new(
         Role::Client,
         nid(node),
-        h.relay.relay_id(),
+        h.relay.estavelle_id(),
         h.relay.public_key().to_vec(),
         rand_nonce(),
     );
@@ -238,7 +238,7 @@ async fn main() {
         let mut client = ClientHandshake::new(
             Role::Client,
             nid(&alice),
-            h.relay.relay_id(),
+            h.relay.estavelle_id(),
             h.relay.public_key().to_vec(),
             rand_nonce(),
         );
@@ -315,7 +315,7 @@ async fn tcp_forward_bench(h: &Harness, alice: &Identity, bob: &Identity) -> Dur
         let mut client = ClientHandshake::new(
             Role::Client,
             nid(node),
-            h.relay.relay_id(),
+            h.relay.estavelle_id(),
             h.relay.public_key().to_vec(),
             rand_nonce(),
         );
@@ -390,7 +390,7 @@ async fn quic_forward_bench(
         let mut client = ClientHandshake::new(
             Role::Client,
             nid(node),
-            h.relay.relay_id(),
+            h.relay.estavelle_id(),
             h.relay.public_key().to_vec(),
             rand_nonce(),
         );

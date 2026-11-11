@@ -59,9 +59,9 @@ func TestScopedGatewayIngressRequiresVersionedAgentAndHashesScope(t *testing.T) 
 	f := newNetmapFixture(t, 1)
 	account := &types.Account{Id: "acct", Groups: map[string]*types.Group{"engineering": {ID: "engineering", Peers: []string{f.peers.byKey[f.peerH[0]].ID}}}}
 	f.handler.DNS = grantAccount{account}
-	f.handler.Policy = &policy.Document{Grants: []policy.Grant{{ID: "exit", Name: "Internet", SourceGroups: []string{"engineering"}, Gateway: f.selfH, Networks: []string{"0.0.0.0/0", "::/0"}, Ports: "*"}}}
+	f.handler.Policy = &policy.Document{Grants: []policy.Grant{{ID: "exit", Name: "Internet", SourceGroups: []string{"engineering"}, Aven: f.selfH, Networks: []string{"0.0.0.0/0", "::/0"}, Ports: "*"}}}
 	request := func(schema uint32, known uint64) (*proto.KarstNetmapResponse, error) {
-		payload, err := pb.Marshal(&proto.KarstNetmapRequest{GatewayIngressSchema: schema, KnownVersion: known})
+		payload, err := pb.Marshal(&proto.KarstNetmapRequest{AvenIngressSchema: schema, KnownVersion: known})
 		require.NoError(t, err)
 		raw, err := f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
 		if err != nil {
@@ -77,14 +77,14 @@ func TestScopedGatewayIngressRequiresVersionedAgentAndHashesScope(t *testing.T) 
 		recorded, readErr := f.handler.Nodes.Get(f.selfH)
 		require.NoError(t, readErr)
 		require.Equal(t, "incompatible", recorded.ControlCheck.Status)
-		require.Equal(t, "gateway_ingress_schema", recorded.ControlCheck.Capability)
+		require.Equal(t, "aven_ingress_schema", recorded.ControlCheck.Capability)
 		require.Equal(t, uint32(1), recorded.ControlCheck.RequiredSchema)
 		require.Equal(t, schema, recorded.ControlCheck.ReportedSchema)
 		require.NotNil(t, recorded.ControlCheck.ObservedAt)
 	}
 	response, err := request(1, 0)
 	require.NoError(t, err)
-	require.Equal(t, uint32(1), response.GatewayIngressSchema)
+	require.Equal(t, uint32(1), response.AvenIngressSchema)
 	require.Len(t, response.PacketFilter, 1)
 	require.Equal(t, []string{f.peerH[0]}, response.PacketFilter[0].Srcs)
 	require.Equal(t, []string{"0.0.0.0/0", "::/0"}, response.PacketFilter[0].DstCidrs)
@@ -118,33 +118,33 @@ func TestScopedGatewayIngressRequiresVersionedAgentAndHashesScope(t *testing.T) 
 }
 
 // TestGatewayIngressSchemaPersistsUnconditionally confirms
-// GatewayIngressSchema is recorded on node.Identity for every netmap
+// AvenIngressSchema is recorded on node.Identity for every netmap
 // request, not only for a node whose policy happens to produce a
 // destination-scoped filter rule and therefore trips the gated
 // FailedPrecondition check above -- the same unconditional-persistence
 // property TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback
-// already covers for RelayLifecycleSchema (ADR-0066).
+// already covers for EstavelleLifecycleSchema (ADR-0066).
 func TestGatewayIngressSchemaPersistsUnconditionally(t *testing.T) {
 	f := newNetmapFixture(t, 1)
 	// No Policy/DNS configured at all, so compileFilter produces no
 	// destination-scoped rule -- the gated check in netmap.go never runs.
-	payload, err := pb.Marshal(&proto.KarstNetmapRequest{GatewayIngressSchema: 1})
+	payload, err := pb.Marshal(&proto.KarstNetmapRequest{AvenIngressSchema: 1})
 	require.NoError(t, err)
 	_, err = f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
 	require.NoError(t, err)
 	recorded, err := f.handler.Nodes.Get(f.selfH)
 	require.NoError(t, err)
-	require.Equal(t, uint32(1), recorded.GatewayIngressSchema)
+	require.Equal(t, uint32(1), recorded.AvenIngressSchema)
 
 	// A later legacy declaration replaces the earlier one, same as
-	// RelayLifecycleSchema's own downgrade behavior.
-	payload, err = pb.Marshal(&proto.KarstNetmapRequest{GatewayIngressSchema: 0})
+	// EstavelleLifecycleSchema's own downgrade behavior.
+	payload, err = pb.Marshal(&proto.KarstNetmapRequest{AvenIngressSchema: 0})
 	require.NoError(t, err)
 	_, err = f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
 	require.NoError(t, err)
 	recorded, err = f.handler.Nodes.Get(f.selfH)
 	require.NoError(t, err)
-	require.Zero(t, recorded.GatewayIngressSchema)
+	require.Zero(t, recorded.AvenIngressSchema)
 }
 
 // TestScopedDnsZoneAffinityRequiresVersionedAgentAndHashesScope is

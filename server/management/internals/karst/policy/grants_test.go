@@ -75,7 +75,7 @@ func TestExplicitLegacyBinding(t *testing.T) {
 }
 
 func TestScopedGatewayGrant(t *testing.T) {
-	d := &Document{Grants: []Grant{{ID: "exit", Name: "Internet", SourceGroups: []string{"engineering"}, Gateway: "gateway", Networks: []string{"0.0.0.0/0", "::/0"}, Ports: "443"}}}
+	d := &Document{Grants: []Grant{{ID: "exit", Name: "Internet", SourceGroups: []string{"engineering"}, Aven: "gateway", Networks: []string{"0.0.0.0/0", "::/0"}, Ports: "443"}}}
 	if err := d.Validate(); err != nil {
 		t.Fatal(err)
 	}

@@ -23,7 +23,7 @@ import (
 
 type compatibleAgents struct{}
 
-func (compatibleAgents) CheckRelayLifecycle(context.Context, string, *gorm.DB) error { return nil }
+func (compatibleAgents) CheckEstavelleLifecycle(context.Context, string, *gorm.DB) error { return nil }
 
 func fixture(t *testing.T) (*Store, *estavellereg.Store, Service) {
 	t.Helper()

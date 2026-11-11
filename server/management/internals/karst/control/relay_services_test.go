@@ -24,7 +24,7 @@ import (
 
 type compatibleLifecycleAgents struct{}
 
-func (compatibleLifecycleAgents) CheckRelayLifecycle(context.Context, string, *gorm.DB) error {
+func (compatibleLifecycleAgents) CheckEstavelleLifecycle(context.Context, string, *gorm.DB) error {
 	return nil
 }
 
@@ -49,9 +49,9 @@ func TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback(t *test
 	// (issue #530); this test is about publication authority, not that.
 	require.NoError(t, db.Create(&estavelleservice.Service{AccountID: "acct", ID: "primary", PonorID: p.ID, Revision: 1}).Error)
 	f.handler.RelayServices = services
-	f.handler.Relays = []*proto.KarstEstavelle{{Address: "203.0.113.9:443"}}
+	f.handler.Estavelles = []*proto.KarstEstavelle{{Address: "203.0.113.9:443"}}
 	lifecycleRequest := func(known uint64) *proto.KarstNetmapResponse {
-		payload, err := pb.Marshal(&proto.KarstNetmapRequest{KnownVersion: known, RelayLifecycleSchema: 1})
+		payload, err := pb.Marshal(&proto.KarstNetmapRequest{KnownVersion: known, EstavelleLifecycleSchema: 1})
 		require.NoError(t, err)
 		raw, err := f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
 		require.NoError(t, err)
@@ -60,15 +60,15 @@ func TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback(t *test
 		return response
 	}
 	legacy := lifecycleRequest(0)
-	require.Equal(t, "203.0.113.9:443", legacy.Relays[0].Address)
+	require.Equal(t, "203.0.113.9:443", legacy.Estavelles[0].Address)
 	_, err = services.SetPublication(ctx, "services")
 	require.NoError(t, err)
 	managed := lifecycleRequest(legacy.Version)
 	require.NotEqual(t, legacy.Version, managed.Version)
-	require.Len(t, managed.Relays, 1)
+	require.Len(t, managed.Estavelles, 1)
 	want, err := estavellereg.Compile(entry)
 	require.NoError(t, err)
-	require.True(t, pb.Equal(want, managed.Relays[0]), "identity, region, TLS name and declared location must be preserved")
+	require.True(t, pb.Equal(want, managed.Estavelles[0]), "identity, region, TLS name and declared location must be preserved")
 	_, err = services.SetModes(ctx, "primary", false)
 	require.NoError(t, err)
 	legacyPayload, err := pb.Marshal(&proto.KarstNetmapRequest{Software: &proto.KarstSoftwareIdentity{Version: "incompatible-release"}})
@@ -78,11 +78,11 @@ func TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback(t *test
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	recorded, err := f.handler.Nodes.Get(node.Handle(f.self.Public()))
 	require.NoError(t, err)
-	require.Zero(t, recorded.RelayLifecycleSchema, "a downgrade replaces the previous declaration even when netmap is refused")
+	require.Zero(t, recorded.EstavelleLifecycleSchema, "a downgrade replaces the previous declaration even when netmap is refused")
 	require.Equal(t, "incompatible-release", recorded.SoftwareVersion, "software identity must be observable even when capabilities reject the netmap")
 	require.NotNil(t, recorded.SoftwareObservedAt)
 	require.Equal(t, "incompatible", recorded.ControlCheck.Status)
-	require.Equal(t, "relay_lifecycle_schema", recorded.ControlCheck.Capability)
+	require.Equal(t, "estavelle_lifecycle_schema", recorded.ControlCheck.Capability)
 	require.Equal(t, uint32(1), recorded.ControlCheck.RequiredSchema)
 	require.Zero(t, recorded.ControlCheck.ReportedSchema)
 	require.NotNil(t, recorded.ControlCheck.ObservedAt)
@@ -93,19 +93,19 @@ func TestRelayServicePublicationPreservesWireIdentityAndExplicitRollback(t *test
 	require.Empty(t, recovered.ControlCheck.Capability)
 	require.Zero(t, recovered.ControlCheck.RequiredSchema)
 	require.Zero(t, recovered.ControlCheck.ReportedSchema)
-	require.Empty(t, withdrawn.Relays)
+	require.Empty(t, withdrawn.Estavelles)
 	require.NotEqual(t, managed.Version, withdrawn.Version)
 	_, err = services.SetModes(ctx, "primary", true)
 	require.NoError(t, err)
 	restored := lifecycleRequest(withdrawn.Version)
-	require.Len(t, restored.Relays, 1)
+	require.Len(t, restored.Estavelles, 1)
 	require.NotEqual(t, withdrawn.Version, restored.Version)
 	require.NoError(t, services.Delete(ctx, "primary"))
 	empty := lifecycleRequest(restored.Version)
 	require.NotEqual(t, restored.Version, empty.Version)
-	require.Empty(t, empty.Relays)
+	require.Empty(t, empty.Estavelles)
 	_, err = services.SetPublication(ctx, "legacy")
 	require.NoError(t, err)
 	rollback := lifecycleRequest(empty.Version)
-	require.Equal(t, "203.0.113.9:443", rollback.Relays[0].Address)
+	require.Equal(t, "203.0.113.9:443", rollback.Estavelles[0].Address)
 }

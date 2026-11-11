@@ -163,13 +163,13 @@ type NetmapHandler struct {
 		RecordRouteBytes(ctx context.Context, accountID, routeID string, report routetelemetry.RouteReport) error
 	}
 
-	// Relays is the authenticated Ponor registry. Entries are static at this
+	// Estavelles is the authenticated Ponor registry. Entries are static at this
 	// boundary until relay administration is moved into the control database.
 	RelayServices interface {
 		Netmap(context.Context) (bool, []*proto.KarstEstavelle, error)
 		Publication(context.Context) (estavelleservice.Publication, error)
 	}
-	Relays     []*proto.KarstEstavelle
+	Estavelles     []*proto.KarstEstavelle
 	RelayStore interface {
 		NetmapRelays(context.Context) ([]*proto.KarstEstavelle, error)
 	}
@@ -269,9 +269,9 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// A malformed value is refused rather than ignored. Ignoring it would leave
 	// the node believing it had published a relay while every peer kept dialing
 	// the old one — an unreachable node with nothing anywhere saying why.
-	if err := h.Nodes.SetHomeRelay(self, req.GetHomeRelay()); err != nil {
-		if errors.Is(err, node.ErrBadHomeRelay) {
-			return nil, status.Error(codes.InvalidArgument, "malformed home relay id")
+	if err := h.Nodes.SetHomeEstavelle(self, req.GetHomeEstavelle()); err != nil {
+		if errors.Is(err, node.ErrBadHomeEstavelle) {
+			return nil, status.Error(codes.InvalidArgument, "malformed home estavelle id")
 		}
 		return nil, fmt.Errorf("record home relay: %w", err)
 	}
@@ -318,19 +318,19 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			log.WithError(err).WithField("node", self).Warn("record Karst software observation")
 		}
 	}
-	if err := h.Nodes.SetRelayLifecycleSchema(ctx, self, req.GetRelayLifecycleSchema()); err != nil {
+	if err := h.Nodes.SetEstavelleLifecycleSchema(ctx, self, req.GetEstavelleLifecycleSchema()); err != nil {
 		return nil, fmt.Errorf("record Relay lifecycle capability: %w", err)
 	}
-	// Recorded unconditionally, mirroring SetRelayLifecycleSchema just
+	// Recorded unconditionally, mirroring SetEstavelleLifecycleSchema just
 	// above, so a current value is on record for every agent -- not only
 	// ones that happen to trigger the gated FailedPrecondition check
 	// further down for a destination-scoped filter rule. A rollout plan's
 	// cross-component compatibility preview (ADR-0066) depends on this
 	// being queryable without a live netmap round trip.
-	if err := h.Nodes.SetGatewayIngressSchema(ctx, self, req.GetGatewayIngressSchema()); err != nil {
+	if err := h.Nodes.SetAvenIngressSchema(ctx, self, req.GetAvenIngressSchema()); err != nil {
 		return nil, fmt.Errorf("record Gateway ingress capability: %w", err)
 	}
-	// Recorded unconditionally, mirroring SetGatewayIngressSchema just
+	// Recorded unconditionally, mirroring SetAvenIngressSchema just
 	// above, for the same ADR-0066 fleet-compatibility-preview reason.
 	if err := h.Nodes.SetDnsZoneAffinitySchema(ctx, self, req.GetDnsZoneAffinitySchema()); err != nil {
 		return nil, fmt.Errorf("record DNS zone affinity capability: %w", err)
@@ -340,8 +340,8 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		if err != nil {
 			return nil, fmt.Errorf("load Relay publication compatibility: %w", err)
 		}
-		if publication.Mode == "services" && publication.SchemaVersion >= 2 && req.GetRelayLifecycleSchema() != 1 {
-			h.recordControlCheck(ctx, self, node.ControlCheck{Status: "incompatible", Capability: "relay_lifecycle_schema", RequiredSchema: 1, ReportedSchema: req.GetRelayLifecycleSchema()})
+		if publication.Mode == "services" && publication.SchemaVersion >= 2 && req.GetEstavelleLifecycleSchema() != 1 {
+			h.recordControlCheck(ctx, self, node.ControlCheck{Status: "incompatible", Capability: "estavelle_lifecycle_schema", RequiredSchema: 1, ReportedSchema: req.GetEstavelleLifecycleSchema()})
 			return nil, status.Error(codes.FailedPrecondition, "Relay lifecycle schema 1 is required by this account; upgrade the agent before using service modes")
 		}
 	}
@@ -416,7 +416,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		return nil, fmt.Errorf("account prefixes: %w", err)
 	}
 
-	// h.Relays is the fallback documented above: it applies only when the
+	// h.Estavelles is the fallback documented above: it applies only when the
 	// account-scoped store has nothing of its own, not whenever a store
 	// happens to be configured. RelayStore is always non-nil in a real
 	// deployment, so treating its presence alone as the switch would make
@@ -431,7 +431,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		}
 	}
 	if !servicePublication {
-		relays = h.Relays
+		relays = h.Estavelles
 		if h.RelayStore != nil {
 			stored, err := h.RelayStore.NetmapRelays(estavellereg.WithAccount(ctx, accountID))
 			if err != nil {
@@ -460,7 +460,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		NodeId:    []byte(self),
 		Addresses: addressesOf(selfPeer, v4Bits, v6Bits),
 		DnsName:   selfPeer.DNSLabel,
-		Relays:    relays,
+		Estavelles:    relays,
 	}
 	if h.ComplianceIngestion {
 		resp.ComplianceIngestionSchema = 1
@@ -568,7 +568,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 
 			// Where to reach this peer when no direct path exists. Empty for a
 			// peer holding no relay, which is a peer reachable only directly.
-			HomeRelay: id.HomeRelay,
+			HomeEstavelle: id.HomeEstavelle,
 		}
 		if sendCandidates {
 			// This peer's own self-reported candidate list, redistributed —
@@ -640,11 +640,11 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	}
 	for _, rule := range filter {
 		if len(rule.DstCidrs) != 0 {
-			if req.GetGatewayIngressSchema() != 1 {
-				h.recordControlCheck(ctx, self, node.ControlCheck{Status: "incompatible", Capability: "gateway_ingress_schema", RequiredSchema: 1, ReportedSchema: req.GetGatewayIngressSchema()})
+			if req.GetAvenIngressSchema() != 1 {
+				h.recordControlCheck(ctx, self, node.ControlCheck{Status: "incompatible", Capability: "aven_ingress_schema", RequiredSchema: 1, ReportedSchema: req.GetAvenIngressSchema()})
 				return nil, status.Error(codes.FailedPrecondition, "Gateway destination-scoped ingress requires gateway_ingress_schema 1; upgrade the agent")
 			}
-			resp.GatewayIngressSchema = 1
+			resp.AvenIngressSchema = 1
 		}
 	}
 	resp.PacketFilter = filter
@@ -904,7 +904,7 @@ func PeerDigest(p *proto.KarstNetmapPeer, epoch uint32) uint64 {
 	// this peer (ponor-v1.md §9.1). Omitting it would leave the digest
 	// unchanged when a peer moved relay, the delta would never be sent, and
 	// every other node would keep dialing a relay the peer had left.
-	writeField(h, p.GetHomeRelay())
+	writeField(h, p.GetHomeEstavelle())
 	for _, ip := range p.GetAllowedIps() {
 		writeField(h, []byte(ip))
 	}
@@ -1055,7 +1055,7 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 	// without a second lookup.
 	gateways := make(map[string]*proto.KarstRouteOffer, len(offers))
 	for _, offer := range offers {
-		if offer.GetRole() == proto.KarstRouteRole_KARST_ROUTE_ROLE_AVEN && string(offer.GetGatewayId()) == self {
+		if offer.GetRole() == proto.KarstRouteRole_KARST_ROUTE_ROLE_AVEN && string(offer.GetAvenId()) == self {
 			gateways[offer.GetRouteId()] = offer
 		}
 	}
@@ -1067,7 +1067,7 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 			continue
 		}
 		if err := h.RouteTelemetry.RecordRouteBytes(ctx, accountID, routeID, routetelemetry.RouteReport{
-			GatewayID:         self,
+			AvenID:         self,
 			ReadinessReported: report.GetForwardingReadinessReported(),
 			Bytes:             report.GetBytes(),
 			Packets:           report.GetPackets(),
@@ -1214,7 +1214,7 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 
 		writeField(h, []byte(p.GetDnsName()))
 		writeField(h, []byte(p.GetEndpoint()))
-		writeField(h, p.GetHomeRelay())
+		writeField(h, p.GetHomeEstavelle())
 		for _, ip := range p.GetAllowedIps() {
 			writeField(h, []byte(ip))
 		}
@@ -1281,10 +1281,10 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 	}
 
 	writeField(h, []byte("karst-estavelles"))
-	for _, relay := range resp.GetRelays() {
+	for _, relay := range resp.GetEstavelles() {
 		writeField(h, []byte(relay.GetAddress()))
 		writeField(h, []byte(relay.GetTlsServerName()))
-		writeField(h, relay.GetRelayId())
+		writeField(h, relay.GetEstavelleId())
 		writeField(h, relay.GetIdentityKey())
 		writeField(h, []byte(relay.GetRegion()))
 	}
@@ -1295,7 +1295,7 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 	for _, route := range resp.GetRoutes() {
 		writeField(h, []byte(route.GetRouteId()))
 		writeField(h, []byte(route.GetPrefix()))
-		writeField(h, route.GetGatewayId())
+		writeField(h, route.GetAvenId())
 		binary.BigEndian.PutUint32(buf[:4], route.GetMetric())
 		h.Write(buf[:4])
 		binary.BigEndian.PutUint32(buf[:4], uint32(route.GetKind()))

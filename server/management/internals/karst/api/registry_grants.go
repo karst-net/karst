@@ -48,7 +48,7 @@ func (h *handler) validateRegistryGrants(ctx context.Context, accountID, documen
 			managed := func(grants []policy.Grant) map[string]policy.Grant {
 				out := map[string]policy.Grant{}
 				for _, g := range grants {
-					if strings.HasPrefix(g.ID, "relay-exit-") {
+					if strings.HasPrefix(g.ID, "estavelle-exit-") {
 						out[g.ID] = g
 					}
 				}
@@ -61,7 +61,7 @@ func (h *handler) validateRegistryGrants(ctx context.Context, accountID, documen
 			return readErr
 		} else {
 			for _, g := range doc.Grants {
-				if strings.HasPrefix(g.ID, "relay-exit-") {
+				if strings.HasPrefix(g.ID, "estavelle-exit-") {
 					return fmt.Errorf("resource-managed grant IDs are reserved")
 				}
 			}

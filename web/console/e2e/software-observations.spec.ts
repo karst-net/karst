@@ -44,7 +44,7 @@ test("agent reports and actual compatibility checks age without changing the rec
   await page.route("**/api/karst/v1/avens", route => route.fulfill({ json: { schema_version: 1, unresolved_routes: [], unsupported_routes: [], avens: [
     { node_id: "aging-gateway", node_handle: "aging-handle", name: "Aging gateway", control_connected: true, forwarding_readiness: "unreported", offers: [],
       software: { version: "v1", revision: "agent-commit", observed_at: observed },
-      control_check: { status: "incompatible", capability: "gateway_ingress_schema", required_schema: 1, reported_schema: 0, observed_at: observed } },
+      control_check: { status: "incompatible", capability: "aven_ingress_schema", required_schema: 1, reported_schema: 0, observed_at: observed } },
   ] } }));
   await page.goto("/#/avens/metrics");
   await page.getByRole("region", { name: "Configured Aven nodes" }).locator("summary").click();

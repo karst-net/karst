@@ -160,7 +160,7 @@ pub(crate) fn sleep_cooperatively(duration: Duration, shutdown: &Shutdown) {
 /// and hands to
 /// [`control::Client::set_anchor_rtt_observations`](crate::control::Client::set_anchor_rtt_observations)
 /// right before its next request — the same "observation queued here, sent
-/// on the next request" shape `sessions`/`home_relay` already use, bridged
+/// on the next request" shape `sessions`/`home_estavelle` already use, bridged
 /// across threads because, unlike those two, this daemon's only `Client`
 /// value is owned exclusively by the refresh loop's own thread for the
 /// whole run.

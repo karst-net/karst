@@ -34,7 +34,7 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Stream for 
 ///
 /// The relay always opens this stream and speaks first — see
 /// `karst-relay`'s `quic.rs` for why — so a node always **accepts** it,
-/// exactly as it waits for `RelayHello` first over TCP+TLS.
+/// exactly as it waits for `EstavelleHello` first over TCP+TLS.
 type QuicStream = tokio::io::Join<quinn::RecvStream, quinn::SendStream>;
 
 /// A fully pinned node-to-relay Ponor conversation.
@@ -43,7 +43,7 @@ pub struct Session {
     handshake: ClientHandshake,
     /// `ClientHandshake` intentionally keeps its internal state private. Keep
     /// the small amount the transport needs here so receiving a packet before
-    /// `RelayAuth` is not an operation a caller can express.
+    /// `EstavelleAuth` is not an operation a caller can express.
     awaiting_auth: bool,
 }
 
@@ -406,7 +406,7 @@ impl Connection {
 
         // The relay opens the stream and speaks first — see `karst-relay`'s
         // `quic.rs` "Who opens the stream" note. Accepting here rather than
-        // opening is the QUIC counterpart of waiting for `RelayHello` before
+        // opening is the QUIC counterpart of waiting for `EstavelleHello` before
         // sending anything, which the TCP path already does.
         let (send, recv) = connection
             .accept_bi()
@@ -415,7 +415,7 @@ impl Connection {
         let tls: QuicStream = tokio::io::join(recv, send);
 
         // Unlike TCP there is no HTTP head to strip first: ALPN already
-        // settled the protocol, so the very first bytes are `RelayHello`
+        // settled the protocol, so the very first bytes are `EstavelleHello`
         // itself and `read_events` below (a plain read then `Decoder::push`,
         // which drains every complete frame its buffer holds) is all the
         // bootstrapping this transport needs.
@@ -607,7 +607,7 @@ pub struct Receiver {
     tls: tokio::io::ReadHalf<Box<dyn Stream>>,
     decoder: Decoder,
     /// Events the handshake read past — a `ReflectOffer` coalesced with
-    /// `RelayAuth`. Delivered by the first [`Receiver::receive`], before it
+    /// `EstavelleAuth`. Delivered by the first [`Receiver::receive`], before it
     /// blocks on the socket.
     deferred: Vec<Event>,
 }
@@ -686,7 +686,7 @@ fn upgrade_head_len(bytes: &[u8]) -> Option<usize> {
 
 /// Write the handshake's replies and hand back anything that outlives it.
 ///
-/// **`ReflectOffer` routinely arrives in the same TCP segment as `RelayAuth`**,
+/// **`ReflectOffer` routinely arrives in the same TCP segment as `EstavelleAuth`**,
 /// because §7.7 has the relay send it immediately after. Handing it back rather
 /// than acting on it here keeps this function about the handshake — and
 /// dropping it, which the first version did, loses the reflector silently and
@@ -764,7 +764,7 @@ impl Session {
             handshake: ClientHandshake::new(
                 Role::Client,
                 node_id,
-                relay.relay_id,
+                relay.estavelle_id,
                 relay.identity_key.clone(),
                 random,
             ),
@@ -819,7 +819,7 @@ impl Session {
         verifier: &impl Verifier,
     ) -> Result<Option<Event>, karst_estavelle_proto::Error> {
         if self.established() {
-            // §7.7. Legal only here — a `ReflectOffer` before `RelayAuth` is a
+            // §7.7. Legal only here — a `ReflectOffer` before `EstavelleAuth` is a
             // key from a party this node has not authenticated, which is
             // exactly the offer an impostor relay would make.
             if let Frame::ReflectOffer {
@@ -972,7 +972,7 @@ mod tests {
         Estavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
-            relay_id: h.finalize().into(),
+            estavelle_id: h.finalize().into(),
             identity_key,
             region: "test".to_owned(),
         }
@@ -988,8 +988,8 @@ mod tests {
 
         let auth = session
             .on_hello(
-                &Frame::RelayHello {
-                    relay_id: relay.relay_id,
+                &Frame::EstavelleHello {
+                    estavelle_id: relay.estavelle_id,
                     relay_random: [0x33; ID_LEN],
                 },
                 &TestSigner,
@@ -998,7 +998,7 @@ mod tests {
         assert!(!auth.is_empty());
         session
             .on_auth(
-                &Frame::RelayAuth {
+                &Frame::EstavelleAuth {
                     signature: &[0x66; SIG_LEN],
                 },
                 &TestVerifier,
@@ -1032,8 +1032,8 @@ mod tests {
         let relay = relay();
         let mut session = Session::new([0x11; ID_LEN], &relay, [0x22; ID_LEN]);
 
-        let hello = Frame::RelayHello {
-            relay_id: relay.relay_id,
+        let hello = Frame::EstavelleHello {
+            estavelle_id: relay.estavelle_id,
             relay_random: [0x33; ID_LEN],
         };
         let Some(Event::Send(auth)) = session
@@ -1047,7 +1047,7 @@ mod tests {
         assert_eq!(
             session
                 .on_frame(
-                    &Frame::RelayAuth {
+                    &Frame::EstavelleAuth {
                         signature: &[0x66; SIG_LEN],
                     },
                     &TestSigner,
@@ -1087,8 +1087,8 @@ mod tests {
         let mut session = Session::new([0x11; ID_LEN], &relay, [0x22; ID_LEN]);
         session
             .on_frame(
-                &Frame::RelayHello {
-                    relay_id: relay.relay_id,
+                &Frame::EstavelleHello {
+                    estavelle_id: relay.estavelle_id,
                     relay_random: [0x33; ID_LEN],
                 },
                 &TestSigner,
@@ -1097,7 +1097,7 @@ mod tests {
             .expect("relay hello");
         session
             .on_frame(
-                &Frame::RelayAuth {
+                &Frame::EstavelleAuth {
                     signature: &[0x66; SIG_LEN],
                 },
                 &TestSigner,
@@ -1121,8 +1121,8 @@ mod tests {
         let session = Session::new([0x11; ID_LEN], &relay, [0x22; ID_LEN]);
         let mut decoder = Decoder::new(session);
 
-        let hello = Frame::RelayHello {
-            relay_id: relay.relay_id,
+        let hello = Frame::EstavelleHello {
+            estavelle_id: relay.estavelle_id,
             relay_random: [0x33; ID_LEN],
         }
         .to_vec();
@@ -1138,7 +1138,7 @@ mod tests {
             .expect("finished hello");
         assert!(matches!(events.as_slice(), [Event::Send(_)]));
 
-        let mut coalesced = Frame::RelayAuth {
+        let mut coalesced = Frame::EstavelleAuth {
             signature: &[0x66; SIG_LEN],
         }
         .to_vec();

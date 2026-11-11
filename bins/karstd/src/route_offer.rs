@@ -63,7 +63,7 @@ pub struct Offer {
     pub route_id: String,
     pub prefix: Prefix,
     prefix_text: String,
-    pub gateway_id: Vec<u8>,
+    pub aven_id: Vec<u8>,
     pub metric: u32,
     pub kind: Kind,
     pub masquerade: bool,
@@ -109,7 +109,7 @@ impl Offer {
         if wire.route_id.is_empty() {
             return Err("route_id is empty".to_owned());
         }
-        if wire.gateway_id.is_empty() {
+        if wire.aven_id.is_empty() {
             return Err(format!("route {:?} has no gateway", wire.route_id));
         }
         if !(MIN_METRIC..=MAX_METRIC).contains(&wire.metric) {
@@ -139,8 +139,8 @@ impl Offer {
             _ => return Err(format!("route {:?} has an unknown kind", wire.route_id)),
         };
         let role = match pb::KarstRouteRole::try_from(wire.role) {
-            Ok(pb::KarstRouteRole::Recipient) if wire.gateway_id != self_id => Role::Recipient,
-            Ok(pb::KarstRouteRole::Aven) if wire.gateway_id == self_id => Role::Aven,
+            Ok(pb::KarstRouteRole::Recipient) if wire.aven_id != self_id => Role::Recipient,
+            Ok(pb::KarstRouteRole::Aven) if wire.aven_id == self_id => Role::Aven,
             Ok(pb::KarstRouteRole::Recipient | pb::KarstRouteRole::Aven) => {
                 return Err(format!(
                     "route {:?} role contradicts its gateway",
@@ -179,7 +179,7 @@ impl Offer {
             dns_zone_text: wire.dns_zone,
             pinned_egress_ip,
             pinned_egress_ip_text: wire.pinned_egress_ip,
-            gateway_id: wire.gateway_id,
+            aven_id: wire.aven_id,
             metric: wire.metric,
             kind,
             masquerade: wire.masquerade,
@@ -193,7 +193,7 @@ impl Offer {
         pb::KarstRouteOffer {
             route_id: self.route_id.clone(),
             prefix: self.prefix_text.clone(),
-            gateway_id: self.gateway_id.clone(),
+            aven_id: self.aven_id.clone(),
             metric: self.metric,
             kind: match self.kind {
                 Kind::Subnet => pb::KarstRouteKind::Subnet as i32,
@@ -229,7 +229,7 @@ impl Offer {
         RouteView {
             route_id: &self.route_id,
             prefix: &self.prefix_text,
-            gateway_id: &self.gateway_id,
+            aven_id: &self.aven_id,
             metric: self.metric,
             kind: match self.kind {
                 Kind::Subnet => 1,
@@ -335,7 +335,7 @@ pub fn select_effective(offers: &[Offer]) -> Vec<Offer> {
         winners
             .entry(offer.group_key())
             .and_modify(|best| {
-                if (offer.metric, &offer.gateway_id) < (best.metric, &best.gateway_id) {
+                if (offer.metric, &offer.aven_id) < (best.metric, &best.aven_id) {
                     *best = offer;
                 }
             })
@@ -368,7 +368,7 @@ mod tests {
         pb::KarstRouteOffer {
             route_id: "route-a".to_owned(),
             prefix: prefix.to_owned(),
-            gateway_id: b"gateway".to_vec(),
+            aven_id: b"gateway".to_vec(),
             metric: 100,
             kind: kind as i32,
             masquerade: true,
@@ -478,7 +478,7 @@ mod tests {
             pb::KarstRouteRole::Recipient,
         );
         low.route_id = "route-a:gw-primary".to_owned();
-        low.gateway_id = b"gw-primary".to_vec();
+        low.aven_id = b"gw-primary".to_vec();
         low.metric = 100;
         let mut high = wire(
             "10.20.0.0/16",
@@ -486,7 +486,7 @@ mod tests {
             pb::KarstRouteRole::Recipient,
         );
         high.route_id = "route-a:gw-standby".to_owned();
-        high.gateway_id = b"gw-standby".to_vec();
+        high.aven_id = b"gw-standby".to_vec();
         high.metric = 200;
 
         let parsed = parse_all(vec![high, low], b"client").unwrap();
@@ -501,7 +501,7 @@ mod tests {
             1,
             "only the effective candidate is used for routing"
         );
-        assert_eq!(effective[0].gateway_id, b"gw-primary");
+        assert_eq!(effective[0].aven_id, b"gw-primary");
     }
 
     /// Candidates tied on metric (the common case for a route created
@@ -517,20 +517,20 @@ mod tests {
             pb::KarstRouteRole::Recipient,
         );
         a.route_id = "route-a:gw-a".to_owned();
-        a.gateway_id = b"gw-a".to_vec();
+        a.aven_id = b"gw-a".to_vec();
         let mut z = wire(
             "10.20.0.0/16",
             pb::KarstRouteKind::Subnet,
             pb::KarstRouteRole::Recipient,
         );
         z.route_id = "route-a:gw-z".to_owned();
-        z.gateway_id = b"gw-z".to_vec();
+        z.aven_id = b"gw-z".to_vec();
 
         for wire_order in [vec![a.clone(), z.clone()], vec![z, a]] {
             let effective = select_effective(&parse_all(wire_order, b"client").unwrap());
             assert_eq!(effective.len(), 1);
             assert_eq!(
-                effective[0].gateway_id, b"gw-a",
+                effective[0].aven_id, b"gw-a",
                 "the lexicographically first id must win regardless of wire order"
             );
         }
@@ -547,13 +547,13 @@ mod tests {
             pb::KarstRouteKind::Subnet,
             pb::KarstRouteRole::Recipient,
         );
-        masqueraded.gateway_id = b"gw-a".to_vec();
+        masqueraded.aven_id = b"gw-a".to_vec();
         let mut not_masqueraded = wire(
             "10.20.0.0/16",
             pb::KarstRouteKind::Subnet,
             pb::KarstRouteRole::Recipient,
         );
-        not_masqueraded.gateway_id = b"gw-b".to_vec();
+        not_masqueraded.aven_id = b"gw-b".to_vec();
         not_masqueraded.masquerade = false;
 
         assert!(parse_all(vec![masqueraded, not_masqueraded], b"client").is_err());
@@ -616,7 +616,7 @@ mod tests {
             pb::KarstRouteKind::Subnet,
             pb::KarstRouteRole::Recipient,
         );
-        low.gateway_id = b"gw-primary".to_vec();
+        low.aven_id = b"gw-primary".to_vec();
         low.metric = 100;
         low.pinned_egress_ip = "203.0.113.9".to_owned();
         let mut high = wire(
@@ -624,14 +624,14 @@ mod tests {
             pb::KarstRouteKind::Subnet,
             pb::KarstRouteRole::Recipient,
         );
-        high.gateway_id = b"gw-standby".to_vec();
+        high.aven_id = b"gw-standby".to_vec();
         high.metric = 200;
         high.pinned_egress_ip = "203.0.113.9".to_owned();
 
         let parsed = parse_all(vec![high, low], b"client").unwrap();
         let effective = select_effective(&parsed);
         assert_eq!(effective.len(), 1);
-        assert_eq!(effective[0].gateway_id, b"gw-primary");
+        assert_eq!(effective[0].aven_id, b"gw-primary");
     }
 
     /// The failure mode ADR-0068 exists to close: two HA candidates for the
@@ -646,14 +646,14 @@ mod tests {
             pb::KarstRouteKind::Subnet,
             pb::KarstRouteRole::Recipient,
         );
-        a.gateway_id = b"gw-a".to_vec();
+        a.aven_id = b"gw-a".to_vec();
         a.pinned_egress_ip = "203.0.113.9".to_owned();
         let mut b = wire(
             "10.20.0.0/16",
             pb::KarstRouteKind::Subnet,
             pb::KarstRouteRole::Recipient,
         );
-        b.gateway_id = b"gw-b".to_vec();
+        b.aven_id = b"gw-b".to_vec();
         b.pinned_egress_ip = "203.0.113.10".to_owned();
 
         assert!(parse_all(vec![a, b], b"client").is_err());
@@ -673,7 +673,7 @@ mod tests {
             pb::KarstRouteRole::Recipient,
         );
         site_a.route_id = "route:site-a".to_owned();
-        site_a.gateway_id = b"gw-a".to_vec();
+        site_a.aven_id = b"gw-a".to_vec();
         site_a.dns_zone = "site-a.legacy".to_owned();
         let mut site_b = wire(
             "10.0.0.0/8",
@@ -681,7 +681,7 @@ mod tests {
             pb::KarstRouteRole::Recipient,
         );
         site_b.route_id = "route:site-b".to_owned();
-        site_b.gateway_id = b"gw-b".to_vec();
+        site_b.aven_id = b"gw-b".to_vec();
         site_b.dns_zone = "site-b.legacy".to_owned();
 
         let parsed = parse_all(vec![site_a, site_b], b"client").unwrap();

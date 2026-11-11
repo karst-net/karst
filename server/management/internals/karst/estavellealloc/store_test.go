@@ -61,7 +61,7 @@ func (e env) draft() Allocation {
 		Name:              "denver",
 		InfraConnectionID: e.connectionID,
 		Location:          "us-west-2",
-		RelayTransport:    true,
+		EstavelleTransport:    true,
 		PermittedGroups:   []string{e.groupID},
 	}
 }
@@ -205,7 +205,7 @@ func TestCreateRejectsNoCapabilityAndNoGroup(t *testing.T) {
 	ctx := WithAccount(context.Background(), "a")
 
 	noCapability := e.draft()
-	noCapability.RelayTransport = false
+	noCapability.EstavelleTransport = false
 	_, err := e.store.Create(ctx, noCapability)
 	require.ErrorIs(t, err, ErrInvalid)
 
@@ -269,7 +269,7 @@ func TestTransitionWalksTheHappyPathToReady(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, StateReady, ready.State)
 	require.Equal(t, "instance-1", ready.InstanceID)
-	require.Equal(t, "relay-1", ready.RelayID)
+	require.Equal(t, "relay-1", ready.EstavelleID)
 
 	var historyCount int64
 	require.NoError(t, e.db.Model(&AllocationHistory{}).Where("allocation_id = ?", created.ID).Count(&historyCount).Error)
@@ -392,7 +392,7 @@ func TestDeprovisionTeardownPathToDeprovisioned(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, StateDeprovisioned, deprovisioned.State)
 	require.Equal(t, "instance-1", deprovisioned.InstanceID)
-	require.Equal(t, "relay-1", deprovisioned.RelayID)
+	require.Equal(t, "relay-1", deprovisioned.EstavelleID)
 
 	require.NoError(t, e.store.Delete(ctx, created.ID, deprovisioned.Revision))
 
@@ -495,7 +495,7 @@ func TestCreateRefusesOverTheConfiguredConcurrencyCeiling(t *testing.T) {
 	otherLocation := locationreg.StoredLocation{AccountID: "b", ID: "loc-b", Lat: 45.8696, Lon: -119.6880, Label: "US West (Oregon)"}
 	require.NoError(t, e.db.Create(&otherLocation).Error)
 	otherCtx := WithAccount(context.Background(), "b")
-	_, err = e.store.Create(otherCtx, Allocation{Name: "denver", InfraConnectionID: otherAccount.ID, Location: "us-west-2", RelayTransport: true, PermittedGroups: []string{otherGroup.ID}})
+	_, err = e.store.Create(otherCtx, Allocation{Name: "denver", InfraConnectionID: otherAccount.ID, Location: "us-west-2", EstavelleTransport: true, PermittedGroups: []string{otherGroup.ID}})
 	require.NoError(t, err)
 }
 

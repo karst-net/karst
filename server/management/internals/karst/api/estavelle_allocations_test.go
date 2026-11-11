@@ -111,7 +111,7 @@ func TestEstavelleAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing
 	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
 	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
 
-	w := allocationRequest(admin, http.MethodPost, "", `{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`)
+	w := allocationRequest(admin, http.MethodPost, "", `{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","estavelle_transport":true,"permitted_groups":["engineering"]}`)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	created := decodeAllocation(t, w)
 	require.Equal(t, estavellealloc.StateRequested, created.State)
@@ -162,7 +162,7 @@ func TestEstavelleAllocationAPIHappyPathToReadyAndBackToDeprovisioned(t *testing
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	ready := decodeAllocation(t, w)
 	require.Equal(t, estavellealloc.StateReady, ready.State)
-	require.Equal(t, relay.ID, ready.RelayID)
+	require.Equal(t, relay.ID, ready.EstavelleID)
 	assertAllocationResponseFields(t, w, "/estavelle-allocations/{id}/grant", "post", "200")
 
 	var serviceCount int64
@@ -217,7 +217,7 @@ func TestEstavelleAllocationGrantReportsFailureWithoutLeavingAPartialGrant(t *te
 	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
 
 	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
-		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
+		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","estavelle_transport":true,"permitted_groups":["engineering"]}`))
 	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
 		fmt.Sprintf(`{"expected_revision":%d,"instance_id":"i-1"}`, created.Revision)))
 
@@ -254,11 +254,11 @@ func TestEstavelleAllocationGrantReportsFailureWithoutLeavingAPartialGrant(t *te
 func TestEstavelleAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither(t *testing.T) {
 	e := estavelleAllocationFixture(t)
 	created := decodeAllocation(t, allocationRequest(estavelleAllocationRouter(e, types.UserRoleAdmin), http.MethodPost, "",
-		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
+		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","estavelle_transport":true,"permitted_groups":["engineering"]}`))
 
 	consoleOnlyRoutes := []struct{ method, path, body string }{
 		{http.MethodGet, "", ""},
-		{http.MethodPost, "", `{"name":"x","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`},
+		{http.MethodPost, "", `{"name":"x","infra_connection_id":"conn-1","location":"us-west-2","estavelle_transport":true,"permitted_groups":["engineering"]}`},
 		{http.MethodDelete, "/" + created.ID + "?revision=1", ""},
 		{http.MethodPost, "/" + created.ID + "/deprovision", `{"revision":1,"acknowledge_deprovision":true}`},
 	}
@@ -299,7 +299,7 @@ func TestEstavelleAllocationFailedInfersFromStateAndIsIdempotent(t *testing.T) {
 	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
 	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
 	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
-		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
+		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","estavelle_transport":true,"permitted_groups":["engineering"]}`))
 
 	w := allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/failed",
 		fmt.Sprintf(`{"expected_revision":%d,"reason":"quota exceeded"}`, created.Revision))
@@ -324,7 +324,7 @@ func TestEstavelleAllocationDeleteRequiresDeprovisionFirst(t *testing.T) {
 	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
 	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
 	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
-		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","relay_transport":true,"permitted_groups":["engineering"]}`))
+		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","estavelle_transport":true,"permitted_groups":["engineering"]}`))
 	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
 		fmt.Sprintf(`{"expected_revision":%d,"instance_id":"i-1"}`, created.Revision)))
 

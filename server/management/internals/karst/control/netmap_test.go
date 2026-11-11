@@ -428,12 +428,12 @@ func TestVersionChangesWithContent(t *testing.T) {
 	})
 
 	t.Run("relay registry changed", func(t *testing.T) {
-		saved := f.handler.Relays
-		defer func() { f.handler.Relays = saved }()
-		f.handler.Relays = []*proto.KarstEstavelle{{
+		saved := f.handler.Estavelles
+		defer func() { f.handler.Estavelles = saved }()
+		f.handler.Estavelles = []*proto.KarstEstavelle{{
 			Address:       "127.0.0.1:443",
 			TlsServerName: "relay.test",
-			RelayId:       bytes.Repeat([]byte{0x91}, 32),
+			EstavelleId:       bytes.Repeat([]byte{0x91}, 32),
 			IdentityKey:   bytes.Repeat([]byte{0x92}, 2592),
 			Region:        "test",
 		}}
@@ -750,7 +750,7 @@ func requestDelta(t *testing.T, f *netFixture, holds []*proto.KarstPeerDigest) *
 // requestNetmapReporting polls as self while reporting a home relay.
 func requestNetmapReporting(t *testing.T, f *netFixture, relay []byte) (*proto.KarstNetmapResponse, error) {
 	t.Helper()
-	payload, err := pb.Marshal(&proto.KarstNetmapRequest{HomeRelay: relay})
+	payload, err := pb.Marshal(&proto.KarstNetmapRequest{HomeEstavelle: relay})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -901,8 +901,8 @@ func TestReportedHomeRelayIsRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if !bytes.Equal(rec.HomeRelay, relay) {
-		t.Fatalf("stored %x, want %x", rec.HomeRelay, relay)
+	if !bytes.Equal(rec.HomeEstavelle, relay) {
+		t.Fatalf("stored %x, want %x", rec.HomeEstavelle, relay)
 	}
 
 	// A node that loses its relay reports none, and the record must follow it
@@ -915,8 +915,8 @@ func TestReportedHomeRelayIsRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if len(rec.HomeRelay) != 0 {
-		t.Fatalf("a withdrawn home relay is still stored as %x", rec.HomeRelay)
+	if len(rec.HomeEstavelle) != 0 {
+		t.Fatalf("a withdrawn home relay is still stored as %x", rec.HomeEstavelle)
 	}
 }
 
@@ -924,7 +924,7 @@ func TestReportedHomeRelayIsRecorded(t *testing.T) {
 func TestHomeRelayReachesPeers(t *testing.T) {
 	f := newNetmapFixture(t, 2)
 	relay := bytes.Repeat([]byte{0xA3}, 32)
-	if err := f.handler.Nodes.SetHomeRelay(f.peerH[0], relay); err != nil {
+	if err := f.handler.Nodes.SetHomeEstavelle(f.peerH[0], relay); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
@@ -932,14 +932,14 @@ func TestHomeRelayReachesPeers(t *testing.T) {
 	var seen bool
 	for _, p := range resp.GetPeers() {
 		if string(p.GetNodeId()) != f.peerH[0] {
-			if len(p.GetHomeRelay()) != 0 {
-				t.Fatalf("a peer holding no relay was given one: %x", p.GetHomeRelay())
+			if len(p.GetHomeEstavelle()) != 0 {
+				t.Fatalf("a peer holding no relay was given one: %x", p.GetHomeEstavelle())
 			}
 			continue
 		}
 		seen = true
-		if !bytes.Equal(p.GetHomeRelay(), relay) {
-			t.Fatalf("peer carries %x, want %x", p.GetHomeRelay(), relay)
+		if !bytes.Equal(p.GetHomeEstavelle(), relay) {
+			t.Fatalf("peer carries %x, want %x", p.GetHomeEstavelle(), relay)
 		}
 	}
 	if !seen {
@@ -957,7 +957,7 @@ func TestHomeRelayMoveIsDelivered(t *testing.T) {
 	holds := digestsOf(full)
 
 	target := string(full.GetPeers()[1].GetNodeId())
-	if err := f.handler.Nodes.SetHomeRelay(target, bytes.Repeat([]byte{0x77}, 32)); err != nil {
+	if err := f.handler.Nodes.SetHomeEstavelle(target, bytes.Repeat([]byte{0x77}, 32)); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
@@ -968,8 +968,8 @@ func TestHomeRelayMoveIsDelivered(t *testing.T) {
 	if string(d.GetPeers()[0].GetNodeId()) != target {
 		t.Fatal("the wrong peer was sent")
 	}
-	if !bytes.Equal(d.GetPeers()[0].GetHomeRelay(), bytes.Repeat([]byte{0x77}, 32)) {
-		t.Fatalf("the moved relay was not delivered: %x", d.GetPeers()[0].GetHomeRelay())
+	if !bytes.Equal(d.GetPeers()[0].GetHomeEstavelle(), bytes.Repeat([]byte{0x77}, 32)) {
+		t.Fatalf("the moved relay was not delivered: %x", d.GetPeers()[0].GetHomeEstavelle())
 	}
 }
 
@@ -1581,17 +1581,17 @@ func TestNetmapCarriesRelaysFromTheStore(t *testing.T) {
 	// Relays is deliberately left populated with something else, so the test
 	// also proves the store takes priority rather than merely working when
 	// the static field is empty.
-	f.handler.Relays = []*proto.KarstEstavelle{{
+	f.handler.Estavelles = []*proto.KarstEstavelle{{
 		Address:       "127.0.0.1:443",
 		TlsServerName: "relay.static.example.com",
-		RelayId:       bytes.Repeat([]byte{0x91}, 32),
+		EstavelleId:       bytes.Repeat([]byte{0x91}, 32),
 		IdentityKey:   bytes.Repeat([]byte{0x92}, estavellereg.IdentityKeySize),
 		Region:        "us",
 	}}
 	f.handler.RelayStore = store
 
 	resp := requestNetmap(t, f, 0)
-	relays := resp.GetRelays()
+	relays := resp.GetEstavelles()
 	if len(relays) != 1 {
 		t.Fatalf("got %d relays, want 1", len(relays))
 	}
@@ -1628,17 +1628,17 @@ func TestNetmapFallsBackToStaticRelaysWhenStoreIsEmpty(t *testing.T) {
 		t.Fatalf("relay store: %v", err)
 	}
 
-	f.handler.Relays = []*proto.KarstEstavelle{{
+	f.handler.Estavelles = []*proto.KarstEstavelle{{
 		Address:       "127.0.0.1:443",
 		TlsServerName: "relay.static.example.com",
-		RelayId:       bytes.Repeat([]byte{0x91}, 32),
+		EstavelleId:       bytes.Repeat([]byte{0x91}, 32),
 		IdentityKey:   bytes.Repeat([]byte{0x92}, estavellereg.IdentityKeySize),
 		Region:        "us",
 	}}
 	f.handler.RelayStore = store
 
 	resp := requestNetmap(t, f, 0)
-	relays := resp.GetRelays()
+	relays := resp.GetEstavelles()
 	if len(relays) != 1 {
 		t.Fatalf("got %d relays, want the static fallback entry", len(relays))
 	}

@@ -212,7 +212,7 @@ func TestFinalizeInvoiceTruncatesLineAmountsAndIsImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finalize invoice: %v", err)
 	}
-	if invoice.DeviceExact != (ExactAmount{Numerator: "1", Denominator: "3"}) || invoice.RelayExact != (ExactAmount{Numerator: "2", Denominator: "3"}) || invoice.DeviceMinor != 0 || invoice.RelayMinor != 0 || invoice.TotalMinor != 0 {
+	if invoice.DeviceExact != (ExactAmount{Numerator: "1", Denominator: "3"}) || invoice.EstavelleExact != (ExactAmount{Numerator: "2", Denominator: "3"}) || invoice.DeviceMinor != 0 || invoice.EstavelleMinor != 0 || invoice.TotalMinor != 0 {
 		t.Fatalf("invoice did not truncate each line down: %+v", invoice)
 	}
 	if invoice.SchemaVersion != "invoice-inputs-v1" || invoice.FinalizedAt.IsZero() {

@@ -17,7 +17,7 @@ func TestControlCheckPersistsRejectionAndClearsItOnlyOnAcceptance(t *testing.T) 
 	handle, err := s.Register(newIdentity(t).Public(), testKeys())
 	require.NoError(t, err)
 	observed := time.Now().UTC()
-	check := node.ControlCheck{Status: "incompatible", Capability: "gateway_ingress_schema", RequiredSchema: 1, ObservedAt: &observed}
+	check := node.ControlCheck{Status: "incompatible", Capability: "aven_ingress_schema", RequiredSchema: 1, ObservedAt: &observed}
 	require.NoError(t, s.RecordControlCheck(context.Background(), handle, check))
 	stored, err := s.Get(handle)
 	require.NoError(t, err)
@@ -34,9 +34,9 @@ func TestControlCheckPersistsRejectionAndClearsItOnlyOnAcceptance(t *testing.T) 
 	for _, invalid := range []node.ControlCheck{
 		{Status: "accepted"},
 		{Status: "unknown", ObservedAt: &observed},
-		{Status: "accepted", Capability: "gateway_ingress_schema", ObservedAt: &observed},
+		{Status: "accepted", Capability: "aven_ingress_schema", ObservedAt: &observed},
 		{Status: "incompatible", Capability: "arbitrary", RequiredSchema: 1, ObservedAt: &observed},
-		{Status: "incompatible", Capability: "gateway_ingress_schema", RequiredSchema: 1, ReportedSchema: 1, ObservedAt: &observed},
+		{Status: "incompatible", Capability: "aven_ingress_schema", RequiredSchema: 1, ReportedSchema: 1, ObservedAt: &observed},
 	} {
 		require.Error(t, s.RecordControlCheck(context.Background(), handle, invalid))
 	}

@@ -33,15 +33,15 @@ type rolloutStore interface {
 	Delete(ctx context.Context, id string, expectedRevision uint64) error
 }
 
-// rolloutFleetChecker is node.Store's own CountRelayLifecycleBelow/
-// CountGatewayIngressBelow, mirroring rollout package's own narrow
+// rolloutFleetChecker is node.Store's own CountEstavelleLifecycleBelow/
+// CountAvenIngressBelow, mirroring rollout package's own narrow
 // fleetChecker interface so this file does not need to import node
 // directly, and so rollout.Preview can be called with whatever concrete
 // store bootstrap.go wires in (normally the same *node.Store already
 // threaded into NetmapHandler).
 type rolloutFleetChecker interface {
-	CountRelayLifecycleBelow(ctx context.Context, account string, required uint32, tx *gorm.DB) (int64, error)
-	CountGatewayIngressBelow(ctx context.Context, account string, required uint32, tx *gorm.DB) (int64, error)
+	CountEstavelleLifecycleBelow(ctx context.Context, account string, required uint32, tx *gorm.DB) (int64, error)
+	CountAvenIngressBelow(ctx context.Context, account string, required uint32, tx *gorm.DB) (int64, error)
 }
 
 type RolloutOptions struct {
@@ -54,8 +54,8 @@ type rolloutComponentRequest struct {
 	CurrentDigest                string  `json:"current_digest,omitempty"`
 	TargetDigest                 string  `json:"target_digest"`
 	VerificationRef              string  `json:"verification_ref"`
-	RequiresRelayLifecycleSchema *uint32 `json:"requires_relay_lifecycle_schema,omitempty"`
-	RequiresGatewayIngressSchema *uint32 `json:"requires_gateway_ingress_schema,omitempty"`
+	RequiresEstavelleLifecycleSchema *uint32 `json:"requires_estavelle_lifecycle_schema,omitempty"`
+	RequiresAvenIngressSchema *uint32 `json:"requires_aven_ingress_schema,omitempty"`
 }
 
 // rolloutPlanPayload is the flat JSON shape every route below returns:
@@ -227,8 +227,8 @@ func handleRolloutsCreate(w http.ResponseWriter, r *http.Request, ctx context.Co
 			CurrentDigest:                component.CurrentDigest,
 			TargetDigest:                 component.TargetDigest,
 			VerificationRef:              component.VerificationRef,
-			RequiresRelayLifecycleSchema: component.RequiresRelayLifecycleSchema,
-			RequiresGatewayIngressSchema: component.RequiresGatewayIngressSchema,
+			RequiresEstavelleLifecycleSchema: component.RequiresEstavelleLifecycleSchema,
+			RequiresAvenIngressSchema: component.RequiresAvenIngressSchema,
 		}
 	}
 	draft := rollout.Plan{TargetRelease: request.TargetRelease, MaintenanceWindowNote: request.MaintenanceWindowNote}
@@ -430,11 +430,11 @@ func rolloutPayload(ctx context.Context, account string, plan *rollout.Plan, com
 
 // rolloutContainerName maps a plan component name to the container/task
 // name scripts/compose-versions.py's snapshot and the Nomad job itself use
-// -- "relay_job" names this job's relay task group specifically (ADR-0066),
+// -- "estavelle_job" names this job's relay task group specifically (ADR-0066),
 // distinct from the broader relay registry, but the job's own task/service
 // name is simply "relay".
 func rolloutContainerName(component string) string {
-	if component == rollout.ComponentRelayJob {
+	if component == rollout.ComponentEstavelleJob {
 		return "relay"
 	}
 	return component

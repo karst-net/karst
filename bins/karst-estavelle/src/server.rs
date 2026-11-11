@@ -216,7 +216,7 @@ impl Ctx {
                 // can still carry this node's traffic, which is the service it
                 // exists for; refusing the connection would turn a degraded
                 // reflector into an outage.
-                eprintln!("karst-relay: {e}");
+                eprintln!("karst-estavelle: {e}");
                 return None;
             }
         };
@@ -239,12 +239,12 @@ impl Ctx {
     ///
     /// A peer absent from the roster cannot be admitted at all, so `false` here
     /// is a belt-and-braces answer rather than the load-bearing one.
-    fn same_region(&self, relay_id: &crate::mesh::Id) -> bool {
+    fn same_region(&self, estavelle_id: &crate::mesh::Id) -> bool {
         let roster = match self.roster.read() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        roster.mesh_region(relay_id) == Some(self.region.as_str())
+        roster.mesh_region(estavelle_id) == Some(self.region.as_str())
     }
 
     /// `pub(crate)`: [`crate::telemetry`] needs the same point-in-time view
@@ -306,7 +306,7 @@ impl Ctx {
             Admitted::Client { node_id, aquifer } => roster
                 .client(node_id)
                 .is_some_and(|entry| entry.aquifer == *aquifer),
-            Admitted::Mesh { relay_id } => roster.mesh_peer(relay_id).is_some(),
+            Admitted::Mesh { estavelle_id } => roster.mesh_peer(estavelle_id).is_some(),
         }
     }
 
@@ -345,7 +345,7 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         // chooses, so one that prefers speed gets a classical exchange from a
         // relay whose operator believes it is post-quantum. Loud, not fatal.
         eprintln!(
-            "karst-relay: warning: X25519MLKEM768 is offered but not preferred; \
+            "karst-estavelle: warning: X25519MLKEM768 is offered but not preferred; \
              clients may negotiate a classical key exchange"
         );
     }
@@ -398,7 +398,7 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         // like having no reflector configured at all.
         let socket = UdpSocket::bind(r.listen).await?;
         eprintln!(
-            "karst-relay: reflector on {} (advertising {})",
+            "karst-estavelle: reflector on {} (advertising {})",
             socket.local_addr()?,
             r.advertised()
         );
@@ -411,7 +411,7 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         // not running looks, to whatever is scraping it, exactly like a relay
         // that has stopped.
         let listener = TcpListener::bind(m.listen).await?;
-        eprintln!("karst-relay: metrics on {}", listener.local_addr()?);
+        eprintln!("karst-estavelle: metrics on {}", listener.local_addr()?);
         tokio::spawn(metrics_loop(listener, Arc::clone(&ctx)));
     }
 
@@ -427,8 +427,8 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         // would be the same silent-failure shape ADR-0020 exists to avoid.
         let quic_tls = crate::quic::client_config(&client_tls)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
-        let dialer = crate::mesh::Dialer::new(ctx.identity.relay_id(), cfg.region.clone());
-        eprintln!("karst-relay: mesh dialing enabled");
+        let dialer = crate::mesh::Dialer::new(ctx.identity.estavelle_id(), cfg.region.clone());
+        eprintln!("karst-estavelle: mesh dialing enabled");
         tokio::spawn(mesh_loop(Arc::clone(&ctx), client_tls, quic_tls, dialer));
     }
 
@@ -440,7 +440,7 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
     // actually tries.
     if let Some(t) = &cfg.telemetry {
         eprintln!(
-            "karst-relay: reporting telemetry to {} every {}s",
+            "karst-estavelle: reporting telemetry to {} every {}s",
             t.control_url, t.interval_secs
         );
         tokio::spawn(crate::telemetry::telemetry_loop(
@@ -535,13 +535,13 @@ async fn roster_loop_with_timing(
             Ok(Some(roster)) => {
                 ctx.replace_roster(roster);
                 failed_closed = false;
-                eprintln!("karst-relay: roster reloaded");
+                eprintln!("karst-estavelle: roster reloaded");
             }
             Ok(None) => {}
-            Err(err) => eprintln!("karst-relay: roster reload failed: {err}"),
+            Err(err) => eprintln!("karst-estavelle: roster reload failed: {err}"),
         }
         if source.expired_after(max_age) && !failed_closed {
-            eprintln!("karst-relay: roster lease expired; admitting nobody until a valid reload");
+            eprintln!("karst-estavelle: roster lease expired; admitting nobody until a valid reload");
             ctx.replace_roster(FileRoster::empty());
             failed_closed = true;
         }
@@ -646,9 +646,9 @@ pub async fn serve_until(
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     eprintln!(
-        "karst-relay: listening on {} (relay_id {})",
+        "karst-estavelle: listening on {} (estavelle_id {})",
         listener.local_addr()?,
-        hex(&ctx.identity.relay_id())
+        hex(&ctx.identity.estavelle_id())
     );
     tokio::pin!(shutdown);
 
@@ -660,7 +660,7 @@ pub async fn serve_until(
                     // A failed accept is one client's problem, not the
                     // relay's. Exiting here would turn a transient descriptor
                     // shortage into an outage.
-                    Err(e) => { eprintln!("karst-relay: accept: {e}"); continue }
+                    Err(e) => { eprintln!("karst-estavelle: accept: {e}"); continue }
                 };
                 let ctx = Arc::clone(&ctx);
                 // **Boxed.** `serve` runs the TLS handshake, the Ponor
@@ -674,7 +674,7 @@ pub async fn serve_until(
                 tokio::spawn(Box::pin(async move { serve(stream, peer, ctx).await }));
             }
             () = &mut shutdown => {
-                eprintln!("karst-relay: shutting down");
+                eprintln!("karst-estavelle: shutting down");
                 ctx.announce_restart().await;
                 return Ok(());
             }
@@ -714,7 +714,7 @@ impl Ctx {
         if told == 0 {
             return;
         }
-        eprintln!("karst-relay: told {told} clients to reconnect elsewhere");
+        eprintln!("karst-estavelle: told {told} clients to reconnect elsewhere");
         let deadline = tokio::time::Instant::now() + RESTART_FLUSH_MAX;
         while self.local_clients() > 0 && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(RESTART_FLUSH_POLL).await;
@@ -756,9 +756,9 @@ pub(crate) async fn after_established<S: Stream>(
     // §8's regional boundary, on the accepting side. Guarding only the dialer
     // would leave it holding on one side of every pair: an operator who put a
     // foreign relay in the list would simply be meshed *by* it instead.
-    if let Admitted::Mesh { relay_id } = &admitted {
-        if !ctx.same_region(relay_id) {
-            eprintln!("karst-relay: refused a mesh peer from another region");
+    if let Admitted::Mesh { estavelle_id } = &admitted {
+        if !ctx.same_region(estavelle_id) {
+            eprintln!("karst-estavelle: refused a mesh peer from another region");
             return;
         }
     }
@@ -850,7 +850,7 @@ pub(crate) async fn establish_ponor<S: Stream>(
 ) -> Option<(S, Vec<u8>, Admitted)> {
     let mut relay_random = [0u8; 32];
     getrandom::fill(&mut relay_random).ok()?;
-    let mut hs = EstavelleHandshake::new(ctx.identity.relay_id(), relay_random);
+    let mut hs = EstavelleHandshake::new(ctx.identity.estavelle_id(), relay_random);
 
     // The relay speaks first, so the peer signs over a value it has not yet
     // seen and a captured ClientAuth is useless on any other connection.
@@ -1156,7 +1156,7 @@ pub async fn mesh_loop(
                     dial_mesh(&ctx, &tls, due.id, &due.addr, &due.name).await
                 };
                 if let Err(e) = result {
-                    eprintln!("karst-relay: mesh dial to {} failed: {e}", due.addr);
+                    eprintln!("karst-estavelle: mesh dial to {} failed: {e}", due.addr);
                 }
             }));
         }
@@ -1236,7 +1236,7 @@ async fn dial_mesh(
     getrandom::fill(&mut nonce).map_err(|e| format!("no entropy: {e}"))?;
     let mut client = karst_estavelle_proto::ClientHandshake::new(
         karst_estavelle_proto::Role::Mesh,
-        ctx.identity.relay_id(),
+        ctx.identity.estavelle_id(),
         peer_id,
         entry.identity_pk.clone(),
         nonce,
@@ -1265,11 +1265,11 @@ async fn dial_mesh(
         return Err("handshake did not establish".to_owned());
     }
 
-    eprintln!("karst-relay: meshed with {addr}");
+    eprintln!("karst-estavelle: meshed with {addr}");
     drive(
         stream,
         rest,
-        Admitted::Mesh { relay_id: peer_id },
+        Admitted::Mesh { estavelle_id: peer_id },
         remote,
         Arc::clone(ctx),
     )

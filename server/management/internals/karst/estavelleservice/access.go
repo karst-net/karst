@@ -29,7 +29,7 @@ func WithActor(ctx context.Context, actor string) context.Context {
 }
 
 type AdmissionLease struct {
-	RelayID     string    `gorm:"primaryKey" json:"relay_id"`
+	EstavelleID     string    `gorm:"primaryKey" json:"estavelle_id"`
 	RefreshedAt time.Time `json:"refreshed_at"`
 }
 
@@ -37,8 +37,8 @@ func (AdmissionLease) TableName() string { return "karst_estavelle_admission_lea
 
 const AdmissionLeaseAge = 50 * time.Second
 
-func (s *Store) RefreshAdmissionLease(relayID string) error {
-	value := AdmissionLease{RelayID: relayID, RefreshedAt: time.Now().UTC()}
+func (s *Store) RefreshAdmissionLease(estavelleID string) error {
+	value := AdmissionLease{EstavelleID: estavelleID, RefreshedAt: time.Now().UTC()}
 	return s.db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&value).Error
 }
 func (s *Store) AdmissionTargets(ctx context.Context) ([]AdmissionLease, error) {
@@ -47,7 +47,7 @@ func (s *Store) AdmissionTargets(ctx context.Context) ([]AdmissionLease, error) 
 		return nil, err
 	}
 	var targets []AdmissionLease
-	err = s.db.WithContext(ctx).Table("karst_estavelle_admission_leases AS lease").Select("lease.*").Joins("JOIN karst_estavelles AS relay ON relay.id = lease.relay_id").Where("relay.account_id = ? AND lease.refreshed_at > ?", account, time.Now().Add(-AdmissionLeaseAge)).Scan(&targets).Error
+	err = s.db.WithContext(ctx).Table("karst_estavelle_admission_leases AS lease").Select("lease.*").Joins("JOIN karst_estavelles AS relay ON relay.id = lease.estavelle_id").Where("relay.account_id = ? AND lease.refreshed_at > ?", account, time.Now().Add(-AdmissionLeaseAge)).Scan(&targets).Error
 	return targets, err
 }
 
@@ -59,7 +59,7 @@ func (s *Store) configureAccess(ctx context.Context, tx *gorm.DB, service Servic
 		return fmt.Errorf("%w: choose at least one allowed group", ErrInvalid)
 	}
 	var lease AdmissionLease
-	if err := tx.Where("relay_id = ? AND refreshed_at > ?", service.PonorID, time.Now().Add(-AdmissionLeaseAge)).First(&lease).Error; err != nil {
+	if err := tx.Where("estavelle_id = ? AND refreshed_at > ?", service.PonorID, time.Now().Add(-AdmissionLeaseAge)).First(&lease).Error; err != nil {
 		return fmt.Errorf("%w: this relay has no live identity-bound admission writer", ErrInvalid)
 	}
 	mode, err := publication(tx, service.AccountID)
@@ -85,7 +85,7 @@ func (s *Store) configureAccess(ctx context.Context, tx *gorm.DB, service Servic
 			return fmt.Errorf("%w: selected group is unavailable in this account", ErrInvalid)
 		}
 	}
-	access := BackendAccess{AccountID: service.AccountID, RelayID: service.PonorID, Groups: service.AllowedGroups}
+	access := BackendAccess{AccountID: service.AccountID, EstavelleID: service.PonorID, Groups: service.AllowedGroups}
 	if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&access).Error; err != nil {
 		return err
 	}
@@ -98,11 +98,11 @@ func (s *Store) configureAccess(ctx context.Context, tx *gorm.DB, service Servic
 	if !service.ExitIPv4 && !service.ExitIPv6 {
 		return nil
 	}
-	if service.GatewayHandle == "" {
+	if service.AvenHandle == "" {
 		return fmt.Errorf("%w: select the enrolled Gateway machine explicitly", ErrInvalid)
 	}
 	var gateway nbpeer.Peer
-	if err := tx.Where("account_id = ? AND key = ?", service.AccountID, service.GatewayHandle).First(&gateway).Error; err != nil {
+	if err := tx.Where("account_id = ? AND key = ?", service.AccountID, service.AvenHandle).First(&gateway).Error; err != nil {
 		return fmt.Errorf("%w: Gateway machine is unavailable in this account", ErrInvalid)
 	}
 	if gateway.Meta.GoOS != "linux" {
@@ -129,7 +129,7 @@ func (s *Store) configureAccess(ctx context.Context, tx *gorm.DB, service Servic
 	if err != nil {
 		return err
 	}
-	grant := policy.Grant{ID: "relay-exit-" + service.ID, Name: service.ID + " internet egress", SourceGroups: service.AllowedGroups, Gateway: service.GatewayHandle, Networks: prefixes, Ports: "*"}
+	grant := policy.Grant{ID: "estavelle-exit-" + service.ID, Name: service.ID + " internet egress", SourceGroups: service.AllowedGroups, Aven: service.AvenHandle, Networks: prefixes, Ports: "*"}
 	doc.Grants = append(doc.Grants, grant)
 	for i, p := range prefixes {
 		prefix, _ := netip.ParsePrefix(p)
@@ -137,7 +137,7 @@ func (s *Store) configureAccess(ctx context.Context, tx *gorm.DB, service Servic
 		if prefix.Addr().Is6() {
 			kind = route.IPv6Network
 		}
-		r := route.Route{ID: route.ID(fmt.Sprintf("relay-exit-%s-%d", service.ID, i)), AccountID: service.AccountID, NetID: route.NetID(service.ID), Description: "Managed internet egress", Network: prefix, NetworkType: kind, Peer: gateway.ID, Groups: service.AllowedGroups, AccessControlGroups: service.AllowedGroups, Enabled: true, Masquerade: true, Metric: metric, SkipAutoApply: true}
+		r := route.Route{ID: route.ID(fmt.Sprintf("estavelle-exit-%s-%d", service.ID, i)), AccountID: service.AccountID, NetID: route.NetID(service.ID), Description: "Managed internet egress", Network: prefix, NetworkType: kind, Peer: gateway.ID, Groups: service.AllowedGroups, AccessControlGroups: service.AllowedGroups, Enabled: true, Masquerade: true, Metric: metric, SkipAutoApply: true}
 		if err := tx.Create(&r).Error; err != nil {
 			return err
 		}
@@ -176,7 +176,7 @@ func writeDocument(tx *gorm.DB, account string, doc *policy.Document, version ui
 // service must withdraw access rather than reopen legacy account-wide admission.
 type BackendAccess struct {
 	AccountID string   `gorm:"primaryKey"`
-	RelayID   string   `gorm:"primaryKey"`
+	EstavelleID   string   `gorm:"primaryKey"`
 	Groups    []string `gorm:"serializer:json"`
 }
 
@@ -184,44 +184,44 @@ func (BackendAccess) TableName() string { return "karst_estavelle_backend_access
 
 // AllowedOnManagedRelay is the installation writer's default-deny variant.
 // Legacy/unconfigured tenants never inherit account-wide admission here.
-func (s *Store) AllowedOnManagedRelay(ctx context.Context, relayID, account, handle string) (bool, error) {
+func (s *Store) AllowedOnManagedRelay(ctx context.Context, estavelleID, account, handle string) (bool, error) {
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&BackendAccess{}).Where("account_id = ? AND relay_id = ?", account, relayID).Count(&count).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&BackendAccess{}).Where("account_id = ? AND estavelle_id = ?", account, estavelleID).Count(&count).Error; err != nil {
 		return false, err
 	}
 	if count == 0 {
 		return false, nil
 	}
-	return s.AllowedOnRelay(ctx, relayID, account, handle)
+	return s.AllowedOnRelay(ctx, estavelleID, account, handle)
 }
 
-func (s *Store) AllowedOnRelay(ctx context.Context, relayID, account, handle string) (bool, error) {
+func (s *Store) AllowedOnRelay(ctx context.Context, estavelleID, account, handle string) (bool, error) {
 	var access BackendAccess
-	err := s.db.WithContext(ctx).Where("account_id = ? AND relay_id = ?", account, relayID).First(&access).Error
+	err := s.db.WithContext(ctx).Where("account_id = ? AND estavelle_id = ?", account, estavelleID).First(&access).Error
 	if err == gorm.ErrRecordNotFound {
 		var managed int64
-		if err := s.db.WithContext(ctx).Model(&BackendAccess{}).Where("relay_id = ?", relayID).Count(&managed).Error; err != nil {
+		if err := s.db.WithContext(ctx).Model(&BackendAccess{}).Where("estavelle_id = ?", estavelleID).Count(&managed).Error; err != nil {
 			return false, err
 		}
 		if managed == 0 {
 			return true, nil
 		}
 		var registered int64
-		err := s.db.WithContext(ctx).Table("karst_estavelles").Where("account_id = ? AND id = ?", account, relayID).Count(&registered).Error
+		err := s.db.WithContext(ctx).Table("karst_estavelles").Where("account_id = ? AND id = ?", account, estavelleID).Count(&registered).Error
 		return registered > 0, err
 	}
 	if err != nil {
 		return false, err
 	}
 	var enabled int64
-	if err := s.db.WithContext(ctx).Model(&Service{}).Where("account_id = ? AND ponor_id = ? AND access_managed = ? AND ponor_disabled = ?", account, relayID, true, false).Count(&enabled).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&Service{}).Where("account_id = ? AND ponor_id = ? AND access_managed = ? AND ponor_disabled = ?", account, estavelleID, true, false).Count(&enabled).Error; err != nil {
 		return false, err
 	}
 	if enabled == 0 || len(access.Groups) == 0 {
 		return false, nil
 	}
 	var infrastructure int64
-	if err := s.db.WithContext(ctx).Model(&Service{}).Where("account_id = ? AND ponor_id = ? AND gateway_handle = ? AND access_managed = ? AND ponor_disabled = ? AND (exit_ipv4 = ? OR exit_ipv6 = ?)", account, relayID, handle, true, false, true, true).Count(&infrastructure).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&Service{}).Where("account_id = ? AND ponor_id = ? AND aven_handle = ? AND access_managed = ? AND ponor_disabled = ? AND (exit_ipv4 = ? OR exit_ipv6 = ?)", account, estavelleID, handle, true, false, true, true).Count(&infrastructure).Error; err != nil {
 		return false, err
 	}
 	if infrastructure > 0 {
@@ -241,13 +241,13 @@ func (s *Store) FilterForPeer(ctx context.Context, peerID string, relays []*prot
 	}
 	var relayIDs []string
 	for _, relay := range relays {
-		relayIDs = append(relayIDs, base64.RawURLEncoding.EncodeToString(relay.RelayId))
+		relayIDs = append(relayIDs, base64.RawURLEncoding.EncodeToString(relay.EstavelleId))
 	}
 	if len(relayIDs) == 0 {
 		return relays, nil
 	}
 	var scoped int64
-	if err := s.db.WithContext(ctx).Model(&BackendAccess{}).Where("relay_id IN ?", relayIDs).Count(&scoped).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&BackendAccess{}).Where("estavelle_id IN ?", relayIDs).Count(&scoped).Error; err != nil {
 		return nil, err
 	}
 	if scoped == 0 {
@@ -259,7 +259,7 @@ func (s *Store) FilterForPeer(ctx context.Context, peerID string, relays []*prot
 	}
 	out := make([]*proto.KarstEstavelle, 0, len(relays))
 	for _, relay := range relays {
-		ok, err := s.AllowedOnRelay(ctx, base64.RawURLEncoding.EncodeToString(relay.RelayId), account, peer.Key)
+		ok, err := s.AllowedOnRelay(ctx, base64.RawURLEncoding.EncodeToString(relay.EstavelleId), account, peer.Key)
 		if err != nil {
 			return nil, err
 		}
@@ -281,7 +281,7 @@ func clearManagedExit(tx *gorm.DB, service Service) error {
 	kept := make([]policy.Grant, 0, len(doc.Grants))
 	changed := false
 	for _, grant := range doc.Grants {
-		if grant.ID == "relay-exit-"+service.ID {
+		if grant.ID == "estavelle-exit-"+service.ID {
 			changed = true
 		} else {
 			kept = append(kept, grant)
@@ -294,7 +294,7 @@ func clearManagedExit(tx *gorm.DB, service Service) error {
 		}
 	}
 	if tx.Migrator().HasTable(&route.Route{}) {
-		return tx.Where("account_id = ? AND id IN ?", service.AccountID, []string{"relay-exit-" + service.ID + "-0", "relay-exit-" + service.ID + "-1"}).Delete(&route.Route{}).Error
+		return tx.Where("account_id = ? AND id IN ?", service.AccountID, []string{"estavelle-exit-" + service.ID + "-0", "estavelle-exit-" + service.ID + "-1"}).Delete(&route.Route{}).Error
 	}
 	return nil
 }
@@ -320,7 +320,7 @@ func (s *Store) UpdateAccess(ctx context.Context, id string, desired Service) (*
 		}
 		current.AccessManaged = true
 		current.AllowedGroups = desired.AllowedGroups
-		current.GatewayHandle = desired.GatewayHandle
+		current.AvenHandle = desired.AvenHandle
 		current.ExitIPv4 = desired.ExitIPv4
 		current.ExitIPv6 = desired.ExitIPv6
 		current.Metric = desired.Metric
@@ -329,7 +329,7 @@ func (s *Store) UpdateAccess(ctx context.Context, id string, desired Service) (*
 		}
 		expected := current.Revision
 		current.Revision++
-		result := tx.Model(&Service{}).Where("account_id = ? AND id = ? AND revision = ?", account, id, expected).Select("access_managed", "allowed_groups", "gateway_handle", "exit_ipv4", "exit_ipv6", "metric", "revision").Updates(&current)
+		result := tx.Model(&Service{}).Where("account_id = ? AND id = ? AND revision = ?", account, id, expected).Select("access_managed", "allowed_groups", "aven_handle", "exit_ipv4", "exit_ipv6", "metric", "revision").Updates(&current)
 		if result.Error != nil {
 			return result.Error
 		}

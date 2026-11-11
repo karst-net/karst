@@ -13,7 +13,7 @@ func (s *Store) requireLifecycle(ctx context.Context, account string, transactio
 	if s.LifecycleAgents == nil {
 		return fmt.Errorf("%w: agent lifecycle capability tracking is not configured", ErrInvalid)
 	}
-	if err := s.LifecycleAgents.CheckRelayLifecycle(ctx, account, transaction); err != nil {
+	if err := s.LifecycleAgents.CheckEstavelleLifecycle(ctx, account, transaction); err != nil {
 		return fmt.Errorf("%w: %s", ErrInvalid, err)
 	}
 	return nil

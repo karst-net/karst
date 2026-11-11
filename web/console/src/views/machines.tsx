@@ -177,7 +177,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
           {paths.value.paths.map((path, index) => <tr key={index}>
             <td><code>{path.peer_handle}</code></td>
             <td><Status state={PATH_STATUS[path.kind]} label={path.kind} /></td>
-            <td>{path.endpoint ? <code>{path.endpoint}</code> : path.relay_id ? <>via relay <code>{path.relay_id}</code></> : "—"}</td>
+            <td>{path.endpoint ? <code>{path.endpoint}</code> : path.estavelle_id ? <>via relay <code>{path.estavelle_id}</code></> : "—"}</td>
             <td>{formatBytes(path.tx_bytes)}</td>
             <td>{formatBytes(path.rx_bytes)}</td>
             <td><Observed at={path.observed_at} /></td>

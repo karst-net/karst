@@ -1082,16 +1082,16 @@ func (e NodeComplianceStatus) Valid() bool {
 
 // Defines values for NodeControlCheckCapability.
 const (
-	NodeControlCheckCapabilityGatewayIngressSchema NodeControlCheckCapability = "gateway_ingress_schema"
-	NodeControlCheckCapabilityRelayLifecycleSchema NodeControlCheckCapability = "relay_lifecycle_schema"
+	NodeControlCheckCapabilityAvenIngressSchema        NodeControlCheckCapability = "aven_ingress_schema"
+	NodeControlCheckCapabilityEstavelleLifecycleSchema NodeControlCheckCapability = "estavelle_lifecycle_schema"
 )
 
 // Valid indicates whether the value is a known member of the NodeControlCheckCapability enum.
 func (e NodeControlCheckCapability) Valid() bool {
 	switch e {
-	case NodeControlCheckCapabilityGatewayIngressSchema:
+	case NodeControlCheckCapabilityAvenIngressSchema:
 		return true
-	case NodeControlCheckCapabilityRelayLifecycleSchema:
+	case NodeControlCheckCapabilityEstavelleLifecycleSchema:
 		return true
 	default:
 		return false
@@ -1166,9 +1166,9 @@ func (e PathObservationKind) Valid() bool {
 
 // Defines values for RolloutComponentName.
 const (
-	RolloutComponentNameConsole  RolloutComponentName = "console"
-	RolloutComponentNameControl  RolloutComponentName = "control"
-	RolloutComponentNameRelayJob RolloutComponentName = "relay_job"
+	RolloutComponentNameConsole      RolloutComponentName = "console"
+	RolloutComponentNameControl      RolloutComponentName = "control"
+	RolloutComponentNameEstavelleJob RolloutComponentName = "estavelle_job"
 )
 
 // Valid indicates whether the value is a known member of the RolloutComponentName enum.
@@ -1178,7 +1178,7 @@ func (e RolloutComponentName) Valid() bool {
 		return true
 	case RolloutComponentNameControl:
 		return true
-	case RolloutComponentNameRelayJob:
+	case RolloutComponentNameEstavelleJob:
 		return true
 	default:
 		return false
@@ -1208,16 +1208,16 @@ func (e RolloutComponentStatus) Valid() bool {
 
 // Defines values for RolloutComponentCompatibilityCapability.
 const (
-	RolloutComponentCompatibilityCapabilityGatewayIngressSchema RolloutComponentCompatibilityCapability = "gateway_ingress_schema"
-	RolloutComponentCompatibilityCapabilityRelayLifecycleSchema RolloutComponentCompatibilityCapability = "relay_lifecycle_schema"
+	RolloutComponentCompatibilityCapabilityAvenIngressSchema        RolloutComponentCompatibilityCapability = "aven_ingress_schema"
+	RolloutComponentCompatibilityCapabilityEstavelleLifecycleSchema RolloutComponentCompatibilityCapability = "estavelle_lifecycle_schema"
 )
 
 // Valid indicates whether the value is a known member of the RolloutComponentCompatibilityCapability enum.
 func (e RolloutComponentCompatibilityCapability) Valid() bool {
 	switch e {
-	case RolloutComponentCompatibilityCapabilityGatewayIngressSchema:
+	case RolloutComponentCompatibilityCapabilityAvenIngressSchema:
 		return true
-	case RolloutComponentCompatibilityCapabilityRelayLifecycleSchema:
+	case RolloutComponentCompatibilityCapabilityEstavelleLifecycleSchema:
 		return true
 	default:
 		return false
@@ -1226,9 +1226,9 @@ func (e RolloutComponentCompatibilityCapability) Valid() bool {
 
 // Defines values for RolloutComponentCompatibilityComponent.
 const (
-	RolloutComponentCompatibilityComponentConsole  RolloutComponentCompatibilityComponent = "console"
-	RolloutComponentCompatibilityComponentControl  RolloutComponentCompatibilityComponent = "control"
-	RolloutComponentCompatibilityComponentRelayJob RolloutComponentCompatibilityComponent = "relay_job"
+	RolloutComponentCompatibilityComponentConsole      RolloutComponentCompatibilityComponent = "console"
+	RolloutComponentCompatibilityComponentControl      RolloutComponentCompatibilityComponent = "control"
+	RolloutComponentCompatibilityComponentEstavelleJob RolloutComponentCompatibilityComponent = "estavelle_job"
 )
 
 // Valid indicates whether the value is a known member of the RolloutComponentCompatibilityComponent enum.
@@ -1238,7 +1238,7 @@ func (e RolloutComponentCompatibilityComponent) Valid() bool {
 		return true
 	case RolloutComponentCompatibilityComponentControl:
 		return true
-	case RolloutComponentCompatibilityComponentRelayJob:
+	case RolloutComponentCompatibilityComponentEstavelleJob:
 		return true
 	default:
 		return false
@@ -1247,9 +1247,9 @@ func (e RolloutComponentCompatibilityComponent) Valid() bool {
 
 // Defines values for RolloutPlanFailedComponent.
 const (
-	RolloutPlanFailedComponentConsole  RolloutPlanFailedComponent = "console"
-	RolloutPlanFailedComponentControl  RolloutPlanFailedComponent = "control"
-	RolloutPlanFailedComponentRelayJob RolloutPlanFailedComponent = "relay_job"
+	RolloutPlanFailedComponentConsole      RolloutPlanFailedComponent = "console"
+	RolloutPlanFailedComponentControl      RolloutPlanFailedComponent = "control"
+	RolloutPlanFailedComponentEstavelleJob RolloutPlanFailedComponent = "estavelle_job"
 )
 
 // Valid indicates whether the value is a known member of the RolloutPlanFailedComponent enum.
@@ -1259,7 +1259,7 @@ func (e RolloutPlanFailedComponent) Valid() bool {
 		return true
 	case RolloutPlanFailedComponentControl:
 		return true
-	case RolloutPlanFailedComponentRelayJob:
+	case RolloutPlanFailedComponentEstavelleJob:
 		return true
 	default:
 		return false
@@ -1890,15 +1890,15 @@ type BedrockStatusMode string
 
 // BillingPayment defines model for BillingPayment.
 type BillingPayment struct {
-	CheckoutUrl *string                `json:"checkout_url,omitempty"`
-	Currency    BillingPaymentCurrency `json:"currency"`
-	DeviceMinor int64                  `json:"device_minor"`
-	PeriodEnd   time.Time              `json:"period_end"`
-	PeriodStart time.Time              `json:"period_start"`
-	RelayMinor  int64                  `json:"relay_minor"`
-	State       BillingPaymentState    `json:"state"`
-	TotalMinor  int64                  `json:"total_minor"`
-	UpdatedAt   time.Time              `json:"updated_at"`
+	CheckoutUrl    *string                `json:"checkout_url,omitempty"`
+	Currency       BillingPaymentCurrency `json:"currency"`
+	DeviceMinor    int64                  `json:"device_minor"`
+	EstavelleMinor int64                  `json:"estavelle_minor"`
+	PeriodEnd      time.Time              `json:"period_end"`
+	PeriodStart    time.Time              `json:"period_start"`
+	State          BillingPaymentState    `json:"state"`
+	TotalMinor     int64                  `json:"total_minor"`
+	UpdatedAt      time.Time              `json:"updated_at"`
 }
 
 // BillingPaymentCurrency defines model for BillingPayment.Currency.
@@ -2257,11 +2257,17 @@ type EstavelleAlertFeed struct {
 type EstavelleAllocation struct {
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 
-	// EgressV4 Not yet supported; rejected if set until Gateway-identity binding is designed.
+	// EgressV4 Not yet supported; rejected if set until Aven-identity binding is designed.
 	EgressV4 *bool `json:"egress_v4,omitempty"`
 
-	// EgressV6 Not yet supported; rejected if set until Gateway-identity binding is designed.
+	// EgressV6 Not yet supported; rejected if set until Aven-identity binding is designed.
 	EgressV6 *bool `json:"egress_v6,omitempty"`
+
+	// EstavelleId The estavelle registry ID
+	EstavelleId *string `json:"estavelle_id,omitempty"`
+
+	// EstavelleTransport The only capability this workflow grants in v1 -- required true.
+	EstavelleTransport *bool `json:"estavelle_transport,omitempty"`
 
 	// FailedStep Only meaningful while state is failed.
 	FailedStep    *EstavelleAllocationFailedStep `json:"failed_step,omitempty"`
@@ -2282,12 +2288,6 @@ type EstavelleAllocation struct {
 
 	// PermittedGroups Stable account group IDs granted access once ready.
 	PermittedGroups []string `json:"permitted_groups"`
-
-	// RelayId The relay registry ID
-	RelayId *string `json:"relay_id,omitempty"`
-
-	// RelayTransport The only capability this workflow grants in v1 -- required true.
-	RelayTransport *bool `json:"relay_transport,omitempty"`
 
 	// Revision Expected revision for the next compare-and-set action against this allocation.
 	Revision  *int                      `json:"revision,omitempty"`
@@ -2343,13 +2343,13 @@ type EstavelleCreditGrant struct {
 	AccountId       string    `json:"account_id"`
 	CapRevision     int64     `json:"cap_revision"`
 	CreatedAt       time.Time `json:"created_at"`
+	EstavelleId     string    `json:"estavelle_id"`
 	Generation      string    `json:"generation"`
 	GrantId         string    `json:"grant_id"`
 	GrantedBytes    string    `json:"granted_bytes"`
 	MappingVersion  string    `json:"mapping_version"`
 	PeriodEnd       time.Time `json:"period_end"`
 	PeriodStart     time.Time `json:"period_start"`
-	RelayId         string    `json:"relay_id"`
 	RequestedBytes  string    `json:"requested_bytes"`
 	ScheduleVersion string    `json:"schedule_version"`
 }
@@ -2357,9 +2357,9 @@ type EstavelleCreditGrant struct {
 // EstavelleCreditRequest defines model for EstavelleCreditRequest.
 type EstavelleCreditRequest struct {
 	DeploymentId   string `json:"deployment_id"`
+	EstavelleId    string `json:"estavelle_id"`
 	Generation     string `json:"generation"`
 	MappingVersion string `json:"mapping_version"`
-	RelayId        string `json:"relay_id"`
 	RequestId      string `json:"request_id"`
 	RequestedBytes string `json:"requested_bytes"`
 	Signature      []byte `json:"signature"`
@@ -2369,10 +2369,10 @@ type EstavelleCreditRequest struct {
 type EstavelleCreditSurrender struct {
 	ConsumedBytes  string `json:"consumed_bytes"`
 	DeploymentId   string `json:"deployment_id"`
+	EstavelleId    string `json:"estavelle_id"`
 	Generation     string `json:"generation"`
 	GrantId        string `json:"grant_id"`
 	MappingVersion string `json:"mapping_version"`
-	RelayId        string `json:"relay_id"`
 	Signature      []byte `json:"signature"`
 }
 
@@ -2419,13 +2419,13 @@ type EstavelleService struct {
 
 	// AllowedGroups Stable account group IDs permitted to use this backend. POST /estavelle-services requires at least one entry.
 	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
-	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
-	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`
 
-	// GatewayHandle Explicitly selected enrolled Linux machine providing internet egress.
-	GatewayHandle *string `json:"gateway_handle,omitempty"`
-	Id            string  `json:"id"`
-	Metric        *int    `json:"metric,omitempty"`
+	// AvenHandle Explicitly selected enrolled Linux machine providing internet egress.
+	AvenHandle *string `json:"aven_handle,omitempty"`
+	ExitIpv4   *bool   `json:"exit_ipv4,omitempty"`
+	ExitIpv6   *bool   `json:"exit_ipv6,omitempty"`
+	Id         string  `json:"id"`
+	Metric     *int    `json:"metric,omitempty"`
 
 	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
 	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
@@ -2444,13 +2444,13 @@ type EstavelleServiceView struct {
 
 	// AllowedGroups Stable account group IDs permitted to use this backend. POST /estavelle-services requires at least one entry.
 	AllowedGroups *[]string `json:"allowed_groups,omitempty"`
-	ExitIpv4      *bool     `json:"exit_ipv4,omitempty"`
-	ExitIpv6      *bool     `json:"exit_ipv6,omitempty"`
 
-	// GatewayHandle Explicitly selected enrolled Linux machine providing internet egress.
-	GatewayHandle *string `json:"gateway_handle,omitempty"`
-	Id            string  `json:"id"`
-	Metric        *int    `json:"metric,omitempty"`
+	// AvenHandle Explicitly selected enrolled Linux machine providing internet egress.
+	AvenHandle *string `json:"aven_handle,omitempty"`
+	ExitIpv4   *bool   `json:"exit_ipv4,omitempty"`
+	ExitIpv6   *bool   `json:"exit_ipv6,omitempty"`
+	Id         string  `json:"id"`
+	Metric     *int    `json:"metric,omitempty"`
 
 	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
 	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
@@ -2827,11 +2827,11 @@ type Page struct {
 
 // PathObservation defines model for PathObservation.
 type PathObservation struct {
-	Endpoint   *string             `json:"endpoint,omitempty"`
-	Kind       PathObservationKind `json:"kind"`
-	ObservedAt time.Time           `json:"observed_at"`
-	PeerHandle string              `json:"peer_handle"`
-	RelayId    *string             `json:"relay_id,omitempty"`
+	Endpoint    *string             `json:"endpoint,omitempty"`
+	EstavelleId *string             `json:"estavelle_id,omitempty"`
+	Kind        PathObservationKind `json:"kind"`
+	ObservedAt  time.Time           `json:"observed_at"`
+	PeerHandle  string              `json:"peer_handle"`
 
 	// RxBytes Bytes received from this peer, a running total for the session
 	RxBytes int        `json:"rx_bytes"`
@@ -2916,16 +2916,16 @@ type RolloutComponent struct {
 	CurrentDigest *string `json:"current_digest,omitempty"`
 	FailureReason *string `json:"failure_reason,omitempty"`
 
-	// Name relay_job is this job's own relay task group
+	// Name estavelle_job is this job's own relay task group
 	Name       RolloutComponentName `json:"name"`
 	ObservedAt *time.Time           `json:"observed_at,omitempty"`
 
 	// ObservedDigest From the deployment-versions snapshot at the time this component was marked applied; empty if the snapshot was unavailable.
-	ObservedDigest               *string `json:"observed_digest,omitempty"`
-	RequiresGatewayIngressSchema *int    `json:"requires_gateway_ingress_schema,omitempty"`
+	ObservedDigest            *string `json:"observed_digest,omitempty"`
+	RequiresAvenIngressSchema *int    `json:"requires_aven_ingress_schema,omitempty"`
 
-	// RequiresRelayLifecycleSchema Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.
-	RequiresRelayLifecycleSchema *int `json:"requires_relay_lifecycle_schema,omitempty"`
+	// RequiresEstavelleLifecycleSchema Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.
+	RequiresEstavelleLifecycleSchema *int `json:"requires_estavelle_lifecycle_schema,omitempty"`
 
 	// Sequence 0-based apply order
 	Sequence     int                     `json:"sequence"`
@@ -2936,7 +2936,7 @@ type RolloutComponent struct {
 	VerificationRef string `json:"verification_ref"`
 }
 
-// RolloutComponentName relay_job is this job's own relay task group
+// RolloutComponentName estavelle_job is this job's own relay task group
 type RolloutComponentName string
 
 // RolloutComponentStatus defines model for RolloutComponent.Status.
@@ -3324,9 +3324,9 @@ type UpdateEstavelleServiceAccessJSONBody struct {
 	AccessManaged           *bool                                                       `json:"access_managed,omitempty"`
 	AcknowledgeAccessChange UpdateEstavelleServiceAccessJSONBodyAcknowledgeAccessChange `json:"acknowledge_access_change"`
 	AllowedGroups           []string                                                    `json:"allowed_groups"`
+	AvenHandle              *string                                                     `json:"aven_handle,omitempty"`
 	ExitIpv4                *bool                                                       `json:"exit_ipv4,omitempty"`
 	ExitIpv6                *bool                                                       `json:"exit_ipv6,omitempty"`
-	GatewayHandle           *string                                                     `json:"gateway_handle,omitempty"`
 	Id                      *string                                                     `json:"id,omitempty"`
 	Metric                  *int                                                        `json:"metric,omitempty"`
 	PonorId                 *string                                                     `json:"ponor_id,omitempty"`

@@ -32,7 +32,7 @@ func testStore(t *testing.T) *rollout.Store {
 func validDraftComponents() []rollout.PlanComponent {
 	return []rollout.PlanComponent{
 		{Name: rollout.ComponentControl, Sequence: 0, TargetDigest: validDigest, VerificationRef: "cosign verify ok @ 2026-11-03"},
-		{Name: rollout.ComponentRelayJob, Sequence: 1, TargetDigest: validDigest, VerificationRef: "cosign verify ok @ 2026-11-03"},
+		{Name: rollout.ComponentEstavelleJob, Sequence: 1, TargetDigest: validDigest, VerificationRef: "cosign verify ok @ 2026-11-03"},
 		{Name: rollout.ComponentConsole, Sequence: 2, TargetDigest: validDigest, VerificationRef: "cosign verify ok @ 2026-11-03"},
 	}
 }
@@ -155,8 +155,8 @@ func TestMarkComponentAppliedEnforcesSequenceIsIdempotentAndCompletesThePlan(t *
 	started, err := store.Start(ctx, plan.ID, plan.Revision, true, false, false, "")
 	require.NoError(t, err)
 
-	// Out-of-order: relay_job is sequence 1, control is sequence 0.
-	_, _, err = store.MarkComponentApplied(ctx, plan.ID, started.Revision, rollout.ComponentRelayJob, validDigest)
+	// Out-of-order: estavelle_job is sequence 1, control is sequence 0.
+	_, _, err = store.MarkComponentApplied(ctx, plan.ID, started.Revision, rollout.ComponentEstavelleJob, validDigest)
 	require.ErrorIs(t, err, rollout.ErrInvalid, "out-of-sequence apply must be rejected")
 
 	updated, components, err := store.MarkComponentApplied(ctx, plan.ID, started.Revision, rollout.ComponentControl, validDigest)
@@ -176,7 +176,7 @@ func TestMarkComponentAppliedEnforcesSequenceIsIdempotentAndCompletesThePlan(t *
 	require.NoError(t, err)
 	require.Equal(t, updated.Revision, again.Revision, "idempotent retry must not advance the revision")
 
-	updated, _, err = store.MarkComponentApplied(ctx, plan.ID, again.Revision, rollout.ComponentRelayJob, validDigest)
+	updated, _, err = store.MarkComponentApplied(ctx, plan.ID, again.Revision, rollout.ComponentEstavelleJob, validDigest)
 	require.NoError(t, err)
 	require.Equal(t, rollout.StateInProgress, updated.State)
 
@@ -211,7 +211,7 @@ func TestMarkComponentFailedSetsPlanFailureFields(t *testing.T) {
 
 	// A plan already failed cannot be marked applied/failed again without
 	// going through a fresh Start.
-	_, _, err = store.MarkComponentFailed(ctx, plan.ID, failed.Revision, rollout.ComponentRelayJob, "x")
+	_, _, err = store.MarkComponentFailed(ctx, plan.ID, failed.Revision, rollout.ComponentEstavelleJob, "x")
 	require.ErrorIs(t, err, rollout.ErrExists)
 }
 

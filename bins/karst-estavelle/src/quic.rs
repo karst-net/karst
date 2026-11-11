@@ -243,8 +243,8 @@ pub async fn serve_until(
         return;
     };
     eprintln!(
-        "karst-relay: listening (quic) on {addr} (relay_id {})",
-        crate::server::hex(&ctx.identity.relay_id())
+        "karst-estavelle: listening (quic) on {addr} (estavelle_id {})",
+        crate::server::hex(&ctx.identity.estavelle_id())
     );
     tokio::pin!(shutdown);
     loop {
@@ -258,7 +258,7 @@ pub async fn serve_until(
                 tokio::spawn(Box::pin(async move { serve(incoming, ctx).await }));
             }
             () = &mut shutdown => {
-                eprintln!("karst-relay: shutting down (quic)");
+                eprintln!("karst-estavelle: shutting down (quic)");
                 return;
             }
         }
@@ -342,7 +342,7 @@ pub async fn dial_mesh(
     getrandom::fill(&mut nonce).map_err(|e| format!("no entropy: {e}"))?;
     let mut client = karst_estavelle_proto::ClientHandshake::new(
         karst_estavelle_proto::Role::Mesh,
-        ctx.identity.relay_id(),
+        ctx.identity.estavelle_id(),
         peer_id,
         entry.identity_pk.clone(),
         nonce,
@@ -371,11 +371,11 @@ pub async fn dial_mesh(
         return Err("handshake did not establish".to_owned());
     }
 
-    eprintln!("karst-relay: meshed with {addr} (quic)");
+    eprintln!("karst-estavelle: meshed with {addr} (quic)");
     crate::server::drive(
         stream,
         buf,
-        Admitted::Mesh { relay_id: peer_id },
+        Admitted::Mesh { estavelle_id: peer_id },
         remote,
         Arc::clone(ctx),
     )

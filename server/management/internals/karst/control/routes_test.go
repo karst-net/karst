@@ -15,7 +15,7 @@ func routeOffer() *proto.KarstRouteOffer {
 	return &proto.KarstRouteOffer{
 		RouteId:    "corp-lan",
 		Prefix:     "10.20.0.0/16",
-		GatewayId:  []byte("gateway-a"),
+		AvenId:  []byte("gateway-a"),
 		Metric:     100,
 		Kind:       proto.KarstRouteKind_KARST_ROUTE_KIND_SUBNET,
 		Masquerade: true,
@@ -46,7 +46,7 @@ func TestNetmapVersionCoversEveryRouteOfferField(t *testing.T) {
 	cases := map[string]func(*proto.KarstRouteOffer){
 		"route id":         func(r *proto.KarstRouteOffer) { r.RouteId = "other" },
 		"prefix":           func(r *proto.KarstRouteOffer) { r.Prefix = "10.30.0.0/16" },
-		"gateway":          func(r *proto.KarstRouteOffer) { r.GatewayId = []byte("gateway-b") },
+		"gateway":          func(r *proto.KarstRouteOffer) { r.AvenId = []byte("gateway-b") },
 		"metric":           func(r *proto.KarstRouteOffer) { r.Metric++ },
 		"kind":             func(r *proto.KarstRouteOffer) { r.Kind = proto.KarstRouteKind_KARST_ROUTE_KIND_EXIT },
 		"masquerade":       func(r *proto.KarstRouteOffer) { r.Masquerade = false },

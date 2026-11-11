@@ -83,7 +83,7 @@ test("explicit Relay association preserves backend identity and supports removal
   await page.route("**/api/karst/v1/estavelle-services**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/publication")) { await route.fulfill({ json: { mode: "services" } }); return; }
-    if (path.endsWith("/admission-targets")) { await route.fulfill({ json: [{ relay_id: endpoint.id, refreshed_at: new Date().toISOString() }] }); return; }
+    if (path.endsWith("/admission-targets")) { await route.fulfill({ json: [{ estavelle_id: endpoint.id, refreshed_at: new Date().toISOString() }] }); return; }
     if (route.request().method() === "POST") {
       submitted = route.request().postDataJSON();
       services = [{ ...submitted, ponor_present: true, revision: 1 }];
@@ -142,7 +142,7 @@ for (const scopedIngress of [true, false]) {
     await page.route("**/api/karst/v1/estavelle-services**",async route => {
       const path=new URL(route.request().url()).pathname;
       if(path.endsWith("/publication")){await route.fulfill({json:{mode:"services"}});return;}
-      if(path.endsWith("/admission-targets")){await route.fulfill({json:[{relay_id:"ponor",refreshed_at:new Date().toISOString()}]});return;}
+      if(path.endsWith("/admission-targets")){await route.fulfill({json:[{estavelle_id:"ponor",refreshed_at:new Date().toISOString()}]});return;}
       if(route.request().method()==="POST") {submitted=route.request().postDataJSON();services=[{...submitted,ponor_present:true,revision:1}];await route.fulfill({json:services[0]});return;}
       await route.fulfill({json:services});
     });
@@ -166,7 +166,7 @@ for (const scopedIngress of [true, false]) {
     await page.getByRole("checkbox",{name:"I reviewed the allowed groups and internet access.",exact:true}).check();
     await page.getByRole("button",{name:"Apply estavelle configuration",exact:true}).click();
     await expect(page.getByRole("status")).toContainText("Estavelle configuration saved");
-    expect(submitted).toMatchObject({id:"denver",ponor_id:"ponor",access_managed:true,allowed_groups:["group-sre"],exit_ipv4:true,gateway_handle:"gateway-key",metric:9999});
+    expect(submitted).toMatchObject({id:"denver",ponor_id:"ponor",access_managed:true,allowed_groups:["group-sre"],exit_ipv4:true,aven_handle:"gateway-key",metric:9999});
   });
 }
 

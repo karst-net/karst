@@ -143,7 +143,7 @@ fn command_pubkey(args: &[&str]) -> ExitCode {
             // What the coordination server needs to publish in the relay
             // registry. Clients pin the key from there, never from the
             // connection — §4.2.
-            println!("relay_id     {}", hex(&identity.relay_id()));
+            println!("estavelle_id     {}", hex(&identity.estavelle_id()));
             println!(
                 "identity_pk  {}",
                 Base64::encode_string(identity.public_key())

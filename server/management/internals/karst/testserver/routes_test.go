@@ -21,7 +21,7 @@ func TestRouteRegistryUpsertAndDelete(t *testing.T) {
 	req := routeOfferRequest{
 		RouteID:       "subnet-a",
 		Prefix:        "10.20.0.0/16",
-		GatewayHandle: "gateway-handle",
+		AvenHandle: "gateway-handle",
 		Metric:        50,
 		Masquerade:    true,
 		KeepRoute:     true,
@@ -58,7 +58,7 @@ func TestRouteRegistryUpsertAndDelete(t *testing.T) {
 	// projectRouteOffers, which calls Network.Masked() again but must not
 	// need to.
 	if err := registry.upsert(ctx, routeOfferRequest{
-		RouteID: "subnet-b", Prefix: "10.30.5.0/24", GatewayHandle: "gateway-handle",
+		RouteID: "subnet-b", Prefix: "10.30.5.0/24", AvenHandle: "gateway-handle",
 	}); err != nil {
 		t.Fatalf("upsert with an unmasked prefix: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestRouteRegistryUpsertAndDelete(t *testing.T) {
 
 	// Upsert replaces rather than accumulating a second entry for the same ID.
 	if err := registry.upsert(ctx, routeOfferRequest{
-		RouteID: "subnet-a", Prefix: "10.20.0.0/16", GatewayHandle: "gateway-handle", Metric: 99,
+		RouteID: "subnet-a", Prefix: "10.20.0.0/16", AvenHandle: "gateway-handle", Metric: 99,
 	}); err != nil {
 		t.Fatalf("upsert (update): %v", err)
 	}
@@ -93,7 +93,7 @@ func TestRouteRegistryUpsertAndDelete(t *testing.T) {
 func TestRouteRegistryUpsertRejectsAnUnknownGateway(t *testing.T) {
 	registry := newRouteRegistry(newMemoryAccount())
 	err := registry.upsert(context.Background(), routeOfferRequest{
-		RouteID: "subnet-a", Prefix: "10.20.0.0/16", GatewayHandle: "no-such-handle",
+		RouteID: "subnet-a", Prefix: "10.20.0.0/16", AvenHandle: "no-such-handle",
 	})
 	if err == nil {
 		t.Fatal("upsert with an unregistered gateway handle succeeded")
@@ -105,7 +105,7 @@ func TestRouteRegistryUpsertRejectsAMalformedPrefix(t *testing.T) {
 	account.register("gateway-handle", "gateway-host")
 	registry := newRouteRegistry(account)
 	err := registry.upsert(context.Background(), routeOfferRequest{
-		RouteID: "subnet-a", Prefix: "not-a-prefix", GatewayHandle: "gateway-handle",
+		RouteID: "subnet-a", Prefix: "not-a-prefix", AvenHandle: "gateway-handle",
 	})
 	if err == nil {
 		t.Fatal("upsert with a malformed prefix succeeded")
@@ -119,7 +119,7 @@ func TestRouteRegistryEnabledFieldDefaultsTrue(t *testing.T) {
 	ctx := context.Background()
 
 	if err := registry.upsert(ctx, routeOfferRequest{
-		RouteID: "subnet-a", Prefix: "10.20.0.0/16", GatewayHandle: "gateway-handle",
+		RouteID: "subnet-a", Prefix: "10.20.0.0/16", AvenHandle: "gateway-handle",
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestRouteRegistryEnabledFieldDefaultsTrue(t *testing.T) {
 
 	disabled := false
 	if err := registry.upsert(ctx, routeOfferRequest{
-		RouteID: "subnet-a", Prefix: "10.20.0.0/16", GatewayHandle: "gateway-handle",
+		RouteID: "subnet-a", Prefix: "10.20.0.0/16", AvenHandle: "gateway-handle",
 		Enabled: &disabled,
 	}); err != nil {
 		t.Fatalf("upsert (disable): %v", err)
@@ -171,7 +171,7 @@ func TestRouteRegistryChangesPushToEveryRegisteredPeer(t *testing.T) {
 	recipientCh := updates.CreateNotificationChannel(ctx, recipient.ID)
 
 	if err := registry.upsert(ctx, routeOfferRequest{
-		RouteID: "subnet-a", Prefix: "10.20.0.0/16", GatewayHandle: "gateway-handle",
+		RouteID: "subnet-a", Prefix: "10.20.0.0/16", AvenHandle: "gateway-handle",
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}

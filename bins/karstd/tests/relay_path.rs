@@ -69,7 +69,7 @@ fn relay_with(tag: u8) -> Estavelle {
     Estavelle {
         address: format!("127.0.0.1:{}", 443 + u16::from(tag)),
         tls_server_name: "relay.test".to_owned(),
-        relay_id: h.finalize().into(),
+        estavelle_id: h.finalize().into(),
         identity_key,
         region: "test".to_owned(),
     }
@@ -116,7 +116,7 @@ struct PeerSpec {
     /// The relay this peer published as its home — `ponor-v1.md` §9.1. `None`
     /// is a peer that has published none, which is every peer here except
     /// where a test is about the second rule.
-    home_relay: Option<[u8; 32]>,
+    home_estavelle: Option<[u8; 32]>,
 }
 
 /// The Ponor node id a seed byte produces, for stamping a relayed datagram.
@@ -148,7 +148,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
             psk_is_fallback: false,
             psk_previous: None,
             disco_key: spec.disco_key,
-            home_estavelle: spec.home_relay,
+            home_estavelle: spec.home_estavelle,
             candidates: Vec::new(),
         });
     }
@@ -177,7 +177,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         // Both entries, because a relay id only becomes dialable through the
         // registry: a peer publishing one this node has never heard of is a
         // different case, and it has its own test below.
-        relays: if with_relay {
+        estavelles: if with_relay {
             vec![relay(), elsewhere()]
         } else {
             Vec::new()
@@ -211,7 +211,7 @@ fn pair(own: u8, peer: u8, peer_range: &'static str, own_range: &str, with_relay
             endpoint: None,
             range: peer_range,
             disco_key: None,
-            home_relay: None,
+            home_estavelle: None,
         }],
         with_relay,
     )
@@ -418,14 +418,14 @@ fn one_peer_cannot_replay_anothers_handshake_under_its_own_identity() {
                 endpoint: None,
                 range: "100.64.0.1/32",
                 disco_key: None,
-                home_relay: None,
+                home_estavelle: None,
             },
             PeerSpec {
                 byte: 0x03,
                 endpoint: None,
                 range: "100.64.0.3/32",
                 disco_key: None,
-                home_relay: None,
+                home_estavelle: None,
             },
         ],
         true,
@@ -530,7 +530,7 @@ fn a_published_endpoint_that_has_gone_stale_falls_back_to_the_relay() {
             endpoint: Some(stale),
             range: "100.64.0.2/32",
             disco_key: Some([0x5A; 32]),
-            home_relay: None,
+            home_estavelle: None,
         }],
         true,
     );
@@ -591,13 +591,13 @@ fn homed_pair(peer_home: Option<[u8; 32]>) -> (Node, Node) {
             endpoint: None,
             range: "100.64.0.2/32",
             disco_key: None,
-            home_relay: peer_home,
+            home_estavelle: peer_home,
         }],
         true,
     );
     let b = pair(0x02, 0x01, "100.64.0.1/32", "100.64.0.2/24", true);
-    a.engine.set_home_relay(Some(relay().relay_id));
-    b.engine.set_home_relay(Some(relay().relay_id));
+    a.engine.set_home_estavelle(Some(relay().estavelle_id));
+    b.engine.set_home_estavelle(Some(relay().estavelle_id));
     establish(&a, &b);
     (a, b)
 }
@@ -639,7 +639,7 @@ fn route(from: &Node, now: u64) -> Route {
 /// ML-DSA-87 handshake for every peer whose registry entry happened to differ.
 #[test]
 fn a_peer_that_published_another_relay_is_still_tried_here_first() {
-    let (a, _b) = homed_pair(Some(elsewhere().relay_id));
+    let (a, _b) = homed_pair(Some(elsewhere().estavelle_id));
     assert_eq!(
         route(&a, 1_000),
         Route::Home,
@@ -657,19 +657,19 @@ fn a_peer_that_published_another_relay_is_still_tried_here_first() {
 /// — so this is the transition the whole published field exists for.
 #[test]
 fn a_peer_this_relay_cannot_reach_moves_to_the_relay_it_published() {
-    let (a, _b) = homed_pair(Some(elsewhere().relay_id));
+    let (a, _b) = homed_pair(Some(elsewhere().estavelle_id));
     assert!(
         a.engine.relay_unreachable(id_of(0x02), 1_000),
         "the peer published a reachable relay, so there was somewhere to move it"
     );
     assert_eq!(
         route(&a, 1_000),
-        Route::Published(elsewhere().relay_id),
+        Route::Published(elsewhere().estavelle_id),
         "the peer stayed on a relay that had already refused it"
     );
     assert_eq!(
         a.engine.relay_for(id_of(0x02)),
-        Some(elsewhere().relay_id),
+        Some(elsewhere().estavelle_id),
         "a rendezvous would have gone to a relay the peer is not on — and a \
          rendezvous is what ends the relay path"
     );
@@ -690,7 +690,7 @@ fn a_refusal_for_a_peer_that_published_nothing_changes_nothing() {
 /// double the handshakes and the relay's connection count for no path at all.
 #[test]
 fn a_peer_homed_on_this_nodes_own_relay_is_not_dialed_twice() {
-    let (a, _b) = homed_pair(Some(relay().relay_id));
+    let (a, _b) = homed_pair(Some(relay().estavelle_id));
     assert!(
         !a.engine.relay_unreachable(id_of(0x02), 1_000),
         "there was nowhere else to go: the published relay is the one already held"
@@ -718,11 +718,11 @@ fn a_published_relay_the_registry_does_not_carry_is_not_dialed() {
 /// while both are meeting on one relay the whole time.
 #[test]
 fn a_peer_heard_on_this_relay_is_reached_on_it_again() {
-    let (a, _b) = homed_pair(Some(elsewhere().relay_id));
+    let (a, _b) = homed_pair(Some(elsewhere().estavelle_id));
     assert!(a.engine.relay_unreachable(id_of(0x02), 1_000));
-    assert_eq!(route(&a, 1_000), Route::Published(elsewhere().relay_id));
+    assert_eq!(route(&a, 1_000), Route::Published(elsewhere().estavelle_id));
 
-    a.engine.seen_on_home_relay(id_of(0x02));
+    a.engine.seen_on_home_estavelle(id_of(0x02));
     assert_eq!(
         route(&a, 1_100),
         Route::Home,
@@ -735,8 +735,8 @@ fn a_peer_heard_on_this_relay_is_reached_on_it_again() {
 /// one that must not cost anything.
 #[test]
 fn hearing_from_an_unmarked_peer_changes_nothing() {
-    let (a, _b) = homed_pair(Some(elsewhere().relay_id));
-    a.engine.seen_on_home_relay(id_of(0x02));
+    let (a, _b) = homed_pair(Some(elsewhere().estavelle_id));
+    a.engine.seen_on_home_estavelle(id_of(0x02));
     assert_eq!(route(&a, 1_000), Route::Home);
 }
 
@@ -752,16 +752,16 @@ fn hearing_from_an_unmarked_peer_changes_nothing() {
 /// would be watching that instead.
 #[test]
 fn the_refusal_expires_so_a_peer_that_arrives_here_is_found_again() {
-    let (a, _b) = homed_pair(Some(elsewhere().relay_id));
+    let (a, _b) = homed_pair(Some(elsewhere().estavelle_id));
     assert!(a.engine.relay_unreachable(id_of(0x02), 1_000));
-    assert_eq!(route(&a, 1_000), Route::Published(elsewhere().relay_id));
+    assert_eq!(route(&a, 1_000), Route::Published(elsewhere().estavelle_id));
 
     // Just short of the retry, and then past it. The timer runs in `poll`,
     // which the daemon calls on every tick.
     let _ = a.engine.poll(1_000 + 4 * 60 * 1_000, seed(0x51));
     assert_eq!(
         a.engine.relay_for(id_of(0x02)),
-        Some(elsewhere().relay_id),
+        Some(elsewhere().estavelle_id),
         "the refusal was forgotten early"
     );
     let _ = a.engine.poll(1_000 + 5 * 60 * 1_000, seed(0x52));

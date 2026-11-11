@@ -201,7 +201,7 @@ func (h *handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	accountID, userID := userAuth.AccountId, userAuth.UserId
 	vars := mux.Vars(r)
 	routeID := vars["routeId"]
-	if strings.HasPrefix(routeID, "relay-exit-") {
+	if strings.HasPrefix(routeID, "estavelle-exit-") {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "edit managed internet egress through its Relay service"), w)
 		return
 	}
@@ -320,7 +320,7 @@ func (h *handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 
 	accountID, userID := userAuth.AccountId, userAuth.UserId
 	routeID := mux.Vars(r)["routeId"]
-	if strings.HasPrefix(routeID, "relay-exit-") {
+	if strings.HasPrefix(routeID, "estavelle-exit-") {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "edit managed internet egress through its Relay service"), w)
 		return
 	}

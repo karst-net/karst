@@ -37,10 +37,10 @@ func TestAuthorizedRelayCreditReservationVerifiesAndBindsMappingAtomically(t *te
 	require.NoError(t, err)
 	key, err := identity.FromSeed(bytes.Repeat([]byte{44}, identity.SeedSize))
 	require.NoError(t, err)
-	relayID, err := relays.AuthorizeProducer(ctx, key.Public(), "deployment-a")
+	estavelleID, err := relays.AuthorizeProducer(ctx, key.Public(), "deployment-a")
 	require.NoError(t, err)
-	require.NoError(t, relays.AllowMapping(ctx, relayID, mapping.DeploymentID, mapping.Version))
-	request := signedCreditRequestForBillingTest(t, key, relayID, mapping.Version, "0102030405060708090a0b0c0d0e0f10", "1112131415161718191a1b1c1d1e1f20", "3000000000")
+	require.NoError(t, relays.AllowMapping(ctx, estavelleID, mapping.DeploymentID, mapping.Version))
+	request := signedCreditRequestForBillingTest(t, key, estavelleID, mapping.Version, "0102030405060708090a0b0c0d0e0f10", "1112131415161718191a1b1c1d1e1f20", "3000000000")
 	leaseUntil, err := store.IssueAuthorizedEstavelleUncappedLease(ctx, relays, start, end, request)
 	require.NoError(t, err)
 	require.True(t, leaseUntil.After(time.Now().UTC()))
@@ -59,20 +59,20 @@ func TestAuthorizedRelayCreditReservationVerifiesAndBindsMappingAtomically(t *te
 	require.NoError(t, err)
 	require.Equal(t, first.GrantID, second.GrantID, "retry returns the original reservation")
 
-	modified := signedCreditRequestForBillingTest(t, key, relayID, mapping.Version, request.Generation, request.RequestID, "3000000001")
+	modified := signedCreditRequestForBillingTest(t, key, estavelleID, mapping.Version, request.Generation, request.RequestID, "3000000001")
 	_, err = store.ReserveAuthorizedEstavelleCredits(ctx, relays, start, end, modified)
 	require.ErrorIs(t, err, ErrCreditRequestConflict, "a request id cannot be reused to mint a larger grant")
 
 	unapproved, err := usage.PersistEstavelleMapping(ctx, store.db, "deployment-a", "aquifer-other", "other-account")
 	require.NoError(t, err)
-	unauthorized := signedCreditRequestForBillingTest(t, key, relayID, unapproved.Version, "2122232425262728292a2b2c2d2e2f30", "3132333435363738393a3b3c3d3e3f40", "100")
+	unauthorized := signedCreditRequestForBillingTest(t, key, estavelleID, unapproved.Version, "2122232425262728292a2b2c2d2e2f30", "3132333435363738393a3b3c3d3e3f40", "100")
 	_, err = store.ReserveAuthorizedEstavelleCredits(ctx, relays, start, end, unauthorized)
 	require.ErrorIs(t, err, estavelleusage.ErrMappingNotAllowed)
 }
 
-func signedCreditRequestForBillingTest(t *testing.T, key *identity.Key, relayID, mappingVersion, generation, requestID, requested string) estavelleusage.CreditRequest {
+func signedCreditRequestForBillingTest(t *testing.T, key *identity.Key, estavelleID, mappingVersion, generation, requestID, requested string) estavelleusage.CreditRequest {
 	t.Helper()
-	request := estavelleusage.CreditRequest{RelayID: relayID, DeploymentID: "deployment-a", MappingVersion: mappingVersion,
+	request := estavelleusage.CreditRequest{EstavelleID: estavelleID, DeploymentID: "deployment-a", MappingVersion: mappingVersion,
 		Generation: generation, RequestID: requestID, RequestedBytes: requested}
 	input, err := request.SigningInput()
 	require.NoError(t, err)

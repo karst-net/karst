@@ -109,7 +109,7 @@ func TestObservedEgressIPReplacesOnEachReport(t *testing.T) {
 	// very drift this field exists to surface.
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{GatewayID: "primary", ObservedEgressIP: "203.0.113.9"}); err != nil {
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{AvenID: "primary", ObservedEgressIP: "203.0.113.9"}); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 	rows, err := s.LatestByAven(ctx, "acct-a")
@@ -122,7 +122,7 @@ func TestObservedEgressIPReplacesOnEachReport(t *testing.T) {
 	// Simulates the address changing after the binding was saved (#554's
 	// own acceptance criterion): a later report from the same candidate
 	// observes a different address.
-	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{GatewayID: "primary", ObservedEgressIP: "203.0.113.99"}); err != nil {
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{AvenID: "primary", ObservedEgressIP: "203.0.113.99"}); err != nil {
 		t.Fatalf("record drifted: %v", err)
 	}
 	rows, err = s.LatestByAven(ctx, "acct-a")
@@ -173,7 +173,7 @@ func TestGatewayHealthKeepsCandidatesAndAccountsIndependent(t *testing.T) {
 	}{
 		{"a", "primary", true}, {"a", "standby", false}, {"b", "primary", false},
 	} {
-		if err := s.RecordRouteBytes(ctx, r.account, "shared-route", RouteReport{GatewayID: r.node, ForwardingActive: r.active}); err != nil {
+		if err := s.RecordRouteBytes(ctx, r.account, "shared-route", RouteReport{AvenID: r.node, ForwardingActive: r.active}); err != nil {
 			t.Fatal(err)
 		}
 	}

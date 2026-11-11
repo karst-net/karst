@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 
 const key = "A".repeat(3456);
 const entry = { address: "203.0.113.7:443", tls_server_name: "relay.example.com", identity_key: key, region: "denver" };
-const receipt = { schema_version: 1, kind: "karst-estavelle-installation", relay_id: "ab".repeat(32), entry };
+const receipt = { schema_version: 1, kind: "karst-estavelle-installation", estavelle_id: "ab".repeat(32), entry };
 
 async function fixture(page: import("@playwright/test").Page, existing = false) {
   let created = false;
@@ -17,7 +17,7 @@ async function fixture(page: import("@playwright/test").Page, existing = false) 
   await page.route("**/api/karst/v1/estavelle-services**", route => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/publication")) return route.fulfill({ json: { mode: "services" } });
-    if (path.endsWith("/admission-targets")) return route.fulfill({ json: [{ relay_id: "installed", refreshed_at: new Date().toISOString() }] });
+    if (path.endsWith("/admission-targets")) return route.fulfill({ json: [{ estavelle_id: "installed", refreshed_at: new Date().toISOString() }] });
     return route.fulfill({ json: [] });
   });
   await page.route("**/api/karst/v1/estavelles", async route => {

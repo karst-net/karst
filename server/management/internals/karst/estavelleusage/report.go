@@ -62,7 +62,7 @@ type Report struct {
 
 type reportWindow struct {
 	DeploymentID string
-	RelayID      string
+	EstavelleID      string
 	Epoch        string
 	Sequence     string
 	StartUS      int64
@@ -77,7 +77,7 @@ type reportWindowRange struct {
 
 type reportTotal struct {
 	DeploymentID string
-	RelayID      string
+	EstavelleID      string
 	Epoch        string
 	Sequence     string
 	MappingKey   string
@@ -129,7 +129,7 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 		}
 		var periods []producerMappingInterval
 		if err := tx.Where("account_id = ? AND start_us < ? AND (end_us IS NULL OR end_us > ?)", accountID, end.UnixMicro(), start.UnixMicro()).
-			Order("deployment_id, relay_id, start_us").Limit(maxReportRows + 1).Find(&periods).Error; err != nil {
+			Order("deployment_id, estavelle_id, start_us").Limit(maxReportRows + 1).Find(&periods).Error; err != nil {
 			return err
 		}
 		if len(periods) > maxReportRows {
@@ -137,10 +137,10 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 		}
 		var windows []reportWindow
 		if err := tx.Table("karst_usage_estavelle_batch_coverage AS c").
-			Select("c.deployment_id, c.relay_id, c.epoch, c.sequence, c.start_us, c.gaps, b.received_at").
-			Joins("JOIN karst_usage_estavelle_batches AS b ON b.deployment_id = c.deployment_id AND b.relay_id = c.relay_id AND b.epoch = c.epoch AND b.sequence = c.sequence").
+			Select("c.deployment_id, c.estavelle_id, c.epoch, c.sequence, c.start_us, c.gaps, b.received_at").
+			Joins("JOIN karst_usage_estavelle_batches AS b ON b.deployment_id = c.deployment_id AND b.estavelle_id = c.estavelle_id AND b.epoch = c.epoch AND b.sequence = c.sequence").
 			Where("c.account_id = ? AND c.start_us >= ? AND c.start_us < ?", accountID, start.UnixMicro(), end.UnixMicro()).
-			Order("c.relay_id, c.epoch, c.sequence").Limit(maxReportRows + 1).Find(&windows).Error; err != nil {
+			Order("c.estavelle_id, c.epoch, c.sequence").Limit(maxReportRows + 1).Find(&windows).Error; err != nil {
 			return err
 		}
 		if len(windows) > maxReportRows {
@@ -148,11 +148,11 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 		}
 		var totals []reportTotal
 		if err := tx.Table("karst_usage_estavelle_batch_totals AS t").
-			Select("t.deployment_id, t.relay_id, t.epoch, t.sequence, t.mapping_key, t.bytes_decimal").
-			Joins("JOIN karst_usage_estavelle_batches AS b ON b.deployment_id = t.deployment_id AND b.relay_id = t.relay_id AND b.epoch = t.epoch AND b.sequence = t.sequence").
-			Joins("JOIN karst_usage_estavelle_batch_coverage AS c ON c.deployment_id = t.deployment_id AND c.relay_id = t.relay_id AND c.epoch = t.epoch AND c.sequence = t.sequence AND c.account_id = t.account_id").
+			Select("t.deployment_id, t.estavelle_id, t.epoch, t.sequence, t.mapping_key, t.bytes_decimal").
+			Joins("JOIN karst_usage_estavelle_batches AS b ON b.deployment_id = t.deployment_id AND b.estavelle_id = t.estavelle_id AND b.epoch = t.epoch AND b.sequence = t.sequence").
+			Joins("JOIN karst_usage_estavelle_batch_coverage AS c ON c.deployment_id = t.deployment_id AND c.estavelle_id = t.estavelle_id AND c.epoch = t.epoch AND c.sequence = t.sequence AND c.account_id = t.account_id").
 			Where("t.account_id = ? AND b.start_us >= ? AND b.start_us < ?", accountID, start.UnixMicro(), end.UnixMicro()).
-			Order("t.relay_id, t.epoch, t.sequence, t.mapping_key").Limit(maxReportRows + 1).Scan(&totals).Error; err != nil {
+			Order("t.estavelle_id, t.epoch, t.sequence, t.mapping_key").Limit(maxReportRows + 1).Scan(&totals).Error; err != nil {
 			return err
 		}
 		if len(totals) > maxReportRows {
@@ -187,7 +187,7 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 		if !ok || value.Sign() < 0 {
 			return ErrReportData
 		}
-		key := reportBatchKey(row.DeploymentID, row.RelayID, row.Epoch, row.Sequence)
+		key := reportBatchKey(row.DeploymentID, row.EstavelleID, row.Epoch, row.Sequence)
 		if batchBytes[key] == nil {
 			batchBytes[key] = new(big.Int)
 		}
@@ -219,7 +219,7 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 		if firstWindow < report.Start.UnixMicro() {
 			firstWindow = report.Start.UnixMicro()
 		}
-		ownerKey := period.DeploymentID + "\x00" + period.RelayID
+		ownerKey := period.DeploymentID + "\x00" + period.EstavelleID
 		rangesByProducer[ownerKey] = append(rangesByProducer[ownerKey], reportWindowRange{StartUS: firstWindow, EndUS: endWindow})
 	}
 	for ownerKey, ranges := range rangesByProducer {
@@ -250,7 +250,7 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 	for _, window := range windows {
 		day := getDay(window.StartUS)
 		day.windows++
-		windowKey := reportWindowKey(window.DeploymentID, window.RelayID, window.StartUS)
+		windowKey := reportWindowKey(window.DeploymentID, window.EstavelleID, window.StartUS)
 		if _, ok := expected[windowKey]; ok {
 			receivedExpected[windowKey] = struct{}{}
 		} else {
@@ -265,7 +265,7 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 		if report.LastReceivedAt == nil || receivedAt.After(*report.LastReceivedAt) {
 			report.LastReceivedAt = &receivedAt
 		}
-		batchKey := reportBatchKey(window.DeploymentID, window.RelayID, window.Epoch, window.Sequence)
+		batchKey := reportBatchKey(window.DeploymentID, window.EstavelleID, window.Epoch, window.Sequence)
 		if value := batchBytes[batchKey]; value != nil {
 			day.bytes.Add(day.bytes, value)
 			totalBytes.Add(totalBytes, value)
@@ -315,14 +315,14 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 	return nil
 }
 
-func reportWindowKey(deploymentID, relayID string, startUS int64) string {
-	return reportWindowKeyFromOwner(deploymentID+"\x00"+relayID, startUS)
+func reportWindowKey(deploymentID, estavelleID string, startUS int64) string {
+	return reportWindowKeyFromOwner(deploymentID+"\x00"+estavelleID, startUS)
 }
 
 func reportWindowKeyFromOwner(ownerKey string, startUS int64) string {
 	return ownerKey + "\x00" + strconv.FormatInt(startUS, 10)
 }
 
-func reportBatchKey(deploymentID, relayID, epoch, sequence string) string {
-	return deploymentID + "\x00" + relayID + "\x00" + epoch + "\x00" + sequence
+func reportBatchKey(deploymentID, estavelleID, epoch, sequence string) string {
+	return deploymentID + "\x00" + estavelleID + "\x00" + epoch + "\x00" + sequence
 }

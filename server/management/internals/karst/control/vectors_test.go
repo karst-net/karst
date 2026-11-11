@@ -72,7 +72,7 @@ type versionCase struct {
 	// differently even when both currently produce an empty rule list.
 	SSHFilter        []versionRule  `json:"ssh_filter,omitempty"`
 	SSHFilterPresent bool           `json:"ssh_filter_present,omitempty"`
-	Relays           []versionRelay `json:"relays"`
+	Estavelles       []versionRelay `json:"estavelles"`
 	Routes           []versionRoute `json:"routes"`
 	DNS              versionDNS     `json:"dns"`
 	Bedrock          versionBedrock `json:"bedrock"`
@@ -164,7 +164,7 @@ type versionDNSUpstream struct {
 type versionRelay struct {
 	Address       string `json:"address"`
 	TLSServerName string `json:"tls_server_name"`
-	RelayID       string `json:"relay_id"`
+	EstavelleID   string `json:"estavelle_id"`
 	IdentityKey   string `json:"identity_key"`
 	Region        string `json:"region"`
 }
@@ -172,7 +172,7 @@ type versionRelay struct {
 type versionRoute struct {
 	RouteID        string `json:"route_id"`
 	Prefix         string `json:"prefix"`
-	GatewayID      string `json:"gateway_id"`
+	AvenID         string `json:"aven_id"`
 	Metric         uint32 `json:"metric"`
 	Kind           uint32 `json:"kind"`
 	Masquerade     bool   `json:"masquerade"`
@@ -188,7 +188,7 @@ type versionPeer struct {
 
 	DNSName    string   `json:"dns_name"`
 	Endpoint   string   `json:"endpoint"`
-	HomeRelay  string   `json:"home_relay"`
+	HomeEstavelle  string   `json:"home_estavelle"`
 	AllowedIPs []string `json:"allowed_ips"`
 	// Candidates is this peer's own self-reported AVEN candidate list —
 	// karst_control.proto's KarstNetmapPeer.candidates, added 2026-10-31
@@ -226,7 +226,7 @@ type digestCase struct {
 
 	DNSName    string   `json:"dns_name"`
 	Endpoint   string   `json:"endpoint"`
-	HomeRelay  string   `json:"home_relay"`
+	HomeEstavelle  string   `json:"home_estavelle"`
 	AllowedIPs []string `json:"allowed_ips"`
 	// See versionPeer.Candidates' own doc comment — same field, same
 	// addition date, same omitempty discipline.
@@ -299,7 +299,7 @@ func relayFor(address, serverName string, seed byte, region string) *proto.Karst
 	return &proto.KarstEstavelle{
 		Address:       address,
 		TlsServerName: serverName,
-		RelayId:       estavellereg.EstavelleID(key),
+		EstavelleId:       estavellereg.EstavelleID(key),
 		IdentityKey:   key,
 		Region:        region,
 	}
@@ -500,7 +500,7 @@ func TestVectors(t *testing.T) {
 
 			DnsName:    tc.dnsName,
 			Endpoint:   tc.endpoint,
-			HomeRelay:  tc.home,
+			HomeEstavelle:  tc.home,
 			AllowedIps: tc.ips,
 			Candidates: tc.candidates,
 		}
@@ -511,7 +511,7 @@ func TestVectors(t *testing.T) {
 
 			DNSName:    tc.dnsName,
 			Endpoint:   tc.endpoint,
-			HomeRelay:  hex.EncodeToString(tc.home),
+			HomeEstavelle:  hex.EncodeToString(tc.home),
 			AllowedIPs: tc.ips,
 			Candidates: tc.candidates,
 			Digest:     control.PeerDigest(p, tc.epoch),
@@ -736,7 +736,7 @@ func TestVectors(t *testing.T) {
 				Addresses: []string{"100.64.0.1"},
 				Routes: []*proto.KarstRouteOffer{{
 					RouteId: "route-one", Prefix: "10.20.0.0/16",
-					GatewayId: []byte("node-two"), Metric: 42,
+					AvenId: []byte("node-two"), Metric: 42,
 					Kind:       proto.KarstRouteKind_KARST_ROUTE_KIND_SUBNET,
 					Masquerade: true, KeepRoute: true,
 					Role: proto.KarstRouteRole_KARST_ROUTE_ROLE_RECIPIENT,
@@ -761,7 +761,7 @@ func TestVectors(t *testing.T) {
 					DnsName:    "beta",
 					AllowedIps: []string{"100.64.0.2/32"},
 				}},
-				Relays: []*proto.KarstEstavelle{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default")},
+				Estavelles: []*proto.KarstEstavelle{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default")},
 			},
 			psks: []string{hex.EncodeToString(pattern(32, 0x70))},
 		},
@@ -783,7 +783,7 @@ func TestVectors(t *testing.T) {
 					DnsName:    "beta",
 					AllowedIps: []string{"100.64.0.2/32"},
 				}},
-				Relays: []*proto.KarstEstavelle{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "eu-west")},
+				Estavelles: []*proto.KarstEstavelle{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "eu-west")},
 			},
 			psks: []string{hex.EncodeToString(pattern(32, 0x70))},
 		},
@@ -847,7 +847,7 @@ func TestVectors(t *testing.T) {
 				NodeId:    []byte("node-one"),
 				DnsName:   "alpha",
 				Addresses: []string{"100.64.0.1"},
-				Relays: []*proto.KarstEstavelle{
+				Estavelles: []*proto.KarstEstavelle{
 					relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default"),
 					relayFor("198.51.100.9:443", "two.example.com", 0xB0, "eu-west"),
 				},
@@ -954,7 +954,7 @@ func TestVectors(t *testing.T) {
 
 				DNSName:    p.GetDnsName(),
 				Endpoint:   p.GetEndpoint(),
-				HomeRelay:  hex.EncodeToString(p.GetHomeRelay()),
+				HomeEstavelle:  hex.EncodeToString(p.GetHomeEstavelle()),
 				AllowedIPs: p.GetAllowedIps(),
 				Candidates: p.GetCandidates(),
 			}
@@ -984,11 +984,11 @@ func TestVectors(t *testing.T) {
 			})
 		}
 		vc.SSHFilterPresent = tc.resp.GetSshFilterPresent()
-		for _, r := range tc.resp.GetRelays() {
-			vc.Relays = append(vc.Relays, versionRelay{
+		for _, r := range tc.resp.GetEstavelles() {
+			vc.Estavelles = append(vc.Estavelles, versionRelay{
 				Address:       r.GetAddress(),
 				TLSServerName: r.GetTlsServerName(),
-				RelayID:       hex.EncodeToString(r.GetRelayId()),
+				EstavelleID:   hex.EncodeToString(r.GetEstavelleId()),
 				IdentityKey:   hex.EncodeToString(r.GetIdentityKey()),
 				Region:        r.GetRegion(),
 			})
@@ -996,7 +996,7 @@ func TestVectors(t *testing.T) {
 		for _, route := range tc.resp.GetRoutes() {
 			vc.Routes = append(vc.Routes, versionRoute{
 				RouteID: route.GetRouteId(), Prefix: route.GetPrefix(),
-				GatewayID: hex.EncodeToString(route.GetGatewayId()), Metric: route.GetMetric(),
+				AvenID: hex.EncodeToString(route.GetAvenId()), Metric: route.GetMetric(),
 				Kind: uint32(route.GetKind()), Masquerade: route.GetMasquerade(),
 				KeepRoute: route.GetKeepRoute(), Role: uint32(route.GetRole()),
 				DnsZone: route.GetDnsZone(), PinnedEgressIP: route.GetPinnedEgressIp(),

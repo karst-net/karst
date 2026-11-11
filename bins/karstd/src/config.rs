@@ -871,7 +871,7 @@ pub struct Peer {
     /// Server-assigned node handle, used to bind Resurgence tags to this peer.
     pub node_id: Vec<u8>,
     /// `node_id` decoded once as text rather than on every packet -- the
-    /// same reasoning `engine.rs`'s own `relay_id` precomputation documents
+    /// same reasoning `engine.rs`'s own `estavelle_id` precomputation documents
     /// ("converted once here rather than on every packet"). The base64
     /// handle string a compliance permit's source list names, used by
     /// `Engine::permit`'s compliance gate check. Empty for a static-roster
@@ -927,7 +927,7 @@ pub struct Peer {
     /// the server — `karst_control.proto`'s `KarstNetmapPeer.candidates`,
     /// parsed and filtered to what actually parses as a socket address.
     /// Empty for a static TOML roster peer, which has no coordination
-    /// server to report through — the same reason `home_relay` is `None`
+    /// server to report through — the same reason `home_estavelle` is `None`
     /// there. Not a live guarantee: this is a peer's last report as the
     /// server last relayed it, exactly as unconfirmed as a candidate learned
     /// from a relayed `CallMeMaybe`, and `disco.rs::reconcile` treats it the
@@ -994,7 +994,7 @@ pub struct Config {
     /// This node's server-assigned handle. Empty for a static TOML roster.
     pub node_id: Vec<u8>,
     /// Authenticated relay choices from the netmap.
-    pub relays: Vec<crate::netmap::Estavelle>,
+    pub estavelles: Vec<crate::netmap::Estavelle>,
     /// Extra trust anchors for relay TLS, from `[control] estavelle_ca_file`.
     ///
     /// Local configuration rather than netmap content, deliberately: which
@@ -1181,7 +1181,7 @@ impl Config {
             addresses,
             psk_epoch: file.node.psk_epoch,
             node_id: Vec::new(),
-            relays: Vec::new(),
+            estavelles: Vec::new(),
             estavelle_ca_file: None,
             prefer_quic_estavelle: false,
             route_offers: Vec::new(),
@@ -1342,7 +1342,7 @@ impl Config {
             }
             let Some(index) = handles
                 .iter()
-                .position(|handle| handle.as_slice() == offer.gateway_id.as_slice())
+                .position(|handle| handle.as_slice() == offer.aven_id.as_slice())
             else {
                 return Err(ConfigError::Unusable(format!(
                     "route {:?} names a gateway absent from the usable peer roster",
@@ -1403,8 +1403,8 @@ impl Config {
             // every consumer — the first connection, §9.1's measurements,
             // §9.2's moves — dials an address this host can reach without any
             // of them knowing why.
-            relays: netmap
-                .relays
+            estavelles: netmap
+                .estavelles
                 .iter()
                 .cloned()
                 .map(|mut relay| {
@@ -1685,7 +1685,7 @@ impl Peer {
         };
 
         // One bad entry must not cost every other candidate for this peer —
-        // the same per-entry tolerance `home_relay`'s own comment describes
+        // the same per-entry tolerance `home_estavelle`'s own comment describes
         // for a wrong-width relay id. A node reporting one is itself not
         // this node's fault to enforce; skip it and keep going.
         let candidates = entry
@@ -1719,10 +1719,10 @@ impl Peer {
             // peer reachable by every other route, rather than failing the
             // whole netmap over one unusable field.
             home_estavelle: entry
-                .home_relay
+                .home_estavelle
                 .as_slice()
                 .first_chunk::<{ karst_estavelle_proto::consts::ID_LEN }>()
-                .filter(|_| entry.home_relay.len() == karst_estavelle_proto::consts::ID_LEN)
+                .filter(|_| entry.home_estavelle.len() == karst_estavelle_proto::consts::ID_LEN)
                 .copied(),
             candidates,
         })
@@ -2724,7 +2724,7 @@ mod netmap_tests {
     pub(super) fn wire_peer(id: &str, dns: &str, ip: &str) -> pb::KarstNetmapPeer {
         let (_, kem_pk) = karst_crypto::kem::keypair_from_seed(KemKind::MlKem1024, &[0x22; 64]);
         pb::KarstNetmapPeer {
-            home_relay: Vec::new(),
+            home_estavelle: Vec::new(),
             node_id: id.as_bytes().to_vec(),
             allowed_ips: vec![format!("{ip}/32")],
             dns_name: dns.to_owned(),
@@ -2797,7 +2797,7 @@ mod netmap_tests {
     #[test]
     fn a_peers_published_home_relay_reaches_the_roster() {
         let mut peer = wire_peer("aaa", "alpha", "100.64.0.2");
-        peer.home_relay = vec![0x7C; 32];
+        peer.home_estavelle = vec![0x7C; 32];
         let map = netmap(vec!["100.64.0.1/16".to_owned()], vec![peer], vec![]);
         let cfg = Config::from_netmap(local(), &map).expect("load");
         assert_eq!(cfg.peers[0].home_estavelle, Some([0x7C; 32]));
@@ -2824,7 +2824,7 @@ mod netmap_tests {
     fn a_home_relay_of_the_wrong_width_is_dropped() {
         for width in [1_usize, 31, 33, 64] {
             let mut peer = wire_peer("aaa", "alpha", "100.64.0.2");
-            peer.home_relay = vec![0x7C; width];
+            peer.home_estavelle = vec![0x7C; width];
             let map = netmap(vec!["100.64.0.1/16".to_owned()], vec![peer], vec![]);
             let cfg = Config::from_netmap(local(), &map).expect("load");
             assert_eq!(
@@ -3175,7 +3175,7 @@ mod skip_tests {
             pb::KarstRouteOffer {
                 route_id: route_id.to_owned(),
                 prefix: prefix.to_owned(),
-                gateway_id: gateway.as_bytes().to_vec(),
+                aven_id: gateway.as_bytes().to_vec(),
                 metric: 100,
                 kind: kind as i32,
                 masquerade: true,

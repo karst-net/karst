@@ -78,9 +78,9 @@ func BuildPaddleAttemptRequest(invoice FinalInvoice, customerID, productID strin
 		invoice.Currency != "USD" || invoice.FinalizedAt.IsZero() ||
 		!isUTCCalendarMonth(invoice.PeriodStart.UnixMicro(), invoice.PeriodEnd.UnixMicro()) ||
 		invoice.PeriodStart.Nanosecond()%1000 != 0 || invoice.PeriodEnd.Nanosecond()%1000 != 0 ||
-		invoice.DeviceMinor < 0 || invoice.RelayMinor < 0 || invoice.TotalMinor < 0 ||
-		invoice.DeviceMinor > int64(^uint64(0)>>1)-invoice.RelayMinor ||
-		invoice.DeviceMinor+invoice.RelayMinor != invoice.TotalMinor {
+		invoice.DeviceMinor < 0 || invoice.EstavelleMinor < 0 || invoice.TotalMinor < 0 ||
+		invoice.DeviceMinor > int64(^uint64(0)>>1)-invoice.EstavelleMinor ||
+		invoice.DeviceMinor+invoice.EstavelleMinor != invoice.TotalMinor {
 		return PaddleTransactionRequest{}, ErrInvalidPaddleInvoice
 	}
 	if invoice.TotalMinor == 0 {
@@ -91,8 +91,8 @@ func BuildPaddleAttemptRequest(invoice FinalInvoice, customerID, productID strin
 	if invoice.DeviceMinor > 0 {
 		items = append(items, paddleItem(productID, "Managed device usage "+period, "Karst managed device usage for "+period, invoice.DeviceMinor))
 	}
-	if invoice.RelayMinor > 0 {
-		items = append(items, paddleItem(productID, "Managed relay usage "+period, "Karst managed relay usage for "+period, invoice.RelayMinor))
+	if invoice.EstavelleMinor > 0 {
+		items = append(items, paddleItem(productID, "Managed relay usage "+period, "Karst managed relay usage for "+period, invoice.EstavelleMinor))
 	}
 	return PaddleTransactionRequest{
 		CustomerID: customerID, CollectionMode: "automatic", CurrencyCode: "USD",

@@ -28,7 +28,7 @@ use karst_estavelle_proto::{AquiferId, EstavelleEntry, Roster, RosterEntry};
 use serde::Deserialize;
 
 use crate::hub::Id;
-use crate::sign::{node_id, relay_id, Identity, SEED_LEN};
+use crate::sign::{node_id, estavelle_id, Identity, SEED_LEN};
 
 /// Errors loading a roster.
 #[derive(Debug)]
@@ -325,7 +325,7 @@ impl FileRoster {
         let mut region = HashMap::new();
         for (n, row) in file.mesh.iter().enumerate() {
             let pk = decode_key(&row.identity_pk, "mesh", n)?;
-            let id = relay_id(&pk);
+            let id = estavelle_id(&pk);
             if let Some(addr) = &row.dial {
                 dial.push(crate::mesh::Peer {
                     id,
@@ -487,7 +487,7 @@ mod tests {
         assert_eq!(dial.len(), 1, "only the row with an address is dialed");
         let first = dial.first().expect("one dialable peer");
         assert_eq!(first.addr, "r2.test:8443");
-        assert_eq!(first.id, relay_id(&pk(2)));
+        assert_eq!(first.id, estavelle_id(&pk(2)));
     }
 
     #[test]
@@ -510,7 +510,7 @@ mod tests {
     fn an_empty_roster_admits_nobody() {
         let r = FileRoster::empty();
         assert!(r.client(&node_id(&pk(1))).is_none());
-        assert!(r.mesh_peer(&relay_id(&pk(1))).is_none());
+        assert!(r.mesh_peer(&estavelle_id(&pk(1))).is_none());
         // And it still has a decoy, so a miss costs the same as a hit.
         assert_eq!(r.decoy_key().len(), IDENTITY_PK_LEN);
     }
@@ -592,8 +592,8 @@ mod tests {
 
         assert!(r.client(&node_id(&pk(1))).is_some());
         assert!(r.mesh_peer(&node_id(&pk(1))).is_none());
-        assert!(r.mesh_peer(&relay_id(&pk(1))).is_some());
-        assert!(r.client(&relay_id(&pk(1))).is_none());
+        assert!(r.mesh_peer(&estavelle_id(&pk(1))).is_some());
+        assert!(r.client(&estavelle_id(&pk(1))).is_none());
     }
 
     #[test]

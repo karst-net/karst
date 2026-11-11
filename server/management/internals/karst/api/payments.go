@@ -37,7 +37,7 @@ type customerPaymentView struct {
 	PeriodEnd   time.Time `json:"period_end"`
 	Currency    string    `json:"currency"`
 	DeviceMinor int64     `json:"device_minor"`
-	RelayMinor  int64     `json:"relay_minor"`
+	EstavelleMinor  int64     `json:"estavelle_minor"`
 	TotalMinor  int64     `json:"total_minor"`
 	State       string    `json:"state"`
 	CheckoutURL string    `json:"checkout_url,omitempty"`
@@ -211,7 +211,7 @@ func parsePaymentPeriod(r *http.Request) (time.Time, error) {
 
 func paymentView(invoice billing.FinalInvoice, intent billing.PaymentIntent) customerPaymentView {
 	return customerPaymentView{PeriodStart: invoice.PeriodStart, PeriodEnd: invoice.PeriodEnd, Currency: invoice.Currency,
-		DeviceMinor: invoice.DeviceMinor, RelayMinor: invoice.RelayMinor, TotalMinor: invoice.TotalMinor,
+		DeviceMinor: invoice.DeviceMinor, EstavelleMinor: invoice.EstavelleMinor, TotalMinor: invoice.TotalMinor,
 		State: intent.State, CheckoutURL: intent.CheckoutURL, UpdatedAt: intent.UpdatedAt}
 }
 

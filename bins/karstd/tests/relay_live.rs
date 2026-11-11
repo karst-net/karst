@@ -147,21 +147,21 @@ async fn start_relay_with(tag: &str, nodes: &[&Identity], quic: bool) -> Running
         let _ = serve_on(listener, serving).await;
     });
 
-    // The registry entry a netmap would carry. `relay_id` is derived from the
+    // The registry entry a netmap would carry. `estavelle_id` is derived from the
     // key rather than stored beside it (§5.1, §5.2), and `netmap::Estavelle`
     // re-derives and checks it when a real netmap is decoded.
     let identity_key = identity.public_key().to_vec();
     let relay = Estavelle {
         address: addr.to_string(),
         tls_server_name: "relay.test".to_owned(),
-        relay_id: karst_estavelle::sign::relay_id(&identity_key),
+        estavelle_id: karst_estavelle::sign::estavelle_id(&identity_key),
         identity_key: identity_key.clone(),
         region: "test".to_owned(),
     };
     let relay_quic = quic_addr.map(|addr| Estavelle {
         address: addr.to_string(),
         tls_server_name: "relay.test".to_owned(),
-        relay_id: karst_estavelle::sign::relay_id(&identity_key),
+        estavelle_id: karst_estavelle::sign::estavelle_id(&identity_key),
         identity_key,
         region: "test".to_owned(),
     });
@@ -259,9 +259,9 @@ async fn a_node_completes_a_ponor_handshake_with_a_real_relay_over_quic() {
 /// which is §4.2's whole argument, that TLS does not authenticate the relay.
 ///
 /// **Where it is refused is worth being precise about.** This fails on the
-/// `relay_id` comparison in the client's hello handling, not on the signature:
+/// `estavelle_id` comparison in the client's hello handling, not on the signature:
 /// disabling the signature check leaves this test passing. That is not a gap,
-/// it is §5.1 and §5.2 working — `relay_id` is *derived* from the key rather
+/// it is §5.1 and §5.2 working — `estavelle_id` is *derived* from the key rather
 /// than stored beside it, so an entry naming a different key necessarily names
 /// a different id and there is no way to construct one that passes the id check
 /// and fails the signature.
@@ -277,10 +277,10 @@ async fn a_substituted_relay_registry_entry_is_refused() {
     let mut running = start_relay("wrongpin", &[&a]).await;
 
     // Same host, same certificate, same address — only the pinned identity is
-    // somebody else's. `relay_id` is re-derived so the entry stays internally
+    // somebody else's. `estavelle_id` is re-derived so the entry stays internally
     // consistent, which is what a substituted registry row would look like.
     let impostor = vec![0x7E; 2592];
-    running.relay.relay_id = karst_estavelle::sign::relay_id(&impostor);
+    running.relay.estavelle_id = karst_estavelle::sign::estavelle_id(&impostor);
     running.relay.identity_key = impostor;
 
     assert!(
@@ -354,10 +354,10 @@ async fn a_relay_answers_a_latency_probe_and_the_round_trip_is_measured() {
     // alternatives being measured there is more than one connection in flight,
     // and a round trip belongs to the relay that answered it.
     let mut probes = karstd::home::Probes::default();
-    let relay_id = running.relay.relay_id;
+    let estavelle_id = running.relay.estavelle_id;
     let token = [0xA7; karstd::relay::PING_TOKEN_LEN];
     let sent_at = 1_000;
-    assert!(probes.sent(relay_id, token, sent_at));
+    assert!(probes.sent(estavelle_id, token, sent_at));
     tx.ping(token).await.expect("ping");
     tx.flush().await.expect("flush");
 
@@ -378,11 +378,11 @@ async fn a_relay_answers_a_latency_probe_and_the_round_trip_is_measured() {
         unreachable!()
     };
     assert_eq!(
-        probes.resolve(relay_id, token, sent_at + 7),
+        probes.resolve(estavelle_id, token, sent_at + 7),
         Some(7),
         "the answered token did not resolve to the round trip"
     );
-    assert_eq!(probes.in_flight(relay_id), 0);
+    assert_eq!(probes.in_flight(estavelle_id), 0);
 }
 
 /// A node the relay has no roster entry for is refused.

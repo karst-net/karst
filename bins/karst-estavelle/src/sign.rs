@@ -42,7 +42,7 @@ pub const CREDIT_SURRENDER_CTX: &[u8] = b"karst-estavelle-credit-surrender-v1";
 pub const CREDIT_SURRENDER_PATH: &str = "/karst/v1/billing/estavelle-credits/";
 
 /// Domain label for a relay identifier — §5.2.
-const RELAY_ID_LABEL: &[u8] = b"karst-estavelle-id-v1";
+const ESTAVELLE_ID_LABEL: &[u8] = b"karst-estavelle-id-v1";
 
 /// Domain label for a node identifier. The same value as the KARST-CONTROL
 /// handle (§5.1); the handle is its base64 presentation.
@@ -53,16 +53,16 @@ pub const SEED_LEN: usize = 32;
 
 /// `SHA-256("karst-estavelle-id-v1" ‖ relay_identity_pk)`.
 #[must_use]
-pub fn relay_id(identity_pk: &[u8]) -> [u8; ID_LEN] {
+pub fn estavelle_id(identity_pk: &[u8]) -> [u8; ID_LEN] {
     let mut h = Sha256::new();
-    h.update(RELAY_ID_LABEL);
+    h.update(ESTAVELLE_ID_LABEL);
     h.update(identity_pk);
     h.finalize().into()
 }
 
 /// `SHA-256("karst-node-handle-v1" ‖ identity_pk)`.
 ///
-/// Separate label from [`relay_id`], and the disjointness is what makes §8's
+/// Separate label from [`estavelle_id`], and the disjointness is what makes §8's
 /// role separation structural: a node id can never be found in the mesh
 /// directory, so a role-confused `ClientAuth` fails on the lookup.
 #[must_use]
@@ -112,7 +112,7 @@ impl std::fmt::Debug for Identity {
         // The id, not the key: it names the relay in a log line without
         // printing 2592 bytes, and the private half never renders at all.
         f.debug_struct("Identity")
-            .field("relay_id", &hex(&self.id))
+            .field("estavelle_id", &hex(&self.id))
             .finish_non_exhaustive()
     }
 }
@@ -123,7 +123,7 @@ impl Identity {
     pub fn from_seed(seed: &[u8; SEED_LEN]) -> Self {
         let signing = ml_dsa::ExpandedSigningKey::<ml_dsa::MlDsa87>::from_seed(&(*seed).into());
         let public = signing.verifying_key().encode().to_vec();
-        let id = relay_id(&public);
+        let id = estavelle_id(&public);
         Self {
             signing,
             public,
@@ -159,7 +159,7 @@ impl Identity {
 
     /// This relay's 32-byte identifier — §5.2.
     #[must_use]
-    pub const fn relay_id(&self) -> [u8; ID_LEN] {
+    pub const fn estavelle_id(&self) -> [u8; ID_LEN] {
         self.id
     }
 
@@ -273,7 +273,7 @@ pub fn usage_upload_signing_input(
 /// Keep in sync with Go's `relayusage.CreditRequest.SigningInput`.
 #[must_use]
 pub fn credit_request_signing_input(
-    relay_id: &str,
+    estavelle_id: &str,
     deployment_id: &str,
     mapping_version: &str,
     generation: &str,
@@ -283,7 +283,7 @@ pub fn credit_request_signing_input(
     let fields = [
         "POST",
         CREDIT_REQUEST_PATH,
-        relay_id,
+        estavelle_id,
         deployment_id,
         mapping_version,
         generation,
@@ -308,7 +308,7 @@ pub fn credit_request_signing_input(
 #[must_use]
 pub fn credit_surrender_signing_input(
     grant_id: &str,
-    relay_id: &str,
+    estavelle_id: &str,
     deployment_id: &str,
     mapping_version: &str,
     generation: &str,
@@ -320,7 +320,7 @@ pub fn credit_surrender_signing_input(
         "POST",
         path.as_str(),
         grant_id,
-        relay_id,
+        estavelle_id,
         deployment_id,
         mapping_version,
         generation,
@@ -604,7 +604,7 @@ mod tests {
     fn shared_credit_request_signing_vector_matches_go() {
         #[derive(serde::Deserialize)]
         struct Vector {
-            relay_id: String,
+            estavelle_id: String,
             deployment_id: String,
             mapping_version: String,
             generation: String,
@@ -617,7 +617,7 @@ mod tests {
         ))
         .expect("valid credit request vector");
         let input = credit_request_signing_input(
-            &vector.relay_id,
+            &vector.estavelle_id,
             &vector.deployment_id,
             &vector.mapping_version,
             &vector.generation,
@@ -632,7 +632,7 @@ mod tests {
         #[derive(serde::Deserialize)]
         struct Vector {
             grant_id: String,
-            relay_id: String,
+            estavelle_id: String,
             deployment_id: String,
             mapping_version: String,
             generation: String,
@@ -645,7 +645,7 @@ mod tests {
         .expect("valid credit surrender vector");
         let input = credit_surrender_signing_input(
             &vector.grant_id,
-            &vector.relay_id,
+            &vector.estavelle_id,
             &vector.deployment_id,
             &vector.mapping_version,
             &vector.generation,
@@ -737,7 +737,7 @@ mod tests {
         // §8's role separation rests on this: a node id must never be findable
         // in the mesh directory.
         let pk = identity(1).public_key().to_vec();
-        assert_ne!(node_id(&pk), relay_id(&pk));
+        assert_ne!(node_id(&pk), estavelle_id(&pk));
     }
 
     #[test]
@@ -747,7 +747,7 @@ mod tests {
         h.update(b"karst-estavelle-id-v1");
         h.update(&pk);
         let expected: [u8; ID_LEN] = h.finalize().into();
-        assert_eq!(identity(3).relay_id(), expected);
+        assert_eq!(identity(3).estavelle_id(), expected);
     }
 
     #[test]
@@ -758,7 +758,7 @@ mod tests {
 
         let first = Identity::load_or_create(&path).expect("create");
         let second = Identity::load_or_create(&path).expect("load");
-        assert_eq!(first.relay_id(), second.relay_id());
+        assert_eq!(first.estavelle_id(), second.estavelle_id());
         assert_eq!(first.public_key(), second.public_key());
 
         let _ = std::fs::remove_dir_all(&dir);

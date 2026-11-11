@@ -258,7 +258,7 @@ fn config() -> karstd::config::Config {
         addresses: Vec::new(),
         psk_epoch: 1,
         node_id: Vec::new(),
-        relays: Vec::new(),
+        estavelles: Vec::new(),
         estavelle_ca_file: None,
         prefer_quic_estavelle: false,
         metrics_listen: None,

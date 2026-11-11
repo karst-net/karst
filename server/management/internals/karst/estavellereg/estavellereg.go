@@ -72,7 +72,7 @@ const DefaultRegion = "default"
 // directory.
 var idLabel = []byte("karst-estavelle-id-v1")
 
-// RelayID is SHA-256("karst-estavelle-id-v1" ‖ identity_pk) — §5.2.
+// EstavelleID is SHA-256("karst-estavelle-id-v1" ‖ identity_pk) — §5.2.
 //
 // Derived rather than configured, for the reason the roster derives node ids:
 // an operator-written id would make a silent mismatch a typo away, and
@@ -86,7 +86,7 @@ func EstavelleID(identityPK []byte) []byte {
 
 // Entry is one relay as an operator writes it.
 //
-// There is no `relay_id` field, deliberately: see [RelayID].
+// There is no `estavelle_id` field, deliberately: see [EstavelleID].
 type Entry struct {
 	// Address is where to dial, as IP:port.
 	//
@@ -129,7 +129,7 @@ type Location = geo.Location
 func ValidLocation(lat, lon float64) error { return geo.ValidLocation(lat, lon) }
 
 type document struct {
-	Relays []Entry `json:"relays"`
+	Relays []Entry `json:"estavelles"`
 }
 
 // Compile validates one API-supplied relay entry through the exact same path
@@ -182,13 +182,13 @@ func Parse(raw []byte) ([]*proto.KarstEstavelle, error) {
 			return nil, fmt.Errorf("relay %d: %w", i, err)
 		}
 		// Two entries with one key are two names for one relay: they derive
-		// the same relay_id, so a node choosing between them would be choosing
+		// the same estavelle_id, so a node choosing between them would be choosing
 		// between duplicates of a single destination while believing it had a
 		// fallback.
-		if first, dup := seen[string(relay.RelayId)]; dup {
+		if first, dup := seen[string(relay.EstavelleId)]; dup {
 			return nil, fmt.Errorf("relay %d repeats the identity key of relay %d", i, first)
 		}
-		seen[string(relay.RelayId)] = i
+		seen[string(relay.EstavelleId)] = i
 		out = append(out, relay)
 	}
 	return out, nil
@@ -234,7 +234,7 @@ func (e Entry) compile() (*proto.KarstEstavelle, error) {
 	return &proto.KarstEstavelle{
 		Address:       e.Address,
 		TlsServerName: e.TLSServerName,
-		RelayId:       EstavelleID(key),
+		EstavelleId:       EstavelleID(key),
 		IdentityKey:   key,
 		Region:        region,
 		Location:      location,

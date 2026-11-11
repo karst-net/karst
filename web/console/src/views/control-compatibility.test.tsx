@@ -14,7 +14,7 @@ describe("observed control compatibility", () => {
     expect(html).toContain("Compatibility is unverified");
   });
 
-  it.each(["relay_lifecycle_schema", "gateway_ingress_schema"] as const)("shows an actual %s rejection even for matching releases", (capability) => {
+  it.each(["estavelle_lifecycle_schema", "aven_ingress_schema"] as const)("shows an actual %s rejection even for matching releases", (capability) => {
     vi.useFakeTimers().setSystemTime(new Date("2026-10-31T18:05:00Z"));
     const html = renderToStaticMarkup(<ClientVersionObservation software={{ version: "v1", observed_at: "2026-10-31T18:00:00Z" }} controlVersion="v1"
       controlCheck={{ status: "incompatible", capability, required_schema: 1, reported_schema: 0, observed_at: "2026-10-31T18:00:00Z" }} />);
@@ -23,7 +23,7 @@ describe("observed control compatibility", () => {
     expect(html).toContain("Upgrade the");
     expect(html).toContain("reconnect it to control");
     expect(html).not.toContain("Compatibility is unverified");
-    expect(html).toContain(capability === "relay_lifecycle_schema" ? "live Estavelle service modes" : "destination-scoped ingress policy");
+    expect(html).toContain(capability === "estavelle_lifecycle_schema" ? "live Estavelle service modes" : "destination-scoped ingress policy");
   });
 
   it("labels old acceptance stale without claiming working traffic", () => {

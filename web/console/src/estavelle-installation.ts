@@ -5,7 +5,7 @@ import installer from "./installation/estavelle-install.py?raw";
 import type { EstavelleLocation } from "@karst-net/api-client";
 
 export type InstallationSettings = { schema_version: 1; address: string; tls_server_name: string; region: string; image: string; control_image: string; location: EstavelleLocation | null };
-export type InstallationReceipt = { schema_version: 1; kind: "karst-estavelle-installation"; relay_id: string; entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: EstavelleLocation } };
+export type InstallationReceipt = { schema_version: 1; kind: "karst-estavelle-installation"; estavelle_id: string; entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: EstavelleLocation } };
 
 export function validateInstallationSettings(settings: InstallationSettings) {
   const match = settings.address.match(/^(\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]):(\d{1,5})$/);
@@ -28,11 +28,11 @@ export function installationScript(settings: InstallationSettings) {
 // the API entry explicitly: unknown file fields cannot become request fields.
 export function parseInstallationReceipt(source: string): InstallationReceipt {
   const value = JSON.parse(source);
-  if (value?.schema_version !== 1 || value?.kind !== "karst-estavelle-installation" || !/^[a-f0-9]{64}$/.test(value.relay_id) || !value.entry) throw new Error("Choose an estavelle installation receipt generated on the control host.");
+  if (value?.schema_version !== 1 || value?.kind !== "karst-estavelle-installation" || !/^[a-f0-9]{64}$/.test(value.estavelle_id) || !value.entry) throw new Error("Choose an estavelle installation receipt generated on the control host.");
   const { address, tls_server_name, identity_key, region, location } = value.entry;
   if (![address, tls_server_name, identity_key, region].every(field => typeof field === "string" && field.length > 0) || !/^[A-Za-z0-9+/]{3456}$/.test(identity_key)) throw new Error("The receipt is missing valid estavelle identity or endpoint fields.");
   if (location != null && (typeof location !== "object" || !Number.isFinite(location.lat) || !Number.isFinite(location.lon) || location.lat < -90 || location.lat > 90 || location.lon < -180 || location.lon > 180 || (location.label !== undefined && typeof location.label !== "string"))) throw new Error("The receipt has an invalid declared location.");
-  return { schema_version: 1, kind: "karst-estavelle-installation", relay_id: value.relay_id, entry: { address, tls_server_name, identity_key, region, ...(location ? { location: { lat: location.lat, lon: location.lon, ...(location.label ? { label: location.label } : {}) } } : {}) } };
+  return { schema_version: 1, kind: "karst-estavelle-installation", estavelle_id: value.estavelle_id, entry: { address, tls_server_name, identity_key, region, ...(location ? { location: { lat: location.lat, lon: location.lon, ...(location.label ? { label: location.label } : {}) } } : {}) } };
 }
 
 export function downloadInstaller(settings: InstallationSettings) {

@@ -72,7 +72,7 @@ func TestRelayExitConfigurationAtomicAndVersioned(t *testing.T) {
 	ctx := WithAccount(context.Background(), "a")
 	svc.ExitIPv4 = true
 	svc.ExitIPv6 = true
-	svc.GatewayHandle = "gateway-key"
+	svc.AvenHandle = "gateway-key"
 	created, err := s.Create(ctx, svc)
 	require.NoError(t, err)
 	var routes []route.Route
@@ -88,7 +88,7 @@ func TestRelayExitConfigurationAtomicAndVersioned(t *testing.T) {
 	doc, err := policy.Parse([]byte(v.Document))
 	require.NoError(t, err)
 	require.Len(t, doc.Grants, 1)
-	require.Equal(t, "gateway-key", doc.Grants[0].Gateway)
+	require.Equal(t, "gateway-key", doc.Grants[0].Aven)
 	require.Empty(t, doc.Grants[0].TargetNodes)
 	changed := *created
 	changed.ExitIPv6 = false
@@ -112,7 +112,7 @@ func TestFailedAllocationLeavesNoAccessOrRoutes(t *testing.T) {
 	s, svc := accessFixture(t)
 	ctx := WithAccount(context.Background(), "a")
 	svc.ExitIPv4 = true
-	svc.GatewayHandle = "foreign-key"
+	svc.AvenHandle = "foreign-key"
 	_, err := s.Create(ctx, svc)
 	require.Error(t, err)
 	var count int64
@@ -165,13 +165,13 @@ func TestReapplyingLegacyExitAccessScopesOnlyItsGeneratedGrant(t *testing.T) {
 	s, svc := accessFixture(t)
 	ctx := WithAccount(context.Background(), "a")
 	svc.ExitIPv4 = true
-	svc.GatewayHandle = "gateway-key"
+	svc.AvenHandle = "gateway-key"
 	created, err := s.Create(ctx, svc)
 	require.NoError(t, err)
 	doc, version, err := currentDocument(s.db, "a")
 	require.NoError(t, err)
 	// A pre-upgrade service has a broad machine target plus its network grant.
-	doc.Grants[0].Gateway = ""
+	doc.Grants[0].Aven = ""
 	doc.Grants[0].TargetNodes = []string{"gateway-key"}
 	doc.Grants = append(doc.Grants, policy.Grant{ID: "independent", Name: "Machine web", SourceGroups: []string{"engineering"}, TargetNodes: []string{"gateway-key"}, Ports: "443"})
 	doc.Ssh = []policy.SshRule{}

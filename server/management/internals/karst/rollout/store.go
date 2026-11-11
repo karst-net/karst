@@ -53,12 +53,12 @@ const (
 const (
 	ComponentControl  = "control"
 	ComponentConsole  = "console"
-	ComponentRelayJob = "relay_job"
+	ComponentEstavelleJob = "estavelle_job"
 )
 
 func validComponentName(name string) bool {
 	switch name {
-	case ComponentControl, ComponentConsole, ComponentRelayJob:
+	case ComponentControl, ComponentConsole, ComponentEstavelleJob:
 		return true
 	default:
 		return false
@@ -103,8 +103,8 @@ type PlanComponent struct {
 	CurrentDigest                string     `json:"current_digest,omitempty"`
 	TargetDigest                 string     `gorm:"not null" json:"target_digest"`
 	VerificationRef              string     `gorm:"not null" json:"verification_ref"`
-	RequiresRelayLifecycleSchema *uint32    `json:"requires_relay_lifecycle_schema,omitempty"`
-	RequiresGatewayIngressSchema *uint32    `json:"requires_gateway_ingress_schema,omitempty"`
+	RequiresEstavelleLifecycleSchema *uint32    `json:"requires_estavelle_lifecycle_schema,omitempty"`
+	RequiresAvenIngressSchema *uint32    `json:"requires_aven_ingress_schema,omitempty"`
 	Status                       string     `gorm:"not null;default:'pending'" json:"status"`
 	FailureReason                string     `json:"failure_reason,omitempty"`
 	ObservedDigest               string     `json:"observed_digest,omitempty"`
@@ -250,8 +250,8 @@ func (s *Store) Create(ctx context.Context, draft Plan, components []PlanCompone
 			CurrentDigest:                component.CurrentDigest,
 			TargetDigest:                 component.TargetDigest,
 			VerificationRef:              component.VerificationRef,
-			RequiresRelayLifecycleSchema: component.RequiresRelayLifecycleSchema,
-			RequiresGatewayIngressSchema: component.RequiresGatewayIngressSchema,
+			RequiresEstavelleLifecycleSchema: component.RequiresEstavelleLifecycleSchema,
+			RequiresAvenIngressSchema: component.RequiresAvenIngressSchema,
 			Status:                       componentPending,
 		}
 	}

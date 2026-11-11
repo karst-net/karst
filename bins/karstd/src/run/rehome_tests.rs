@@ -121,7 +121,7 @@ fn start_relay(
         relay: Estavelle {
             address: addr.to_string(),
             tls_server_name: "relay.test".to_owned(),
-            relay_id: karst_estavelle::sign::relay_id(&identity_key),
+            estavelle_id: karst_estavelle::sign::estavelle_id(&identity_key),
             identity_key,
             region: "test".to_owned(),
         },
@@ -169,9 +169,9 @@ fn with_two_relays<T>(tag: &str, scenario: impl FnOnce(&Rig<'_>) -> T) -> T {
     let two = start_relay(&rt, &dir, 2, &node, &cert_path, &key_path);
 
     let engine = engine(vec![one.relay.clone(), two.relay.clone()]);
-    engine.set_home_relay(Some(one.relay.relay_id));
+    engine.set_home_estavelle(Some(one.relay.estavelle_id));
     let home = Mutex::new(crate::home::Selector::new());
-    home.lock().unwrap().hold(one.relay.relay_id);
+    home.lock().unwrap().hold(one.relay.estavelle_id);
     let rtt = Mutex::new(crate::home::Probes::default());
     let disco = Mutex::new(disco::Disco::new(1));
     let socket = UdpTransport::bind("127.0.0.1:0".parse().unwrap()).expect("udp");
@@ -265,7 +265,7 @@ fn move_under_traffic(
             two.ctx.local_clients() == 1
         });
         let took = start.elapsed();
-        assert_eq!(engine.home_relay(), Some(two.relay.relay_id));
+        assert_eq!(engine.home_estavelle(), Some(two.relay.estavelle_id));
         // The queue filled while the connection was being replaced, so the
         // feeder was refused for a moment. What matters is that nothing was
         // lost for good: the new connection takes the same queue over and
@@ -284,7 +284,7 @@ fn move_under_traffic(
 fn a_busy_home_connection_follows_a_choice_that_moved() {
     let took = move_under_traffic("chosen", |_, home, _, two| {
         // §9.2 has decided relay 2 is better.
-        home.lock().unwrap().hold(two.relay.relay_id);
+        home.lock().unwrap().hold(two.relay.estavelle_id);
     });
     assert!(took < MOVE_BOUND, "{took:?}");
 }
@@ -295,11 +295,11 @@ fn a_busy_home_connection_leaves_a_relay_the_netmap_withdrew() {
         // What a netmap refresh and the next probe round do: the registry loses
         // relay 1, and the selector releases a choice it no longer lists.
         engine.reconfigure(&config(vec![two.relay.clone()]));
-        home.lock().unwrap().retain(&[two.relay.relay_id]);
+        home.lock().unwrap().retain(&[two.relay.estavelle_id]);
         assert!(engine
-            .relays()
+            .estavelles()
             .iter()
-            .all(|r| r.relay_id != one.relay.relay_id));
+            .all(|r| r.estavelle_id != one.relay.estavelle_id));
     });
     assert!(took < MOVE_BOUND, "{took:?}");
 }
@@ -311,7 +311,7 @@ fn a_busy_home_worker_withdraws_all_endpoints_and_resumes_without_restart() {
         wait_for("all Ponor connections to close", MOVE_BOUND, || {
             rig.one.ctx.local_clients() == 0
                 && rig.two.ctx.local_clients() == 0
-                && rig.engine.home_relay().is_none()
+                && rig.engine.home_estavelle().is_none()
         });
         rig.engine.reconfigure(&config(vec![rig.two.relay.clone()]));
         wait_for(
@@ -319,7 +319,7 @@ fn a_busy_home_worker_withdraws_all_endpoints_and_resumes_without_restart() {
             MOVE_BOUND,
             || {
                 rig.two.ctx.local_clients() == 1
-                    && rig.engine.home_relay() == Some(rig.two.relay.relay_id)
+                    && rig.engine.home_estavelle() == Some(rig.two.relay.estavelle_id)
             },
         );
     });
@@ -351,8 +351,8 @@ fn a_relay_that_announced_a_restart_is_waited_for_not_abandoned() {
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(9) {
             assert_eq!(
-                rig.engine.home_relay(),
-                Some(rig.one.relay.relay_id),
+                rig.engine.home_estavelle(),
+                Some(rig.one.relay.estavelle_id),
                 "the node gave up on a relay that said it was restarting, after {:?}",
                 start.elapsed()
             );

@@ -369,7 +369,7 @@ func (d *Document) Compile(target Node, all []Node) (*Filter, error) {
 	}
 
 	for _, grant := range d.Grants {
-		if target.Inactive || grant.Gateway != target.Handle || grant.Gateway == "" {
+		if target.Inactive || grant.Aven != target.Handle || grant.Aven == "" {
 			continue
 		}
 		var selectors []string

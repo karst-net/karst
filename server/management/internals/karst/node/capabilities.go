@@ -9,11 +9,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// SetRelayLifecycleSchema records a declaration for an identity authenticated
+// SetEstavelleLifecycleSchema records a declaration for an identity authenticated
 // by the control channel. A later legacy declaration replaces an earlier one;
 // upgrading once must not permanently claim support after a downgrade.
-func (s *Store) SetRelayLifecycleSchema(ctx context.Context, handle string, schema uint32) error {
-	result := s.db.WithContext(ctx).Model(&Identity{}).Where("handle = ?", handle).Update("relay_lifecycle_schema", schema)
+func (s *Store) SetEstavelleLifecycleSchema(ctx context.Context, handle string, schema uint32) error {
+	result := s.db.WithContext(ctx).Model(&Identity{}).Where("handle = ?", handle).Update("estavelle_lifecycle_schema", schema)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -24,11 +24,11 @@ func (s *Store) SetRelayLifecycleSchema(ctx context.Context, handle string, sche
 	return nil
 }
 
-// CheckRelayLifecycle covers every enrolled Karst peer in this account,
+// CheckEstavelleLifecycle covers every enrolled Karst peer in this account,
 // including offline/unknown agents. Generic inherited peers without a Karst
 // identity do not consume Karst transport configuration and are excluded.
-func (s *Store) CheckRelayLifecycle(ctx context.Context, account string, transaction *gorm.DB) error {
-	count, err := s.CountRelayLifecycleBelow(ctx, account, 1, transaction)
+func (s *Store) CheckEstavelleLifecycle(ctx context.Context, account string, transaction *gorm.DB) error {
+	count, err := s.CountEstavelleLifecycleBelow(ctx, account, 1, transaction)
 	if err != nil {
 		return err
 	}
@@ -38,12 +38,12 @@ func (s *Store) CheckRelayLifecycle(ctx context.Context, account string, transac
 	return nil
 }
 
-// SetGatewayIngressSchema records a declaration for an identity
-// authenticated by the control channel, mirroring SetRelayLifecycleSchema
+// SetAvenIngressSchema records a declaration for an identity
+// authenticated by the control channel, mirroring SetEstavelleLifecycleSchema
 // above exactly: a later legacy declaration replaces an earlier one, so
 // upgrading once must not permanently claim support after a downgrade.
-func (s *Store) SetGatewayIngressSchema(ctx context.Context, handle string, schema uint32) error {
-	result := s.db.WithContext(ctx).Model(&Identity{}).Where("handle = ?", handle).Update("gateway_ingress_schema", schema)
+func (s *Store) SetAvenIngressSchema(ctx context.Context, handle string, schema uint32) error {
+	result := s.db.WithContext(ctx).Model(&Identity{}).Where("handle = ?", handle).Update("aven_ingress_schema", schema)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -54,25 +54,25 @@ func (s *Store) SetGatewayIngressSchema(ctx context.Context, handle string, sche
 	return nil
 }
 
-// CountRelayLifecycleBelow counts enrolled Karst peers (as CheckRelayLifecycle
+// CountEstavelleLifecycleBelow counts enrolled Karst peers (as CheckEstavelleLifecycle
 // above) whose reported relay_lifecycle_schema is below required. Parameterized
 // rather than hardcoded so callers outside this package -- a rollout plan's
 // cross-component compatibility preview, in particular -- can ask "how many
 // fleet members would be incompatible with this target schema" for a schema
 // value that is not yet, and may never be, the account-wide minimum
-// CheckRelayLifecycle itself enforces.
-func (s *Store) CountRelayLifecycleBelow(ctx context.Context, account string, required uint32, transaction *gorm.DB) (int64, error) {
-	return s.countCapabilityBelow(ctx, account, "relay_lifecycle_schema", required, transaction)
+// CheckEstavelleLifecycle itself enforces.
+func (s *Store) CountEstavelleLifecycleBelow(ctx context.Context, account string, required uint32, transaction *gorm.DB) (int64, error) {
+	return s.countCapabilityBelow(ctx, account, "estavelle_lifecycle_schema", required, transaction)
 }
 
-// CountGatewayIngressBelow is CountRelayLifecycleBelow's gateway_ingress_schema
+// CountAvenIngressBelow is CountEstavelleLifecycleBelow's gateway_ingress_schema
 // counterpart.
-func (s *Store) CountGatewayIngressBelow(ctx context.Context, account string, required uint32, transaction *gorm.DB) (int64, error) {
-	return s.countCapabilityBelow(ctx, account, "gateway_ingress_schema", required, transaction)
+func (s *Store) CountAvenIngressBelow(ctx context.Context, account string, required uint32, transaction *gorm.DB) (int64, error) {
+	return s.countCapabilityBelow(ctx, account, "aven_ingress_schema", required, transaction)
 }
 
 // SetDnsZoneAffinitySchema records a declaration for an identity
-// authenticated by the control channel, mirroring SetGatewayIngressSchema
+// authenticated by the control channel, mirroring SetAvenIngressSchema
 // above exactly: a later legacy declaration replaces an earlier one, so
 // upgrading once must not permanently claim support after a downgrade.
 func (s *Store) SetDnsZoneAffinitySchema(ctx context.Context, handle string, schema uint32) error {
@@ -87,7 +87,7 @@ func (s *Store) SetDnsZoneAffinitySchema(ctx context.Context, handle string, sch
 	return nil
 }
 
-// CountDnsZoneAffinityBelow is CountRelayLifecycleBelow's dns_zone_affinity_schema
+// CountDnsZoneAffinityBelow is CountEstavelleLifecycleBelow's dns_zone_affinity_schema
 // counterpart.
 func (s *Store) CountDnsZoneAffinityBelow(ctx context.Context, account string, required uint32, transaction *gorm.DB) (int64, error) {
 	return s.countCapabilityBelow(ctx, account, "dns_zone_affinity_schema", required, transaction)

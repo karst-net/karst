@@ -246,12 +246,12 @@ func newFinalizeCommand(opener StoreOpener) *cobra.Command {
 					}
 					detail, err := json.Marshal(struct {
 						DeviceInputSHA256 string    `json:"device_input_sha256"`
-						RelayInputSHA256  string    `json:"relay_input_sha256"`
+						EstavelleInputSHA256  string    `json:"estavelle_input_sha256"`
 						TotalMinor        int64     `json:"total_minor"`
 						Currency          string    `json:"currency"`
 						PeriodStart       time.Time `json:"period_start"`
 						PeriodEnd         time.Time `json:"period_end"`
-					}{invoice.DeviceInputHash, invoice.RelayInputHash, invoice.TotalMinor, invoice.Currency, invoice.PeriodStart, invoice.PeriodEnd})
+					}{invoice.DeviceInputHash, invoice.EstavelleInputHash, invoice.TotalMinor, invoice.Currency, invoice.PeriodStart, invoice.PeriodEnd})
 					if err != nil {
 						return fmt.Errorf("encode audit detail: %w", err)
 					}

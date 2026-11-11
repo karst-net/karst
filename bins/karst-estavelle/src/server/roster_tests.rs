@@ -63,7 +63,7 @@ async fn authenticate(
     let mut client = ClientHandshake::new(
         Role::Client,
         crate::sign::node_id(node.public_key()),
-        relay.relay_id(),
+        relay.estavelle_id(),
         relay.public_key().to_vec(),
         [7; 32],
     );

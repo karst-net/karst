@@ -51,10 +51,10 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	require.NoError(t, err)
 	key, err := identity.FromSeed(bytes.Repeat([]byte{55}, identity.SeedSize))
 	require.NoError(t, err)
-	relayID, err := relays.AuthorizeProducer(context.Background(), key.Public(), "deployment-a")
+	estavelleID, err := relays.AuthorizeProducer(context.Background(), key.Public(), "deployment-a")
 	require.NoError(t, err)
-	require.NoError(t, relays.AllowMapping(context.Background(), relayID, mapping.DeploymentID, mapping.Version))
-	request := estavelleusage.CreditRequest{RelayID: relayID, DeploymentID: "deployment-a", MappingVersion: mapping.Version,
+	require.NoError(t, relays.AllowMapping(context.Background(), estavelleID, mapping.DeploymentID, mapping.Version))
+	request := estavelleusage.CreditRequest{EstavelleID: estavelleID, DeploymentID: "deployment-a", MappingVersion: mapping.Version,
 		Generation: "0102030405060708090a0b0c0d0e0f10", RequestID: "1112131415161718191a1b1c1d1e1f20", RequestedBytes: "3000000000"}
 	input, err := request.SigningInput()
 	require.NoError(t, err)
@@ -103,7 +103,7 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	require.Equal(t, "account-1", grant.AccountID)
 	require.Equal(t, "3000000000", grant.GrantedBytes)
 
-	surrender := estavelleusage.CreditSurrender{GrantID: grant.GrantID, RelayID: relayID, DeploymentID: "deployment-a",
+	surrender := estavelleusage.CreditSurrender{GrantID: grant.GrantID, EstavelleID: estavelleID, DeploymentID: "deployment-a",
 		MappingVersion: mapping.Version, Generation: request.Generation, ConsumedBytes: "1000000000"}
 	surrenderInput, err := surrender.SigningInput()
 	require.NoError(t, err)

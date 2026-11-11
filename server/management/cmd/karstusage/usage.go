@@ -82,16 +82,16 @@ func NewCommands(opener StoreOpener) *cobra.Command {
 		devices.AddCommand(command)
 	}
 	root.AddCommand(devices)
-	root.AddCommand(newRelayCommands(opener))
+	root.AddCommand(newEstavelleCommands(opener))
 	return root
 }
 
-func newRelayCommands(opener StoreOpener) *cobra.Command {
-	root := &cobra.Command{Use: "relays", Short: "Authorize managed relay usage producers and mapping scope"}
-	authorize := &cobra.Command{Use: "authorize", Short: "Authorize a relay identity for managed usage", Args: cobra.NoArgs}
+func newEstavelleCommands(opener StoreOpener) *cobra.Command {
+	root := &cobra.Command{Use: "estavelles", Short: "Authorize managed estavelle usage producers and mapping scope"}
+	authorize := &cobra.Command{Use: "authorize", Short: "Authorize an estavelle identity for managed usage", Args: cobra.NoArgs}
 	var publicKeyText, deployment, actor string
-	authorize.Flags().StringVar(&publicKeyText, "identity-key", "", "Base64 ML-DSA-87 relay public identity key")
-	authorize.Flags().StringVar(&deployment, "deployment-id", "", "Managed deployment this relay may report for")
+	authorize.Flags().StringVar(&publicKeyText, "identity-key", "", "Base64 ML-DSA-87 estavelle public identity key")
+	authorize.Flags().StringVar(&deployment, "deployment-id", "", "Managed deployment this estavelle may report for")
 	authorize.Flags().StringVar(&actor, "actor", "", "Operator identity recorded in the audit log")
 	authorize.RunE = func(cmd *cobra.Command, _ []string) error {
 		publicKey, err := base64.StdEncoding.DecodeString(publicKeyText)
@@ -101,67 +101,67 @@ func newRelayCommands(opener StoreOpener) *cobra.Command {
 		if !validLabel(deployment) || !validLabel(actor) {
 			return fmt.Errorf("provide valid --deployment-id and --actor labels")
 		}
-		relayID, err := runRelayMutation(cmd, opener, actor, "authorize", "", "deployment="+deployment,
-			func(relays *estavelleusage.Store) (string, error) {
-				return relays.AuthorizeProducer(cmd.Context(), publicKey, deployment)
+		estavelleID, err := runEstavelleMutation(cmd, opener, actor, "authorize", "", "deployment="+deployment,
+			func(estavelles *estavelleusage.Store) (string, error) {
+				return estavelles.AuthorizeProducer(cmd.Context(), publicKey, deployment)
 			})
 		if err != nil {
 			return err
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
-			RelayID      string `json:"relay_id"`
+			EstavelleID  string `json:"estavelle_id"`
 			DeploymentID string `json:"deployment_id"`
 			Enabled      bool   `json:"enabled"`
-		}{RelayID: relayID, DeploymentID: deployment, Enabled: true})
+		}{EstavelleID: estavelleID, DeploymentID: deployment, Enabled: true})
 	}
 
-	revoke := &cobra.Command{Use: "revoke", Short: "Revoke managed usage reporting for a relay", Args: cobra.NoArgs}
+	revoke := &cobra.Command{Use: "revoke", Short: "Revoke managed usage reporting for an estavelle", Args: cobra.NoArgs}
 	var revokeID, revokeActor string
-	revoke.Flags().StringVar(&revokeID, "relay-id", "", "Derived relay identity ID")
+	revoke.Flags().StringVar(&revokeID, "estavelle-id", "", "Derived estavelle identity ID")
 	revoke.Flags().StringVar(&revokeActor, "actor", "", "Operator identity recorded in the audit log")
 	revoke.RunE = func(cmd *cobra.Command, _ []string) error {
-		if !validRelayID(revokeID) || !validLabel(revokeActor) {
-			return fmt.Errorf("provide a valid --relay-id and --actor")
+		if !validEstavelleID(revokeID) || !validLabel(revokeActor) {
+			return fmt.Errorf("provide a valid --estavelle-id and --actor")
 		}
-		_, err := runRelayMutation(cmd, opener, revokeActor, "revoke", revokeID, "",
-			func(relays *estavelleusage.Store) (string, error) {
-				return revokeID, relays.RevokeProducer(cmd.Context(), revokeID)
+		_, err := runEstavelleMutation(cmd, opener, revokeActor, "revoke", revokeID, "",
+			func(estavelles *estavelleusage.Store) (string, error) {
+				return revokeID, estavelles.RevokeProducer(cmd.Context(), revokeID)
 			})
 		return err
 	}
 
-	allow := &cobra.Command{Use: "allow-mapping", Short: "Allow one exact account mapping reference for a relay", Args: cobra.NoArgs}
-	var mappingRelay, mappingDeployment, mappingVersion, mappingActor string
-	allow.Flags().StringVar(&mappingRelay, "relay-id", "", "Derived relay identity ID")
+	allow := &cobra.Command{Use: "allow-mapping", Short: "Allow one exact account mapping reference for an estavelle", Args: cobra.NoArgs}
+	var mappingEstavelle, mappingDeployment, mappingVersion, mappingActor string
+	allow.Flags().StringVar(&mappingEstavelle, "estavelle-id", "", "Derived estavelle identity ID")
 	allow.Flags().StringVar(&mappingDeployment, "deployment-id", "", "Deployment owning the mapping")
 	allow.Flags().StringVar(&mappingVersion, "mapping-version", "", "Immutable mapping version from the roster ledger")
 	allow.Flags().StringVar(&mappingActor, "actor", "", "Operator identity recorded in the audit log")
 	allow.RunE = func(cmd *cobra.Command, _ []string) error {
-		if !validRelayID(mappingRelay) || !validLabel(mappingDeployment) || !validMappingVersion(mappingVersion) || !validLabel(mappingActor) {
-			return fmt.Errorf("provide valid --relay-id, --deployment-id, --mapping-version and --actor values")
+		if !validEstavelleID(mappingEstavelle) || !validLabel(mappingDeployment) || !validMappingVersion(mappingVersion) || !validLabel(mappingActor) {
+			return fmt.Errorf("provide valid --estavelle-id, --deployment-id, --mapping-version and --actor values")
 		}
 		detail := "deployment=" + mappingDeployment + " mapping=" + mappingVersion
-		_, err := runRelayMutation(cmd, opener, mappingActor, "allow-mapping", mappingRelay, detail,
-			func(relays *estavelleusage.Store) (string, error) {
-				return mappingRelay, relays.AllowMapping(cmd.Context(), mappingRelay, mappingDeployment, mappingVersion)
+		_, err := runEstavelleMutation(cmd, opener, mappingActor, "allow-mapping", mappingEstavelle, detail,
+			func(estavelles *estavelleusage.Store) (string, error) {
+				return mappingEstavelle, estavelles.AllowMapping(cmd.Context(), mappingEstavelle, mappingDeployment, mappingVersion)
 			})
 		return err
 	}
 
-	revokeMapping := &cobra.Command{Use: "revoke-mapping", Short: "Revoke one exact account mapping reference for a relay", Args: cobra.NoArgs}
-	var revokeMappingRelay, revokeMappingDeployment, revokeMappingVersion, revokeMappingActor string
-	revokeMapping.Flags().StringVar(&revokeMappingRelay, "relay-id", "", "Derived relay identity ID")
+	revokeMapping := &cobra.Command{Use: "revoke-mapping", Short: "Revoke one exact account mapping reference for an estavelle", Args: cobra.NoArgs}
+	var revokeMappingEstavelle, revokeMappingDeployment, revokeMappingVersion, revokeMappingActor string
+	revokeMapping.Flags().StringVar(&revokeMappingEstavelle, "estavelle-id", "", "Derived estavelle identity ID")
 	revokeMapping.Flags().StringVar(&revokeMappingDeployment, "deployment-id", "", "Deployment owning the mapping")
 	revokeMapping.Flags().StringVar(&revokeMappingVersion, "mapping-version", "", "Immutable mapping version from the roster ledger")
 	revokeMapping.Flags().StringVar(&revokeMappingActor, "actor", "", "Operator identity recorded in the audit log")
 	revokeMapping.RunE = func(cmd *cobra.Command, _ []string) error {
-		if !validRelayID(revokeMappingRelay) || !validLabel(revokeMappingDeployment) || !validMappingVersion(revokeMappingVersion) || !validLabel(revokeMappingActor) {
-			return fmt.Errorf("provide valid --relay-id, --deployment-id, --mapping-version and --actor values")
+		if !validEstavelleID(revokeMappingEstavelle) || !validLabel(revokeMappingDeployment) || !validMappingVersion(revokeMappingVersion) || !validLabel(revokeMappingActor) {
+			return fmt.Errorf("provide valid --estavelle-id, --deployment-id, --mapping-version and --actor values")
 		}
 		detail := "deployment=" + revokeMappingDeployment + " mapping=" + revokeMappingVersion
-		_, err := runRelayMutation(cmd, opener, revokeMappingActor, "revoke-mapping", revokeMappingRelay, detail,
-			func(relays *estavelleusage.Store) (string, error) {
-				return revokeMappingRelay, relays.RevokeMapping(cmd.Context(), revokeMappingRelay, revokeMappingDeployment, revokeMappingVersion)
+		_, err := runEstavelleMutation(cmd, opener, revokeMappingActor, "revoke-mapping", revokeMappingEstavelle, detail,
+			func(estavelles *estavelleusage.Store) (string, error) {
+				return revokeMappingEstavelle, estavelles.RevokeMapping(cmd.Context(), revokeMappingEstavelle, revokeMappingDeployment, revokeMappingVersion)
 			})
 		return err
 	}
@@ -169,12 +169,12 @@ func newRelayCommands(opener StoreOpener) *cobra.Command {
 	return root
 }
 
-func runRelayMutation(cmd *cobra.Command, opener StoreOpener, actor, action, target, detail string, mutate func(*estavelleusage.Store) (string, error)) (string, error) {
+func runEstavelleMutation(cmd *cobra.Command, opener StoreOpener, actor, action, target, detail string, mutate func(*estavelleusage.Store) (string, error)) (string, error) {
 	var result string
 	err := opener(cmd, func(ctx context.Context, raw store.Store) error {
 		sql, ok := raw.(*store.SqlStore)
 		if !ok {
-			return fmt.Errorf("managed relay usage requires a SQL store")
+			return fmt.Errorf("managed estavelle usage requires a SQL store")
 		}
 		base, err := estavelleusage.NewStore(sql.GetDB())
 		if err != nil {
@@ -187,7 +187,7 @@ func runRelayMutation(cmd *cobra.Command, opener StoreOpener, actor, action, tar
 		return sql.ExecuteInTransaction(ctx, func(tx store.Store) error {
 			transaction, ok := tx.(*store.SqlStore)
 			if !ok {
-				return fmt.Errorf("managed relay usage requires a SQL transaction")
+				return fmt.Errorf("managed estavelle usage requires a SQL transaction")
 			}
 			id, err := mutate(base.WithDB(transaction.GetDB()))
 			if err != nil {
@@ -197,14 +197,14 @@ func runRelayMutation(cmd *cobra.Command, opener StoreOpener, actor, action, tar
 			if target == "" {
 				target = id
 			}
-			_, err = log.AppendInTransaction(ctx, transaction.GetDB(), "operator:"+actor, "karst.usage.relay."+action, target, detail)
+			_, err = log.AppendInTransaction(ctx, transaction.GetDB(), "operator:"+actor, "karst.usage.estavelle."+action, target, detail)
 			return err
 		})
 	})
 	return result, err
 }
 
-func validRelayID(id string) bool {
+func validEstavelleID(id string) bool {
 	decoded, err := base64.RawURLEncoding.DecodeString(id)
 	return err == nil && len(decoded) == 32 && base64.RawURLEncoding.EncodeToString(decoded) == id
 }

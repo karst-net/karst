@@ -182,9 +182,9 @@ func TestRelayCreditReservationsAreSerializedAcrossConcurrentRelays(t *testing.T
 	errs := make(chan error, 2)
 	for _, id := range []string{"relay-a", "relay-b"} {
 		wg.Add(1)
-		go func(relayID string) {
+		go func(estavelleID string) {
 			defer wg.Done()
-			grant, reserveErr := store.ReserveRelayCredits(ctx, start, end, relayID, "epoch-"+relayID, "map-v1", "request-"+relayID, 15_000_000_000)
+			grant, reserveErr := store.ReserveRelayCredits(ctx, start, end, estavelleID, "epoch-"+estavelleID, "map-v1", "request-"+estavelleID, 15_000_000_000)
 			if reserveErr != nil {
 				errs <- reserveErr
 				return

@@ -59,7 +59,7 @@ func (r *routeRegistry) GetNetworkMap(_ context.Context, _ string) (*types.Netwo
 type routeOfferRequest struct {
 	RouteID       string `json:"route_id"`
 	Prefix        string `json:"prefix"`
-	GatewayHandle string `json:"gateway_handle"`
+	AvenHandle string `json:"aven_handle"`
 	Metric        int    `json:"metric"`
 	Masquerade    bool   `json:"masquerade"`
 	KeepRoute     bool   `json:"keep_route"`
@@ -77,8 +77,8 @@ func (r *routeRegistry) upsert(ctx context.Context, req routeOfferRequest) error
 	if err != nil {
 		return fmt.Errorf("prefix: %w", err)
 	}
-	if _, err := r.account.GetPeerByPeerPubKey(ctx, req.GatewayHandle); err != nil {
-		return fmt.Errorf("gateway_handle %q: %w", req.GatewayHandle, err)
+	if _, err := r.account.GetPeerByPeerPubKey(ctx, req.AvenHandle); err != nil {
+		return fmt.Errorf("gateway_handle %q: %w", req.AvenHandle, err)
 	}
 	networkType := nbroute.IPv4Network
 	if prefix.Addr().Is6() {
@@ -108,7 +108,7 @@ func (r *routeRegistry) upsert(ctx context.Context, req routeOfferRequest) error
 		// ID, and `routeRegistry` has to follow the same convention or a
 		// recipient's `handles.position(...)` lookup in `bins/karstd/src/
 		// config.rs` never finds the gateway it was just told about.
-		Peer:       req.GatewayHandle,
+		Peer:       req.AvenHandle,
 		Metric:     metric,
 		Masquerade: req.Masquerade,
 		KeepRoute:  req.KeepRoute,

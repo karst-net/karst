@@ -124,7 +124,7 @@ fn server_config(filter: PacketFilter, ssh_filter: SshFilter) -> Arc<Config> {
         addresses: vec!["100.64.0.3/24".parse().expect("interface address")],
         psk_epoch: 1,
         node_id: Vec::new(),
-        relays: Vec::new(),
+        estavelles: Vec::new(),
         estavelle_ca_file: None,
         prefer_quic_estavelle: false,
         metrics_listen: None,

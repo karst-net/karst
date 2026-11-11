@@ -14,7 +14,7 @@ import { rolloutStatus } from "../rollout-status";
  * deployment needs a different order yet. */
 const componentOrder: Array<{ name: RolloutComponent["name"]; label: string }> = [
   { name: "control", label: "Control" },
-  { name: "relay_job", label: "Estavelle (this job's task group)" },
+  { name: "estavelle_job", label: "Estavelle (this job's task group)" },
   { name: "console", label: "Console" },
 ];
 

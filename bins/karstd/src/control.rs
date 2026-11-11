@@ -417,7 +417,7 @@ pub struct Client {
     /// chosen, and empty again if the choice is released — a node that has let
     /// its relay go must be able to say so, or peers keep being sent somewhere
     /// nothing is listening.
-    home_relay: Vec<u8>,
+    home_estavelle: Vec<u8>,
     sessions: Vec<pb::KarstSessionObservation>,
     /// ADR-0045 §4b: anchor RTTs this node measured since the last
     /// successful request, queued the same way `sessions` is — set by
@@ -582,7 +582,7 @@ impl Client {
         });
 
         Ok(Self {
-            home_relay: Vec::new(),
+            home_estavelle: Vec::new(),
             sessions: Vec::new(),
             anchor_rtt: Vec::new(),
             ephemeral_anchor_rtt: Vec::new(),
@@ -1248,8 +1248,8 @@ impl Client {
     /// Takes effect on the next netmap request rather than sending one: the
     /// node is already on a refresh cadence, and §9.2's hysteresis exists so
     /// that this changes rarely enough for that to be soon enough.
-    pub fn set_home_relay(&mut self, relay_id: Option<[u8; 32]>) {
-        self.home_relay = relay_id.map(|id| id.to_vec()).unwrap_or_default();
+    pub fn set_home_estavelle(&mut self, estavelle_id: Option<[u8; 32]>) {
+        self.home_estavelle = estavelle_id.map(|id| id.to_vec()).unwrap_or_default();
     }
 
     /// Replace the last locally measured session observations. They are sent
@@ -1317,16 +1317,16 @@ impl Client {
             // §9.1. Reported on the request this node is already sending
             // rather than through a call of its own: a second path to the same
             // fact is a second path that can disagree with this one.
-            home_relay: self.home_relay.clone(),
+            home_estavelle: self.home_estavelle.clone(),
             sessions: self.sessions.clone(),
             anchor_rtt: self.anchor_rtt.clone(),
             ephemeral_anchor_rtt: self.ephemeral_anchor_rtt.clone(),
             route_observations: self.route_observations.clone(),
-            relay_lifecycle_schema: 1,
-            gateway_ingress_schema: 1,
+            estavelle_lifecycle_schema: 1,
+            aven_ingress_schema: 1,
             // This node understands `KarstRouteOffer`'s `dns_zone`/
             // `pinned_egress_ip` — ADR-0068, same declaration pattern as
-            // `gateway_ingress_schema` just above.
+            // `aven_ingress_schema` just above.
             dns_zone_affinity_schema: 1,
             software: Some(pb::KarstSoftwareIdentity {
                 version: crate::VERSION.to_owned(),
@@ -2248,7 +2248,7 @@ mod tests {
             addresses: vec!["100.64.0.1/16".to_owned()],
             dns_name: "self".to_owned(),
             peers: vec![pb::KarstNetmapPeer {
-                home_relay: Vec::new(),
+                home_estavelle: Vec::new(),
                 node_id: b"aaa".to_vec(),
                 allowed_ips: vec!["100.64.0.2/32".to_owned()],
                 dns_name: "alpha".to_owned(),

@@ -1983,13 +1983,13 @@ fn start_server(net: &mut Aquifer, relay_pk: &str) -> Pins {
 /// mechanism — a mechanism that edits `/etc/resolv.conf` directly, with no
 /// regard for network namespaces. Turning DNS on for every row would risk the
 /// runner's own resolver, not just the fixture's.
-fn start_server_with(net: &mut Aquifer, relays: &[(String, String)], dns_zone: &str) -> Pins {
-    start_server_with_options(net, relays, dns_zone, 0, &[])
+fn start_server_with(net: &mut Aquifer, estavelles: &[(String, String)], dns_zone: &str) -> Pins {
+    start_server_with_options(net, estavelles, dns_zone, 0, &[])
 }
 
 fn start_server_with_options(
     net: &mut Aquifer,
-    relays: &[(String, String)],
+    estavelles: &[(String, String)],
     dns_zone: &str,
     preload: usize,
     extra: &[String],
@@ -2035,7 +2035,7 @@ fn start_server_with_options(
     .iter()
     .map(|s| (*s).to_owned())
     .collect();
-    for (address, key) in relays {
+    for (address, key) in estavelles {
         argv.push("--relay".to_owned());
         argv.push(address.clone());
         argv.push(key.clone());
@@ -2045,7 +2045,7 @@ fn start_server_with_options(
         argv.push(dns_zone.to_owned());
     }
     argv.extend(extra.iter().cloned());
-    let relay_addr = relays.first().map(|(a, _)| a.clone()).unwrap_or_default();
+    let relay_addr = estavelles.first().map(|(a, _)| a.clone()).unwrap_or_default();
     let mut server = Command::new("ip")
         .args(&argv)
         .stdout(Stdio::piped())
@@ -3444,7 +3444,7 @@ fn exchange_tcp_under_the_acl(net: &mut Aquifer) {
 /// Every other row in this file has one relay, and with one relay §9.1's second
 /// rule can never fire: both nodes hold the same connection and the relay
 /// forwards between them. This row is the one that puts them on different
-/// relays and makes the pair depend on the published `home_relay` — the field
+/// relays and makes the pair depend on the published `home_estavelle` — the field
 /// that crosses the control plane, enters both content hashes, and until now
 /// was never *read* by anything that carried a packet.
 ///
@@ -3588,7 +3588,7 @@ fn two_nodes_on_two_relays_reach_each_other() {
     assert!(
         !net.log("a.log").contains("giving up on relay"),
         "node A moved relay too, so this row did not test two nodes on two \
-         relays:\n{}",
+         estavelles:\n{}",
         net.log("a.log")
     );
 }

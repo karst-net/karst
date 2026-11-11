@@ -66,7 +66,7 @@ struct VersionCase {
     #[serde(default)]
     ssh_filter_present: bool,
     #[serde(default)]
-    relays: Option<Vec<VersionRelay>>,
+    estavelles: Option<Vec<VersionRelay>>,
     #[serde(default)]
     routes: Option<Vec<VersionRoute>>,
     #[serde(default)]
@@ -173,7 +173,7 @@ struct VersionDNSRoute {
 struct VersionRelay {
     address: String,
     tls_server_name: String,
-    relay_id: String,
+    estavelle_id: String,
     identity_key: String,
     region: String,
 }
@@ -182,7 +182,7 @@ struct VersionRelay {
 struct VersionRoute {
     route_id: String,
     prefix: String,
-    gateway_id: String,
+    aven_id: String,
     metric: u32,
     kind: u32,
     masquerade: bool,
@@ -208,7 +208,7 @@ struct VersionPeer {
     /// `the_version_ignores_the_psk_bytes`.
     psk: String,
     #[serde(default)]
-    home_relay: String,
+    home_estavelle: String,
     #[serde(default)]
     candidates: Vec<String>,
 }
@@ -235,7 +235,7 @@ struct DigestCase {
     dns_name: String,
     endpoint: String,
     #[serde(default)]
-    home_relay: String,
+    home_estavelle: String,
     allowed_ips: Option<Vec<String>>,
     #[serde(default)]
     candidates: Vec<String>,
@@ -493,7 +493,7 @@ fn peer_digest_matches() {
             kem_public_key: &unhex(&c.kem_public_key),
             dns_name: &c.dns_name,
             endpoint: &c.endpoint,
-            home_relay: &unhex(&c.home_relay),
+            home_estavelle: &unhex(&c.home_estavelle),
             allowed_ips: &ips,
             candidates: &c.candidates,
         };
@@ -544,8 +544,8 @@ struct VersionInputs {
     ssh_ports: Vec<Vec<(u32, u32)>>,
     node_id: Vec<u8>,
     addresses: Vec<String>,
-    relay_ids: Vec<Vec<u8>>,
-    relay_keys: Vec<Vec<u8>>,
+    estavelle_ids: Vec<Vec<u8>>,
+    estavelle_keys: Vec<Vec<u8>>,
 }
 
 /// Inclusive port ranges out of a rule list.
@@ -577,7 +577,7 @@ fn inputs(c: &VersionCase) -> VersionInputs {
         ids: peers.iter().map(|p| unhex(&p.node_id)).collect(),
         kems: peers.iter().map(|p| unhex(&p.kem_public_key)).collect(),
 
-        homes: peers.iter().map(|p| unhex(&p.home_relay)).collect(),
+        homes: peers.iter().map(|p| unhex(&p.home_estavelle)).collect(),
         ips: peers
             .iter()
             .map(|p| p.allowed_ips.clone().unwrap_or_default())
@@ -587,16 +587,16 @@ fn inputs(c: &VersionCase) -> VersionInputs {
         ssh_ports: port_ranges(c.ssh_filter.as_deref().unwrap_or_default()),
         node_id: unhex(&c.node_id),
         addresses: c.addresses.clone().unwrap_or_default(),
-        relay_ids: relays_of(c).iter().map(|r| unhex(&r.relay_id)).collect(),
-        relay_keys: relays_of(c)
+        estavelle_ids: estavelles_of(c).iter().map(|r| unhex(&r.estavelle_id)).collect(),
+        estavelle_keys: estavelles_of(c)
             .iter()
             .map(|r| unhex(&r.identity_key))
             .collect(),
     }
 }
 
-fn relays_of(c: &VersionCase) -> &[VersionRelay] {
-    c.relays.as_deref().unwrap_or_default()
+fn estavelles_of(c: &VersionCase) -> &[VersionRelay] {
+    c.estavelles.as_deref().unwrap_or_default()
 }
 
 fn routes_of(c: &VersionCase) -> &[VersionRoute] {
@@ -674,7 +674,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
             kem_public_key: &held.kems[i],
             dns_name: &p.dns_name,
             endpoint: &p.endpoint,
-            home_relay: &held.homes[i],
+            home_estavelle: &held.homes[i],
             allowed_ips: &held.ips[i],
             candidates: &p.candidates,
         })
@@ -698,29 +698,29 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         c.ssh_filter.as_deref().unwrap_or_default(),
     );
 
-    let relays: Vec<RelayView<'_>> = relays_of(c)
+    let estavelles: Vec<RelayView<'_>> = estavelles_of(c)
         .iter()
         .enumerate()
         .map(|(i, r)| RelayView {
             address: &r.address,
             tls_server_name: &r.tls_server_name,
-            relay_id: &held.relay_ids[i],
-            identity_key: &held.relay_keys[i],
+            estavelle_id: &held.estavelle_ids[i],
+            identity_key: &held.estavelle_keys[i],
             region: &r.region,
         })
         .collect();
 
     let gateway_ids: Vec<Vec<u8>> = routes_of(c)
         .iter()
-        .map(|route| unhex(&route.gateway_id))
+        .map(|route| unhex(&route.aven_id))
         .collect();
     let routes: Vec<RouteView<'_>> = routes_of(c)
         .iter()
         .zip(gateway_ids.iter())
-        .map(|(route, gateway_id)| RouteView {
+        .map(|(route, aven_id)| RouteView {
             route_id: &route.route_id,
             prefix: &route.prefix,
-            gateway_id,
+            aven_id,
             metric: route.metric,
             kind: route.kind,
             masquerade: route.masquerade,
@@ -790,7 +790,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         egress_filter: &egress,
         ssh_filter: &ssh,
         ssh_filter_present: c.ssh_filter_present,
-        relays: &relays,
+        estavelles: &estavelles,
         routes: &routes,
         dns: dns_config(c, &dns_routes, &config_upstreams),
         bedrock_head: bedrock_head(c, &bedrock_hash),
@@ -831,7 +831,7 @@ fn a_relay_id_is_the_digest_of_its_identity_key() {
 
     let mut checked = 0_usize;
     for c in &vectors().cases.netmap_version {
-        for r in relays_of(c) {
+        for r in estavelles_of(c) {
             let key = unhex(&r.identity_key);
             assert_eq!(
                 key.len(),
@@ -842,9 +842,9 @@ fn a_relay_id_is_the_digest_of_its_identity_key() {
             h.update(b"karst-estavelle-id-v1");
             h.update(&key);
             assert_eq!(
-                unhex(&r.relay_id),
+                unhex(&r.estavelle_id),
                 h.finalize().as_slice(),
-                "relay_id is not SHA-256(\"karst-estavelle-id-v1\" || identity_key); \
+                "estavelle_id is not SHA-256(\"karst-estavelle-id-v1\" || identity_key); \
                  karstd would refuse every netmap carrying this registry"
             );
             checked += 1;

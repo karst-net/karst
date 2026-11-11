@@ -648,9 +648,9 @@ paths:
                 type: array
                 items:
                   type: object
-                  required: [relay_id, refreshed_at]
+                  required: [estavelle_id, refreshed_at]
                   properties:
-                    relay_id: {type: string}
+                    estavelle_id: {type: string}
                     refreshed_at: {type: string, format: date-time}
   /estavelle-services/{serviceId}/access:
     parameters:
@@ -670,7 +670,7 @@ paths:
                 ponor_id: {type: string}
                 access_managed: {type: boolean}
                 allowed_groups: {type: array, minItems: 1, items: {type: string}}
-                gateway_handle: {type: string}
+                aven_handle: {type: string}
                 exit_ipv4: {type: boolean}
                 exit_ipv6: {type: boolean}
                 metric: {type: integer, minimum: 1, maximum: 9999}
@@ -939,7 +939,7 @@ paths:
   /rollouts/{id}/components/{name}/mark-applied:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
-      - {name: name, in: path, required: true, schema: {type: string, enum: [control, console, relay_job]}}
+      - {name: name, in: path, required: true, schema: {type: string, enum: [control, console, estavelle_job]}}
     post:
       operationId: markRolloutComponentApplied
       tags: [rollouts]
@@ -956,7 +956,7 @@ paths:
   /rollouts/{id}/components/{name}/mark-failed:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
-      - {name: name, in: path, required: true, schema: {type: string, enum: [control, console, relay_job]}}
+      - {name: name, in: path, required: true, schema: {type: string, enum: [control, console, estavelle_job]}}
     post:
       operationId: markRolloutComponentFailed
       tags: [rollouts]
@@ -1723,13 +1723,13 @@ components:
     BillingPayment:
       type: object
       additionalProperties: false
-      required: [period_start, period_end, currency, device_minor, relay_minor, total_minor, state, updated_at]
+      required: [period_start, period_end, currency, device_minor, estavelle_minor, total_minor, state, updated_at]
       properties:
         period_start: {type: string, format: date-time}
         period_end: {type: string, format: date-time}
         currency: {type: string, enum: [USD]}
         device_minor: {type: integer, format: int64, minimum: 0}
-        relay_minor: {type: integer, format: int64, minimum: 0}
+        estavelle_minor: {type: integer, format: int64, minimum: 0}
         total_minor: {type: integer, format: int64, minimum: 0}
         state: {type: string, enum: [not_queued, ready, submitting, reconcile, checkout, paid, past_due, operator_hold]}
         checkout_url: {type: string, format: uri}
@@ -1797,9 +1797,9 @@ components:
     EstavelleCreditRequest:
       type: object
       additionalProperties: false
-      required: [relay_id, deployment_id, mapping_version, generation, request_id, requested_bytes, signature]
+      required: [estavelle_id, deployment_id, mapping_version, generation, request_id, requested_bytes, signature]
       properties:
-        relay_id: {type: string, minLength: 1, maxLength: 64}
+        estavelle_id: {type: string, minLength: 1, maxLength: 64}
         deployment_id: {type: string, minLength: 1, maxLength: 128}
         mapping_version: {type: string, pattern: '^[0-9a-f]{64}$'}
         generation: {type: string, pattern: '^[0-9a-f]{32}$'}
@@ -1808,13 +1808,13 @@ components:
         signature: {type: string, format: byte}
     EstavelleCreditGrant:
       type: object
-      required: [grant_id, account_id, period_start, period_end, relay_id, generation, mapping_version, schedule_version, cap_revision, requested_bytes, granted_bytes, created_at]
+      required: [grant_id, account_id, period_start, period_end, estavelle_id, generation, mapping_version, schedule_version, cap_revision, requested_bytes, granted_bytes, created_at]
       properties:
         grant_id: {type: string, pattern: '^[0-9a-f]{32}$'}
         account_id: {type: string}
         period_start: {type: string, format: date-time}
         period_end: {type: string, format: date-time}
-        relay_id: {type: string}
+        estavelle_id: {type: string}
         generation: {type: string, pattern: '^[0-9a-f]{32}$'}
         mapping_version: {type: string, pattern: '^[0-9a-f]{64}$'}
         schedule_version: {type: string}
@@ -1825,10 +1825,10 @@ components:
     EstavelleCreditSurrender:
       type: object
       additionalProperties: false
-      required: [grant_id, relay_id, deployment_id, mapping_version, generation, consumed_bytes, signature]
+      required: [grant_id, estavelle_id, deployment_id, mapping_version, generation, consumed_bytes, signature]
       properties:
         grant_id: {type: string, pattern: '^[0-9a-f]{32}$'}
-        relay_id: {type: string, minLength: 1, maxLength: 64}
+        estavelle_id: {type: string, minLength: 1, maxLength: 64}
         deployment_id: {type: string, minLength: 1, maxLength: 128}
         mapping_version: {type: string, pattern: '^[0-9a-f]{64}$'}
         generation: {type: string, pattern: '^[0-9a-f]{32}$'}
@@ -1900,7 +1900,7 @@ components:
       properties:
         status: {type: string, enum: [accepted, incompatible]}
         observed_at: {type: string, format: date-time}
-        capability: {type: string, enum: [relay_lifecycle_schema, gateway_ingress_schema]}
+        capability: {type: string, enum: [estavelle_lifecycle_schema, aven_ingress_schema]}
         required_schema: {type: integer, minimum: 1}
         reported_schema: {type: integer, minimum: 0}
     NodeSoftware:
@@ -1961,7 +1961,7 @@ components:
     PathObservation:
       type: object
       required: [peer_handle, kind, observed_at, tx_bytes, rx_bytes]
-      properties: {peer_handle: {type: string}, kind: {type: string, enum: [direct, relay, turn, unreachable]}, endpoint: {type: string, nullable: true}, relay_id: {type: string, nullable: true}, since: {type: string, nullable: true, format: date-time}, observed_at: {type: string, format: date-time}, tx_bytes: {type: integer, minimum: 0, description: 'Bytes sent to this peer, a running total for the session'}, rx_bytes: {type: integer, minimum: 0, description: 'Bytes received from this peer, a running total for the session'}}
+      properties: {peer_handle: {type: string}, kind: {type: string, enum: [direct, relay, turn, unreachable]}, endpoint: {type: string, nullable: true}, estavelle_id: {type: string, nullable: true}, since: {type: string, nullable: true, format: date-time}, observed_at: {type: string, format: date-time}, tx_bytes: {type: integer, minimum: 0, description: 'Bytes sent to this peer, a running total for the session'}, rx_bytes: {type: integer, minimum: 0, description: 'Bytes received from this peer, a running total for the session'}}
     NodePosture:
       type: object
       required: [status, observed_at]
@@ -2082,7 +2082,7 @@ components:
         ponor_id: {type: string, minLength: 1, description: Existing account-local Ponor registry ID.}
         access_managed: {type: boolean, default: false, description: Use live registry-group membership for estavelle admission. Requires a live identity-bound roster writer. POST /estavelle-services always requires this to be true; false only appears on a row created before the unmanaged legacy-association path was removed.}
         allowed_groups: {type: array, items: {type: string}, description: Stable account group IDs permitted to use this backend. POST /estavelle-services requires at least one entry.}
-        gateway_handle: {type: string, description: Explicitly selected enrolled Linux machine providing internet egress.}
+        aven_handle: {type: string, description: Explicitly selected enrolled Linux machine providing internet egress.}
         exit_ipv4: {type: boolean, default: false}
         exit_ipv6: {type: boolean, default: false}
         metric: {type: integer, minimum: 1, maximum: 9999}
@@ -2104,15 +2104,15 @@ components:
         name: {type: string, minLength: 1}
         infra_connection_id: {type: string, minLength: 1, description: Existing account-local infrastructure connection ID.}
         location: {type: string, minLength: 1, description: Region/zone/namespace code from that connection's own discovery.}
-        relay_transport: {type: boolean, default: false, description: The only capability this workflow grants in v1 -- required true.}
-        egress_v4: {type: boolean, default: false, description: Not yet supported; rejected if set until Gateway-identity binding is designed.}
-        egress_v6: {type: boolean, default: false, description: Not yet supported; rejected if set until Gateway-identity binding is designed.}
+        estavelle_transport: {type: boolean, default: false, description: The only capability this workflow grants in v1 -- required true.}
+        egress_v4: {type: boolean, default: false, description: Not yet supported; rejected if set until Aven-identity binding is designed.}
+        egress_v6: {type: boolean, default: false, description: Not yet supported; rejected if set until Aven-identity binding is designed.}
         permitted_groups: {type: array, minItems: 1, items: {type: string}, description: Stable account group IDs granted access once ready.}
         state: {type: string, readOnly: true, enum: [requested, provisioning, granting, ready, revoking, deprovisioning, deprovisioned, failed]}
         failed_step: {type: string, readOnly: true, enum: [requested, provisioning, granting, revoking, deprovisioning], description: Only meaningful while state is failed.}
         failure_reason: {type: string, readOnly: true}
         instance_id: {type: string, readOnly: true, description: The Driver-reported compute instance, once provisioning recorded one.}
-        relay_id: {type: string, readOnly: true, description: The relay registry ID, once granted.}
+        estavelle_id: {type: string, readOnly: true, description: The estavelle registry ID, once granted.}
         revision: {type: integer, minimum: 0, readOnly: true, description: Expected revision for the next compare-and-set action against this allocation.}
         created_at: {type: string, format: date-time, readOnly: true}
         updated_at: {type: string, format: date-time, readOnly: true}
@@ -2128,7 +2128,7 @@ components:
         compatibility: {type: array, readOnly: true, items: {$ref: '#/components/schemas/RolloutComponentCompatibility'}, description: Live, uncached fleet-compatibility preview -- recomputed on every read, never stored.}
         note: {type: string, readOnly: true, description: A non-blocking reconciliation note, e.g. when the deployment-versions snapshot is stale or missing.}
         state: {type: string, readOnly: true, enum: [planned, in_progress, completed, failed, rolled_back]}
-        failed_component: {type: string, readOnly: true, enum: [control, console, relay_job], description: Only meaningful while state is failed.}
+        failed_component: {type: string, readOnly: true, enum: [control, console, estavelle_job], description: Only meaningful while state is failed.}
         failure_reason: {type: string, readOnly: true}
         revision: {type: integer, minimum: 0, readOnly: true, description: Expected revision for the next compare-and-set action against this plan.}
         created_at: {type: string, format: date-time, readOnly: true}
@@ -2140,13 +2140,13 @@ components:
       required: [name, sequence, target_digest, verification_ref]
       additionalProperties: false
       properties:
-        name: {type: string, enum: [control, console, relay_job], description: relay_job is this job's own relay task group, not the broader relay registry.}
+        name: {type: string, enum: [control, console, estavelle_job], description: estavelle_job is this job's own relay task group, not the broader relay registry.}
         sequence: {type: integer, minimum: 0, description: 0-based apply order, enforced contiguous across a plan's components.}
         current_digest: {type: string, description: Operator-recorded, informational only; not verified by control.}
         target_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
         verification_ref: {type: string, minLength: 1, description: The operator's own attestation that they ran cosign verify against target_digest per deploy/nomad/prod/README.md. Control never re-verifies this.}
-        requires_relay_lifecycle_schema: {type: integer, minimum: 0, nullable: true, description: Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.}
-        requires_gateway_ingress_schema: {type: integer, minimum: 0, nullable: true}
+        requires_estavelle_lifecycle_schema: {type: integer, minimum: 0, nullable: true, description: Set only if this release raises the account-wide requirement; entered by hand -- no release-to-schema manifest exists.}
+        requires_aven_ingress_schema: {type: integer, minimum: 0, nullable: true}
         status: {type: string, readOnly: true, enum: [pending, applied, failed]}
         failure_reason: {type: string, readOnly: true}
         observed_digest: {type: string, readOnly: true, description: From the deployment-versions snapshot at the time this component was marked applied; empty if the snapshot was unavailable.}
@@ -2156,8 +2156,8 @@ components:
       required: [component, capability, required, incompatible_peer_count, blocking]
       additionalProperties: false
       properties:
-        component: {type: string, enum: [control, console, relay_job]}
-        capability: {type: string, enum: [relay_lifecycle_schema, gateway_ingress_schema]}
+        component: {type: string, enum: [control, console, estavelle_job]}
+        capability: {type: string, enum: [estavelle_lifecycle_schema, aven_ingress_schema]}
         required: {type: integer, minimum: 0}
         incompatible_peer_count: {type: integer, minimum: 0}
         blocking: {type: boolean}

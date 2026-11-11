@@ -76,7 +76,7 @@ type handler struct {
 // ADR-0021 for why the signed message is a separate, fixed binary layout
 // rather than these JSON bytes.
 type report struct {
-	RelayID       string `json:"relay_id"`
+	EstavelleID       string `json:"estavelle_id"`
 	Timestamp     int64  `json:"timestamp"`
 	LocalClients  int    `json:"local_clients"`
 	MeshPeers     int    `json:"mesh_peers"`
@@ -109,13 +109,13 @@ func (h *handler) report(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "malformed telemetry report"), w)
 		return
 	}
-	if req.RelayID != urlRelayID {
-		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "relay_id does not match the URL"), w)
+	if req.EstavelleID != urlRelayID {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "estavelle_id does not match the URL"), w)
 		return
 	}
-	relayID, err := base64.RawURLEncoding.DecodeString(req.RelayID)
-	if err != nil || len(relayID) != 32 {
-		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "relay_id is not a 32-byte id"), w)
+	estavelleID, err := base64.RawURLEncoding.DecodeString(req.EstavelleID)
+	if err != nil || len(estavelleID) != 32 {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "estavelle_id is not a 32-byte id"), w)
 		return
 	}
 	if age := time.Since(time.Unix(req.Timestamp, 0)); age > freshnessWindow || age < -freshnessWindow {
@@ -131,13 +131,13 @@ func (h *handler) report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	candidates, err := h.relays.FindByID(r.Context(), req.RelayID)
+	candidates, err := h.relays.FindByID(r.Context(), req.EstavelleID)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
 
-	msg := signingInput(relayID, req)
+	msg := signingInput(estavelleID, req)
 	t := estavellereg.Telemetry{
 		LocalClients:  req.LocalClients,
 		MeshPeers:     req.MeshPeers,
@@ -192,9 +192,9 @@ func (h *handler) report(w http.ResponseWriter, r *http.Request) {
 // the JSON body — JSON has no canonical encoding, and a signature must
 // cover bytes both sides construct identically without needing to agree on
 // field order or whitespace.
-func signingInput(relayID []byte, req report) []byte {
+func signingInput(estavelleID []byte, req report) []byte {
 	buf := make([]byte, 0, signedMessageLen)
-	buf = append(buf, relayID...)
+	buf = append(buf, estavelleID...)
 	buf = binary.BigEndian.AppendUint64(buf, uint64(req.Timestamp))
 	buf = binary.BigEndian.AppendUint64(buf, uint64(req.LocalClients))
 	buf = binary.BigEndian.AppendUint64(buf, uint64(req.MeshPeers))

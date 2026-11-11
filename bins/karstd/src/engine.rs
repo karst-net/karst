@@ -366,7 +366,7 @@ struct Roster {
     relay_ids: Vec<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
     /// The reverse mapping, for attributing a relay-delivered datagram to the
     /// peer the relay says sent it.
-    by_relay_id: HashMap<[u8; karst_estavelle_proto::consts::ID_LEN], PeerIndex>,
+    by_estavelle_id: HashMap<[u8; karst_estavelle_proto::consts::ID_LEN], PeerIndex>,
     /// Each peer's published home relay — §9.1 — **filtered to relays this node
     /// could actually dial**, which means present in the netmap's registry.
     ///
@@ -375,7 +375,7 @@ struct Roster {
     /// three come from the registry. Filtering here rather than at the point of
     /// use means the routing decision cannot produce a destination the
     /// transport will silently drop.
-    home_relays: Vec<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
+    home_estavelles: Vec<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
     /// Whether this node has a relay to send through at all. Without one a
     /// peer's node id names a destination nothing can reach.
     relay_configured: bool,
@@ -447,7 +447,7 @@ pub struct Engine {
     /// belongs to `home::Selector`, and a second place computing it is a second
     /// place that can disagree — at which point this node would route a peer
     /// onto an on-demand connection to the relay it is already sitting on.
-    home_relay: RwLock<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
+    home_estavelle: RwLock<Option<[u8; karst_estavelle_proto::consts::ID_LEN]>>,
     /// Resolved file transfers, most recent last — GitHub issue #212. Local
     /// audit trail, in the same spirit as
     /// `server/management/internals/karst/node/node.go`'s
@@ -491,7 +491,7 @@ impl Engine {
             in_mac_key,
             cookie: Mutex::new(None),
             stats: Counters::default(),
-            home_relay: RwLock::new(None),
+            home_estavelle: RwLock::new(None),
             file_transfer_receipts: Mutex::new(VecDeque::new()),
             dns_affinity: crate::zone_route::DnsAffinityCache::default(),
         }
@@ -502,11 +502,11 @@ impl Engine {
     /// Routing needs it to tell the two rules apart: a peer whose published
     /// home is the relay this node is already connected to is reached on that
     /// connection, not on a second one dialed to the same address.
-    pub fn set_home_relay(&self, relay_id: Option<[u8; karst_estavelle_proto::consts::ID_LEN]>) {
+    pub fn set_home_estavelle(&self, estavelle_id: Option<[u8; karst_estavelle_proto::consts::ID_LEN]>) {
         *self
-            .home_relay
+            .home_estavelle
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = relay_id;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = estavelle_id;
     }
 
     /// The registry entry for a relay id, or `None` if the netmap carries none.
@@ -517,13 +517,13 @@ impl Engine {
     #[must_use]
     pub fn relay(
         &self,
-        relay_id: [u8; karst_estavelle_proto::consts::ID_LEN],
+        estavelle_id: [u8; karst_estavelle_proto::consts::ID_LEN],
     ) -> Option<crate::netmap::Estavelle> {
         self.roster()
             .config
-            .relays
+            .estavelles
             .iter()
-            .find(|r| r.relay_id == relay_id)
+            .find(|r| r.estavelle_id == estavelle_id)
             .cloned()
     }
 
@@ -534,15 +534,15 @@ impl Engine {
     /// alternatives against a registry that has been withdrawn would be dialing
     /// relays its peers are no longer told about.
     #[must_use]
-    pub fn relays(&self) -> Vec<crate::netmap::Estavelle> {
-        self.roster().config.relays.clone()
+    pub fn estavelles(&self) -> Vec<crate::netmap::Estavelle> {
+        self.roster().config.estavelles.clone()
     }
 
     /// The relay this node holds — §9.1.
     #[must_use]
-    pub fn home_relay(&self) -> Option<[u8; karst_estavelle_proto::consts::ID_LEN]> {
+    pub fn home_estavelle(&self) -> Option<[u8; karst_estavelle_proto::consts::ID_LEN]> {
         *self
-            .home_relay
+            .home_estavelle
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -561,9 +561,9 @@ impl Engine {
     ///
     /// Cheap on the datapath: a relaxed load, and a store only when a mark is
     /// actually in force.
-    pub fn seen_on_home_relay(&self, peer_id: [u8; karst_estavelle_proto::consts::ID_LEN]) {
+    pub fn seen_on_home_estavelle(&self, peer_id: [u8; karst_estavelle_proto::consts::ID_LEN]) {
         let roster = self.roster();
-        let Some(&peer) = roster.by_relay_id.get(&peer_id) else {
+        let Some(&peer) = roster.by_estavelle_id.get(&peer_id) else {
             return;
         };
         let Some(slot) = roster.peers.get(peer) else {
@@ -588,7 +588,7 @@ impl Engine {
         now_ms: u64,
     ) -> bool {
         let roster = self.roster();
-        let Some(&peer) = roster.by_relay_id.get(&peer_id) else {
+        let Some(&peer) = roster.by_estavelle_id.get(&peer_id) else {
             return false;
         };
         let Some(slot) = roster.peers.get(peer) else {
@@ -597,8 +597,8 @@ impl Engine {
         // Zero is "not marked", so a mark taken in the first millisecond of the
         // process must not read as one.
         slot.off_home.store(now_ms.max(1), Ordering::Relaxed);
-        let elsewhere = roster.home_relays.get(peer).copied().flatten();
-        elsewhere.is_some_and(|id| Some(id) != self.home_relay())
+        let elsewhere = roster.home_estavelles.get(peer).copied().flatten();
+        elsewhere.is_some_and(|id| Some(id) != self.home_estavelle())
     }
 
     /// A snapshot of the current peer set.
@@ -827,8 +827,8 @@ impl Engine {
             .get(peer)
             .is_some_and(|slot| slot.off_home.load(Ordering::Relaxed) != 0);
         if refused {
-            if let Some(home) = roster.home_relays.get(peer).copied().flatten() {
-                if Some(home) != self.home_relay() {
+            if let Some(home) = roster.home_estavelles.get(peer).copied().flatten() {
+                if Some(home) != self.home_estavelle() {
                     return Some(Via::Relay {
                         relay: Some(home),
                         destination,
@@ -855,7 +855,7 @@ impl Engine {
         peer_id: [u8; karst_estavelle_proto::consts::ID_LEN],
     ) -> Option<[u8; karst_estavelle_proto::consts::ID_LEN]> {
         let roster = self.roster();
-        let &peer = roster.by_relay_id.get(&peer_id)?;
+        let &peer = roster.by_estavelle_id.get(&peer_id)?;
         let refused = roster
             .peers
             .get(peer)
@@ -864,11 +864,11 @@ impl Engine {
             return None;
         }
         roster
-            .home_relays
+            .home_estavelles
             .get(peer)
             .copied()
             .flatten()
-            .filter(|&home| Some(home) != self.home_relay())
+            .filter(|&home| Some(home) != self.home_estavelle())
     }
 
     /// Install an authenticated Resurgence-selected endpoint for a roster peer.
@@ -1612,7 +1612,7 @@ impl Engine {
     ) -> Output {
         let mut out = Output::default();
         let roster = self.roster();
-        let Some(peer) = roster.by_relay_id.get(&source_id).copied() else {
+        let Some(peer) = roster.by_estavelle_id.get(&source_id).copied() else {
             return out;
         };
         let Ok((hdr, payload)) = split_datagram(datagram) else {
@@ -2717,8 +2717,8 @@ fn build_roster(config: &Arc<Config>, carried: &HashMap<[u8; 32], Arc<PeerSlot>>
     let mut peers = Vec::with_capacity(config.peers.len());
     let mut by_hint = HashMap::with_capacity(config.peers.len());
     let mut relay_ids = Vec::with_capacity(config.peers.len());
-    let mut by_relay_id = HashMap::with_capacity(config.peers.len());
-    let mut home_relays = Vec::with_capacity(config.peers.len());
+    let mut by_estavelle_id = HashMap::with_capacity(config.peers.len());
+    let mut home_estavelles = Vec::with_capacity(config.peers.len());
 
     for (index, peer) in config.peers.iter().enumerate() {
         let hint = peer_id_hint(&peer.public.kem_pk.to_bytes());
@@ -2727,22 +2727,22 @@ fn build_roster(config: &Arc<Config>, carried: &HashMap<[u8; 32], Arc<PeerSlot>>
         // that will not decode simply leaves the peer without a relay path
         // instead of failing the whole roster — the direct path, if it has one,
         // still works.
-        let relay_id = std::str::from_utf8(&peer.node_id)
+        let estavelle_id = std::str::from_utf8(&peer.node_id)
             .ok()
             .and_then(karst_control_client::handle_bytes);
-        if let Some(id) = relay_id {
-            by_relay_id.insert(id, index);
+        if let Some(id) = estavelle_id {
+            by_estavelle_id.insert(id, index);
         }
-        relay_ids.push(relay_id);
+        relay_ids.push(estavelle_id);
         // §9.1. A published relay this node's registry does not carry is a
         // relay it has no address, TLS name or pinned key for — so it is
         // dropped here, where the peer still has every other route, rather
         // than surfacing as a destination the transport quietly discards.
-        home_relays.push(peer.home_estavelle.filter(|id| {
+        home_estavelles.push(peer.home_estavelle.filter(|id| {
             config
-                .relays
+                .estavelles
                 .iter()
-                .any(|registered| registered.relay_id == *id)
+                .any(|registered| registered.estavelle_id == *id)
         }));
         // The same peer as before keeps its session and its learned endpoint;
         // rebuilding would cost a rehandshake for a change that had nothing to
@@ -2775,13 +2775,13 @@ fn build_roster(config: &Arc<Config>, carried: &HashMap<[u8; 32], Arc<PeerSlot>>
     }
 
     Roster {
-        relay_configured: !config.relays.is_empty(),
+        relay_configured: !config.estavelles.is_empty(),
         config: Arc::clone(config),
         peers,
         by_hint,
         relay_ids,
-        by_relay_id,
-        home_relays,
+        by_estavelle_id,
+        home_estavelles,
     }
 }
 

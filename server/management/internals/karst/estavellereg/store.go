@@ -155,7 +155,7 @@ func (s *Store) Create(ctx context.Context, entry Entry) (*StoredEstavelle, erro
 	if err != nil {
 		return nil, err
 	}
-	record := &StoredEstavelle{AccountID: accountID, ID: base64.RawURLEncoding.EncodeToString(relay.RelayId), Address: relay.Address, TLSServerName: relay.TlsServerName, IdentityKey: entry.IdentityKey, Region: relay.Region}
+	record := &StoredEstavelle{AccountID: accountID, ID: base64.RawURLEncoding.EncodeToString(relay.EstavelleId), Address: relay.Address, TLSServerName: relay.TlsServerName, IdentityKey: entry.IdentityKey, Region: relay.Region}
 	if relay.Location != nil {
 		lat, lon := relay.Location.Lat, relay.Location.Lon
 		record.LocationLat, record.LocationLon, record.LocationLabel = &lat, &lon, relay.Location.Label
@@ -215,7 +215,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 // destroy(): the driver computes a to-be-destroyed instance's address
 // deterministically (karst-scaler-k8s's own bundle.rs/driver.rs) but never
 // learns its registry id, which is derived from the relay's own identity
-// key (RelayID), generated at the relay's own boot, not from its address.
+// key (EstavelleID), generated at the relay's own boot, not from its address.
 //
 // The id here cannot be derived from the input directly — a relay's id and
 // its address are independent values. So this looks the row up by address
@@ -614,7 +614,7 @@ func (s *Store) invalidateCompiled(accountID, id string) {
 func cloneRelay(relay *proto.KarstEstavelle) *proto.KarstEstavelle {
 	cloned := &proto.KarstEstavelle{
 		Address:       relay.Address,
-		RelayId:       append([]byte(nil), relay.RelayId...),
+		EstavelleId:       append([]byte(nil), relay.EstavelleId...),
 		IdentityKey:   append([]byte(nil), relay.IdentityKey...),
 		Region:        relay.Region,
 		TlsServerName: relay.TlsServerName,

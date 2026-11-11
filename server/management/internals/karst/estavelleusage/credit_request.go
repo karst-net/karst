@@ -31,13 +31,13 @@ const CreditSurrenderPath = "/karst/v1/billing/estavelle-credits/"
 
 const maxCreditRequestBytes = 8192
 
-var ErrInvalidCreditRequest = errors.New("relay usage: invalid cap credit request")
+var ErrInvalidCreditRequest = errors.New("estavelle usage: invalid cap credit request")
 
-// CreditRequest asks for an idempotent byte grant bound to one relay process
+// CreditRequest asks for an idempotent byte grant bound to one estavelle process
 // generation and one authorized customer mapping. Account ownership is always
 // resolved from the operator-approved mapping, never from this document.
 type CreditRequest struct {
-	RelayID        string `json:"relay_id"`
+	EstavelleID        string `json:"estavelle_id"`
 	DeploymentID   string `json:"deployment_id"`
 	MappingVersion string `json:"mapping_version"`
 	Generation     string `json:"generation"`
@@ -52,7 +52,7 @@ type CreditRequest struct {
 // an old grant; a crash therefore strands credits safely instead of guessing.
 type CreditSurrender struct {
 	GrantID        string `json:"grant_id"`
-	RelayID        string `json:"relay_id"`
+	EstavelleID        string `json:"estavelle_id"`
 	DeploymentID   string `json:"deployment_id"`
 	MappingVersion string `json:"mapping_version"`
 	Generation     string `json:"generation"`
@@ -86,7 +86,7 @@ func ParseCreditSurrender(body []byte) (CreditSurrender, error) {
 
 // SigningInput is a canonical transcript shared with the Rust relay client.
 func (r CreditSurrender) SigningInput() ([]byte, error) {
-	if !validCreditHex(r.GrantID, 16) || !validText(r.RelayID, 64) || !validText(r.DeploymentID, 128) ||
+	if !validCreditHex(r.GrantID, 16) || !validText(r.EstavelleID, 64) || !validText(r.DeploymentID, 128) ||
 		!validCreditHex(r.MappingVersion, 32) || !validCreditHex(r.Generation, 16) {
 		return nil, ErrInvalidCreditRequest
 	}
@@ -94,7 +94,7 @@ func (r CreditSurrender) SigningInput() ([]byte, error) {
 	if err != nil || strconv.FormatUint(consumed, 10) != r.ConsumedBytes {
 		return nil, ErrInvalidCreditRequest
 	}
-	fields := []string{"POST", CreditSurrenderPath + r.GrantID + "/surrender", r.GrantID, r.RelayID,
+	fields := []string{"POST", CreditSurrenderPath + r.GrantID + "/surrender", r.GrantID, r.EstavelleID,
 		r.DeploymentID, r.MappingVersion, r.Generation, r.ConsumedBytes}
 	out := []byte("karst-estavelle-credit-surrender-v1\x00")
 	for _, field := range fields {
@@ -155,7 +155,7 @@ func ParseCreditRequest(body []byte) (CreditRequest, error) {
 // SigningInput has one canonical, cross-language binary encoding. Decimal byte
 // counts remain strings in JSON but are encoded as a fixed-width uint64 here.
 func (r CreditRequest) SigningInput() ([]byte, error) {
-	if !validText(r.RelayID, 64) || !validText(r.DeploymentID, 128) || !validCreditHex(r.MappingVersion, 32) ||
+	if !validText(r.EstavelleID, 64) || !validText(r.DeploymentID, 128) || !validCreditHex(r.MappingVersion, 32) ||
 		!validCreditHex(r.Generation, 16) || !validCreditHex(r.RequestID, 16) {
 		return nil, ErrInvalidCreditRequest
 	}
@@ -163,8 +163,8 @@ func (r CreditRequest) SigningInput() ([]byte, error) {
 	if err != nil || requested == 0 || strconv.FormatUint(requested, 10) != r.RequestedBytes {
 		return nil, ErrInvalidCreditRequest
 	}
-	fields := []string{"POST", CreditRequestPath, r.RelayID, r.DeploymentID, r.MappingVersion, r.Generation, r.RequestID}
-	out := make([]byte, 0, 64+len(r.RelayID)+len(r.DeploymentID)+len(r.MappingVersion)+len(r.Generation)+len(r.RequestID))
+	fields := []string{"POST", CreditRequestPath, r.EstavelleID, r.DeploymentID, r.MappingVersion, r.Generation, r.RequestID}
+	out := make([]byte, 0, 64+len(r.EstavelleID)+len(r.DeploymentID)+len(r.MappingVersion)+len(r.Generation)+len(r.RequestID))
 	out = append(out, []byte("karst-estavelle-credit-request-v1\x00")...)
 	for _, field := range fields {
 		if len(field) > math.MaxUint16 {
@@ -195,7 +195,7 @@ func (s *Store) AuthorizeCreditRequest(ctx context.Context, request CreditReques
 	var mapping usage.EstavelleMapping
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var producer ManagedProducer
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("relay_id = ? AND enabled = ?", request.RelayID, true).Take(&producer).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("estavelle_id = ? AND enabled = ?", request.EstavelleID, true).Take(&producer).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrProducerMissing
 			}
@@ -205,7 +205,7 @@ func (s *Store) AuthorizeCreditRequest(ctx context.Context, request CreditReques
 		if err != nil || len(publicKey) != identity.PublicKeySize || producer.DeploymentID != request.DeploymentID {
 			return ErrProducerMissing
 		}
-		relayIDBytes, err := base64.RawURLEncoding.DecodeString(request.RelayID)
+		relayIDBytes, err := base64.RawURLEncoding.DecodeString(request.EstavelleID)
 		if err != nil || subtle.ConstantTimeCompare(relayIDBytes, estavellereg.EstavelleID(publicKey)) != 1 {
 			return ErrUnauthorized
 		}
@@ -213,8 +213,8 @@ func (s *Store) AuthorizeCreditRequest(ctx context.Context, request CreditReques
 			return ErrUnauthorized
 		}
 		var allowed AllowedMapping
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("relay_id = ? AND deployment_id = ? AND version = ? AND enabled = ?",
-			request.RelayID, request.DeploymentID, request.MappingVersion, true).Take(&allowed).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("estavelle_id = ? AND deployment_id = ? AND version = ? AND enabled = ?",
+			request.EstavelleID, request.DeploymentID, request.MappingVersion, true).Take(&allowed).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrMappingNotAllowed
 			}
@@ -251,7 +251,7 @@ func (s *Store) AuthorizeCreditSurrender(ctx context.Context, request CreditSurr
 	var mapping usage.EstavelleMapping
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var producer ManagedProducer
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("relay_id = ? AND enabled = ?", request.RelayID, true).Take(&producer).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("estavelle_id = ? AND enabled = ?", request.EstavelleID, true).Take(&producer).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrProducerMissing
 			}
@@ -261,7 +261,7 @@ func (s *Store) AuthorizeCreditSurrender(ctx context.Context, request CreditSurr
 		if err != nil || len(publicKey) != identity.PublicKeySize || producer.DeploymentID != request.DeploymentID {
 			return ErrProducerMissing
 		}
-		relayIDBytes, err := base64.RawURLEncoding.DecodeString(request.RelayID)
+		relayIDBytes, err := base64.RawURLEncoding.DecodeString(request.EstavelleID)
 		if err != nil || subtle.ConstantTimeCompare(relayIDBytes, estavellereg.EstavelleID(publicKey)) != 1 {
 			return ErrUnauthorized
 		}
@@ -269,8 +269,8 @@ func (s *Store) AuthorizeCreditSurrender(ctx context.Context, request CreditSurr
 			return ErrUnauthorized
 		}
 		var allowed AllowedMapping
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("relay_id = ? AND deployment_id = ? AND version = ? AND enabled = ?",
-			request.RelayID, request.DeploymentID, request.MappingVersion, true).Take(&allowed).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("estavelle_id = ? AND deployment_id = ? AND version = ? AND enabled = ?",
+			request.EstavelleID, request.DeploymentID, request.MappingVersion, true).Take(&allowed).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrMappingNotAllowed
 			}

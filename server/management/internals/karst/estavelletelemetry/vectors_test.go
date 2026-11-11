@@ -47,7 +47,7 @@ type vectorFile struct {
 }
 
 type signingInputCase struct {
-	RelayID       string `json:"relay_id"`
+	EstavelleID       string `json:"estavelle_id"`
 	Timestamp     int64  `json:"timestamp"`
 	LocalClients  int    `json:"local_clients"`
 	MeshPeers     int    `json:"mesh_peers"`
@@ -79,7 +79,7 @@ func vectorsPath(t *testing.T) string {
 		t.Fatal("cannot locate this source file")
 	}
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "..",
-		"spec", "vectors", "relay-telemetry-v1.json")
+		"spec", "vectors", "estavelle-telemetry-v1.json")
 }
 
 func TestVectors(t *testing.T) {
@@ -87,7 +87,7 @@ func TestVectors(t *testing.T) {
 		Spec: "ADR-0021 relay telemetry signing input",
 		Note: "Cross-implementation vectors for the 136-byte message " +
 			"ADR-0021/ADR-0048/ADR-0045's telemetry report is signed over: " +
-			"relay_id followed by thirteen big-endian u64 fields (the " +
+			"estavelle_id followed by thirteen big-endian u64 fields (the " +
 			"original six, plus has_location/lat_e7/lon_e7 added by " +
 			"ADR-0048, plus §4a's four RTT histogram buckets). Not the " +
 			"signature itself — ML-DSA-87 signing is hedged, so no " +
@@ -134,8 +134,8 @@ func TestVectors(t *testing.T) {
 		// other fields above check for — shows up as a vector mismatch.
 		{relayIDSeed: 0x66, timestamp: 1_700_000_000, localClients: 100, rttUnder20ms: 40, rtt20To50ms: 30, rtt50To100ms: 20, rttOver100ms: 10},
 	} {
-		relayID := pattern(32, tc.relayIDSeed)
-		// req.RelayID is deliberately left unset: signingInput takes the
+		estavelleID := pattern(32, tc.relayIDSeed)
+		// req.EstavelleID is deliberately left unset: signingInput takes the
 		// decoded relay id as its own argument and never reads the field.
 		req := report{
 			Timestamp:     tc.timestamp,
@@ -153,7 +153,7 @@ func TestVectors(t *testing.T) {
 			RTTOver100ms:  tc.rttOver100ms,
 		}
 		got.Cases = append(got.Cases, signingInputCase{
-			RelayID:       hex.EncodeToString(relayID),
+			EstavelleID:       hex.EncodeToString(estavelleID),
 			Timestamp:     tc.timestamp,
 			LocalClients:  tc.localClients,
 			MeshPeers:     tc.meshPeers,
@@ -167,7 +167,7 @@ func TestVectors(t *testing.T) {
 			RTT20To50ms:   tc.rtt20To50ms,
 			RTT50To100ms:  tc.rtt50To100ms,
 			RTTOver100ms:  tc.rttOver100ms,
-			Expected:      hex.EncodeToString(signingInput(relayID, req)),
+			Expected:      hex.EncodeToString(signingInput(estavelleID, req)),
 		})
 	}
 

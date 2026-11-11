@@ -45,7 +45,7 @@ pub async fn telemetry_loop(cfg: TelemetryConfig, ctx: Arc<Ctx>) {
     let tls = match crate::tls::webpki_client_config() {
         Ok(tls) => tls,
         Err(e) => {
-            eprintln!("karst-relay: telemetry: {e}; not reporting telemetry this run");
+            eprintln!("karst-estavelle: telemetry: {e}; not reporting telemetry this run");
             return;
         }
     };
@@ -58,8 +58,8 @@ pub async fn telemetry_loop(cfg: TelemetryConfig, ctx: Arc<Ctx>) {
         tick.tick().await;
         match tokio::time::timeout(REQUEST_TIMEOUT, report_once(&cfg, &tls, &ctx, location)).await {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => eprintln!("karst-relay: telemetry: {e}"),
-            Err(_) => eprintln!("karst-relay: telemetry: timed out"),
+            Ok(Err(e)) => eprintln!("karst-estavelle: telemetry: {e}"),
+            Err(_) => eprintln!("karst-estavelle: telemetry: timed out"),
         }
     }
 }
@@ -71,7 +71,7 @@ async fn report_once(
     location: Option<DetectedLocation>,
 ) -> Result<(), String> {
     let (host, port) = parse_authority(&cfg.control_url)?;
-    let relay_id = ctx.identity.relay_id();
+    let estavelle_id = ctx.identity.estavelle_id();
     let snapshot = ctx.snapshot();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -101,7 +101,7 @@ async fn report_once(
     );
 
     let msg = signing_input(
-        &relay_id,
+        &estavelle_id,
         timestamp,
         local_clients,
         mesh_peers,
@@ -122,11 +122,11 @@ async fn report_once(
         .sign_telemetry(&msg)
         .map_err(|e| format!("sign: {e}"))?;
 
-    let relay_id_b64 = Base64UrlUnpadded::encode_string(&relay_id);
+    let relay_id_b64 = Base64UrlUnpadded::encode_string(&estavelle_id);
     let signature_b64 = Base64::encode_string(&signature);
 
     let body = format!(
-        "{{\"relay_id\":\"{relay_id_b64}\",\"timestamp\":{timestamp},\
+        "{{\"estavelle_id\":\"{relay_id_b64}\",\"timestamp\":{timestamp},\
          \"local_clients\":{local_clients},\"mesh_peers\":{mesh_peers},\
          \"remote_clients\":{remote_clients},\"bytes_total\":{bytes_total},\
          \"uptime_secs\":{uptime_secs},\"has_location\":{has_location},\
@@ -189,7 +189,7 @@ async fn post(
     }
 }
 
-/// ADR-0021/ADR-0048/ADR-0045's exact 136-byte signed message: `relay_id`
+/// ADR-0021/ADR-0048/ADR-0045's exact 136-byte signed message: `estavelle_id`
 /// followed by thirteen big-endian `u64` fields (the original six, plus
 /// `has_location`/`lat_e7`/`lon_e7` added by ADR-0048, plus §4a's four RTT
 /// histogram buckets). Never the JSON body — JSON has no canonical
@@ -197,7 +197,7 @@ async fn post(
 /// identically without agreeing on field order or whitespace.
 ///
 /// Pure and deterministic, unlike the signature over it: this is what
-/// `spec/vectors/relay-telemetry-v1.json` pins against
+/// `spec/vectors/estavelle-telemetry-v1.json` pins against
 /// `relaytelemetry.signingInput` on the Go side, the same way
 /// `karst-control-v1.json` pins `channel.SigningInput` rather than a
 /// signature — ML-DSA-87 is hedged, so a signature is never reproducible
@@ -205,7 +205,7 @@ async fn post(
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn signing_input(
-    relay_id: &[u8; 32],
+    estavelle_id: &[u8; 32],
     timestamp: u64,
     local_clients: u64,
     mesh_peers: u64,
@@ -221,7 +221,7 @@ pub fn signing_input(
     rtt_over_100ms: u64,
 ) -> Vec<u8> {
     let mut msg = Vec::with_capacity(136);
-    msg.extend_from_slice(relay_id);
+    msg.extend_from_slice(estavelle_id);
     msg.extend_from_slice(&timestamp.to_be_bytes());
     msg.extend_from_slice(&local_clients.to_be_bytes());
     msg.extend_from_slice(&mesh_peers.to_be_bytes());

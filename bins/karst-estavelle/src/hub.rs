@@ -216,9 +216,9 @@ impl Conn {
             Admitted::Mesh { .. } => None,
         }
     }
-    fn relay_id(&self) -> Option<Id> {
+    fn estavelle_id(&self) -> Option<Id> {
         match self.peer {
-            Admitted::Mesh { relay_id } => Some(relay_id),
+            Admitted::Mesh { estavelle_id } => Some(estavelle_id),
             Admitted::Client { .. } => None,
         }
     }
@@ -314,8 +314,8 @@ impl Hub {
                 // replacement is not an arrival: the node never left.
                 (self.cfg.client_budget, prev, prev.is_none())
             }
-            Admitted::Mesh { relay_id } => {
-                let prev = self.by_mesh.insert(*relay_id, id);
+            Admitted::Mesh { estavelle_id } => {
+                let prev = self.by_mesh.insert(*estavelle_id, id);
                 (self.cfg.mesh_budget, prev, false)
             }
         };
@@ -410,7 +410,7 @@ impl Hub {
         conn.stats.frames_in += 1;
         conn.stats.bytes_in += len;
 
-        let is_mesh = conn.relay_id().is_some();
+        let is_mesh = conn.estavelle_id().is_some();
         match (*frame, is_mesh) {
             // ── Either role ───────────────────────────────────────────────
             (Frame::Ping(token), _) => {
@@ -448,14 +448,14 @@ impl Hub {
                 true,
             ) => Ok(self.deliver_from_mesh(id, src_id, dst_id, payload, roster, now_ms, mapping)),
             (Frame::PeerPresent { node_id }, true) => {
-                if let Some(relay_id) = self.conns.get(&id).and_then(Conn::relay_id) {
-                    self.presence.insert(node_id, relay_id);
+                if let Some(estavelle_id) = self.conns.get(&id).and_then(Conn::estavelle_id) {
+                    self.presence.insert(node_id, estavelle_id);
                 }
                 Ok(None)
             }
             (Frame::PeerGone { peer_id, .. }, true) => {
                 // Only the relay that claimed a node may retract it.
-                let owner = self.conns.get(&id).and_then(Conn::relay_id);
+                let owner = self.conns.get(&id).and_then(Conn::estavelle_id);
                 if self.presence.get(&peer_id).copied() == owner {
                     self.presence.remove(&peer_id);
                 }
@@ -827,13 +827,13 @@ impl Hub {
             }
         }
 
-        if let Some(relay_id) = conn.relay_id() {
-            if self.by_mesh.get(&relay_id) == Some(&id) {
-                self.by_mesh.remove(&relay_id);
+        if let Some(estavelle_id) = conn.estavelle_id() {
+            if self.by_mesh.get(&estavelle_id) == Some(&id) {
+                self.by_mesh.remove(&estavelle_id);
                 // Every presence claim this peer made goes with it. Leaving
                 // them would send Forwards into a connection that no longer
                 // exists, for as long as the process runs.
-                self.presence.retain(|_, owner| *owner != relay_id);
+                self.presence.retain(|_, owner| *owner != estavelle_id);
             }
         }
         released
@@ -880,8 +880,8 @@ impl Hub {
     /// Asked by the dialer rather than tracked there, so there is one answer
     /// to the question instead of two that can disagree.
     #[must_use]
-    pub fn has_mesh(&self, relay_id: &Id) -> bool {
-        self.by_mesh.contains_key(relay_id)
+    pub fn has_mesh(&self, estavelle_id: &Id) -> bool {
+        self.by_mesh.contains_key(estavelle_id)
     }
 
     /// Accounting for the operator — §7.4.
@@ -1067,7 +1067,7 @@ mod tests {
 
     fn mesh(relay: u8) -> Admitted {
         Admitted::Mesh {
-            relay_id: id(relay),
+            estavelle_id: id(relay),
         }
     }
 
@@ -1410,8 +1410,8 @@ mod tests {
                 src_id: id(1),
                 payload: &payload,
             },
-            Frame::RelayHello {
-                relay_id: id(1),
+            Frame::EstavelleHello {
+                estavelle_id: id(1),
                 relay_random: id(2),
             },
             Frame::Restarting {

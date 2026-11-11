@@ -28,14 +28,14 @@ type FinalInvoice struct {
 	ScheduleVersion string                `json:"schedule_version"`
 	Currency        string                `json:"currency"`
 	DeviceUsage     usage.DeviceReport    `json:"device_usage"`
-	RelayUsage      estavelleusage.Report `json:"relay_usage"`
+	EstavelleUsage      estavelleusage.Report `json:"estavelle_usage"`
 	DeviceInputHash string                `json:"device_input_sha256"`
-	RelayInputHash  string                `json:"relay_input_sha256"`
+	EstavelleInputHash  string                `json:"estavelle_input_sha256"`
 	DeviceExact     ExactAmount           `json:"device_exact_minor"`
-	RelayExact      ExactAmount           `json:"relay_exact_minor"`
+	EstavelleExact      ExactAmount           `json:"estavelle_exact_minor"`
 	TotalExact      ExactAmount           `json:"total_exact_minor"`
 	DeviceMinor     int64                 `json:"device_minor"`
-	RelayMinor      int64                 `json:"relay_minor"`
+	EstavelleMinor      int64                 `json:"estavelle_minor"`
 	TotalMinor      int64                 `json:"total_minor"`
 	FinalizedAt     time.Time             `json:"finalized_at"`
 }
@@ -71,9 +71,9 @@ func sameInvoiceInputs(a, b FinalInvoice) bool {
 	return a.SchemaVersion == b.SchemaVersion && a.AccountID == b.AccountID &&
 		a.PeriodStart.Equal(b.PeriodStart) && a.PeriodEnd.Equal(b.PeriodEnd) &&
 		a.ScheduleVersion == b.ScheduleVersion && a.Currency == b.Currency &&
-		a.DeviceInputHash == b.DeviceInputHash && a.RelayInputHash == b.RelayInputHash &&
-		a.DeviceExact == b.DeviceExact && a.RelayExact == b.RelayExact && a.TotalExact == b.TotalExact &&
-		a.DeviceMinor == b.DeviceMinor && a.RelayMinor == b.RelayMinor && a.TotalMinor == b.TotalMinor
+		a.DeviceInputHash == b.DeviceInputHash && a.EstavelleInputHash == b.EstavelleInputHash &&
+		a.DeviceExact == b.DeviceExact && a.EstavelleExact == b.EstavelleExact && a.TotalExact == b.TotalExact &&
+		a.DeviceMinor == b.DeviceMinor && a.EstavelleMinor == b.EstavelleMinor && a.TotalMinor == b.TotalMinor
 }
 
 func digestJSON(value any) (string, error) {

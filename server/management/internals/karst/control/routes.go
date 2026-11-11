@@ -94,7 +94,7 @@ func projectRouteOffers(networkMap *types.NetworkMap, self string) ([]*proto.Kar
 		}
 		offers = append(offers, &proto.KarstRouteOffer{
 			RouteId: string(route.GetResourceID()), Prefix: prefix.String(),
-			GatewayId: []byte(route.Peer), Metric: uint32(route.Metric), Kind: kind,
+			AvenId: []byte(route.Peer), Metric: uint32(route.Metric), Kind: kind,
 			Masquerade: route.Masquerade, KeepRoute: route.KeepRoute, Role: role,
 			DnsZone: route.DnsZone, PinnedEgressIp: route.PinnedEgressIP,
 		})
@@ -106,7 +106,7 @@ func projectRouteOffers(networkMap *types.NetworkMap, self string) ([]*proto.Kar
 		if offers[i].GetPrefix() != offers[j].GetPrefix() {
 			return offers[i].GetPrefix() < offers[j].GetPrefix()
 		}
-		return string(offers[i].GetGatewayId()) < string(offers[j].GetGatewayId())
+		return string(offers[i].GetAvenId()) < string(offers[j].GetAvenId())
 	})
 	return offers, nil
 }

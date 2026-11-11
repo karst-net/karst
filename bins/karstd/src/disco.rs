@@ -289,17 +289,17 @@ impl Disco {
     /// discard the reports §7.2's counting rule depends on.
     pub fn set_reflector(
         &mut self,
-        relay_id: [u8; 32],
+        estavelle_id: [u8; 32],
         key: [u8; 32],
         endpoint: SocketAddr,
     ) -> bool {
-        if !self.reflectors.contains_key(&relay_id) && self.reflectors.len() >= REFLECTORS_MAX {
+        if !self.reflectors.contains_key(&estavelle_id) && self.reflectors.len() >= REFLECTORS_MAX {
             return false;
         }
         let key = DiscoKey::new(key);
         let tag = key.reflect_tag();
         self.reflectors.insert(
-            relay_id,
+            estavelle_id,
             Reflector {
                 key,
                 tag,
@@ -322,8 +322,8 @@ impl Disco {
     /// `Reflect` to it would be talking to something that will never answer —
     /// and continuing to *advertise* what it last said would be offering peers
     /// a mapping nothing is keeping alive.
-    pub fn clear_reflector(&mut self, relay_id: &[u8; 32]) {
-        if self.reflectors.remove(relay_id).is_some() {
+    pub fn clear_reflector(&mut self, estavelle_id: &[u8; 32]) {
+        if self.reflectors.remove(estavelle_id).is_some() {
             self.republish();
         }
     }

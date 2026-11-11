@@ -12,7 +12,7 @@
 //! quietly wrong in the second:
 //!
 //! * **The client verifies before it transmits.** [`ClientHandshake`] will not
-//!   report itself established until `RelayAuth` has verified, and
+//!   report itself established until `EstavelleAuth` has verified, and
 //!   [`ClientHandshake::may_send`] is the guard the datapath is expected to
 //!   consult. `karst-control-v1.md` §9 is what happens otherwise: "the
 //!   connection will fail closed" is no comfort for a message already sent.
@@ -44,7 +44,7 @@ fn push_field(h: &mut Sha512, field: &[u8]) {
 
 fn transcript(
     label: &[u8],
-    relay_id: &[u8; ID_LEN],
+    estavelle_id: &[u8; ID_LEN],
     relay_random: &[u8; RANDOM_LEN],
     client_random: &[u8; RANDOM_LEN],
     peer_id: &[u8; ID_LEN],
@@ -52,7 +52,7 @@ fn transcript(
 ) -> [u8; 64] {
     let mut h = Sha512::new();
     h.update(label);
-    push_field(&mut h, relay_id);
+    push_field(&mut h, estavelle_id);
     push_field(&mut h, relay_random);
     push_field(&mut h, client_random);
     push_field(&mut h, peer_id);
@@ -62,12 +62,12 @@ fn transcript(
 
 /// The byte string a connecting peer signs — `spec/ponor-v1.md` §5.5.
 ///
-/// `relay_id` is bound so that a rogue relay cannot replay the client's
+/// `estavelle_id` is bound so that a rogue relay cannot replay the client's
 /// authentication to the real one; `role` is bound so that a client's
 /// authentication cannot be accepted as a mesh peer's.
 #[must_use]
 pub fn client_auth_signing_input(
-    relay_id: &[u8; ID_LEN],
+    estavelle_id: &[u8; ID_LEN],
     relay_random: &[u8; RANDOM_LEN],
     client_random: &[u8; RANDOM_LEN],
     peer_id: &[u8; ID_LEN],
@@ -75,7 +75,7 @@ pub fn client_auth_signing_input(
 ) -> [u8; 64] {
     transcript(
         LABEL_CLIENT_AUTH,
-        relay_id,
+        estavelle_id,
         relay_random,
         client_random,
         peer_id,
@@ -89,7 +89,7 @@ pub fn client_auth_signing_input(
 /// party's signature is ever a valid value for the other's.
 #[must_use]
 pub fn relay_auth_signing_input(
-    relay_id: &[u8; ID_LEN],
+    estavelle_id: &[u8; ID_LEN],
     relay_random: &[u8; RANDOM_LEN],
     client_random: &[u8; RANDOM_LEN],
     peer_id: &[u8; ID_LEN],
@@ -97,7 +97,7 @@ pub fn relay_auth_signing_input(
 ) -> [u8; 64] {
     transcript(
         LABEL_RELAY_AUTH,
-        relay_id,
+        estavelle_id,
         relay_random,
         client_random,
         peer_id,
@@ -155,7 +155,7 @@ pub trait Roster {
     fn client(&self, node_id: &[u8; ID_LEN]) -> Option<RosterEntry>;
 
     /// The mesh peer's entry, or `None` if it is not a configured mesh peer.
-    fn mesh_peer(&self, relay_id: &[u8; ID_LEN]) -> Option<EstavelleEntry>;
+    fn mesh_peer(&self, estavelle_id: &[u8; ID_LEN]) -> Option<EstavelleEntry>;
 
     /// A syntactically valid ML-DSA-87 public key that verifies nothing.
     ///
@@ -188,7 +188,7 @@ pub enum Admitted {
     /// Another relay in the same region.
     Mesh {
         /// Its 32-byte id.
-        relay_id: [u8; ID_LEN],
+        estavelle_id: [u8; ID_LEN],
     },
 }
 
@@ -209,7 +209,7 @@ enum ClientState {
 pub struct ClientHandshake {
     role: Role,
     peer_id: [u8; ID_LEN],
-    expected_relay_id: [u8; ID_LEN],
+    expected_estavelle_id: [u8; ID_LEN],
     relay_identity_pk: Vec<u8>,
     client_random: [u8; RANDOM_LEN],
     state: ClientState,
@@ -228,21 +228,21 @@ impl ClientHandshake {
     pub fn new(
         role: Role,
         peer_id: [u8; ID_LEN],
-        expected_relay_id: [u8; ID_LEN],
+        expected_estavelle_id: [u8; ID_LEN],
         relay_identity_pk: Vec<u8>,
         client_random: [u8; RANDOM_LEN],
     ) -> Self {
         Self {
             role,
             peer_id,
-            expected_relay_id,
+            expected_estavelle_id,
             relay_identity_pk,
             client_random,
             state: ClientState::AwaitingHello,
         }
     }
 
-    /// Consume `RelayHello` and produce the encoded `ClientAuth` to send.
+    /// Consume `EstavelleHello` and produce the encoded `ClientAuth` to send.
     ///
     /// # Errors
     /// [`Error::OutOfOrder`] if a hello has already been seen,
@@ -254,8 +254,8 @@ impl ClientHandshake {
         frame: &Frame<'_>,
         signer: &impl Signer,
     ) -> Result<Vec<u8>, Error> {
-        let Frame::RelayHello {
-            relay_id,
+        let Frame::EstavelleHello {
+            estavelle_id,
             relay_random,
         } = *frame
         else {
@@ -265,13 +265,13 @@ impl ClientHandshake {
             return self.fail(Error::OutOfOrder);
         }
         // Checked before signing, not after: signing over an impostor's
-        // relay_id would hand it a signature naming itself.
-        if relay_id != self.expected_relay_id {
+        // estavelle_id would hand it a signature naming itself.
+        if estavelle_id != self.expected_estavelle_id {
             return self.fail(Error::RelayIdentityMismatch);
         }
 
         let input = client_auth_signing_input(
-            &relay_id,
+            &estavelle_id,
             &relay_random,
             &self.client_random,
             &self.peer_id,
@@ -294,7 +294,7 @@ impl ClientHandshake {
         Ok(bytes)
     }
 
-    /// Verify `RelayAuth` and establish the connection.
+    /// Verify `EstavelleAuth` and establish the connection.
     ///
     /// # Errors
     /// [`Error::OutOfOrder`] if no hello has been seen or the handshake is
@@ -305,7 +305,7 @@ impl ClientHandshake {
         frame: &Frame<'_>,
         verifier: &impl Verifier,
     ) -> Result<(), Error> {
-        let Frame::RelayAuth { signature } = *frame else {
+        let Frame::EstavelleAuth { signature } = *frame else {
             return self.fail(Error::OutOfOrder).map(|_: Vec<u8>| ());
         };
         let ClientState::AwaitingAuth { relay_random } = self.state else {
@@ -313,7 +313,7 @@ impl ClientHandshake {
         };
 
         let input = relay_auth_signing_input(
-            &self.expected_relay_id,
+            &self.expected_estavelle_id,
             &relay_random,
             &self.client_random,
             &self.peer_id,
@@ -361,7 +361,7 @@ enum RelayState {
 /// The listening side of the handshake.
 #[derive(Debug)]
 pub struct EstavelleHandshake {
-    relay_id: [u8; ID_LEN],
+    estavelle_id: [u8; ID_LEN],
     relay_random: [u8; RANDOM_LEN],
     state: RelayState,
 }
@@ -370,9 +370,9 @@ impl EstavelleHandshake {
     /// Begin a handshake. `relay_random` must be 32 fresh random bytes, per
     /// connection — it is the freshness the peer's signature is bound to.
     #[must_use]
-    pub fn new(relay_id: [u8; ID_LEN], relay_random: [u8; RANDOM_LEN]) -> Self {
+    pub fn new(estavelle_id: [u8; ID_LEN], relay_random: [u8; RANDOM_LEN]) -> Self {
         Self {
-            relay_id,
+            estavelle_id,
             relay_random,
             state: RelayState::AwaitingAuth,
         }
@@ -382,14 +382,14 @@ impl EstavelleHandshake {
     /// over a value it has not yet seen — §7.1.
     #[must_use]
     pub fn hello(&self) -> Frame<'static> {
-        Frame::RelayHello {
-            relay_id: self.relay_id,
+        Frame::EstavelleHello {
+            estavelle_id: self.estavelle_id,
             relay_random: self.relay_random,
         }
     }
 
     /// Verify `ClientAuth`, decide admission, and produce the encoded
-    /// `RelayAuth` to send.
+    /// `EstavelleAuth` to send.
     ///
     /// The peer's public key is obtained from `roster` and from nowhere else.
     /// On a roster miss the signature is still verified, against
@@ -439,13 +439,13 @@ impl EstavelleHandshake {
                 None => (roster.decoy_key().to_vec(), None),
             },
             Role::Mesh => match roster.mesh_peer(&peer_id) {
-                Some(e) => (e.identity_pk, Some(Admitted::Mesh { relay_id: peer_id })),
+                Some(e) => (e.identity_pk, Some(Admitted::Mesh { estavelle_id: peer_id })),
                 None => (roster.decoy_key().to_vec(), None),
             },
         };
 
         let input = client_auth_signing_input(
-            &self.relay_id,
+            &self.estavelle_id,
             &self.relay_random,
             &client_random,
             &peer_id,
@@ -461,7 +461,7 @@ impl EstavelleHandshake {
         };
 
         let reply = relay_auth_signing_input(
-            &self.relay_id,
+            &self.estavelle_id,
             &self.relay_random,
             &client_random,
             &peer_id,
@@ -473,7 +473,7 @@ impl EstavelleHandshake {
         };
 
         self.state = RelayState::Established;
-        Ok((admitted, Frame::RelayAuth { signature: &sig }.to_vec()))
+        Ok((admitted, Frame::EstavelleAuth { signature: &sig }.to_vec()))
     }
 
     /// Whether a peer has been admitted.
@@ -584,8 +584,8 @@ mod tests {
         fn client(&self, node_id: &[u8; ID_LEN]) -> Option<RosterEntry> {
             self.clients.get(node_id).cloned()
         }
-        fn mesh_peer(&self, relay_id: &[u8; ID_LEN]) -> Option<EstavelleEntry> {
-            self.mesh.get(relay_id).cloned()
+        fn mesh_peer(&self, estavelle_id: &[u8; ID_LEN]) -> Option<EstavelleEntry> {
+            self.mesh.get(estavelle_id).cloned()
         }
         fn decoy_key(&self) -> &[u8] {
             &self.decoy
@@ -598,7 +598,7 @@ mod tests {
 
     struct Fixture {
         node_id: [u8; ID_LEN],
-        relay_id: [u8; ID_LEN],
+        estavelle_id: [u8; ID_LEN],
         node_key: StubKey,
         relay_key: StubKey,
     }
@@ -607,7 +607,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 node_id: id(0x11),
-                relay_id: id(0x22),
+                estavelle_id: id(0x22),
                 node_key: StubKey(0xaa),
                 relay_key: StubKey(0xbb),
             }
@@ -616,13 +616,13 @@ mod tests {
             ClientHandshake::new(
                 Role::Client,
                 self.node_id,
-                self.relay_id,
+                self.estavelle_id,
                 self.relay_key.public(),
                 id(0x33),
             )
         }
         fn relay(&self) -> EstavelleHandshake {
-            EstavelleHandshake::new(self.relay_id, id(0x44))
+            EstavelleHandshake::new(self.estavelle_id, id(0x44))
         }
         fn roster(&self) -> TestRoster {
             TestRoster::new().with_client(self.node_id, &self.node_key, "aquifer-a")
@@ -727,15 +727,15 @@ mod tests {
     #[test]
     fn a_mesh_peer_is_admitted_as_a_mesh_peer() {
         let f = Fixture::new();
-        let peer_relay_id = id(0x55);
+        let peer_estavelle_id = id(0x55);
         let peer_key = StubKey(0xdd);
-        let roster = TestRoster::new().with_mesh(peer_relay_id, &peer_key);
+        let roster = TestRoster::new().with_mesh(peer_estavelle_id, &peer_key);
         let v = StubVerifier::default();
 
         let mut client = ClientHandshake::new(
             Role::Mesh,
-            peer_relay_id,
-            f.relay_id,
+            peer_estavelle_id,
+            f.estavelle_id,
             f.relay_key.public(),
             id(0x66),
         );
@@ -753,7 +753,7 @@ mod tests {
         assert_eq!(
             admitted,
             Admitted::Mesh {
-                relay_id: peer_relay_id
+                estavelle_id: peer_estavelle_id
             }
         );
 
@@ -831,7 +831,7 @@ mod tests {
         let v = StubVerifier::default();
 
         let mut client = f.client();
-        let first = EstavelleHandshake::new(f.relay_id, id(0x44));
+        let first = EstavelleHandshake::new(f.estavelle_id, id(0x44));
         let auth_bytes = client
             .on_relay_hello(&first.hello(), &f.node_key)
             .expect("hello accepted");
@@ -840,7 +840,7 @@ mod tests {
             .expect("complete");
 
         // Same relay, different connection: a fresh relay_random.
-        let mut second = EstavelleHandshake::new(f.relay_id, id(0x77));
+        let mut second = EstavelleHandshake::new(f.estavelle_id, id(0x77));
         assert_eq!(
             second.on_client_auth(&auth, &roster, &v, &f.relay_key),
             Err(Error::Rejected)
@@ -874,7 +874,7 @@ mod tests {
         let mut client_b = ClientHandshake::new(
             Role::Client,
             f.node_id,
-            f.relay_id,
+            f.estavelle_id,
             f.relay_key.public(),
             id(0x88),
         );
@@ -915,7 +915,7 @@ mod tests {
 
         let junk = vec![0u8; SIG_LEN];
         assert_eq!(
-            client.on_relay_auth(&Frame::RelayAuth { signature: &junk }, &v),
+            client.on_relay_auth(&Frame::EstavelleAuth { signature: &junk }, &v),
             Err(Error::Rejected)
         );
         assert!(!client.may_send());

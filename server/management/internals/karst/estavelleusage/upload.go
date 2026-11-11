@@ -21,7 +21,7 @@ const maxAuthorizationBytes = 6400
 var ErrInvalidUploadAuth = errors.New("relay usage: invalid upload authentication")
 
 type UploadAuthorization struct {
-	RelayID         string
+	EstavelleID         string
 	TimestampMicros uint64
 	Nonce           [32]byte
 	Signature       []byte
@@ -43,8 +43,8 @@ func ParseUploadAuthorization(value string) (UploadAuthorization, error) {
 	if len(parts) != 4 {
 		return auth, ErrInvalidUploadAuth
 	}
-	relayID, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil || len(relayID) != 32 || base64.RawURLEncoding.EncodeToString(relayID) != parts[0] {
+	estavelleID, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil || len(estavelleID) != 32 || base64.RawURLEncoding.EncodeToString(estavelleID) != parts[0] {
 		return auth, ErrInvalidUploadAuth
 	}
 	timestamp, err := strconv.ParseUint(parts[1], 10, 64)
@@ -59,7 +59,7 @@ func ParseUploadAuthorization(value string) (UploadAuthorization, error) {
 	if err != nil || len(signature) != identity.SignatureSize || base64.StdEncoding.EncodeToString(signature) != parts[3] {
 		return auth, ErrInvalidUploadAuth
 	}
-	auth.RelayID = parts[0]
+	auth.EstavelleID = parts[0]
 	auth.TimestampMicros = timestamp
 	copy(auth.Nonce[:], nonce)
 	if auth.Nonce == [32]byte{} {

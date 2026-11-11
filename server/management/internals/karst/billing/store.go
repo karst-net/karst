@@ -166,7 +166,7 @@ func (s *Store) FinalizeInvoice(ctx context.Context, deviceReport usage.DeviceRe
 	if err != nil {
 		return FinalInvoice{}, err
 	}
-	if !estimate.UsageComplete || len(estimate.Incomplete) != 0 || estimate.DeviceExact == nil || estimate.RelayExact == nil || estimate.TotalExact == nil {
+	if !estimate.UsageComplete || len(estimate.Incomplete) != 0 || estimate.DeviceExact == nil || estimate.EstavelleExact == nil || estimate.TotalExact == nil {
 		return FinalInvoice{}, ErrInvoiceIncomplete
 	}
 	assignment, err := s.Assignment(ctx, start, end)
@@ -195,7 +195,7 @@ func (s *Store) FinalizeInvoice(ctx context.Context, deviceReport usage.DeviceRe
 	if err != nil {
 		return FinalInvoice{}, err
 	}
-	relayExact, err := parseExactNonnegative(*estimate.RelayExact)
+	relayExact, err := parseExactNonnegative(*estimate.EstavelleExact)
 	if err != nil {
 		return FinalInvoice{}, err
 	}
@@ -221,10 +221,10 @@ func (s *Store) FinalizeInvoice(ctx context.Context, deviceReport usage.DeviceRe
 		SchemaVersion: "invoice-inputs-v1", AccountID: accountID,
 		PeriodStart: time.UnixMicro(startUS).UTC(), PeriodEnd: time.UnixMicro(endUS).UTC(),
 		ScheduleVersion: schedule.Version, Currency: schedule.Currency,
-		DeviceUsage: deviceReport, RelayUsage: relayReport,
-		DeviceInputHash: deviceInputHash, RelayInputHash: relayInputHash,
-		DeviceExact: *estimate.DeviceExact, RelayExact: *estimate.RelayExact, TotalExact: *estimate.TotalExact,
-		DeviceMinor: deviceMinor, RelayMinor: relayMinor, TotalMinor: deviceMinor + relayMinor,
+		DeviceUsage: deviceReport, EstavelleUsage: relayReport,
+		DeviceInputHash: deviceInputHash, EstavelleInputHash: relayInputHash,
+		DeviceExact: *estimate.DeviceExact, EstavelleExact: *estimate.EstavelleExact, TotalExact: *estimate.TotalExact,
+		DeviceMinor: deviceMinor, EstavelleMinor: relayMinor, TotalMinor: deviceMinor + relayMinor,
 		FinalizedAt: time.Now().UTC(),
 	}
 	snapshot, err := json.Marshal(invoice)
@@ -295,8 +295,8 @@ func (s *Store) Invoice(ctx context.Context, start, end time.Time) (FinalInvoice
 	if err != nil || deviceHash != invoice.DeviceInputHash {
 		return FinalInvoice{}, errors.New("billing: device invoice input digest mismatch")
 	}
-	relayHash, err := digestJSON(invoice.RelayUsage)
-	if err != nil || relayHash != invoice.RelayInputHash {
+	relayHash, err := digestJSON(invoice.EstavelleUsage)
+	if err != nil || relayHash != invoice.EstavelleInputHash {
 		return FinalInvoice{}, errors.New("billing: relay invoice input digest mismatch")
 	}
 	schedule, err := s.Schedule(ctx, invoice.ScheduleVersion)
@@ -306,16 +306,16 @@ func (s *Store) Invoice(ctx context.Context, start, end time.Time) (FinalInvoice
 	if schedule.Currency != invoice.Currency {
 		return FinalInvoice{}, errors.New("billing: invoice currency differs from its schedule")
 	}
-	estimate, err := Calculate(invoice.DeviceUsage, invoice.RelayUsage, schedule)
-	if err != nil || !estimate.UsageComplete || estimate.DeviceExact == nil || estimate.RelayExact == nil || estimate.TotalExact == nil ||
-		*estimate.DeviceExact != invoice.DeviceExact || *estimate.RelayExact != invoice.RelayExact || *estimate.TotalExact != invoice.TotalExact {
+	estimate, err := Calculate(invoice.DeviceUsage, invoice.EstavelleUsage, schedule)
+	if err != nil || !estimate.UsageComplete || estimate.DeviceExact == nil || estimate.EstavelleExact == nil || estimate.TotalExact == nil ||
+		*estimate.DeviceExact != invoice.DeviceExact || *estimate.EstavelleExact != invoice.EstavelleExact || *estimate.TotalExact != invoice.TotalExact {
 		return FinalInvoice{}, errors.New("billing: invoice amounts do not match their usage inputs")
 	}
 	deviceAmount, err := parseExactNonnegative(invoice.DeviceExact)
 	if err != nil {
 		return FinalInvoice{}, errors.New("billing: invalid finalized device exact amount")
 	}
-	relayAmount, err := parseExactNonnegative(invoice.RelayExact)
+	relayAmount, err := parseExactNonnegative(invoice.EstavelleExact)
 	if err != nil {
 		return FinalInvoice{}, errors.New("billing: invalid finalized relay exact amount")
 	}
@@ -328,7 +328,7 @@ func (s *Store) Invoice(ctx context.Context, start, end time.Time) (FinalInvoice
 		return FinalInvoice{}, errors.New("billing: invalid finalized device line amount")
 	}
 	relayMinor, err := truncateMinor(relayAmount)
-	if err != nil || relayMinor != invoice.RelayMinor || deviceMinor > int64(^uint64(0)>>1)-relayMinor || deviceMinor+relayMinor != invoice.TotalMinor {
+	if err != nil || relayMinor != invoice.EstavelleMinor || deviceMinor > int64(^uint64(0)>>1)-relayMinor || deviceMinor+relayMinor != invoice.TotalMinor {
 		return FinalInvoice{}, errors.New("billing: invalid finalized relay or total amount")
 	}
 	return invoice, nil

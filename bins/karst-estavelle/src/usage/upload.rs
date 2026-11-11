@@ -24,13 +24,13 @@ pub(super) async fn run(
     mut cancel: tokio::sync::watch::Receiver<bool>,
 ) {
     let Some((host, port)) = parse_origin(&url) else {
-        eprintln!("karst-relay: usage upload: invalid HTTPS origin");
+        eprintln!("karst-estavelle: usage upload: invalid HTTPS origin");
         return;
     };
     let tls = match crate::tls::webpki_client_config() {
         Ok(tls) => tls,
         Err(e) => {
-            eprintln!("karst-relay: usage upload: {e}");
+            eprintln!("karst-estavelle: usage upload: {e}");
             return;
         }
     };
@@ -45,12 +45,12 @@ pub(super) async fn run(
                         return;
                     }
                     if let Err(e) = upload_one(&host, port, &tls, &identity, &commands, id).await {
-                        eprintln!("karst-relay: usage upload: {e}");
+                        eprintln!("karst-estavelle: usage upload: {e}");
                         break;
                     }
                 }
             }
-            Err(e) => eprintln!("karst-relay: usage upload: spool: {e}"),
+            Err(e) => eprintln!("karst-estavelle: usage upload: spool: {e}"),
         }
         tokio::select! {
             () = tokio::time::sleep(RETRY_DELAY) => {},
@@ -115,9 +115,9 @@ async fn upload_one(
         getrandom::fill(&mut nonce).map_err(|_| "request nonce entropy unavailable".to_owned())?;
         let transcript = usage_upload_signing_input(timestamp, &nonce, &body);
         let signature = identity.sign_usage_upload(&transcript).map_err(|e| format!("sign: {e}"))?;
-        let relay_id = Base64UrlUnpadded::encode_string(&identity.relay_id());
+        let estavelle_id = Base64UrlUnpadded::encode_string(&identity.estavelle_id());
         let nonce_hex = nonce.iter().fold(String::with_capacity(64), |mut out, byte| { use std::fmt::Write as _; let _ = write!(out, "{byte:02x}"); out });
-        let authorization = format!("KarstUsage {relay_id}.{timestamp}.{nonce_hex}.{}", Base64::encode_string(&signature));
+        let authorization = format!("KarstUsage {estavelle_id}.{timestamp}.{nonce_hex}.{}", Base64::encode_string(&signature));
         let authority_host = if host.contains(':') { format!("[{host}]") } else { host.to_owned() };
         let host_header = if port == 443 { authority_host } else { format!("{authority_host}:{port}") };
         let request = format!("POST {USAGE_UPLOAD_PATH} HTTP/1.1\r\nHost: {host_header}\r\nAuthorization: {authorization}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());

@@ -37,11 +37,11 @@ func TestKarstGroupDeletionDependencies(t *testing.T) {
 		{name: "binding", document: `{"groups":{"group:legacy":["alice"]},"groupBindings":{"group:legacy":"g"}}`, resource: "legacy membership mapping"},
 		{name: "relay", resource: "relay", service: &estavelleservice.Service{AccountID: "a", ID: "Denver", AllowedGroups: []string{"g"}}},
 		{name: "disabled relay", resource: "relay", service: &estavelleservice.Service{AccountID: "a", ID: "Denver", PonorDisabled: true, AllowedGroups: []string{"g"}}},
-		{name: "retained admission", resource: "relay admission", backend: &estavelleservice.BackendAccess{AccountID: "a", RelayID: "backend", Groups: []string{"g"}}},
+		{name: "retained admission", resource: "relay admission", backend: &estavelleservice.BackendAccess{AccountID: "a", EstavelleID: "backend", Groups: []string{"g"}}},
 		{name: "unbound legacy group is not a registry reference", document: `{"groups":{"group:g":["alice"]},"acls":[{"action":"accept","src":["group:g"],"dst":["*:443"]}]}`},
 		{name: "unrelated grant", document: `{"grants":[{"id":"web","name":"Web","source_groups":["other"],"target_groups":["elsewhere"],"ports":"443"}]}`},
 		{name: "other tenant relay", service: &estavelleservice.Service{AccountID: "b", ID: "Denver", AllowedGroups: []string{"g"}}},
-		{name: "empty deny admission", backend: &estavelleservice.BackendAccess{AccountID: "a", RelayID: "backend"}},
+		{name: "empty deny admission", backend: &estavelleservice.BackendAccess{AccountID: "a", EstavelleID: "backend"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

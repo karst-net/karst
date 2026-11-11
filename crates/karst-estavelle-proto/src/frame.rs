@@ -8,8 +8,8 @@
 
 use crate::consts::{
     CLIENT_AUTH_LEN, ENDPOINT_LEN, FRAME_HEADER, FRAME_PAYLOAD_MAX, ID_LEN, PAYLOAD_MAX,
-    PAYLOAD_MIN, PEER_GONE_LEN, RANDOM_LEN, REFLECT_KEY_LEN, REFLECT_OFFER_LEN, RELAY_AUTH_LEN,
-    RELAY_HELLO_LEN, RESTARTING_LEN, SIG_LEN, TOKEN_LEN, VERSION,
+    PAYLOAD_MIN, PEER_GONE_LEN, RANDOM_LEN, REFLECT_KEY_LEN, REFLECT_OFFER_LEN, ESTAVELLE_AUTH_LEN,
+    ESTAVELLE_HELLO_LEN, RESTARTING_LEN, SIG_LEN, TOKEN_LEN, VERSION,
 };
 use crate::Error;
 
@@ -109,9 +109,9 @@ pub enum Frame<'a> {
     /// `0x01` relay → peer. The relay speaks first, so the peer signs over a
     /// value it has not yet seen and a captured `ClientAuth` is useless
     /// elsewhere — §7.1.
-    RelayHello {
+    EstavelleHello {
         /// `SHA-256("karst-estavelle-id-v1" ‖ relay_identity_pk)`.
-        relay_id: [u8; ID_LEN],
+        estavelle_id: [u8; ID_LEN],
         /// Freshness for the peer's signature.
         relay_random: [u8; RANDOM_LEN],
     },
@@ -120,7 +120,7 @@ pub enum Frame<'a> {
     ClientAuth {
         /// Client or mesh peer.
         role: Role,
-        /// `node_id` for a client, `relay_id` for a mesh peer.
+        /// `node_id` for a client, `estavelle_id` for a mesh peer.
         peer_id: [u8; ID_LEN],
         /// Freshness for the relay's signature.
         client_random: [u8; RANDOM_LEN],
@@ -129,7 +129,7 @@ pub enum Frame<'a> {
     },
     /// `0x03` relay → peer. The peer MUST verify this before sending anything
     /// beyond `ClientAuth`.
-    RelayAuth {
+    EstavelleAuth {
         /// ML-DSA-65 over §5.5.
         signature: &'a [u8],
     },
@@ -193,7 +193,7 @@ pub enum Frame<'a> {
     /// stays on the relay when that is not enough.
     ReflectOffer {
         /// 32 bytes from a CSPRNG, minted for this connection and forgotten
-        /// when it closes. Sent only after `RelayAuth`, so a client that
+        /// when it closes. Sent only after `EstavelleAuth`, so a client that
         /// follows §7.1 has already authenticated whoever minted it.
         reflect_key: [u8; REFLECT_KEY_LEN],
         /// Where to send `Reflect`, in `resurgence-v1.md` §6.2's encoding.
@@ -206,9 +206,9 @@ pub enum Frame<'a> {
     },
 }
 
-const T_RELAY_HELLO: u8 = 0x01;
+const T_ESTAVELLE_HELLO: u8 = 0x01;
 const T_CLIENT_AUTH: u8 = 0x02;
-const T_RELAY_AUTH: u8 = 0x03;
+const T_ESTAVELLE_AUTH: u8 = 0x03;
 const T_SEND_PACKET: u8 = 0x04;
 const T_RECV_PACKET: u8 = 0x05;
 const T_PEER_GONE: u8 = 0x06;
@@ -230,9 +230,9 @@ impl Frame<'_> {
     #[must_use]
     pub const fn frame_type(&self) -> u8 {
         match self {
-            Self::RelayHello { .. } => T_RELAY_HELLO,
+            Self::EstavelleHello { .. } => T_ESTAVELLE_HELLO,
             Self::ClientAuth { .. } => T_CLIENT_AUTH,
-            Self::RelayAuth { .. } => T_RELAY_AUTH,
+            Self::EstavelleAuth { .. } => T_ESTAVELLE_AUTH,
             Self::SendPacket { .. } => T_SEND_PACKET,
             Self::RecvPacket { .. } => T_RECV_PACKET,
             Self::PeerGone { .. } => T_PEER_GONE,
@@ -257,12 +257,12 @@ impl Frame<'_> {
         out.extend_from_slice(&[self.frame_type(), 0, 0, 0]);
 
         match *self {
-            Self::RelayHello {
-                relay_id,
+            Self::EstavelleHello {
+                estavelle_id,
                 relay_random,
             } => {
                 out.push(VERSION);
-                out.extend_from_slice(&relay_id);
+                out.extend_from_slice(&estavelle_id);
                 out.extend_from_slice(&relay_random);
             }
             Self::ClientAuth {
@@ -277,7 +277,7 @@ impl Frame<'_> {
                 out.extend_from_slice(&client_random);
                 out.extend_from_slice(signature);
             }
-            Self::RelayAuth { signature } => {
+            Self::EstavelleAuth { signature } => {
                 out.push(VERSION);
                 out.extend_from_slice(signature);
             }
@@ -356,9 +356,9 @@ impl Frame<'_> {
     #[must_use]
     pub fn encoded_len(&self) -> usize {
         let payload = match *self {
-            Self::RelayHello { .. } => RELAY_HELLO_LEN,
+            Self::EstavelleHello { .. } => ESTAVELLE_HELLO_LEN,
             Self::ClientAuth { signature, .. } => CLIENT_AUTH_LEN - SIG_LEN + signature.len(),
-            Self::RelayAuth { signature } => RELAY_AUTH_LEN - SIG_LEN + signature.len(),
+            Self::EstavelleAuth { signature } => ESTAVELLE_AUTH_LEN - SIG_LEN + signature.len(),
             Self::SendPacket { payload, .. } | Self::RecvPacket { payload, .. } => {
                 ID_LEN + payload.len()
             }
@@ -430,17 +430,17 @@ fn check_version(b: u8) -> Result<(), Error> {
 fn decode_payload(frame_type: u8, p: &[u8]) -> Result<Frame<'_>, Error> {
     let n = p.len();
     match frame_type {
-        T_RELAY_HELLO => {
-            if n != RELAY_HELLO_LEN {
+        T_ESTAVELLE_HELLO => {
+            if n != ESTAVELLE_HELLO_LEN {
                 return Err(bad_len(frame_type, n));
             }
             let (version, rest) = take::<1>(p).ok_or_else(|| bad_len(frame_type, n))?;
             check_version(version[0])?;
-            let (relay_id, rest) = take::<ID_LEN>(rest).ok_or_else(|| bad_len(frame_type, n))?;
+            let (estavelle_id, rest) = take::<ID_LEN>(rest).ok_or_else(|| bad_len(frame_type, n))?;
             let (relay_random, _) =
                 take::<RANDOM_LEN>(rest).ok_or_else(|| bad_len(frame_type, n))?;
-            Ok(Frame::RelayHello {
-                relay_id: *relay_id,
+            Ok(Frame::EstavelleHello {
+                estavelle_id: *estavelle_id,
                 relay_random: *relay_random,
             })
         }
@@ -461,13 +461,13 @@ fn decode_payload(frame_type: u8, p: &[u8]) -> Result<Frame<'_>, Error> {
                 signature,
             })
         }
-        T_RELAY_AUTH => {
-            if n != RELAY_AUTH_LEN {
+        T_ESTAVELLE_AUTH => {
+            if n != ESTAVELLE_AUTH_LEN {
                 return Err(bad_len(frame_type, n));
             }
             let (version, signature) = take::<1>(p).ok_or_else(|| bad_len(frame_type, n))?;
             check_version(version[0])?;
-            Ok(Frame::RelayAuth { signature })
+            Ok(Frame::EstavelleAuth { signature })
         }
         T_SEND_PACKET | T_RECV_PACKET => {
             let (id, payload) = take::<ID_LEN>(p).ok_or_else(|| bad_len(frame_type, n))?;
@@ -588,8 +588,8 @@ mod tests {
         let token = [1, 2, 3, 4, 5, 6, 7, 8];
         let payload = [0xab; 1200];
         for f in [
-            Frame::RelayHello {
-                relay_id: id(1),
+            Frame::EstavelleHello {
+                estavelle_id: id(1),
                 relay_random: id(2),
             },
             Frame::ClientAuth {
@@ -604,7 +604,7 @@ mod tests {
                 client_random: id(4),
                 signature: &SIG,
             },
-            Frame::RelayAuth { signature: &SIG },
+            Frame::EstavelleAuth { signature: &SIG },
             Frame::SendPacket {
                 dst_id: id(5),
                 payload: &payload,
@@ -641,11 +641,11 @@ mod tests {
 
     #[test]
     fn encoded_lengths_match_the_spec() {
-        let f = Frame::RelayHello {
-            relay_id: id(1),
+        let f = Frame::EstavelleHello {
+            estavelle_id: id(1),
             relay_random: id(2),
         };
-        assert_eq!(f.to_vec().len(), FRAME_HEADER + RELAY_HELLO_LEN);
+        assert_eq!(f.to_vec().len(), FRAME_HEADER + ESTAVELLE_HELLO_LEN);
         let f = Frame::ClientAuth {
             role: Role::Client,
             peer_id: id(1),
@@ -653,8 +653,8 @@ mod tests {
             signature: &SIG,
         };
         assert_eq!(f.to_vec().len(), FRAME_HEADER + CLIENT_AUTH_LEN);
-        let f = Frame::RelayAuth { signature: &SIG };
-        assert_eq!(f.to_vec().len(), FRAME_HEADER + RELAY_AUTH_LEN);
+        let f = Frame::EstavelleAuth { signature: &SIG };
+        assert_eq!(f.to_vec().len(), FRAME_HEADER + ESTAVELLE_AUTH_LEN);
         let f = Frame::ReflectOffer {
             reflect_key: [0; REFLECT_KEY_LEN],
             endpoint: [0; ENDPOINT_LEN],
@@ -709,9 +709,9 @@ mod tests {
         // Walk each fixed-length frame one byte short and one byte long.
         for (ty, len) in [
             (T_REFLECT_OFFER, REFLECT_OFFER_LEN),
-            (T_RELAY_HELLO, RELAY_HELLO_LEN),
+            (T_ESTAVELLE_HELLO, ESTAVELLE_HELLO_LEN),
             (T_CLIENT_AUTH, CLIENT_AUTH_LEN),
-            (T_RELAY_AUTH, RELAY_AUTH_LEN),
+            (T_ESTAVELLE_AUTH, ESTAVELLE_AUTH_LEN),
             (T_PEER_GONE, PEER_GONE_LEN),
             (T_PING, TOKEN_LEN),
             (T_PONG, TOKEN_LEN),
@@ -773,8 +773,8 @@ mod tests {
 
     #[test]
     fn an_unknown_version_is_rejected() {
-        let mut bytes = Frame::RelayHello {
-            relay_id: id(1),
+        let mut bytes = Frame::EstavelleHello {
+            estavelle_id: id(1),
             relay_random: id(2),
         }
         .to_vec();

@@ -32,17 +32,17 @@ func TestRelayLifecycleAccountScopeDowngradeAndTransaction(t *testing.T) {
 	require.NoError(t, db.Exec("INSERT INTO peers VALUES ('inherited', 'a')").Error)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
-	require.ErrorContains(t, store.CheckRelayLifecycle(ctx, "a", nil), "1 enrolled")
-	require.NoError(t, store.SetRelayLifecycleSchema(ctx, "old", 1))
+	require.ErrorContains(t, store.CheckEstavelleLifecycle(ctx, "a", nil), "1 enrolled")
+	require.NoError(t, store.SetEstavelleLifecycleSchema(ctx, "old", 1))
 	require.NoError(t, db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return store.CheckRelayLifecycle(ctx, "a", tx)
+		return store.CheckEstavelleLifecycle(ctx, "a", tx)
 	}))
-	require.ErrorContains(t, store.CheckRelayLifecycle(ctx, "b", nil), "1 enrolled")
-	require.NoError(t, store.SetRelayLifecycleSchema(ctx, "old", 0))
-	require.ErrorContains(t, store.CheckRelayLifecycle(ctx, "a", nil), "1 enrolled")
+	require.ErrorContains(t, store.CheckEstavelleLifecycle(ctx, "b", nil), "1 enrolled")
+	require.NoError(t, store.SetEstavelleLifecycleSchema(ctx, "old", 0))
+	require.ErrorContains(t, store.CheckEstavelleLifecycle(ctx, "a", nil), "1 enrolled")
 	require.NoError(t, db.Exec("DELETE FROM peers WHERE key = 'old'").Error)
-	require.NoError(t, store.CheckRelayLifecycle(ctx, "a", nil))
-	require.ErrorIs(t, store.SetRelayLifecycleSchema(ctx, "missing", 1), node.ErrUnknownNode)
+	require.NoError(t, store.CheckEstavelleLifecycle(ctx, "a", nil))
+	require.ErrorIs(t, store.SetEstavelleLifecycleSchema(ctx, "missing", 1), node.ErrUnknownNode)
 }
 
 func TestGatewayIngressSchemaAndParameterizedCounts(t *testing.T) {
@@ -63,45 +63,45 @@ func TestGatewayIngressSchemaAndParameterizedCounts(t *testing.T) {
 	defer cancel()
 
 	// Both agents start at schema 0 -- below any required schema >= 1.
-	below, err := store.CountGatewayIngressBelow(ctx, "a", 1, nil)
+	below, err := store.CountAvenIngressBelow(ctx, "a", 1, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, below)
 
-	require.NoError(t, store.SetGatewayIngressSchema(ctx, "old", 1))
-	below, err = store.CountGatewayIngressBelow(ctx, "a", 1, nil)
+	require.NoError(t, store.SetAvenIngressSchema(ctx, "old", 1))
+	below, err = store.CountAvenIngressBelow(ctx, "a", 1, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, below)
 
 	// A later legacy declaration replaces the earlier one -- a downgrade
-	// is not sticky, the same property SetRelayLifecycleSchema already has.
-	require.NoError(t, store.SetGatewayIngressSchema(ctx, "old", 0))
-	below, err = store.CountGatewayIngressBelow(ctx, "a", 1, nil)
+	// is not sticky, the same property SetEstavelleLifecycleSchema already has.
+	require.NoError(t, store.SetAvenIngressSchema(ctx, "old", 0))
+	below, err = store.CountAvenIngressBelow(ctx, "a", 1, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, below)
 
 	// A higher required schema than any agent has reported counts everyone,
 	// including an agent that satisfies a lower bar.
-	require.NoError(t, store.SetGatewayIngressSchema(ctx, "new", 1))
-	below, err = store.CountGatewayIngressBelow(ctx, "a", 2, nil)
+	require.NoError(t, store.SetAvenIngressSchema(ctx, "new", 1))
+	below, err = store.CountAvenIngressBelow(ctx, "a", 2, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, below)
 
-	// CountRelayLifecycleBelow is independent of the gateway column, and
-	// CheckRelayLifecycle's own error-returning behavior is unchanged by
+	// CountEstavelleLifecycleBelow is independent of the gateway column, and
+	// CheckEstavelleLifecycle's own error-returning behavior is unchanged by
 	// having been refactored onto it.
-	relayBelow, err := store.CountRelayLifecycleBelow(ctx, "a", 1, nil)
+	relayBelow, err := store.CountEstavelleLifecycleBelow(ctx, "a", 1, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, relayBelow)
-	require.ErrorContains(t, store.CheckRelayLifecycle(ctx, "a", nil), "2 enrolled")
+	require.ErrorContains(t, store.CheckEstavelleLifecycle(ctx, "a", nil), "2 enrolled")
 
 	require.NoError(t, db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		count, err := store.CountGatewayIngressBelow(ctx, "a", 1, tx)
+		count, err := store.CountAvenIngressBelow(ctx, "a", 1, tx)
 		if err != nil {
 			return err
 		}
 		require.EqualValues(t, 1, count) // "old" is still at schema 0; "new" is at 1
 		return nil
 	}))
-	_, err = store.CountGatewayIngressBelow(ctx, "", 1, nil)
+	_, err = store.CountAvenIngressBelow(ctx, "", 1, nil)
 	require.Error(t, err)
 }

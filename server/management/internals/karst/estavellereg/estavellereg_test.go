@@ -46,7 +46,7 @@ func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
 // doc builds a one-relay registry with the given entry body spliced in.
 func doc(body string) []byte {
-	return []byte(`{"relays":[{` + body + `}]}`)
+	return []byte(`{"estavelles":[{` + body + `}]}`)
 }
 
 func goodEntry() string {
@@ -75,7 +75,7 @@ func TestAValidRegistryCompilesToNetmapEntries(t *testing.T) {
 }
 
 func TestTheRelayIDIsDerivedAndNotConfigurable(t *testing.T) {
-	// §5.2 defines relay_id as a digest of the pinned identity key, and karstd
+	// §5.2 defines estavelle_id as a digest of the pinned identity key, and karstd
 	// recomputes it while decoding the netmap. An operator-written id would
 	// make a silent mismatch a typo away — and that mismatch fails the whole
 	// netmap, not just the relay.
@@ -84,14 +84,14 @@ func TestTheRelayIDIsDerivedAndNotConfigurable(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	want := EstavelleID(key(1))
-	if hex.EncodeToString(relays[0].GetRelayId()) != hex.EncodeToString(want) {
-		t.Fatalf("relay_id is not the digest of the identity key")
+	if hex.EncodeToString(relays[0].GetEstavelleId()) != hex.EncodeToString(want) {
+		t.Fatalf("estavelle_id is not the digest of the identity key")
 	}
 
 	// And the field cannot be supplied: an operator who writes one is told,
 	// rather than having it quietly ignored while they believe it is in force.
-	if _, err := Parse(doc(goodEntry() + `,"relay_id":"00"`)); err == nil {
-		t.Fatal("a hand-written relay_id was accepted")
+	if _, err := Parse(doc(goodEntry() + `,"estavelle_id":"00"`)); err == nil {
+		t.Fatal("a hand-written estavelle_id was accepted")
 	}
 }
 
@@ -118,7 +118,7 @@ func TestAnEmptiregistryIsRefused(t *testing.T) {
 	// This is the failure the package exists to end: a server that publishes
 	// no relay hands every node an empty registry, and relaying silently never
 	// happens. An operator who wrote a registry file meant to publish one.
-	if _, err := Parse([]byte(`{"relays":[]}`)); err == nil {
+	if _, err := Parse([]byte(`{"estavelles":[]}`)); err == nil {
 		t.Fatal("an empty registry was accepted")
 	}
 	if _, err := Parse([]byte(`{}`)); err == nil {
@@ -185,10 +185,10 @@ func TestTheRegionDefaultsToTheRelaysOwnDefault(t *testing.T) {
 }
 
 func TestARepeatedIdentityKeyIsRefused(t *testing.T) {
-	// Two entries with one key derive one relay_id: a node choosing between
+	// Two entries with one key derive one estavelle_id: a node choosing between
 	// them would be choosing between two names for a single destination while
 	// believing it had a fallback.
-	raw := []byte(`{"relays":[{` + goodEntry() + `},{"address":"198.51.100.9:443",` +
+	raw := []byte(`{"estavelles":[{` + goodEntry() + `},{"address":"198.51.100.9:443",` +
 		`"tls_server_name":"other.example.com","identity_key":"` + b64(key(1)) + `"}]}`)
 	if _, err := Parse(raw); err == nil {
 		t.Fatal("two entries with the same identity key were accepted")
@@ -223,7 +223,7 @@ func TestLoadNamesTheFile(t *testing.T) {
 	// A bad file names itself: this error is what an operator sees at startup,
 	// and "invalid character" with no path is a poor thing to be told.
 	bad := filepath.Join(dir, "bad.json")
-	if err := os.WriteFile(bad, []byte(`{"relays":[{`), 0o600); err != nil {
+	if err := os.WriteFile(bad, []byte(`{"estavelles":[{`), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if _, err := Load(bad); err == nil || !strings.Contains(err.Error(), "bad.json") {

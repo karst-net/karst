@@ -42,7 +42,7 @@ use zeroize::Zeroize;
 /// Length of a per-pair PSK.
 pub const PSK_LEN: usize = 32;
 
-const RELAY_ID_LEN: usize = 32;
+const ESTAVELLE_ID_LEN: usize = 32;
 const RELAY_IDENTITY_KEY_LEN: usize = 2592;
 
 /// Authenticated resolver policy supplied with a netmap.
@@ -393,9 +393,9 @@ impl DNSConfig {
 pub struct Estavelle {
     pub address: String,
     /// DNS name for TLS SNI and certificate validation; Ponor identity remains
-    /// pinned by `identity_key` and `relay_id`.
+    /// pinned by `identity_key` and `estavelle_id`.
     pub tls_server_name: String,
-    pub relay_id: [u8; RELAY_ID_LEN],
+    pub estavelle_id: [u8; ESTAVELLE_ID_LEN],
     pub identity_key: Vec<u8>,
     pub region: String,
 }
@@ -428,11 +428,11 @@ impl Estavelle {
                 "tls_server_name is not a usable ASCII DNS name".to_owned(),
             ));
         }
-        let relay_id: [u8; RELAY_ID_LEN] = relay
-            .relay_id
+        let estavelle_id: [u8; ESTAVELLE_ID_LEN] = relay
+            .estavelle_id
             .as_slice()
             .try_into()
-            .map_err(|_| Error::Estavelle("relay_id is not 32 bytes".to_owned()))?;
+            .map_err(|_| Error::Estavelle("estavelle_id is not 32 bytes".to_owned()))?;
         if relay.identity_key.len() != RELAY_IDENTITY_KEY_LEN {
             return Err(Error::Estavelle(
                 "identity_key is not an ML-DSA-87 public key".to_owned(),
@@ -445,16 +445,16 @@ impl Estavelle {
         let mut h = Sha256::new();
         h.update(b"karst-estavelle-id-v1");
         h.update(&relay.identity_key);
-        let derived: [u8; RELAY_ID_LEN] = h.finalize().into();
-        if relay_id != derived {
+        let derived: [u8; ESTAVELLE_ID_LEN] = h.finalize().into();
+        if estavelle_id != derived {
             return Err(Error::Estavelle(
-                "relay_id does not match identity_key".to_owned(),
+                "estavelle_id does not match identity_key".to_owned(),
             ));
         }
         Ok(Self {
             address: relay.address.clone(),
             tls_server_name: relay.tls_server_name.clone(),
-            relay_id,
+            estavelle_id,
             identity_key: relay.identity_key.clone(),
             region: relay.region.clone(),
         })
@@ -464,7 +464,7 @@ impl Estavelle {
         pb::KarstEstavelle {
             address: self.address.clone(),
             tls_server_name: self.tls_server_name.clone(),
-            relay_id: self.relay_id.to_vec(),
+            estavelle_id: self.estavelle_id.to_vec(),
             identity_key: self.identity_key.clone(),
             region: self.region.clone(),
             // A relay's declared NOC-map position (ADR-0046 §1) is
@@ -606,7 +606,7 @@ pub struct Peer {
     /// reported one, which is "no second option" rather than an invitation to
     /// guess — a guess sends a handshake to a relay the peer is not connected
     /// to and then waits out the timeout.
-    pub home_relay: Vec<u8>,
+    pub home_estavelle: Vec<u8>,
     /// ML-KEM-1024 encapsulation key, 1568 B.
     pub kem_public_key: Vec<u8>,
     /// PSK for the current epoch. Absent means the §7.3 lattice-only fallback.
@@ -657,7 +657,7 @@ impl Peer {
             allowed_ips: p.allowed_ips,
             dns_name: p.dns_name,
             endpoint: p.endpoint,
-            home_relay: p.home_relay,
+            home_estavelle: p.home_estavelle,
             kem_public_key: p.kem_public_key,
             psk,
             psk_previous,
@@ -672,7 +672,7 @@ impl Peer {
             allowed_ips: self.allowed_ips.clone(),
             dns_name: self.dns_name.clone(),
             endpoint: self.endpoint.clone(),
-            home_relay: self.home_relay.clone(),
+            home_estavelle: self.home_estavelle.clone(),
             kem_public_key: self.kem_public_key.clone(),
             psk: self.psk.as_ref().map(|p| p.0.to_vec()).unwrap_or_default(),
             psk_previous: self
@@ -698,7 +698,7 @@ impl Peer {
                 kem_public_key: &self.kem_public_key,
                 dns_name: &self.dns_name,
                 endpoint: &self.endpoint,
-                home_relay: &self.home_relay,
+                home_estavelle: &self.home_estavelle,
                 allowed_ips: &self.allowed_ips,
                 candidates: &self.candidates,
             },
@@ -795,7 +795,7 @@ pub struct Netmap {
     /// two are observably different states and must not collide (§3.2).
     pub ssh_filter_present: bool,
     /// Pinned relay choices, replaced wholesale with every netmap.
-    pub relays: Vec<Estavelle>,
+    pub estavelles: Vec<Estavelle>,
     /// Authenticated subnet and exit-route offers for this node.
     pub routes: Vec<crate::route_offer::Offer>,
     /// The tip of the Bedrock log the server reported — `bedrock-v1.md` §5.
@@ -902,7 +902,7 @@ impl Netmap {
             egress_filter: Vec::new(),
             ssh_filter: Vec::new(),
             ssh_filter_present: false,
-            relays: Vec::new(),
+            estavelles: Vec::new(),
             routes: Vec::new(),
             peers: BTreeMap::new(),
         }
@@ -968,12 +968,12 @@ impl Netmap {
         // `delta`: the server sets only one, and treating an unchanged response
         // as an empty delta would be harmless while treating it as a full
         // netmap would drop every peer.
-        if resp.gateway_ingress_schema > 1
+        if resp.aven_ingress_schema > 1
             || (resp.packet_filter.iter().any(|r| !r.dst_cidrs.is_empty())
-                && resp.gateway_ingress_schema != 1)
+                && resp.aven_ingress_schema != 1)
             || resp.ssh_filter.iter().any(|r| !r.dst_cidrs.is_empty())
         {
-            return Err(Error::AvenIngressSchema(resp.gateway_ingress_schema));
+            return Err(Error::AvenIngressSchema(resp.aven_ingress_schema));
         }
         if resp.unchanged {
             return Ok(Outcome::Unchanged);
@@ -998,8 +998,8 @@ impl Netmap {
         self.egress_filter = resp.egress_filter;
         self.ssh_filter = resp.ssh_filter;
         self.ssh_filter_present = resp.ssh_filter_present;
-        self.relays = resp
-            .relays
+        self.estavelles = resp
+            .estavelles
             .iter()
             .map(Estavelle::from_wire)
             .collect::<Result<_, _>>()?;
@@ -1080,7 +1080,7 @@ impl Netmap {
                 kem_public_key: &p.kem_public_key,
                 dns_name: &p.dns_name,
                 endpoint: &p.endpoint,
-                home_relay: &p.home_relay,
+                home_estavelle: &p.home_estavelle,
                 allowed_ips: &p.allowed_ips,
                 candidates: &p.candidates,
             })
@@ -1118,13 +1118,13 @@ impl Netmap {
                 ports,
             })
             .collect();
-        let relays: Vec<RelayView<'_>> = self
-            .relays
+        let estavelles: Vec<RelayView<'_>> = self
+            .estavelles
             .iter()
             .map(|r| RelayView {
                 address: &r.address,
                 tls_server_name: &r.tls_server_name,
-                relay_id: &r.relay_id,
+                estavelle_id: &r.estavelle_id,
                 identity_key: &r.identity_key,
                 region: &r.region,
             })
@@ -1179,7 +1179,7 @@ impl Netmap {
             egress_filter: &egress,
             ssh_filter: &ssh,
             ssh_filter_present: self.ssh_filter_present,
-            relays: &relays,
+            estavelles: &estavelles,
             routes: &routes,
             dns: DNSConfigView {
                 nameservers: &self.dns_config.nameservers,
@@ -1241,7 +1241,7 @@ impl Netmap {
             compliance_tenant_id: String::new(),
             compliance_device_id: String::new(),
             compliance_policy_revision: String::new(),
-            gateway_ingress_schema: u32::from(
+            aven_ingress_schema: u32::from(
                 self.packet_filter.iter().any(|r| !r.dst_cidrs.is_empty()),
             ),
             dns_zone_affinity_schema: u32::from(
@@ -1263,7 +1263,7 @@ impl Netmap {
             egress_filter: self.egress_filter.clone(),
             ssh_filter: self.ssh_filter.clone(),
             ssh_filter_present: self.ssh_filter_present,
-            relays: self.relays.iter().map(Estavelle::to_wire).collect(),
+            estavelles: self.estavelles.iter().map(Estavelle::to_wire).collect(),
             routes: self
                 .routes
                 .iter()
@@ -1291,7 +1291,7 @@ mod tests {
     #[test]
     fn scoped_ingress_is_hashed_cached_and_rejects_unknown_schemas() {
         let response = pb::KarstNetmapResponse {
-            gateway_ingress_schema: 1,
+            aven_ingress_schema: 1,
             packet_filter: vec![pb::KarstFilterRule {
                 srcs: vec!["client".to_owned()],
                 dst_cidrs: vec!["0.0.0.0/0".to_owned()],
@@ -1310,7 +1310,7 @@ mod tests {
         assert_ne!(scoped.version, legacy.version);
         for schema in [0, 2] {
             let mut invalid = scoped.clone();
-            invalid.gateway_ingress_schema = schema;
+            invalid.aven_ingress_schema = schema;
             assert!(matches!(
                 held.apply(invalid),
                 Err(Error::AvenIngressSchema(_))
@@ -1328,7 +1328,7 @@ mod tests {
 
     fn wire_peer(id: &str, ip: &str) -> pb::KarstNetmapPeer {
         pb::KarstNetmapPeer {
-            home_relay: Vec::new(),
+            home_estavelle: Vec::new(),
             node_id: id.as_bytes().to_vec(),
             allowed_ips: vec![format!("{ip}/32")],
             dns_name: id.to_owned(),
@@ -1359,8 +1359,8 @@ mod tests {
         projected.egress_filter = resp.egress_filter.clone();
         projected.ssh_filter = resp.ssh_filter.clone();
         projected.ssh_filter_present = resp.ssh_filter_present;
-        projected.relays = resp
-            .relays
+        projected.estavelles = resp
+            .estavelles
             .iter()
             .map(Estavelle::from_wire)
             .collect::<Result<_, _>>()
@@ -1418,7 +1418,7 @@ mod tests {
         pb::KarstEstavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
-            relay_id: h.finalize().to_vec(),
+            estavelle_id: h.finalize().to_vec(),
             identity_key,
             region: "test".to_owned(),
             location: None,
@@ -1444,7 +1444,7 @@ mod tests {
         let route = pb::KarstRouteOffer {
             route_id: "subnet-a".to_owned(),
             prefix: "10.20.0.0/16".to_owned(),
-            gateway_id: b"aaa".to_vec(),
+            aven_id: b"aaa".to_vec(),
             metric: 100,
             kind: pb::KarstRouteKind::Subnet as i32,
             masquerade: true,
@@ -1721,16 +1721,16 @@ mod tests {
 
         let mut with = Netmap::new();
         let mut resp = full(vec![wire_peer("aaa", "100.64.0.2")]);
-        resp.relays = vec![wire_relay(0x91)];
+        resp.estavelles = vec![wire_relay(0x91)];
         with.apply(sealed(resp, &with)).expect("apply");
 
-        assert_eq!(with.relays.len(), 1);
+        assert_eq!(with.estavelles.len(), 1);
         assert_ne!(without.version, with.version);
 
         let before = with.version;
         let mut renamed = full(vec![wire_peer("aaa", "100.64.0.2")]);
-        renamed.relays = vec![wire_relay(0x91)];
-        let relay = renamed.relays.first_mut().expect("one relay");
+        renamed.estavelles = vec![wire_relay(0x91)];
+        let relay = renamed.estavelles.first_mut().expect("one relay");
         relay.tls_server_name = "replacement-relay.test".to_owned();
         with.apply(sealed(renamed, &with)).expect("apply");
         assert_ne!(with.version, before, "TLS name must move the version");
@@ -1950,7 +1950,7 @@ mod tests {
         let relay = pb::KarstEstavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
-            relay_id: vec![0x11; RELAY_ID_LEN],
+            estavelle_id: vec![0x11; ESTAVELLE_ID_LEN],
             identity_key: vec![0x22; 32],
             region: "test".to_owned(),
             location: None,
@@ -1976,7 +1976,7 @@ mod tests {
         let relay = pb::KarstEstavelle {
             address: "127.0.0.1:443".to_owned(),
             tls_server_name: "relay.test".to_owned(),
-            relay_id: vec![0x11; RELAY_ID_LEN],
+            estavelle_id: vec![0x11; ESTAVELLE_ID_LEN],
             identity_key: vec![0x22; RELAY_IDENTITY_KEY_LEN],
             region: "test".to_owned(),
             location: None,

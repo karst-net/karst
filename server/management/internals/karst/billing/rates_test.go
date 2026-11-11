@@ -57,7 +57,7 @@ func TestPilotRateScheduleProducesApprovedSensitivityExamples(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, estimate.UsageComplete)
 		require.Equal(t, tc.deviceMinor, estimate.DeviceExact.Numerator)
-		require.Equal(t, tc.relayMinor, estimate.RelayExact.Numerator)
+		require.Equal(t, tc.relayMinor, estimate.EstavelleExact.Numerator)
 		require.Equal(t, "1", estimate.TotalExact.Denominator)
 		require.Equal(t, tc.totalMinor, estimate.TotalExact.Numerator)
 	}

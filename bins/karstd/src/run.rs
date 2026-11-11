@@ -412,7 +412,7 @@ mod run_embedded_tests {
             addresses: Vec::new(),
             psk_epoch: 1,
             node_id: Vec::new(),
-            relays: Vec::new(),
+            estavelles: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             zone_routes: crate::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
@@ -753,7 +753,7 @@ fn run_engine(
         state.set_interfaces(&gather_interfaces(config), listen_port);
     }
 
-    let relay = config.relays.first().cloned();
+    let relay = config.estavelles.first().cloned();
     let relay_node_id = config.node_id.clone();
     let relay_ca = config.estavelle_ca_file.clone();
     let relay_prefer_quic = config.prefer_quic_estavelle;
@@ -777,7 +777,7 @@ fn run_engine(
     let relay_out = relay_out.as_ref();
     // §9.1. The engine routes by it, so it is set from the same value the relay
     // worker connects to rather than recomputed from the registry.
-    engine.set_home_relay(relay.as_ref().map(|r| r.relay_id));
+    engine.set_home_estavelle(relay.as_ref().map(|r| r.estavelle_id));
 
     // §9.1. The probes are per-connection state and the selector is the node's;
     // both are held here so every relay worker and the timer thread see the same
@@ -978,8 +978,8 @@ fn run_engine(
         {
             scope.spawn(move || {
                 while !common.shutdown.requested() {
-                    if let Some(relay) = common.engine.relays().first().cloned() {
-                        common.engine.set_home_relay(Some(relay.relay_id));
+                    if let Some(relay) = common.engine.estavelles().first().cloned() {
+                        common.engine.set_home_estavelle(Some(relay.estavelle_id));
                         relay_worker(
                             RelayContext {
                                 common,
@@ -1809,7 +1809,7 @@ fn probe_relays(
     let Some(relay) = relay else {
         return;
     };
-    let registry: Vec<crate::home::RelayId> = engine.relays().iter().map(|r| r.relay_id).collect();
+    let registry: Vec<crate::home::RelayId> = engine.estavelles().iter().map(|r| r.estavelle_id).collect();
 
     // Read before `Rotation::round` below, which is the only thing that can
     // end a sweep: whether the change this round produces belongs to one
@@ -1822,7 +1822,7 @@ fn probe_relays(
     // on it will be credited to. Between a choice moving and the worker
     // following it these differ for a round, and recording the probe against
     // the wrong one would lose the measurement.
-    let held = engine.home_relay();
+    let held = engine.home_estavelle();
     let (chosen, changed) = {
         let mut home = home
             .lock()
@@ -2297,8 +2297,8 @@ impl RelayContext<'_> {
 
 /// Whether this connection still has a matching published transport endpoint.
 fn relay_registration_current(context: &RelayContext<'_>) -> bool {
-    context.common.engine.relays().iter().any(|entry| {
-        entry.relay_id == context.relay.relay_id
+    context.common.engine.estavelles().iter().any(|entry| {
+        entry.estavelle_id == context.relay.estavelle_id
             && entry.address == context.relay.address
             && entry.tls_server_name == context.relay.tls_server_name
     })
@@ -2322,8 +2322,8 @@ fn moved_home(context: &RelayContext<'_>) -> Option<crate::netmap::Estavelle> {
         .chosen();
     home_target(
         chosen,
-        context.relay.relay_id,
-        &context.common.engine.relays(),
+        context.relay.estavelle_id,
+        &context.common.engine.estavelles(),
     )
 }
 
@@ -2343,14 +2343,14 @@ fn home_target(
         // §9.2 moved it. A choice the registry no longer carries cannot be
         // dialed — `retain` keeps the selector from holding one, so this is
         // belt and braces, and staying put is the right answer to it anyway.
-        Some(id) => registry.iter().find(|r| r.relay_id == id).cloned(),
+        Some(id) => registry.iter().find(|r| r.estavelle_id == id).cloned(),
         // No choice at all: either nothing has been measured yet, or the
         // netmap withdrew the relay this node was on and `retain` released it.
         // The second is worth acting on — **a node left on a withdrawn relay is
         // a node peers are no longer told to look for** — and the first is not,
         // because the relay held is exactly where it should be until something
         // has been measured.
-        None if registry.iter().any(|r| r.relay_id == current) => None,
+        None if registry.iter().any(|r| r.estavelle_id == current) => None,
         None => registry.first().cloned(),
     }
 }
@@ -2378,7 +2378,7 @@ fn next_relay(
     current: RelayId,
     registry: &[crate::netmap::Estavelle],
 ) -> Option<crate::netmap::Estavelle> {
-    let at = registry.iter().position(|r| r.relay_id == current);
+    let at = registry.iter().position(|r| r.estavelle_id == current);
     match at {
         // Not in the registry at all — withdrawn while this node was on it.
         // Start from the top rather than from a position that no longer means
@@ -2386,7 +2386,7 @@ fn next_relay(
         None => registry.first().cloned(),
         Some(at) => registry
             .get((at + 1) % registry.len())
-            .filter(|next| next.relay_id != current)
+            .filter(|next| next.estavelle_id != current)
             .cloned(),
     }
 }
@@ -2401,7 +2401,7 @@ fn next_relay(
 /// for the life of the process, and the relays it *was* admitted to would never
 /// be dialed — nothing measures a relay it has no connection to.
 fn abandon_relay(context: &mut RelayContext<'_>) {
-    let Some(next) = next_relay(context.relay.relay_id, &context.common.engine.relays()) else {
+    let Some(next) = next_relay(context.relay.estavelle_id, &context.common.engine.estavelles()) else {
         return;
     };
     tracing::warn!(
@@ -2418,8 +2418,8 @@ fn abandon_relay(context: &mut RelayContext<'_>) {
         .home
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .hold(next.relay_id);
-    context.common.engine.set_home_relay(Some(next.relay_id));
+        .hold(next.estavelle_id);
+    context.common.engine.set_home_estavelle(Some(next.estavelle_id));
     context.relay = next;
 }
 
@@ -2443,8 +2443,8 @@ fn handover(
         old.address,
         new.address
     );
-    engine.set_home_relay(Some(new.relay_id));
-    relayed.hold(old.relay_id);
+    engine.set_home_estavelle(Some(new.estavelle_id));
+    relayed.hold(old.estavelle_id);
 }
 
 /// The QUIC client config a relay worker dials with, if ADR-0020's opt-in is
@@ -2583,12 +2583,12 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
     // the dead-relay path.
     let mut restart = crate::home::Restart::default();
     while !context.common.shutdown.requested() {
-        let registry = context.common.engine.relays();
+        let registry = context.common.engine.estavelles();
         if registry.is_empty() {
             if !context.is_home() {
                 return;
             }
-            context.common.engine.set_home_relay(None);
+            context.common.engine.set_home_estavelle(None);
             while outbound.try_recv().is_ok() {}
             backoff = RELAY_BACKOFF_MIN;
             std::thread::sleep(TICK);
@@ -2602,7 +2602,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
                 .or_else(|| {
                     registry
                         .iter()
-                        .find(|entry| entry.relay_id == context.relay.relay_id)
+                        .find(|entry| entry.estavelle_id == context.relay.estavelle_id)
                         .cloned()
                 })
                 .or_else(|| registry.first().cloned())
@@ -2620,7 +2620,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
             context
                 .common
                 .engine
-                .set_home_relay(Some(context.relay.relay_id));
+                .set_home_estavelle(Some(context.relay.estavelle_id));
         }
 
         // §9.2's decision, carried out. The home connection follows the
@@ -2644,7 +2644,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
             .rtt
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .reset(context.relay.relay_id);
+            .reset(context.relay.estavelle_id);
         let session = crate::relay::Session::from_control_handle(
             &context.common.node_id,
             &context.relay,
@@ -2746,7 +2746,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
             .disco
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear_reflector(&context.relay.relay_id);
+            .clear_reflector(&context.relay.estavelle_id);
 
         // A closed queue is the hub saying this relay is no longer needed —
         // §9.1's "SHOULD be closed after a period with no traffic". Reconnecting
@@ -2907,8 +2907,8 @@ async fn relay_receive_loop(
 /// reads as a decision rather than a boolean juggled inline, and so a test
 /// can check the decision without going through a live connection to make
 /// it.
-fn ping_reply_target(is_home: bool, relay_id: RelayId) -> Option<RelayId> {
-    (!is_home).then_some(relay_id)
+fn ping_reply_target(is_home: bool, estavelle_id: RelayId) -> Option<RelayId> {
+    (!is_home).then_some(estavelle_id)
 }
 
 /// Act on one event from a relay, whichever of §9.1's two connections it
@@ -2965,7 +2965,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
             .disco
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .set_reflector(context.relay.relay_id, key, endpoint.0);
+            .set_reflector(context.relay.estavelle_id, key, endpoint.0);
         // Once per connection, not per datagram. A node that never
         // learns its mapped address stays on the relay forever, and
         // "the relay offered no reflector" and "the reflector never
@@ -2996,7 +2996,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .resolve(
-                context.relay.relay_id,
+                context.relay.estavelle_id,
                 token,
                 now_ms(context.common.started),
             );
@@ -3006,7 +3006,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
                 .home
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .observe(context.relay.relay_id, measured);
+                .observe(context.relay.estavelle_id, measured);
         }
         return;
     }
@@ -3015,7 +3015,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
     // unconditional about who initiated it.
     if let crate::relay::Event::Ping { token } = event {
         context.common.relayed.pong(
-            ping_reply_target(context.is_home(), context.relay.relay_id),
+            ping_reply_target(context.is_home(), context.relay.estavelle_id),
             token,
         );
         return;
@@ -3026,7 +3026,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
     // §9.1's first rule, answered by the peer itself: it is on the relay this
     // node holds, whatever it published and whatever that relay said earlier.
     if context.is_home() {
-        context.common.engine.seen_on_home_relay(source_id);
+        context.common.engine.seen_on_home_estavelle(source_id);
     }
     let now = now_ms(context.common.started);
     // **Resurgence is asked first, exactly as on the UDP socket**, and for the
@@ -3118,7 +3118,7 @@ fn on_demand_hub<'scope>(
             // losing whatever was in flight. That is how a fragmented message
             // loses its second fragment and a tunnel carries handshakes but no
             // data.
-            if let Some(home) = common.engine.home_relay() {
+            if let Some(home) = common.engine.home_estavelle() {
                 if open.close(home) {
                     tracing::warn!(
                         "karstd: letting go of the on-demand connection to the relay this \
@@ -3142,14 +3142,14 @@ fn on_demand_hub<'scope>(
         else {
             continue;
         };
-        let Some((relay_id, item)) = request else {
+        let Some((estavelle_id, item)) = request else {
             return;
         };
         // Anything addressed to the relay this node already holds goes on the
         // connection it already has, rather than opening a second one to the
         // same place. This is the same rule as the sweep above, applied to the
         // request that would otherwise create the duplicate.
-        if common.engine.home_relay() == Some(relay_id) {
+        if common.engine.home_estavelle() == Some(estavelle_id) {
             match item {
                 Relayed::Packet {
                     destination,
@@ -3163,14 +3163,14 @@ fn on_demand_hub<'scope>(
             continue;
         }
         let now = now_ms(common.started);
-        if open.route(relay_id, now).is_none() {
+        if open.route(estavelle_id, now).is_none() {
             // The registry is the only place a relay id becomes something
             // dialable. A peer publishing one this node does not have is
             // already filtered out when the roster is built, so reaching here
             // with an unknown id means the netmap changed underneath the packet
             // — drop it and let the next one be routed against the roster that
             // replaced it.
-            let Some(relay) = common.engine.relay(relay_id) else {
+            let Some(relay) = common.engine.relay(estavelle_id) else {
                 common.relayed.dropped.fetch_add(1, Ordering::Relaxed);
                 continue;
             };
@@ -3211,9 +3211,9 @@ fn on_demand_hub<'scope>(
                     rx,
                 );
             });
-            open.insert(relay_id, tx, last);
+            open.insert(estavelle_id, tx, last);
         }
-        let Some(queue) = open.route(relay_id, now) else {
+        let Some(queue) = open.route(estavelle_id, now) else {
             continue;
         };
         if queue.try_send(item).is_err() {
@@ -3347,7 +3347,7 @@ fn underlay_addresses(
             }
         }
     }
-    for relay in &config.relays {
+    for relay in &config.estavelles {
         resolve_socket_name(&relay.address, &mut out)?;
     }
     if let Some(endpoint) = control_endpoint {
@@ -5701,7 +5701,7 @@ fn refresh_netmap(
             continue;
         }
         next = Instant::now() + client.refresh_interval();
-        client.set_home_relay(chosen);
+        client.set_home_estavelle(chosen);
         let epoch = client.netmap().psk_epoch;
         let sessions = engine
             .status()
@@ -6363,7 +6363,7 @@ mod route_tests {
                 .collect(),
             psk_epoch: 1,
             node_id: Vec::new(),
-            relays: Vec::new(),
+            estavelles: Vec::new(),
             peers,
             routes: crate::routing::AllowedIps::build(pairs).expect("no conflicts"),
             zone_routes: crate::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
@@ -6511,7 +6511,7 @@ mod route_tests {
             pb::KarstRouteOffer {
                 route_id: route_id.to_owned(),
                 prefix: "0.0.0.0/0".to_owned(),
-                gateway_id: vec![1],
+                aven_id: vec![1],
                 metric: 100,
                 kind: pb::KarstRouteKind::Exit as i32,
                 masquerade: true,
@@ -6539,7 +6539,7 @@ mod route_tests {
             pb::KarstRouteOffer {
                 route_id: route_id.to_owned(),
                 prefix: prefix.to_owned(),
-                gateway_id: vec![1],
+                aven_id: vec![1],
                 metric: 100,
                 kind: pb::KarstRouteKind::Subnet as i32,
                 masquerade: false,
@@ -6558,7 +6558,7 @@ mod route_tests {
             pb::KarstRouteOffer {
                 route_id: route_id.to_owned(),
                 prefix: prefix.to_owned(),
-                gateway_id: vec![1],
+                aven_id: vec![1],
                 metric: 100,
                 kind: if prefix.ends_with("/0") {
                     pb::KarstRouteKind::Exit
@@ -7146,19 +7146,19 @@ mod probe_tests {
         crate::netmap::Estavelle {
             address: format!("198.51.100.{tag}:443"),
             tls_server_name: "relay.test".to_owned(),
-            relay_id: h.finalize().into(),
+            estavelle_id: h.finalize().into(),
             identity_key,
             region: "test".to_owned(),
         }
     }
 
-    /// An engine whose netmap carries `relays` and no peers.
-    pub(super) fn engine(relays: Vec<crate::netmap::Estavelle>) -> Engine {
-        Engine::new(&config(relays))
+    /// An engine whose netmap carries `estavelles` and no peers.
+    pub(super) fn engine(estavelles: Vec<crate::netmap::Estavelle>) -> Engine {
+        Engine::new(&config(estavelles))
     }
 
     /// The configuration [`engine`] runs on.
-    pub(super) fn config(relays: Vec<crate::netmap::Estavelle>) -> Arc<crate::config::Config> {
+    pub(super) fn config(estavelles: Vec<crate::netmap::Estavelle>) -> Arc<crate::config::Config> {
         Arc::new(crate::config::Config {
             estavelle_ca_file: None,
             prefer_quic_estavelle: false,
@@ -7180,7 +7180,7 @@ mod probe_tests {
             addresses: vec!["100.64.0.1/16".parse().expect("address")],
             psk_epoch: 1,
             node_id: Vec::new(),
-            relays,
+            estavelles,
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             zone_routes: crate::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),
@@ -7277,7 +7277,7 @@ mod probe_tests {
         let mut q = queues();
         let token = [0x42; crate::relay::PING_TOKEN_LEN];
         q.sender
-            .pong(super::ping_reply_target(true, relay(1).relay_id), token);
+            .pong(super::ping_reply_target(true, relay(1).estavelle_id), token);
         assert_eq!(ponged_home(&mut q), Some(token));
         assert!(
             ponged_elsewhere(&mut q).is_none(),
@@ -7294,8 +7294,8 @@ mod probe_tests {
         let token = [0x42; crate::relay::PING_TOKEN_LEN];
         let r = relay(2);
         q.sender
-            .pong(super::ping_reply_target(false, r.relay_id), token);
-        assert_eq!(ponged_elsewhere(&mut q), Some((r.relay_id, token)));
+            .pong(super::ping_reply_target(false, r.estavelle_id), token);
+        assert_eq!(ponged_elsewhere(&mut q), Some((r.estavelle_id, token)));
         assert!(
             ponged_home(&mut q).is_none(),
             "nothing queued on the home connection"
@@ -7307,10 +7307,10 @@ mod probe_tests {
     #[test]
     fn ping_reply_target_follows_the_connection_it_arrived_on() {
         let r = relay(3);
-        assert_eq!(super::ping_reply_target(true, r.relay_id), None);
+        assert_eq!(super::ping_reply_target(true, r.estavelle_id), None);
         assert_eq!(
-            super::ping_reply_target(false, r.relay_id),
-            Some(r.relay_id)
+            super::ping_reply_target(false, r.estavelle_id),
+            Some(r.estavelle_id)
         );
     }
 
@@ -7320,7 +7320,7 @@ mod probe_tests {
     #[test]
     fn a_round_measures_the_incumbent_and_one_alternative() {
         let engine = engine(vec![relay(1), relay(2), relay(3)]);
-        engine.set_home_relay(Some(relay(1).relay_id));
+        engine.set_home_estavelle(Some(relay(1).estavelle_id));
         let mut q = queues();
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
@@ -7345,10 +7345,10 @@ mod probe_tests {
         let candidate = pinged_elsewhere(&mut q).expect("no alternative was measured");
         assert_ne!(
             candidate,
-            relay(1).relay_id,
+            relay(1).estavelle_id,
             "the incumbent was measured twice, and would be compared against itself"
         );
-        assert!([relay(2).relay_id, relay(3).relay_id].contains(&candidate));
+        assert!([relay(2).estavelle_id, relay(3).estavelle_id].contains(&candidate));
     }
 
     /// A node whose registry holds one relay has no alternatives, and must not
@@ -7356,7 +7356,7 @@ mod probe_tests {
     #[test]
     fn a_lone_relay_is_not_measured_against_itself() {
         let engine = engine(vec![relay(1)]);
-        engine.set_home_relay(Some(relay(1).relay_id));
+        engine.set_home_estavelle(Some(relay(1).estavelle_id));
         let mut q = queues();
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
@@ -7378,7 +7378,7 @@ mod probe_tests {
             let _ = q.home.try_recv();
             rtt.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .reset(relay(1).relay_id);
+                .reset(relay(1).estavelle_id);
         }
         assert_eq!(
             pinged_elsewhere(&mut q),
@@ -7411,7 +7411,7 @@ mod probe_tests {
         let mut farther = relay(3);
         farther.region = "ap-south".to_owned();
         let engine = engine(vec![relay(1), far.clone(), farther.clone()]);
-        engine.set_home_relay(Some(relay(1).relay_id));
+        engine.set_home_estavelle(Some(relay(1).estavelle_id));
 
         // Every candidate is reached across enough rounds to rule out a filter
         // that merely happens to admit the first one.
@@ -7443,13 +7443,13 @@ mod probe_tests {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             for r in [&relay(1), &far, &farther] {
-                probes.reset(r.relay_id);
+                probes.reset(r.estavelle_id);
             }
             drop(probes);
         }
 
         assert!(
-            seen.contains(&far.relay_id) && seen.contains(&farther.relay_id),
+            seen.contains(&far.estavelle_id) && seen.contains(&farther.estavelle_id),
             "a relay in another region was never measured; selection has grown a \
              region filter that §9.1 does not specify"
         );
@@ -7461,7 +7461,7 @@ mod probe_tests {
     #[test]
     fn an_unanswered_relay_is_not_asked_forever() {
         let engine = engine(vec![relay(1), relay(2)]);
-        engine.set_home_relay(Some(relay(1).relay_id));
+        engine.set_home_estavelle(Some(relay(1).estavelle_id));
         let mut q = queues();
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
@@ -7496,7 +7496,7 @@ mod probe_tests {
     #[test]
     fn a_withdrawn_relay_stops_being_a_candidate() {
         let engine = engine(vec![relay(1), relay(2)]);
-        engine.set_home_relay(Some(relay(1).relay_id));
+        engine.set_home_estavelle(Some(relay(1).estavelle_id));
         let mut q = queues();
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
@@ -7513,11 +7513,11 @@ mod probe_tests {
             1_000,
             seeds(),
         );
-        assert_eq!(pinged_elsewhere(&mut q), Some(relay(2).relay_id));
+        assert_eq!(pinged_elsewhere(&mut q), Some(relay(2).estavelle_id));
 
         // The netmap drops it.
         let smaller = Arc::new(crate::config::Config {
-            relays: vec![relay(1)],
+            estavelles: vec![relay(1)],
             ..engine_config(&engine)
         });
         let _ = engine.reconfigure(&smaller);
@@ -7546,7 +7546,7 @@ mod probe_tests {
     #[test]
     fn a_completed_sweep_is_counted_timed_and_marked_as_a_change() {
         let engine = engine(vec![relay(1), relay(2), relay(3)]);
-        engine.set_home_relay(Some(relay(1).relay_id));
+        engine.set_home_estavelle(Some(relay(1).estavelle_id));
         let mut q = queues();
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
@@ -7565,7 +7565,7 @@ mod probe_tests {
             seeds(),
         );
         while let Ok(item) = q.home.try_recv() {
-            answer(&rtt, &home, relay(1).relay_id, &item, 1_000, 10);
+            answer(&rtt, &home, relay(1).estavelle_id, &item, 1_000, 10);
         }
         while let Ok((id, item)) = q.on_demand.try_recv() {
             answer(&rtt, &home, id, &item, 1_000, 100);
@@ -7598,10 +7598,10 @@ mod probe_tests {
                 seeds(),
             );
             while let Ok(item) = q.home.try_recv() {
-                answer(&rtt, &home, relay(1).relay_id, &item, now.get(), 100);
+                answer(&rtt, &home, relay(1).estavelle_id, &item, now.get(), 100);
             }
             while let Ok((id, item)) = q.on_demand.try_recv() {
-                let rtt_ms = if id == relay(2).relay_id { 10 } else { 100 };
+                let rtt_ms = if id == relay(2).estavelle_id { 10 } else { 100 };
                 answer(&rtt, &home, id, &item, now.get(), rtt_ms);
             }
         }
@@ -7610,7 +7610,7 @@ mod probe_tests {
             home.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .chosen(),
-            Some(relay(2).relay_id),
+            Some(relay(2).estavelle_id),
             "relay(2) should have won the sweep"
         );
         assert_eq!(counters.started.load(Ordering::Relaxed), 1);
@@ -7632,7 +7632,7 @@ mod probe_tests {
     #[test]
     fn a_sweep_cut_short_by_a_shrinking_registry_is_still_recorded() {
         let engine = engine(vec![relay(1), relay(2)]);
-        engine.set_home_relay(Some(relay(1).relay_id));
+        engine.set_home_estavelle(Some(relay(1).estavelle_id));
         let q = queues();
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
@@ -7663,7 +7663,7 @@ mod probe_tests {
 
         // The netmap drops the only candidate mid-sweep.
         let smaller = Arc::new(crate::config::Config {
-            relays: vec![relay(1)],
+            estavelles: vec![relay(1)],
             ..engine_config(&engine)
         });
         let _ = engine.reconfigure(&smaller);
@@ -7733,7 +7733,7 @@ mod probe_tests {
     fn a_choice_that_has_not_moved_moves_nothing() {
         let registry = vec![relay(1), relay(2)];
         assert!(
-            home_target(Some(relay(1).relay_id), relay(1).relay_id, &registry).is_none(),
+            home_target(Some(relay(1).estavelle_id), relay(1).estavelle_id, &registry).is_none(),
             "the connection was rebuilt for a choice that did not change"
         );
     }
@@ -7741,9 +7741,9 @@ mod probe_tests {
     #[test]
     fn a_moved_choice_names_the_registry_entry_to_dial() {
         let registry = vec![relay(1), relay(2)];
-        let target = home_target(Some(relay(2).relay_id), relay(1).relay_id, &registry)
+        let target = home_target(Some(relay(2).estavelle_id), relay(1).estavelle_id, &registry)
             .expect("a relay to move to");
-        assert_eq!(target.relay_id, relay(2).relay_id);
+        assert_eq!(target.estavelle_id, relay(2).estavelle_id);
         assert_eq!(
             target.address,
             relay(2).address,
@@ -7757,7 +7757,7 @@ mod probe_tests {
     #[test]
     fn a_choice_the_registry_lost_leaves_the_connection_where_it_is() {
         let registry = vec![relay(1)];
-        assert!(home_target(Some(relay(2).relay_id), relay(1).relay_id, &registry).is_none());
+        assert!(home_target(Some(relay(2).estavelle_id), relay(1).estavelle_id, &registry).is_none());
     }
 
     /// **A node must not be left on a withdrawn relay.** `retain` releases the
@@ -7768,8 +7768,8 @@ mod probe_tests {
     fn a_withdrawn_relay_is_left_for_one_the_netmap_still_carries() {
         let registry = vec![relay(2), relay(3)];
         let target =
-            home_target(None, relay(1).relay_id, &registry).expect("somewhere still listed");
-        assert_eq!(target.relay_id, relay(2).relay_id);
+            home_target(None, relay(1).estavelle_id, &registry).expect("somewhere still listed");
+        assert_eq!(target.estavelle_id, relay(2).estavelle_id);
     }
 
     /// Before anything has been measured the relay held is exactly where it
@@ -7777,7 +7777,7 @@ mod probe_tests {
     #[test]
     fn nothing_measured_yet_moves_nothing() {
         let registry = vec![relay(1), relay(2)];
-        assert!(home_target(None, relay(1).relay_id, &registry).is_none());
+        assert!(home_target(None, relay(1).estavelle_id, &registry).is_none());
     }
 
     // ── a relay that will not have this node ────────────────────────────
@@ -7790,10 +7790,10 @@ mod probe_tests {
     #[test]
     fn a_relay_that_will_not_take_this_node_is_left_for_the_next() {
         let registry = vec![relay(1), relay(2), relay(3)];
-        let next = next_relay(relay(1).relay_id, &registry).expect("somewhere else");
-        assert_eq!(next.relay_id, relay(2).relay_id);
-        let wrapped = next_relay(relay(3).relay_id, &registry).expect("back to the top");
-        assert_eq!(wrapped.relay_id, relay(1).relay_id);
+        let next = next_relay(relay(1).estavelle_id, &registry).expect("somewhere else");
+        assert_eq!(next.estavelle_id, relay(2).estavelle_id);
+        let wrapped = next_relay(relay(3).estavelle_id, &registry).expect("back to the top");
+        assert_eq!(wrapped.estavelle_id, relay(1).estavelle_id);
     }
 
     /// A node with one relay has nowhere to go and must keep trying: the roster
@@ -7801,8 +7801,8 @@ mod probe_tests {
     /// make that unrecoverable.
     #[test]
     fn a_registry_of_one_leaves_nowhere_to_go() {
-        assert!(next_relay(relay(1).relay_id, &[relay(1)]).is_none());
-        assert!(next_relay(relay(1).relay_id, &[]).is_none());
+        assert!(next_relay(relay(1).estavelle_id, &[relay(1)]).is_none());
+        assert!(next_relay(relay(1).estavelle_id, &[]).is_none());
     }
 
     /// A relay withdrawn while this node was on it has no position in the
@@ -7810,8 +7810,8 @@ mod probe_tests {
     /// somewhere that no longer means anything.
     #[test]
     fn a_relay_the_registry_dropped_starts_from_the_top() {
-        let next = next_relay(relay(9).relay_id, &[relay(1), relay(2)]).expect("a relay");
-        assert_eq!(next.relay_id, relay(1).relay_id);
+        let next = next_relay(relay(9).estavelle_id, &[relay(1), relay(2)]).expect("a relay");
+        assert_eq!(next.estavelle_id, relay(1).estavelle_id);
     }
 
     /// Deliver a `Pong` for whatever was just asked, at `rtt_ms`, exactly as
@@ -7844,7 +7844,7 @@ mod probe_tests {
     #[test]
     fn a_network_change_remeasures_the_registry_promptly() {
         let engine = engine(vec![relay(1), relay(2), relay(3)]);
-        engine.set_home_relay(Some(relay(1).relay_id));
+        engine.set_home_estavelle(Some(relay(1).estavelle_id));
         let mut q = queues();
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
@@ -7867,10 +7867,10 @@ mod probe_tests {
                     seeds(),
                 );
                 while let Ok(item) = q.home.try_recv() {
-                    answer(&rtt, &home, relay(1).relay_id, &item, now, 100);
+                    answer(&rtt, &home, relay(1).estavelle_id, &item, now, 100);
                 }
                 while let Ok((id, item)) = q.on_demand.try_recv() {
-                    let rtt_ms = if id == relay(2).relay_id { fast } else { 110 };
+                    let rtt_ms = if id == relay(2).estavelle_id { fast } else { 110 };
                     answer(&rtt, &home, id, &item, now, rtt_ms);
                 }
             };
@@ -7885,14 +7885,14 @@ mod probe_tests {
         for _ in 0..4 {
             round(&mut rotation, &mut sweep, 110);
         }
-        assert_eq!(chosen(&home), Some(relay(1).relay_id));
+        assert_eq!(chosen(&home), Some(relay(1).estavelle_id));
         let before = now.get();
 
         // The roam: relay(2) is now much closer. Interfaces changed.
         rotation.network_changed();
         sweep.began(before);
         let mut rounds = 0;
-        while chosen(&home) != Some(relay(2).relay_id) {
+        while chosen(&home) != Some(relay(2).estavelle_id) {
             rounds += 1;
             assert!(rounds <= 3 * crate::home::PROBE_ROUNDS, "never adopted");
             round(&mut rotation, &mut sweep, 10);
@@ -7921,7 +7921,7 @@ mod probe_tests {
     fn a_faster_relay_is_adopted_and_a_marginal_one_is_not() {
         for (challenger_rtt, adopted) in [(10, true), (85, false)] {
             let engine = engine(vec![relay(1), relay(2), relay(3)]);
-            engine.set_home_relay(Some(relay(1).relay_id));
+            engine.set_home_estavelle(Some(relay(1).estavelle_id));
             let mut q = queues();
             let rtt = Mutex::new(crate::home::Probes::default());
             let home = Mutex::new(crate::home::Selector::new());
@@ -7943,13 +7943,13 @@ mod probe_tests {
                     seeds(),
                 );
                 while let Ok(item) = q.home.try_recv() {
-                    answer(&rtt, &home, relay(1).relay_id, &item, now, 100);
+                    answer(&rtt, &home, relay(1).estavelle_id, &item, now, 100);
                 }
                 while let Ok((id, item)) = q.on_demand.try_recv() {
                     measured.push(id);
                     // Only relay(2) is fast. The other candidate is no better
                     // than the incumbent, so it must not move anything.
-                    let rtt_ms = if id == relay(2).relay_id {
+                    let rtt_ms = if id == relay(2).estavelle_id {
                         challenger_rtt
                     } else {
                         110
@@ -7965,13 +7965,13 @@ mod probe_tests {
             if adopted {
                 assert_eq!(
                     chosen,
-                    Some(relay(2).relay_id),
+                    Some(relay(2).estavelle_id),
                     "a relay {challenger_rtt} ms against 100 ms was never adopted"
                 );
             } else {
                 assert_eq!(
                     chosen,
-                    Some(relay(1).relay_id),
+                    Some(relay(1).estavelle_id),
                     "switched on {challenger_rtt} ms against 100 ms, which is inside §9.2's margin"
                 );
             }
@@ -8014,25 +8014,25 @@ mod probe_tests {
     #[test]
     fn a_move_keeps_the_old_relay_reachable_meanwhile() {
         let engine = engine(vec![relay(1), relay(2)]);
-        engine.set_home_relay(Some(relay(1).relay_id));
+        engine.set_home_estavelle(Some(relay(1).estavelle_id));
         let mut q = queues();
 
         handover(&engine, &q.sender, &relay(1), &relay(2));
 
         assert_eq!(
-            engine.home_relay(),
-            Some(relay(2).relay_id),
+            engine.home_estavelle(),
+            Some(relay(2).estavelle_id),
             "routing was not told where this node now is"
         );
         assert!(
-            matches!(q.on_demand.try_recv(), Ok((id, Relayed::Hold)) if id == relay(1).relay_id),
+            matches!(q.on_demand.try_recv(), Ok((id, Relayed::Hold)) if id == relay(1).estavelle_id),
             "the relay every peer still believes this node is on was dropped at once"
         );
     }
 
     /// The engine's current configuration, so a test can change one field of it.
     fn engine_config(engine: &Engine) -> crate::config::Config {
-        let relays = engine.relays();
+        let estavelles = engine.estavelles();
         crate::config::Config {
             estavelle_ca_file: None,
             prefer_quic_estavelle: false,
@@ -8054,7 +8054,7 @@ mod probe_tests {
             addresses: vec!["100.64.0.1/16".parse().expect("address")],
             psk_epoch: 1,
             node_id: Vec::new(),
-            relays,
+            estavelles,
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             zone_routes: crate::zone_route::ZoneRoutes::build(Vec::new()).expect("no conflicts"),

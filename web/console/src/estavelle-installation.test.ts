@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { installationScript, parseInstallationReceipt, type InstallationSettings } from "./estavelle-installation";
 
 const settings: InstallationSettings = { schema_version: 1, address: "203.0.113.7:443", tls_server_name: "relay.example.com", region: "denver", image: "ghcr.io/karst-net/karst-estavelle:dev", control_image: "ghcr.io/karst-net/karst-control:dev", location: null };
-const receipt = { schema_version: 1, kind: "karst-estavelle-installation", relay_id: "ab".repeat(32), entry: { address: settings.address, tls_server_name: settings.tls_server_name, identity_key: "A".repeat(3456), region: settings.region } };
+const receipt = { schema_version: 1, kind: "karst-estavelle-installation", estavelle_id: "ab".repeat(32), entry: { address: settings.address, tls_server_name: settings.tls_server_name, identity_key: "A".repeat(3456), region: settings.region } };
 
 describe("relay installation handoff", () => {
   it("embeds public settings as UTF-8 data, never Python source", () => {
@@ -22,7 +22,7 @@ describe("relay installation handoff", () => {
     expect(parseInstallationReceipt(JSON.stringify({ ...receipt, credential: "ignored", entry: { ...receipt.entry, token: "ignored" } }))).toEqual(receipt);
   });
   it("rejects unrelated, malformed or oversized identity data", () => {
-    for (const value of [{}, { ...receipt, schema_version: 2 }, { ...receipt, relay_id: "bad" }, { ...receipt, entry: { ...receipt.entry, identity_key: "short" } }, { ...receipt, entry: { ...receipt.entry, location: { lat: 91, lon: 0 } } }]) {
+    for (const value of [{}, { ...receipt, schema_version: 2 }, { ...receipt, estavelle_id: "bad" }, { ...receipt, entry: { ...receipt.entry, identity_key: "short" } }, { ...receipt, entry: { ...receipt.entry, location: { lat: 91, lon: 0 } } }]) {
       expect(() => parseInstallationReceipt(JSON.stringify(value))).toThrow();
     }
   });

@@ -36,9 +36,9 @@ export function ControlCompatibility({ check }: { check?: NodeControlCheck }) {
   return <section aria-label="Control compatibility check">
     <p>Last control check: {check.status === "incompatible" ? "Incompatible" : "Accepted"}. Observation status: {freshness}. Checked <Observed at={check.observed_at} />.</p>
     {check.status === "incompatible" ? <p role="status">
-      {check.capability === "relay_lifecycle_schema"
+      {check.capability === "estavelle_lifecycle_schema"
         ? "The control server rejected this agent because its Estavelle service lifecycle capability does not meet the account’s requirements. Upgrade the agent to a release supporting live Estavelle service modes, then reconnect it to control."
-        : check.capability === "gateway_ingress_schema"
+        : check.capability === "aven_ingress_schema"
           ? "The control server rejected this aven because it does not support the configured destination-scoped ingress policy. Upgrade the aven agent to a release supporting scoped ingress, then reconnect it to control."
           : "The control server rejected this agent’s capabilities. Upgrade the agent to a release supported by control, then reconnect it."}
       {check.capability && <> Required {check.capability}: {check.required_schema ?? "Unknown"}; reported: {check.reported_schema ?? "Unknown"}.</>}

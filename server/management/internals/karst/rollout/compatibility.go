@@ -10,14 +10,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// fleetChecker is node.Store's own CountRelayLifecycleBelow/
-// CountGatewayIngressBelow, accepted as an interface so this package does
+// fleetChecker is node.Store's own CountEstavelleLifecycleBelow/
+// CountAvenIngressBelow, accepted as an interface so this package does
 // not import node directly -- the same narrow-interface convention
 // estavellealloc's relayAllocationRegistry/relayAllocationGrantStore already
 // use for their own cross-package dependencies.
 type fleetChecker interface {
-	CountRelayLifecycleBelow(ctx context.Context, account string, required uint32, tx *gorm.DB) (int64, error)
-	CountGatewayIngressBelow(ctx context.Context, account string, required uint32, tx *gorm.DB) (int64, error)
+	CountEstavelleLifecycleBelow(ctx context.Context, account string, required uint32, tx *gorm.DB) (int64, error)
+	CountAvenIngressBelow(ctx context.Context, account string, required uint32, tx *gorm.DB) (int64, error)
 }
 
 // ComponentCompatibility is one capability's fleet-wide compatibility
@@ -35,7 +35,7 @@ type ComponentCompatibility struct {
 // Preview computes the live, uncached cross-component compatibility answer
 // ADR-0066 describes: for each component that declares a required schema,
 // count enrolled Karst peers in account whose persisted schema falls below
-// it, using the same counting-query shape node.Store.CheckRelayLifecycle
+// it, using the same counting-query shape node.Store.CheckEstavelleLifecycle
 // already uses in production (control/netmap.go), parameterized instead of
 // hardcoded to 1. v1 does not infer a required schema from TargetDigest or
 // TargetRelease -- there is no release-to-schema manifest anywhere in the
@@ -52,15 +52,15 @@ func Preview(ctx context.Context, account string, components []PlanComponent, fl
 	}
 	results := make([]ComponentCompatibility, 0, len(components)*2)
 	for _, component := range components {
-		if component.RequiresRelayLifecycleSchema != nil {
-			result, err := componentCompatibility(ctx, account, component.Name, "relay_lifecycle_schema", *component.RequiresRelayLifecycleSchema, fleet.CountRelayLifecycleBelow)
+		if component.RequiresEstavelleLifecycleSchema != nil {
+			result, err := componentCompatibility(ctx, account, component.Name, "estavelle_lifecycle_schema", *component.RequiresEstavelleLifecycleSchema, fleet.CountEstavelleLifecycleBelow)
 			if err != nil {
 				return nil, err
 			}
 			results = append(results, result)
 		}
-		if component.RequiresGatewayIngressSchema != nil {
-			result, err := componentCompatibility(ctx, account, component.Name, "gateway_ingress_schema", *component.RequiresGatewayIngressSchema, fleet.CountGatewayIngressBelow)
+		if component.RequiresAvenIngressSchema != nil {
+			result, err := componentCompatibility(ctx, account, component.Name, "aven_ingress_schema", *component.RequiresAvenIngressSchema, fleet.CountAvenIngressBelow)
 			if err != nil {
 				return nil, err
 			}

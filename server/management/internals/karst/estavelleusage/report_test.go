@@ -12,7 +12,7 @@ import (
 )
 
 func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompleteness(t *testing.T) {
-	db, store, key, relayID, mapping := ingestionFixture(t)
+	db, store, key, estavelleID, mapping := ingestionFixture(t)
 	ctx := context.Background()
 	// Fixed rather than time.Now(): the 10-minute window below must not
 	// straddle a UTC day boundary, or report.Days (bucketed by day) would
@@ -33,7 +33,7 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 	require.NoError(t, db.Save(&period).Error)
 
 	first := makeSignedBatch(t, key, [16]byte{1}, 0, mappingPayloadAt(mapping, 123, uint64(windowStart.UnixMicro())))
-	firstAuth := makeUploadAuth(t, key, relayID, first, ingestNow, [32]byte{1})
+	firstAuth := makeUploadAuth(t, key, estavelleID, first, ingestNow, [32]byte{1})
 	_, err := store.Ingest(ctx, "POST", UploadPath, firstAuth, first, ingestNow)
 	require.NoError(t, err)
 
@@ -41,7 +41,7 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 	secondPayload := mappingPayloadAt(mapping, 456, uint64(secondStart.UnixMicro()))
 	secondPayload[len(secondPayload)-1] = GapClock | GapObservationLost
 	second := makeSignedBatch(t, key, [16]byte{1}, 2, secondPayload)
-	secondAuth := makeUploadAuth(t, key, relayID, second, ingestNow, [32]byte{2})
+	secondAuth := makeUploadAuth(t, key, estavelleID, second, ingestNow, [32]byte{2})
 	_, err = store.Ingest(ctx, "POST", UploadPath, secondAuth, second, ingestNow)
 	require.NoError(t, err)
 
@@ -97,7 +97,7 @@ func TestCustomerReportRejectsUnalignedFutureAndOversizedWindows(t *testing.T) {
 }
 
 func TestCustomerReportIsCompleteWhenEveryAuthorizedWindowArrivedWithoutGaps(t *testing.T) {
-	db, store, key, relayID, mapping := ingestionFixture(t)
+	db, store, key, estavelleID, mapping := ingestionFixture(t)
 	ctx := context.Background()
 	ingestNow := time.Now().UTC()
 	end := ingestNow.Truncate(time.Minute)
@@ -113,7 +113,7 @@ func TestCustomerReportIsCompleteWhenEveryAuthorizedWindowArrivedWithoutGaps(t *
 	for sequence := uint64(4); sequence <= 5; sequence++ {
 		windowStart := start.Add(time.Duration(sequence-4) * time.Minute)
 		body := makeSignedBatch(t, key, [16]byte{2}, sequence, mappingPayloadAt(mapping, 0, uint64(windowStart.UnixMicro())))
-		auth := makeUploadAuth(t, key, relayID, body, ingestNow, [32]byte{byte(sequence)})
+		auth := makeUploadAuth(t, key, estavelleID, body, ingestNow, [32]byte{byte(sequence)})
 		_, err := store.Ingest(ctx, "POST", UploadPath, auth, body, ingestNow)
 		require.NoError(t, err)
 	}
@@ -151,8 +151,8 @@ func TestCustomerReportMergesOverlappingMappingPeriodsForOneProducer(t *testing.
 	firstEnd := start.Add(time.Minute).UnixMicro()
 	report := Report{Start: start, End: end, HistoryComplete: true}
 	periods := []producerMappingInterval{
-		{DeploymentID: "deployment", RelayID: "relay", Version: "mapping-a", AccountID: "account", StartUS: start.UnixMicro(), EndUS: &firstEnd},
-		{DeploymentID: "deployment", RelayID: "relay", Version: "mapping-b", AccountID: "account", StartUS: start.UnixMicro()},
+		{DeploymentID: "deployment", EstavelleID: "relay", Version: "mapping-a", AccountID: "account", StartUS: start.UnixMicro(), EndUS: &firstEnd},
+		{DeploymentID: "deployment", EstavelleID: "relay", Version: "mapping-b", AccountID: "account", StartUS: start.UnixMicro()},
 	}
 	require.NoError(t, composeRelayReport(&report, periods, nil, nil))
 	require.Equal(t, uint64(2), report.ExpectedWindows)

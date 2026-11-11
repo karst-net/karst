@@ -19,9 +19,9 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 )
 
-func signedCreditRequest(t *testing.T, key *identity.Key, relayID string, mappingVersion string) CreditRequest {
+func signedCreditRequest(t *testing.T, key *identity.Key, estavelleID string, mappingVersion string) CreditRequest {
 	t.Helper()
-	request := CreditRequest{RelayID: relayID, DeploymentID: "deployment-a", MappingVersion: mappingVersion,
+	request := CreditRequest{EstavelleID: estavelleID, DeploymentID: "deployment-a", MappingVersion: mappingVersion,
 		Generation: "0102030405060708090a0b0c0d0e0f10", RequestID: "1112131415161718191a1b1c1d1e1f20", RequestedBytes: "1234567"}
 	input, err := request.SigningInput()
 	require.NoError(t, err)
@@ -32,8 +32,8 @@ func signedCreditRequest(t *testing.T, key *identity.Key, relayID string, mappin
 }
 
 func TestCreditRequestIsCanonicalAndAuthorizedToExactMapping(t *testing.T) {
-	_, store, key, relayID, mapping := ingestionFixture(t)
-	request := signedCreditRequest(t, key, relayID, mapping.Version)
+	_, store, key, estavelleID, mapping := ingestionFixture(t)
+	request := signedCreditRequest(t, key, estavelleID, mapping.Version)
 	body, err := json.Marshal(request)
 	require.NoError(t, err)
 	parsed, err := ParseCreditRequest(body)
@@ -51,13 +51,13 @@ func TestCreditRequestIsCanonicalAndAuthorizedToExactMapping(t *testing.T) {
 }
 
 func TestCreditRequestRejectsUnapprovedMappingAndProducer(t *testing.T) {
-	_, store, key, relayID, mapping := ingestionFixture(t)
-	request := signedCreditRequest(t, key, relayID, mapping.Version)
-	require.NoError(t, store.RevokeMapping(context.Background(), relayID, mapping.DeploymentID, mapping.Version))
+	_, store, key, estavelleID, mapping := ingestionFixture(t)
+	request := signedCreditRequest(t, key, estavelleID, mapping.Version)
+	require.NoError(t, store.RevokeMapping(context.Background(), estavelleID, mapping.DeploymentID, mapping.Version))
 	_, err := store.AuthorizeCreditRequest(context.Background(), request)
 	require.ErrorIs(t, err, ErrMappingNotAllowed)
 
-	require.NoError(t, store.RevokeProducer(context.Background(), relayID))
+	require.NoError(t, store.RevokeProducer(context.Background(), estavelleID))
 	_, err = store.AuthorizeCreditRequest(context.Background(), request)
 	require.ErrorIs(t, err, ErrProducerMissing)
 }
@@ -65,8 +65,8 @@ func TestCreditRequestRejectsUnapprovedMappingAndProducer(t *testing.T) {
 func TestParseCreditRequestRejectsMalformedAndUnknownFields(t *testing.T) {
 	for _, body := range [][]byte{
 		[]byte(`{}`),
-		[]byte(`{"relay_id":"r","requested_bytes":"01","extra":true}`),
-		[]byte(`{"relay_id":"r"} trailing`),
+		[]byte(`{"estavelle_id":"r","requested_bytes":"01","extra":true}`),
+		[]byte(`{"estavelle_id":"r"} trailing`),
 		make([]byte, maxCreditRequestBytes+1),
 	} {
 		_, err := ParseCreditRequest(body)
@@ -79,7 +79,7 @@ func TestSharedCreditRequestSigningVectorMatchesRust(t *testing.T) {
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	var vector struct {
-		RelayID        string `json:"relay_id"`
+		EstavelleID        string `json:"estavelle_id"`
 		DeploymentID   string `json:"deployment_id"`
 		MappingVersion string `json:"mapping_version"`
 		Generation     string `json:"generation"`
@@ -88,7 +88,7 @@ func TestSharedCreditRequestSigningVectorMatchesRust(t *testing.T) {
 		SigningInput   string `json:"signing_input_hex"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &vector))
-	request := CreditRequest{RelayID: vector.RelayID, DeploymentID: vector.DeploymentID, MappingVersion: vector.MappingVersion,
+	request := CreditRequest{EstavelleID: vector.EstavelleID, DeploymentID: vector.DeploymentID, MappingVersion: vector.MappingVersion,
 		Generation: vector.Generation, RequestID: vector.RequestID, RequestedBytes: strconv.FormatUint(vector.RequestedBytes, 10)}
 	got, err := request.SigningInput()
 	require.NoError(t, err)
@@ -96,8 +96,8 @@ func TestSharedCreditRequestSigningVectorMatchesRust(t *testing.T) {
 }
 
 func TestCreditSurrenderIsCanonicalAndMapsToAuthorizedRelay(t *testing.T) {
-	_, store, key, relayID, mapping := ingestionFixture(t)
-	request := CreditSurrender{GrantID: "0123456789abcdef0123456789abcdef", RelayID: relayID,
+	_, store, key, estavelleID, mapping := ingestionFixture(t)
+	request := CreditSurrender{GrantID: "0123456789abcdef0123456789abcdef", EstavelleID: estavelleID,
 		DeploymentID: "deployment-a", MappingVersion: mapping.Version,
 		Generation: "0102030405060708090a0b0c0d0e0f10", ConsumedBytes: "1234567"}
 	input, err := request.SigningInput()
@@ -120,7 +120,7 @@ func TestCreditSurrenderIsCanonicalAndMapsToAuthorizedRelay(t *testing.T) {
 	_, err = store.AuthorizeCreditSurrender(context.Background(), modified)
 	require.ErrorIs(t, err, ErrUnauthorized)
 
-	require.NoError(t, store.RevokeMapping(context.Background(), relayID, mapping.DeploymentID, mapping.Version))
+	require.NoError(t, store.RevokeMapping(context.Background(), estavelleID, mapping.DeploymentID, mapping.Version))
 	_, err = store.AuthorizeCreditSurrender(context.Background(), parsed)
 	require.ErrorIs(t, err, ErrMappingNotAllowed)
 }
@@ -131,7 +131,7 @@ func TestSharedCreditSurrenderSigningVectorMatchesRust(t *testing.T) {
 	require.NoError(t, err)
 	var vector struct {
 		GrantID        string `json:"grant_id"`
-		RelayID        string `json:"relay_id"`
+		EstavelleID        string `json:"estavelle_id"`
 		DeploymentID   string `json:"deployment_id"`
 		MappingVersion string `json:"mapping_version"`
 		Generation     string `json:"generation"`
@@ -139,7 +139,7 @@ func TestSharedCreditSurrenderSigningVectorMatchesRust(t *testing.T) {
 		SigningInput   string `json:"signing_input_hex"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &vector))
-	request := CreditSurrender{GrantID: vector.GrantID, RelayID: vector.RelayID, DeploymentID: vector.DeploymentID,
+	request := CreditSurrender{GrantID: vector.GrantID, EstavelleID: vector.EstavelleID, DeploymentID: vector.DeploymentID,
 		MappingVersion: vector.MappingVersion, Generation: vector.Generation, ConsumedBytes: strconv.FormatUint(vector.ConsumedBytes, 10)}
 	input, err := request.SigningInput()
 	require.NoError(t, err)

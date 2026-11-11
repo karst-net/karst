@@ -63,7 +63,7 @@ struct SurrenderGrant {
 /// Thread-safe local check used by the synchronous forwarding core.
 #[derive(Debug)]
 pub struct Controller {
-    relay_id: String,
+    estavelle_id: String,
     generation: String,
     requested_bytes: u64,
     states: Mutex<HashMap<MappingKey, Allowance>>,
@@ -258,11 +258,11 @@ impl Runtime {
         getrandom::fill(&mut generation)
             .map_err(|error| io::Error::other(format!("no entropy for cap generation: {error}")))?;
         let generation = hex_lower(&generation);
-        let relay_id = Base64UrlUnpadded::encode_string(&identity.relay_id());
+        let estavelle_id = Base64UrlUnpadded::encode_string(&identity.estavelle_id());
         let (requests, receiver) = mpsc::channel(1024);
         let (surrenders, surrender_receiver) = mpsc::channel(1024);
         let controller = Arc::new(Controller {
-            relay_id,
+            estavelle_id,
             generation,
             requested_bytes,
             states: Mutex::new(HashMap::new()),
@@ -357,7 +357,7 @@ async fn run(
                     let task_controller = Arc::clone(&controller);
                     active.spawn(async move {
                         if let Err(error) = surrender_grant(&task_host, port, &task_tls, &task_identity, &task_controller, &grant).await {
-                            eprintln!("karst-relay: cap credit surrender: {error}; unused bytes remain reserved until period end");
+                            eprintln!("karst-estavelle: cap credit surrender: {error}; unused bytes remain reserved until period end");
                         }
                     });
                 }
@@ -408,7 +408,7 @@ async fn run(
             )
             .await
             {
-                eprintln!("karst-relay: cap credit surrender: {error}; unused bytes remain reserved until period end");
+                eprintln!("karst-estavelle: cap credit surrender: {error}; unused bytes remain reserved until period end");
             }
         });
     }
@@ -419,7 +419,7 @@ async fn run(
         {
             active.abort_all();
             while active.join_next().await.is_some() {}
-            eprintln!("karst-relay: shutdown surrender budget elapsed; unconfirmed credits remain reserved until period end");
+            eprintln!("karst-estavelle: shutdown surrender budget elapsed; unconfirmed credits remain reserved until period end");
             break;
         }
     }
@@ -428,7 +428,7 @@ async fn run(
 #[derive(Debug, Serialize)]
 struct CreditSurrenderRequest<'a> {
     grant_id: &'a str,
-    relay_id: &'a str,
+    estavelle_id: &'a str,
     deployment_id: &'a str,
     mapping_version: &'a str,
     generation: &'a str,
@@ -446,7 +446,7 @@ async fn surrender_grant(
 ) -> Result<(), String> {
     let transcript = credit_surrender_signing_input(
         &grant.grant_id,
-        &controller.relay_id,
+        &controller.estavelle_id,
         &grant.deployment_id,
         &grant.mapping_version,
         &grant.generation,
@@ -460,7 +460,7 @@ async fn surrender_grant(
         .map_err(|error| error.to_string())?;
     let body = serde_json::to_vec(&CreditSurrenderRequest {
         grant_id: &grant.grant_id,
-        relay_id: &controller.relay_id,
+        estavelle_id: &controller.estavelle_id,
         deployment_id: &grant.deployment_id,
         mapping_version: &grant.mapping_version,
         generation: &grant.generation,
@@ -500,7 +500,7 @@ async fn request_until_ready(
     let body = match signed_request(identity, controller, mapping, &request_id) {
         Ok(body) => body,
         Err(error) => {
-            eprintln!("karst-relay: cap credit request: {error}");
+            eprintln!("karst-estavelle: cap credit request: {error}");
             controller.finish_request(mapping);
             return;
         }
@@ -529,7 +529,7 @@ async fn request_until_ready(
                     != Some("uncapped")
                     || valid_ms != Some(UNCAPPED_LEASE_MILLIS)
                 {
-                    eprintln!("karst-relay: cap credit request: invalid uncapped lease response");
+                    eprintln!("karst-estavelle: cap credit request: invalid uncapped lease response");
                     controller.finish_request(mapping);
                     return;
                 }
@@ -546,7 +546,7 @@ async fn request_until_ready(
                     .and_then(|value| value.parse::<u64>().ok())
                     .filter(|millis| *millis > 0 && *millis <= 31 * 24 * 60 * 60 * 1000);
                 let Some(valid_ms) = valid_ms else {
-                    eprintln!("karst-relay: cap credit request: invalid grant validity");
+                    eprintln!("karst-estavelle: cap credit request: invalid grant validity");
                     controller.finish_request(mapping);
                     return;
                 };
@@ -560,7 +560,7 @@ async fn request_until_ready(
                         return;
                     }
                     Err(error) => {
-                        eprintln!("karst-relay: cap credit request: {error}");
+                        eprintln!("karst-estavelle: cap credit request: {error}");
                         controller.finish_request(mapping);
                         return;
                     }
@@ -574,7 +574,7 @@ async fn request_until_ready(
             }
             Ok(Ok(response)) => {
                 eprintln!(
-                    "karst-relay: cap credit request: control plane returned HTTP {}",
+                    "karst-estavelle: cap credit request: control plane returned HTTP {}",
                     response.status
                 );
                 if !delay_or_cancel(&mut cancel).await {
@@ -583,14 +583,14 @@ async fn request_until_ready(
                 }
             }
             Ok(Err(error)) => {
-                eprintln!("karst-relay: cap credit request: {error}");
+                eprintln!("karst-estavelle: cap credit request: {error}");
                 if !delay_or_cancel(&mut cancel).await {
                     controller.finish_request(mapping);
                     return;
                 }
             }
             Err(_) => {
-                eprintln!("karst-relay: cap credit request: timed out");
+                eprintln!("karst-estavelle: cap credit request: timed out");
                 if !delay_or_cancel(&mut cancel).await {
                     controller.finish_request(mapping);
                     return;
@@ -609,7 +609,7 @@ async fn delay_or_cancel(cancel: &mut watch::Receiver<bool>) -> bool {
 
 #[derive(Debug, Serialize)]
 struct CreditRequest<'a> {
-    relay_id: &'a str,
+    estavelle_id: &'a str,
     deployment_id: &'a str,
     mapping_version: &'a str,
     generation: &'a str,
@@ -625,7 +625,7 @@ fn signed_request(
     request_id: &str,
 ) -> Result<Vec<u8>, String> {
     let transcript = credit_request_signing_input(
-        &controller.relay_id,
+        &controller.estavelle_id,
         &mapping.deployment,
         &mapping.version,
         &controller.generation,
@@ -636,7 +636,7 @@ fn signed_request(
         .sign_credit_request(&transcript)
         .map_err(|error| error.to_string())?;
     serde_json::to_vec(&CreditRequest {
-        relay_id: &controller.relay_id,
+        estavelle_id: &controller.estavelle_id,
         deployment_id: &mapping.deployment,
         mapping_version: &mapping.version,
         generation: &controller.generation,
@@ -773,7 +773,7 @@ async fn read_response(
 #[derive(Debug, Deserialize)]
 struct GrantResponse {
     grant_id: String,
-    relay_id: String,
+    estavelle_id: String,
     generation: String,
     mapping_version: String,
     requested_bytes: String,
@@ -807,7 +807,7 @@ fn parse_grant(
             .grant_id
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        || grant.relay_id != controller.relay_id
+        || grant.estavelle_id != controller.estavelle_id
         || grant.generation != controller.generation
         || grant.mapping_version != mapping.version
         || grant.requested_bytes != controller.requested_bytes.to_string()
@@ -865,7 +865,7 @@ mod tests {
         let (requests, receiver) = mpsc::channel(8);
         let (surrenders, _) = mpsc::channel(8);
         let controller = Arc::new(Controller {
-            relay_id: "relay-id".to_owned(),
+            estavelle_id: "relay-id".to_owned(),
             generation: "01".repeat(16),
             requested_bytes,
             states: Mutex::new(HashMap::new()),
@@ -963,7 +963,7 @@ mod tests {
             "account_id": "account",
             "period_start": "2026-10-01T00:00:00Z",
             "period_end": "2026-11-01T00:00:00Z",
-            "relay_id": controller.relay_id,
+            "estavelle_id": controller.estavelle_id,
             "generation": controller.generation,
             "mapping_version": mapping.version,
             "schedule_version": "schedule",

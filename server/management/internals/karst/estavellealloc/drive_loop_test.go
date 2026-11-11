@@ -77,12 +77,12 @@ func (f fakeEnroll) MintEstavelleEnrollKey(context.Context, string, string, time
 	return f.token, nil
 }
 
-type fakeRelays struct {
+type fakeEstavelles struct {
 	relay *estavellereg.StoredEstavelle
 	err   error
 }
 
-func (f fakeRelays) FindByTLSServerName(context.Context, string) (*estavellereg.StoredEstavelle, error) {
+func (f fakeEstavelles) FindByTLSServerName(context.Context, string) (*estavellereg.StoredEstavelle, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -140,13 +140,13 @@ func newDriveEnv(t *testing.T, driver *fakeDriver, relay *estavellereg.StoredEst
 	ctx := scopedContexts{
 		alloc: WithAccount(base, "a"),
 		infra: infraconnections.WithAccount(base, "a"),
-		relay: estavellereg.WithAccount(base, "a"),
+		estavelle: estavellereg.WithAccount(base, "a"),
 		grant: estavelleservice.WithAccount(estavelleservice.WithActor(base, "test"), "a"),
 	}
 	deps := AllocateDeps{
 		InfraConnections: fakeInfraConnections{driver: driver},
 		Enroll:           fakeEnroll{token: "tok"},
-		Relays:           fakeRelays{relay: relay},
+		Estavelles:       fakeEstavelles{relay: relay},
 		Deenroll:         deenr,
 		Grants:           grants,
 		ControlAPIBase:   "https://control.example",
@@ -200,7 +200,7 @@ func TestGrantStepMovesProvisioningToReadyAndCreatesGrant(t *testing.T) {
 	got, err := de.store.Get(de.ctx.alloc, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, StateReady, got.State)
-	require.Equal(t, "relay-1", got.RelayID)
+	require.Equal(t, "relay-1", got.EstavelleID)
 	require.Len(t, de.grants.created, 1)
 	require.Equal(t, "relay-1", de.grants.created[0].PonorID)
 }

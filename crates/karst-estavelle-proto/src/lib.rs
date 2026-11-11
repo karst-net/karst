@@ -74,12 +74,12 @@ pub mod consts {
     /// delivers nothing, which makes it a pure amplification unit.
     pub const PAYLOAD_MIN: usize = 1;
 
-    /// `RelayHello`: version, `relay_id`, `relay_random`.
-    pub const RELAY_HELLO_LEN: usize = 1 + ID_LEN + RANDOM_LEN;
+    /// `EstavelleHello`: version, `estavelle_id`, `relay_random`.
+    pub const ESTAVELLE_HELLO_LEN: usize = 1 + ID_LEN + RANDOM_LEN;
     /// `ClientAuth`: version, role, `peer_id`, `client_random`, signature.
     pub const CLIENT_AUTH_LEN: usize = 1 + 1 + ID_LEN + RANDOM_LEN + SIG_LEN;
-    /// `RelayAuth`: version, signature.
-    pub const RELAY_AUTH_LEN: usize = 1 + SIG_LEN;
+    /// `EstavelleAuth`: version, signature.
+    pub const ESTAVELLE_AUTH_LEN: usize = 1 + SIG_LEN;
     /// `PeerGone`: peer id and reason.
     pub const PEER_GONE_LEN: usize = ID_LEN + 1;
     /// `Ping` / `Pong` token.
@@ -197,9 +197,9 @@ mod tests {
     fn frame_lengths_match_the_spec() {
         // spec/ponor-v1.md §6.1. A change here should show up as a diff
         // against the specification rather than as drift.
-        assert_eq!(RELAY_HELLO_LEN, 65);
+        assert_eq!(ESTAVELLE_HELLO_LEN, 65);
         assert_eq!(CLIENT_AUTH_LEN, 4693);
-        assert_eq!(RELAY_AUTH_LEN, 4628);
+        assert_eq!(ESTAVELLE_AUTH_LEN, 4628);
         assert_eq!(PEER_GONE_LEN, 33);
         assert_eq!(ID_LEN + PAYLOAD_MAX, 1368); // SendPacket / RecvPacket max
         assert_eq!(2 * ID_LEN + PAYLOAD_MAX, 1400); // Forward max
@@ -211,7 +211,7 @@ mod tests {
         // above the largest legal frame — and the largest legal frame is the
         // handshake's, not the datapath's.
         let largest = CLIENT_AUTH_LEN
-            .max(RELAY_AUTH_LEN)
+            .max(ESTAVELLE_AUTH_LEN)
             .max(2 * ID_LEN + PAYLOAD_MAX);
         assert!(
             largest <= FRAME_PAYLOAD_MAX,
@@ -228,7 +228,7 @@ mod tests {
         // **6 762 B before ADR-0015, 9 398 B after.** Moving identities to
         // ML-DSA-87 costs 39% on every relay handshake, which is what Category
         // 5 buys and what it charges.
-        let total = 3 * FRAME_HEADER + RELAY_HELLO_LEN + CLIENT_AUTH_LEN + RELAY_AUTH_LEN;
+        let total = 3 * FRAME_HEADER + ESTAVELLE_HELLO_LEN + CLIENT_AUTH_LEN + ESTAVELLE_AUTH_LEN;
         assert_eq!(total, 9398);
     }
 }

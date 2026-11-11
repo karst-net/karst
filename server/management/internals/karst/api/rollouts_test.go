@@ -77,7 +77,7 @@ func decodeRolloutPayload(t *testing.T, w *httptest.ResponseRecorder) rolloutPla
 func threeComponentPlanBody() string {
 	return fmt.Sprintf(`{"target_release":"v0.9.0","components":[
 		{"name":"control","sequence":0,"target_digest":%q,"verification_ref":"cosign verify ok"},
-		{"name":"relay_job","sequence":1,"target_digest":%q,"verification_ref":"cosign verify ok"},
+		{"name":"estavelle_job","sequence":1,"target_digest":%q,"verification_ref":"cosign verify ok"},
 		{"name":"console","sequence":2,"target_digest":%q,"verification_ref":"cosign verify ok"}
 	]}`, testValidDigest, testValidDigest, testValidDigest)
 }
@@ -103,8 +103,8 @@ func TestRolloutAPIHappyPathToCompleted(t *testing.T) {
 	started := decodeRolloutPayload(t, w)
 	require.Equal(t, rollout.StateInProgress, started.State)
 
-	// Out of order: relay_job is sequence 1, control is sequence 0.
-	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/components/relay_job/mark-applied",
+	// Out of order: estavelle_job is sequence 1, control is sequence 0.
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/components/estavelle_job/mark-applied",
 		fmt.Sprintf(`{"revision":%d}`, started.Revision))
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
 
@@ -115,7 +115,7 @@ func TestRolloutAPIHappyPathToCompleted(t *testing.T) {
 	require.Equal(t, rollout.StateInProgress, afterControl.State)
 	require.Contains(t, afterControl.Note, "scripts/compose-versions.py", "no deployment snapshot is configured in this test")
 
-	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/components/relay_job/mark-applied",
+	w = rolloutRequest(router, http.MethodPost, "/"+created.ID+"/components/estavelle_job/mark-applied",
 		fmt.Sprintf(`{"revision":%d}`, afterControl.Revision))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	afterRelay := decodeRolloutPayload(t, w)
@@ -140,10 +140,10 @@ func TestRolloutAPIBlocksStartOnIncompatibleFleetUnlessOverridden(t *testing.T) 
 
 	require.NoError(t, e.db.Create(&node.Identity{Handle: "peer-1", PublicKey: []byte{1}}).Error)
 	require.NoError(t, e.db.Exec("INSERT INTO peers VALUES (?, ?)", "peer-1", "a").Error)
-	// peer-1 never declares relay_lifecycle_schema; it stays at 0.
+	// peer-1 never declares estavelle_lifecycle_schema; it stays at 0.
 
 	body := fmt.Sprintf(`{"target_release":"v0.9.0","components":[
-		{"name":"control","sequence":0,"target_digest":%q,"verification_ref":"ok","requires_relay_lifecycle_schema":2}
+		{"name":"control","sequence":0,"target_digest":%q,"verification_ref":"ok","requires_estavelle_lifecycle_schema":2}
 	]}`, testValidDigest)
 	w := rolloutRequest(router, http.MethodPost, "", body)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
