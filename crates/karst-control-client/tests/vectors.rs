@@ -587,7 +587,10 @@ fn inputs(c: &VersionCase) -> VersionInputs {
         ssh_ports: port_ranges(c.ssh_filter.as_deref().unwrap_or_default()),
         node_id: unhex(&c.node_id),
         addresses: c.addresses.clone().unwrap_or_default(),
-        estavelle_ids: estavelles_of(c).iter().map(|r| unhex(&r.estavelle_id)).collect(),
+        estavelle_ids: estavelles_of(c)
+            .iter()
+            .map(|r| unhex(&r.estavelle_id))
+            .collect(),
         estavelle_keys: estavelles_of(c)
             .iter()
             .map(|r| unhex(&r.identity_key))

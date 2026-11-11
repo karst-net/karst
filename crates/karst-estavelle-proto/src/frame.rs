@@ -7,9 +7,9 @@
 //! into the destination's queue rather than twice.
 
 use crate::consts::{
-    CLIENT_AUTH_LEN, ENDPOINT_LEN, FRAME_HEADER, FRAME_PAYLOAD_MAX, ID_LEN, PAYLOAD_MAX,
-    PAYLOAD_MIN, PEER_GONE_LEN, RANDOM_LEN, REFLECT_KEY_LEN, REFLECT_OFFER_LEN, ESTAVELLE_AUTH_LEN,
-    ESTAVELLE_HELLO_LEN, RESTARTING_LEN, SIG_LEN, TOKEN_LEN, VERSION,
+    CLIENT_AUTH_LEN, ENDPOINT_LEN, ESTAVELLE_AUTH_LEN, ESTAVELLE_HELLO_LEN, FRAME_HEADER,
+    FRAME_PAYLOAD_MAX, ID_LEN, PAYLOAD_MAX, PAYLOAD_MIN, PEER_GONE_LEN, RANDOM_LEN,
+    REFLECT_KEY_LEN, REFLECT_OFFER_LEN, RESTARTING_LEN, SIG_LEN, TOKEN_LEN, VERSION,
 };
 use crate::Error;
 
@@ -436,7 +436,8 @@ fn decode_payload(frame_type: u8, p: &[u8]) -> Result<Frame<'_>, Error> {
             }
             let (version, rest) = take::<1>(p).ok_or_else(|| bad_len(frame_type, n))?;
             check_version(version[0])?;
-            let (estavelle_id, rest) = take::<ID_LEN>(rest).ok_or_else(|| bad_len(frame_type, n))?;
+            let (estavelle_id, rest) =
+                take::<ID_LEN>(rest).ok_or_else(|| bad_len(frame_type, n))?;
             let (relay_random, _) =
                 take::<RANDOM_LEN>(rest).ok_or_else(|| bad_len(frame_type, n))?;
             Ok(Frame::EstavelleHello {

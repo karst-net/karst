@@ -529,7 +529,9 @@ async fn request_until_ready(
                     != Some("uncapped")
                     || valid_ms != Some(UNCAPPED_LEASE_MILLIS)
                 {
-                    eprintln!("karst-estavelle: cap credit request: invalid uncapped lease response");
+                    eprintln!(
+                        "karst-estavelle: cap credit request: invalid uncapped lease response"
+                    );
                     controller.finish_request(mapping);
                     return;
                 }

@@ -375,7 +375,9 @@ pub async fn dial_mesh(
     crate::server::drive(
         stream,
         buf,
-        Admitted::Mesh { estavelle_id: peer_id },
+        Admitted::Mesh {
+            estavelle_id: peer_id,
+        },
         remote,
         Arc::clone(ctx),
     )

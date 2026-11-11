@@ -1809,7 +1809,8 @@ fn probe_relays(
     let Some(relay) = relay else {
         return;
     };
-    let registry: Vec<crate::home::RelayId> = engine.estavelles().iter().map(|r| r.estavelle_id).collect();
+    let registry: Vec<crate::home::RelayId> =
+        engine.estavelles().iter().map(|r| r.estavelle_id).collect();
 
     // Read before `Rotation::round` below, which is the only thing that can
     // end a sweep: whether the change this round produces belongs to one
@@ -2401,7 +2402,10 @@ fn next_relay(
 /// for the life of the process, and the relays it *was* admitted to would never
 /// be dialed — nothing measures a relay it has no connection to.
 fn abandon_relay(context: &mut RelayContext<'_>) {
-    let Some(next) = next_relay(context.relay.estavelle_id, &context.common.engine.estavelles()) else {
+    let Some(next) = next_relay(
+        context.relay.estavelle_id,
+        &context.common.engine.estavelles(),
+    ) else {
         return;
     };
     tracing::warn!(
@@ -2419,7 +2423,10 @@ fn abandon_relay(context: &mut RelayContext<'_>) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .hold(next.estavelle_id);
-    context.common.engine.set_home_estavelle(Some(next.estavelle_id));
+    context
+        .common
+        .engine
+        .set_home_estavelle(Some(next.estavelle_id));
     context.relay = next;
 }
 
@@ -7733,7 +7740,12 @@ mod probe_tests {
     fn a_choice_that_has_not_moved_moves_nothing() {
         let registry = vec![relay(1), relay(2)];
         assert!(
-            home_target(Some(relay(1).estavelle_id), relay(1).estavelle_id, &registry).is_none(),
+            home_target(
+                Some(relay(1).estavelle_id),
+                relay(1).estavelle_id,
+                &registry
+            )
+            .is_none(),
             "the connection was rebuilt for a choice that did not change"
         );
     }
@@ -7741,8 +7753,12 @@ mod probe_tests {
     #[test]
     fn a_moved_choice_names_the_registry_entry_to_dial() {
         let registry = vec![relay(1), relay(2)];
-        let target = home_target(Some(relay(2).estavelle_id), relay(1).estavelle_id, &registry)
-            .expect("a relay to move to");
+        let target = home_target(
+            Some(relay(2).estavelle_id),
+            relay(1).estavelle_id,
+            &registry,
+        )
+        .expect("a relay to move to");
         assert_eq!(target.estavelle_id, relay(2).estavelle_id);
         assert_eq!(
             target.address,
@@ -7757,7 +7773,12 @@ mod probe_tests {
     #[test]
     fn a_choice_the_registry_lost_leaves_the_connection_where_it_is() {
         let registry = vec![relay(1)];
-        assert!(home_target(Some(relay(2).estavelle_id), relay(1).estavelle_id, &registry).is_none());
+        assert!(home_target(
+            Some(relay(2).estavelle_id),
+            relay(1).estavelle_id,
+            &registry
+        )
+        .is_none());
     }
 
     /// **A node must not be left on a withdrawn relay.** `retain` releases the
@@ -7870,7 +7891,11 @@ mod probe_tests {
                     answer(&rtt, &home, relay(1).estavelle_id, &item, now, 100);
                 }
                 while let Ok((id, item)) = q.on_demand.try_recv() {
-                    let rtt_ms = if id == relay(2).estavelle_id { fast } else { 110 };
+                    let rtt_ms = if id == relay(2).estavelle_id {
+                        fast
+                    } else {
+                        110
+                    };
                     answer(&rtt, &home, id, &item, now, rtt_ms);
                 }
             };

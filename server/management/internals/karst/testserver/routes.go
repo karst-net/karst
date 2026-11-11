@@ -78,7 +78,7 @@ func (r *routeRegistry) upsert(ctx context.Context, req routeOfferRequest) error
 		return fmt.Errorf("prefix: %w", err)
 	}
 	if _, err := r.account.GetPeerByPeerPubKey(ctx, req.AvenHandle); err != nil {
-		return fmt.Errorf("gateway_handle %q: %w", req.AvenHandle, err)
+		return fmt.Errorf("aven_handle %q: %w", req.AvenHandle, err)
 	}
 	networkType := nbroute.IPv4Network
 	if prefix.Addr().Is6() {

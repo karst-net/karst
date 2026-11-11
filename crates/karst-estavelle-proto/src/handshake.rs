@@ -439,7 +439,12 @@ impl EstavelleHandshake {
                 None => (roster.decoy_key().to_vec(), None),
             },
             Role::Mesh => match roster.mesh_peer(&peer_id) {
-                Some(e) => (e.identity_pk, Some(Admitted::Mesh { estavelle_id: peer_id })),
+                Some(e) => (
+                    e.identity_pk,
+                    Some(Admitted::Mesh {
+                        estavelle_id: peer_id,
+                    }),
+                ),
                 None => (roster.decoy_key().to_vec(), None),
             },
         };

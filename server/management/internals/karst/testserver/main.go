@@ -210,7 +210,7 @@ func controlAddr() string {
 //
 //	GET    /peers                    -> [{handle, label, ip}, ...]
 //	POST   /remove?handle=<handle>   -> 200 removed / 404 no such peer
-//	POST   /routes                   -> {route_id, prefix, gateway_handle,
+//	POST   /routes                   -> {route_id, prefix, aven_handle,
 //	                                      metric, masquerade, keep_route,
 //	                                      enabled} as JSON; 200 on create
 //	                                      or update (upsert by route_id),

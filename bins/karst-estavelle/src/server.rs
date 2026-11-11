@@ -541,7 +541,9 @@ async fn roster_loop_with_timing(
             Err(err) => eprintln!("karst-estavelle: roster reload failed: {err}"),
         }
         if source.expired_after(max_age) && !failed_closed {
-            eprintln!("karst-estavelle: roster lease expired; admitting nobody until a valid reload");
+            eprintln!(
+                "karst-estavelle: roster lease expired; admitting nobody until a valid reload"
+            );
             ctx.replace_roster(FileRoster::empty());
             failed_closed = true;
         }
@@ -1269,7 +1271,9 @@ async fn dial_mesh(
     drive(
         stream,
         rest,
-        Admitted::Mesh { estavelle_id: peer_id },
+        Admitted::Mesh {
+            estavelle_id: peer_id,
+        },
         remote,
         Arc::clone(ctx),
     )

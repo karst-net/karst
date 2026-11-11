@@ -2045,7 +2045,10 @@ fn start_server_with_options(
         argv.push(dns_zone.to_owned());
     }
     argv.extend(extra.iter().cloned());
-    let relay_addr = estavelles.first().map(|(a, _)| a.clone()).unwrap_or_default();
+    let relay_addr = estavelles
+        .first()
+        .map(|(a, _)| a.clone())
+        .unwrap_or_default();
     let mut server = Command::new("ip")
         .args(&argv)
         .stdout(Stdio::piped())
@@ -3851,7 +3854,7 @@ fn a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding() 
     // reads node B's — the fixture assigns addresses in registration order,
     // and this row restarts node A, so hardcoding one would be a guess.
     let gateway_ip = overlay_peer_address(&net, "b", NS_B);
-    let gateway_handle = fixture_handle_for(&gateway_ip);
+    let aven_handle = fixture_handle_for(&gateway_ip);
 
     // Nothing before this point could have reached the destination host: it
     // has no route to anything on the fixture but node A. This is the
@@ -3865,7 +3868,7 @@ fn a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding() 
     let created = fixture_create_route(&RouteOfferBody {
         route_id: "dest-lan",
         prefix: DEST_PREFIX,
-        gateway_handle: &gateway_handle,
+        aven_handle: &aven_handle,
         metric: 100,
         masquerade: true,
         keep_route: false,
@@ -3873,7 +3876,7 @@ fn a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding() 
     });
     assert!(
         created,
-        "the fixture rejected the route offer (gateway handle {gateway_handle:?})"
+        "the fixture rejected the route offer (gateway handle {aven_handle:?})"
     );
 
     // The same restart-to-pick-up-a-server-side-change pattern the offline-
@@ -3964,13 +3967,13 @@ fn gateway_forwarding_survives_a_daemon_crash_and_restart() {
     let (mut net, _pins, _ca) = start_routing_topology("crash");
 
     let gateway_ip = overlay_peer_address(&net, "b", NS_B);
-    let gateway_handle = fixture_handle_for(&gateway_ip);
+    let aven_handle = fixture_handle_for(&gateway_ip);
 
     assert!(
         fixture_create_route(&RouteOfferBody {
             route_id: "dest-lan",
             prefix: DEST_PREFIX,
-            gateway_handle: &gateway_handle,
+            aven_handle: &aven_handle,
             metric: 100,
             masquerade: true,
             keep_route: false,
@@ -4078,7 +4081,7 @@ fn dest_reachable() -> bool {
 struct RouteOfferBody<'a> {
     route_id: &'a str,
     prefix: &'a str,
-    gateway_handle: &'a str,
+    aven_handle: &'a str,
     metric: u32,
     masquerade: bool,
     keep_route: bool,
@@ -4094,14 +4097,9 @@ fn fixture_create_route(body: &RouteOfferBody<'_>) -> bool {
         None => String::new(),
     };
     let payload = format!(
-        "{{\"route_id\":{:?},\"prefix\":{:?},\"gateway_handle\":{:?},\
+        "{{\"route_id\":{:?},\"prefix\":{:?},\"aven_handle\":{:?},\
          \"metric\":{},\"masquerade\":{},\"keep_route\":{}{enabled_field}}}",
-        body.route_id,
-        body.prefix,
-        body.gateway_handle,
-        body.metric,
-        body.masquerade,
-        body.keep_route,
+        body.route_id, body.prefix, body.aven_handle, body.metric, body.masquerade, body.keep_route,
     );
     Command::new("ip")
         .args([
@@ -4172,7 +4170,7 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
     let (mut net, _pins, _ca) = start_routing_topology("exit");
 
     let gateway_ip = overlay_peer_address(&net, "b", NS_B);
-    let gateway_handle = fixture_handle_for(&gateway_ip);
+    let aven_handle = fixture_handle_for(&gateway_ip);
 
     assert!(
         !dest_reachable(),
@@ -4183,7 +4181,7 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
     let created = fixture_create_route(&RouteOfferBody {
         route_id: "internet",
         prefix: "0.0.0.0/0",
-        gateway_handle: &gateway_handle,
+        aven_handle: &aven_handle,
         metric: 100,
         masquerade: true,
         keep_route: false,
@@ -4191,7 +4189,7 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
     });
     assert!(
         created,
-        "the fixture rejected the exit offer (gateway handle {gateway_handle:?})"
+        "the fixture rejected the exit offer (gateway handle {aven_handle:?})"
     );
 
     // Same restart-to-pick-up-a-server-side-change pattern the subnet row
@@ -4305,13 +4303,13 @@ fn exit_node_consent_survives_a_daemon_crash_and_restart() {
     let (mut net, _pins, _ca) = start_routing_topology("consent");
 
     let gateway_ip = overlay_peer_address(&net, "b", NS_B);
-    let gateway_handle = fixture_handle_for(&gateway_ip);
+    let aven_handle = fixture_handle_for(&gateway_ip);
 
     assert!(
         fixture_create_route(&RouteOfferBody {
             route_id: "internet",
             prefix: "0.0.0.0/0",
-            gateway_handle: &gateway_handle,
+            aven_handle: &aven_handle,
             metric: 100,
             masquerade: true,
             keep_route: false,
@@ -4448,13 +4446,13 @@ fn selecting_one_ip_familys_exit_route_does_not_activate_the_other() {
     let (mut net, _pins, _ca) = start_routing_topology("dualstack");
 
     let gateway_ip = overlay_peer_address(&net, "b", NS_B);
-    let gateway_handle = fixture_handle_for(&gateway_ip);
+    let aven_handle = fixture_handle_for(&gateway_ip);
 
     for (route_id, prefix) in [("internet-v4", "0.0.0.0/0"), ("internet-v6", "::/0")] {
         let created = fixture_create_route(&RouteOfferBody {
             route_id,
             prefix,
-            gateway_handle: &gateway_handle,
+            aven_handle: &aven_handle,
             metric: 100,
             masquerade: true,
             keep_route: false,
@@ -4566,7 +4564,7 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
         fixture_create_route(&RouteOfferBody {
             route_id: "dest-lan",
             prefix: DEST_PREFIX,
-            gateway_handle: &gateway_a_handle,
+            aven_handle: &gateway_a_handle,
             metric: 100,
             masquerade: true,
             keep_route: false,
@@ -4687,7 +4685,7 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
         fixture_create_route(&RouteOfferBody {
             route_id: "dest-lan",
             prefix: DEST_PREFIX,
-            gateway_handle: &gateway_c_handle,
+            aven_handle: &gateway_c_handle,
             metric: 100,
             masquerade: true,
             keep_route: false,
@@ -4844,7 +4842,7 @@ fn route_changes_converge_through_push_not_restart() {
     let (mut net, _pins, _ca) = start_routing_topology("push");
 
     let gateway_ip = overlay_peer_address(&net, "b", NS_B);
-    let gateway_handle = fixture_handle_for(&gateway_ip);
+    let aven_handle = fixture_handle_for(&gateway_ip);
 
     assert!(
         !dest_reachable(),
@@ -4880,7 +4878,7 @@ fn route_changes_converge_through_push_not_restart() {
         fixture_create_route(&RouteOfferBody {
             route_id: "dest-lan",
             prefix: DEST_PREFIX,
-            gateway_handle: &gateway_handle,
+            aven_handle: &aven_handle,
             metric: 100,
             masquerade: true,
             keep_route: false,
@@ -4903,7 +4901,7 @@ fn route_changes_converge_through_push_not_restart() {
         fixture_create_route(&RouteOfferBody {
             route_id: "dest-lan",
             prefix: DEST_PREFIX,
-            gateway_handle: &gateway_handle,
+            aven_handle: &aven_handle,
             metric: 250,
             masquerade: true,
             keep_route: false,
@@ -4920,7 +4918,7 @@ fn route_changes_converge_through_push_not_restart() {
         fixture_create_route(&RouteOfferBody {
             route_id: "dest-lan",
             prefix: DEST_PREFIX,
-            gateway_handle: &gateway_handle,
+            aven_handle: &aven_handle,
             metric: 250,
             masquerade: true,
             keep_route: false,
@@ -4944,7 +4942,7 @@ fn route_changes_converge_through_push_not_restart() {
         fixture_create_route(&RouteOfferBody {
             route_id: "dest-lan",
             prefix: DEST_PREFIX,
-            gateway_handle: &gateway_handle,
+            aven_handle: &aven_handle,
             metric: 250,
             masquerade: true,
             keep_route: false,
@@ -5010,12 +5008,12 @@ fn overlapping_pushes_under_control_plane_load_still_converge_to_the_final_state
     let (net, _pins, _ca) = start_routing_topology("burst");
 
     let gateway_ip = overlay_peer_address(&net, "b", NS_B);
-    let gateway_handle = fixture_handle_for(&gateway_ip);
+    let aven_handle = fixture_handle_for(&gateway_ip);
 
     let stop_noise = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let noise_thread = {
         let stop_noise = stop_noise.clone();
-        let gateway_handle = gateway_handle.clone();
+        let aven_handle = aven_handle.clone();
         std::thread::spawn(move || {
             let mut metric = 100_u32;
             // A tight loop of unrelated route writes, for the round loop's
@@ -5036,7 +5034,7 @@ fn overlapping_pushes_under_control_plane_load_still_converge_to_the_final_state
                 fixture_create_route(&RouteOfferBody {
                     route_id: "background-noise",
                     prefix: "203.0.113.0/24",
-                    gateway_handle: &gateway_handle,
+                    aven_handle: &aven_handle,
                     metric,
                     masquerade: true,
                     keep_route: false,
@@ -5053,7 +5051,7 @@ fn overlapping_pushes_under_control_plane_load_still_converge_to_the_final_state
             children.push(fixture_create_route_spawn(&RouteOfferBody {
                 route_id: "dest-lan",
                 prefix: DEST_PREFIX,
-                gateway_handle: &gateway_handle,
+                aven_handle: &aven_handle,
                 metric,
                 masquerade: true,
                 keep_route: false,
@@ -5062,7 +5060,7 @@ fn overlapping_pushes_under_control_plane_load_still_converge_to_the_final_state
             children.push(fixture_create_route_spawn(&RouteOfferBody {
                 route_id: "concurrent-noise",
                 prefix: "198.51.100.0/24",
-                gateway_handle: &gateway_handle,
+                aven_handle: &aven_handle,
                 metric: 200 + step,
                 masquerade: true,
                 keep_route: false,
@@ -5082,7 +5080,7 @@ fn overlapping_pushes_under_control_plane_load_still_converge_to_the_final_state
             fixture_create_route(&RouteOfferBody {
                 route_id: "dest-lan",
                 prefix: DEST_PREFIX,
-                gateway_handle: &gateway_handle,
+                aven_handle: &aven_handle,
                 metric: sentinel_metric,
                 masquerade: true,
                 keep_route: false,
@@ -5115,14 +5113,9 @@ fn fixture_create_route_spawn(body: &RouteOfferBody<'_>) -> Child {
         None => String::new(),
     };
     let payload = format!(
-        "{{\"route_id\":{:?},\"prefix\":{:?},\"gateway_handle\":{:?},\
+        "{{\"route_id\":{:?},\"prefix\":{:?},\"aven_handle\":{:?},\
          \"metric\":{},\"masquerade\":{},\"keep_route\":{}{enabled_field}}}",
-        body.route_id,
-        body.prefix,
-        body.gateway_handle,
-        body.metric,
-        body.masquerade,
-        body.keep_route,
+        body.route_id, body.prefix, body.aven_handle, body.metric, body.masquerade, body.keep_route,
     );
     Command::new("ip")
         .args([
@@ -5271,7 +5264,7 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
         return;
     }
     let (mut net, _pins, _ca) = start_routing_topology("combined-gateway");
-    let gateway_handle = fixture_handle_for(&overlay_peer_address(&net, "b", NS_B));
+    let aven_handle = fixture_handle_for(&overlay_peer_address(&net, "b", NS_B));
     let exit_destination = "10.99.0.3";
     must(&nsr(
         NS_DEST,
@@ -5281,7 +5274,7 @@ fn one_gateway_serves_a_subnet_and_exit_without_combining_client_consent() {
         assert!(fixture_create_route(&RouteOfferBody {
             route_id,
             prefix,
-            gateway_handle: &gateway_handle,
+            aven_handle: &aven_handle,
             metric: 100,
             masquerade: true,
             keep_route: false,
@@ -5454,7 +5447,7 @@ fn ipv6_gateway_forwards_specific_and_default_prefixes_with_independent_consent(
         assert!(fixture_create_route(&RouteOfferBody {
             route_id,
             prefix,
-            gateway_handle: &handle,
+            aven_handle: &handle,
             metric: 100,
             masquerade: true,
             keep_route: false,
@@ -5506,7 +5499,7 @@ fn ipv6_gateway_forwards_specific_and_default_prefixes_with_independent_consent(
     assert!(fixture_create_route(&RouteOfferBody {
         route_id: "lan-v6",
         prefix: "fd99::2/128",
-        gateway_handle: &handle,
+        aven_handle: &handle,
         metric: 100,
         masquerade: false,
         keep_route: false,
@@ -5591,7 +5584,7 @@ fn ipv6_gateway_dns_upstream_requires_consent_and_stops_after_withdrawal() {
     assert!(fixture_create_route(&RouteOfferBody {
         route_id: "dns-exit-v6",
         prefix: "::/0",
-        gateway_handle: &handle,
+        aven_handle: &handle,
         metric: 100,
         masquerade: true,
         keep_route: false,

@@ -502,7 +502,10 @@ impl Engine {
     /// Routing needs it to tell the two rules apart: a peer whose published
     /// home is the relay this node is already connected to is reached on that
     /// connection, not on a second one dialed to the same address.
-    pub fn set_home_estavelle(&self, estavelle_id: Option<[u8; karst_estavelle_proto::consts::ID_LEN]>) {
+    pub fn set_home_estavelle(
+        &self,
+        estavelle_id: Option<[u8; karst_estavelle_proto::consts::ID_LEN]>,
+    ) {
         *self
             .home_estavelle
             .write()

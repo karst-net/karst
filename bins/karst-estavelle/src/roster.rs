@@ -28,7 +28,7 @@ use karst_estavelle_proto::{AquiferId, EstavelleEntry, Roster, RosterEntry};
 use serde::Deserialize;
 
 use crate::hub::Id;
-use crate::sign::{node_id, estavelle_id, Identity, SEED_LEN};
+use crate::sign::{estavelle_id, node_id, Identity, SEED_LEN};
 
 /// Errors loading a roster.
 #[derive(Debug)]
