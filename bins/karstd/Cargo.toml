@@ -97,7 +97,7 @@ http = "1"
 x509-cert = "0.2"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1", features = ["fs"] }
+rustix = { version = "1.1.6", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 karst-ipc.workspace = true
@@ -123,7 +123,7 @@ karst-noise.workspace = true
 # Already a dev-dependency of karst-relay, and used here for the same reason:
 # testing what a relay's certificate does needs a certificate.
 rcgen = "0.14"
-hickory-proto = { version = "0.26.1", default-features = false }
+hickory-proto = { version = "0.26.2", default-features = false }
 # Drives `trace_export::Client::send_bytes` synchronously in its own tests —
 # the same executor `opentelemetry_sdk`'s batch processor itself uses to
 # drive the trait's `async fn` from a plain `std::thread`, not a Tokio

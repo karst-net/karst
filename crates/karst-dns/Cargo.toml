@@ -12,7 +12,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-hickory-proto = { version = "0.26.1", default-features = false }
+hickory-proto = { version = "0.26.2", default-features = false }
 thiserror = "2"
 # zbus 6 dropped the `blocking` module (issue #347): `default-rt` gives every
 # `Connection` zruntime's own single-threaded reactor, and `zbus::block_on`
