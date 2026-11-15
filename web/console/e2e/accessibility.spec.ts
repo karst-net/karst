@@ -421,7 +421,7 @@ test("a relay can be added and removed", async ({ page }) => {
 
 test("a network route can be added, disabled and deleted", async ({ page }) => {
   await page.goto("/#/routes");
-  await page.getByRole("button", { name: "Add subnet route" }).click();
+  await page.getByRole("button", { name: "Add Aven behavior" }).click();
   await page.getByLabel("Route identifier").fill("branch-office");
   await page.getByLabel("Route network (CIDR)").fill("192.168.40.0/24");
   await page.getByLabel("Routing groups").selectOption(["group-gateways"]);
@@ -439,7 +439,7 @@ test("a network route can be added, disabled and deleted", async ({ page }) => {
 
 test("a route without a routing group is refused with the reason", async ({ page }) => {
   await page.goto("/#/routes");
-  await page.getByRole("button", { name: "Add subnet route" }).click();
+  await page.getByRole("button", { name: "Add Aven behavior" }).click();
   await page.getByLabel("Route identifier").fill("nowhere");
   await page.getByLabel("Route network (CIDR)").fill("10.9.0.0/16");
   await page.getByLabel("Distribution groups").selectOption(["group-engineering"]);

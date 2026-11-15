@@ -27,6 +27,18 @@ independent Bedrock membership. A declaration does not establish reachability.
 
 The Aven behavior editor administers specific-prefix access and IPv4/IPv6
 default egress through one behavior selector, including from an Aven row.
+Use **Add Aven behavior** to open the shared editor; the former subnet and
+IPv4/IPv6 exit shortcuts opened this same editor with only a different initial
+selection and have been consolidated.
+
+| Behavior | Destination | Client activation | DNS zone |
+|---|---|---|---|
+| Specific-prefix access | An IPv4 or IPv6 subnet CIDR | Normal subnet route application | Optional |
+| IPv4 default-route egress | `0.0.0.0/0` | Explicit local IPv4 exit selection | Unavailable |
+| IPv6 default-route egress | `::/0` | Explicit local IPv6 exit selection | Unavailable |
+
+Switching to default-route egress clears a subnet's DNS zone. All choices use
+the same route API and routing, distribution and access-control group gates.
 Existing route records and IDs remain authoritative. Routing groups choose candidate nodes; distribution
 groups choose offer recipients; access-control groups and packet policy govern
 use. Default routes additionally require durable local client selection:

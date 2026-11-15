@@ -30,7 +30,7 @@ test("one Aven shows both behaviors without claiming forwarding readiness", asyn
 test("legacy route links and canonical Aven navigation remain usable", async ({ page }) => {
   await page.goto("/#/routes");
   await expect(page.getByRole("heading", { name: "Avens", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add subnet route" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add Aven behavior" })).toBeVisible();
   await page.getByRole("link", { name: "Avens", exact: true }).click();
   await expect(page).toHaveURL(/#\/avens$/);
   await expect(page.getByRole("link", { name: "Avens", exact: true })).toHaveAttribute("aria-current", "page");
@@ -41,7 +41,8 @@ test("older control inventory errors do not remove route administration", async 
   await page.goto("/#/avens/metrics");
   await expect(page.getByText(/Aven inventory unavailable:/)).toBeVisible();
   await page.getByRole("button", { name: "Manage", exact: true }).click();
-  await page.getByRole("button", { name: "Add IPv4 exit route" }).click();
+  await page.getByRole("button", { name: "Add Aven behavior" }).click();
+  await page.getByLabel("Aven behavior", { exact: true }).selectOption("0.0.0.0/0");
   await expect(page.getByLabel("Route network (CIDR)")).toHaveValue("0.0.0.0/0");
   await expect(page.getByText("karst aven exit use <route-id>")).toBeVisible();
   await expect(page.getByText(/IPv4 and IPv6 consent are independent/)).toBeVisible();
@@ -91,12 +92,13 @@ test("an unknown inventory schema fails explicitly while routes remain available
   await page.goto("/#/avens/metrics");
   await expect(page.getByText(/Unsupported Aven inventory schema/)).toBeVisible();
   await page.getByRole("button", { name: "Manage", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Add subnet route" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add Aven behavior" })).toBeVisible();
 });
 
 test("one Aven behavior editor switches prefix and default-route behaviors", async ({ page }) => {
   await page.goto("/#/avens");
   await page.getByRole("button", { name: "Add Aven behavior", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Add (subnet|IPv[46] exit) route/ })).toHaveCount(0);
   const behavior = page.getByLabel("Aven behavior", { exact: true });
   await expect(behavior).toHaveValue("subnet");
   await behavior.selectOption("::/0");
@@ -109,26 +111,32 @@ test("one Aven behavior editor switches prefix and default-route behaviors", asy
   await expect(page.getByText("karst aven exit use <route-id>")).toHaveCount(0);
 });
 
-test("default behavior keeps explicit client consent and existing route writes", async ({ page }) => {
-  let submitted: Record<string, unknown> | undefined;
-  await page.route("**/api/routes", async (route) => {
-    if (route.request().method() !== "POST") { await route.continue(); return; }
-    submitted = route.request().postDataJSON() as Record<string, unknown>;
-    await route.fulfill({ status: 201, json: { ...submitted, id: "new-default" } });
+for (const network of ["10.50.0.0/16", "0.0.0.0/0", "::/0"]) {
+  test(`behavior ${network} submits through the shared route API`, async ({ page }) => {
+    let submitted: Record<string, unknown> | undefined;
+    await page.route("**/api/routes", async (route) => {
+      if (route.request().method() !== "POST") { await route.continue(); return; }
+      submitted = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({ status: 201, json: { ...submitted, id: "new-default" } });
+    });
+    await page.goto("/#/avens");
+    await page.getByRole("button", { name: "Add Aven behavior", exact: true }).click();
+    await page.getByLabel("Route DNS zone", { exact: true }).fill("old.example.internal");
+    const exit = network.endsWith("/0");
+    if (exit) await page.getByLabel("Aven behavior", { exact: true }).selectOption(network);
+    else await page.getByLabel("Route network (CIDR)").fill(network);
+    await page.getByLabel("Route identifier", { exact: true }).fill("new-behavior");
+    await page.getByLabel("Routing groups", { exact: true }).selectOption(["group-gateways"]);
+    await page.getByLabel("Distribution groups", { exact: true }).selectOption(["group-all"]);
+    await page.getByLabel("Access-control groups", { exact: true }).selectOption(["group-sre"]);
+    await page.getByRole("button", { name: "Add route", exact: true }).click();
+    await expect.poll(() => submitted).toMatchObject({
+      network, network_id: "new-behavior", skip_auto_apply: exit, dns_zone: exit ? "" : "old.example.internal",
+      peer_groups: ["group-gateways"], groups: ["group-all"], access_control_groups: ["group-sre"],
+    });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
   });
-  await page.goto("/#/avens");
-  await page.getByRole("button", { name: "Add Aven behavior", exact: true }).click();
-  await page.getByLabel("Aven behavior", { exact: true }).selectOption("::/0");
-  await page.getByLabel("Route identifier", { exact: true }).fill("ipv6-egress");
-  await page.getByLabel("Routing groups", { exact: true }).selectOption(["group-gateways"]);
-  await page.getByLabel("Distribution groups", { exact: true }).selectOption(["group-all"]);
-  await page.getByLabel("Access-control groups", { exact: true }).selectOption(["group-sre"]);
-  await page.getByRole("button", { name: "Add route", exact: true }).click();
-  await expect.poll(() => submitted).toMatchObject({
-    network: "::/0", network_id: "ipv6-egress", skip_auto_apply: true,
-    peer_groups: ["group-gateways"], groups: ["group-all"], access_control_groups: ["group-sre"],
-  });
-});
+}
 
 test("DNS zone affinity is offered for a subnet route, hidden for a default route, and submits correctly", async ({ page }) => {
   let submitted: Record<string, unknown> | undefined;
@@ -138,7 +146,7 @@ test("DNS zone affinity is offered for a subnet route, hidden for a default rout
     await route.fulfill({ status: 201, json: { ...submitted, id: "new-legacy" } });
   });
   await page.goto("/#/avens");
-  await page.getByRole("button", { name: "Add subnet route", exact: true }).click();
+  await page.getByRole("button", { name: "Add Aven behavior", exact: true }).click();
   await expect(page.getByLabel("Route DNS zone", { exact: true })).toBeVisible();
 
   await page.getByLabel("Aven behavior", { exact: true }).selectOption("0.0.0.0/0");

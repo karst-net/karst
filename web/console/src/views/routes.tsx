@@ -113,10 +113,8 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
       <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled devices ("avens") will carry traffic to it. Advertise a subnet or default route through enrolled aven devices. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
       <div className="actions">
         <button className="primary" onClick={() => addBehavior()}>Add Aven behavior</button>
-        <button onClick={() => setDraft({ value: fresh() })}>Add subnet route</button>
-        <button onClick={() => setDraft({ value: fresh("0.0.0.0/0") })}>Add IPv4 exit route</button>
-        <button onClick={() => setDraft({ value: fresh("::/0") })}>Add IPv6 exit route</button>
       </div>
+      <p className="lede">Add subnet access or IPv4/IPv6 internet egress using the behavior selector.</p>
       <Notice message={message} />
       {routes.length === 0
         ? <EmptyState title="No network routes">Add a subnet route or offer an exit route that clients may explicitly accept.</EmptyState>
@@ -142,10 +140,11 @@ export function Routes({ defaultTab = "manage" }: { defaultTab?: "manage" | "met
     <Dialog open={Boolean(draft)} title={draft?.id ? "Edit Aven behavior" : "Add Aven behavior"} onClose={() => setDraft(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <label>Identifier<input aria-label="Route identifier" placeholder="aws-prod" value={draft?.value.network_id ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network_id: event.target.value } })} /></label>
-        <label>Behavior<select aria-label="Aven behavior" value={isExit(draft?.value.network ?? "") ? draft?.value.network : "subnet"} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value === "subnet" ? "" : event.target.value, skip_auto_apply: event.target.value !== "subnet" } })}>
+        <label>Behavior<select aria-label="Aven behavior" value={isExit(draft?.value.network ?? "") ? draft?.value.network : "subnet"} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value === "subnet" ? "" : event.target.value, dns_zone: event.target.value === "subnet" ? current.value.dns_zone : "", skip_auto_apply: event.target.value !== "subnet" } })}>
           <option value="subnet">Specific-prefix access</option><option value="0.0.0.0/0">IPv4 default-route egress</option><option value="::/0">IPv6 default-route egress</option>
         </select></label>
-        <label>Network (CIDR)<input aria-label="Route network (CIDR)" placeholder="10.10.0.0/16" value={draft?.value.network ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value, skip_auto_apply: isExit(event.target.value) } })} /></label>
+        <p className="lede">Specific-prefix access routes traffic to an IPv4 or IPv6 subnet and supports an optional DNS zone. IPv4 default-route egress (0.0.0.0/0) and IPv6 default-route egress (::/0) route internet traffic for that address family and require separate local client consent.</p>
+        <label>Network (CIDR)<input aria-label="Route network (CIDR)" placeholder="10.10.0.0/16" value={draft?.value.network ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, network: event.target.value, dns_zone: isExit(event.target.value.trim()) ? "" : current.value.dns_zone, skip_auto_apply: isExit(event.target.value.trim()) } })} /></label>
         {isExit(draft?.value.network ?? "") && <p className="lede">The server only offers this default route. Each client must run <code>karst aven exit use &lt;route-id&gt;</code> locally before it becomes active. IPv4 and IPv6 consent are independent.</p>}
         <label>Description<input aria-label="Route description" value={draft?.value.description ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, description: event.target.value } })} /></label>
         {!isExit(draft?.value.network ?? "") && <label>DNS zone (optional)<input aria-label="Route DNS zone" placeholder="legacy.example.internal" value={draft?.value.dns_zone ?? ""} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, dns_zone: event.target.value } })} /></label>}
