@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Dialog, EmptyState, Status } from "@karst-net/ui";
 import { api, type NameserverGroup, type NameserverGroupDraft } from "../api";
 import { Failure, Notice, Rows, idList, useMutation, useResource } from "../common";
+import { GroupPicker } from "./access";
 import { TutorialHint } from "../tutorial";
 
 const blank: NameserverGroupDraft = { name: "", description: "", nameservers: [{ ip: "", ns_type: "udp", port: 53 }], enabled: true, groups: [], primary: false, domains: [], search_domains_enabled: false };
@@ -12,15 +13,23 @@ const blank: NameserverGroupDraft = { name: "", description: "", nameservers: [{
 export function Dns() {
   const settings = useResource(api.dnsSettings);
   const servers = useResource(api.nameservers);
+  const groups = useResource(api.groups);
   const { message, setMessage, run } = useMutation(() => { settings.reload(); servers.reload(); });
-  const [excluded, setExcluded] = useState("");
+  const [excluded, setExcluded] = useState<string[]>([]);
   const [draft, setDraft] = useState<{ value: NameserverGroupDraft; id?: string }>();
-  useEffect(() => { if (settings.value) setExcluded(settings.value.disabled_management_groups.join(", ")); }, [settings.value]);
+  useEffect(() => { if (settings.value) setExcluded(settings.value.disabled_management_groups); }, [settings.value]);
 
-  if (settings.loading) return <p>Loading DNS settings…</p>;
+  if (settings.loading || groups.loading) return <p>Loading DNS settings…</p>;
   if (settings.error) return <Failure message={settings.error} retry={settings.reload} />;
 
-  const saveSettings = () => void run(() => api.saveDnsSettings(idList(excluded)), "DNS settings saved.");
+  if (groups.error) return <Failure message={groups.error} retry={groups.reload} />;
+
+  const allGroups = groups.value ?? [];
+  const names = (ids: string[]) => ids.map(id => allGroups.find(group => group.id === id)?.name ?? "Unavailable group").join(", ");
+  const savedExcluded = settings.value?.disabled_management_groups ?? [];
+  const overlap = (draft?.value.groups ?? []).filter(id => savedExcluded.includes(id));
+  const excludedAssignments = (servers.value ?? []).filter(group => group.groups.some(id => excluded.includes(id)));
+  const saveSettings = () => void run(() => api.saveDnsSettings(excluded), "DNS settings saved.");
   const save = async () => {
     if (!draft) return;
     const value = { ...draft.value, name: draft.value.name.trim(), nameservers: draft.value.nameservers.filter((server) => server.ip.trim()).map((server) => ({ ...server, ip: server.ip.trim() })) };
@@ -49,9 +58,9 @@ export function Dns() {
     <Notice message={message} />
 
     <h3>Managed resolvers</h3>
-    <label htmlFor="dns-groups">Groups excluded from DNS management</label>
-    <input id="dns-groups" value={excluded} onChange={(event) => setExcluded(event.target.value)} />
-    <p className="lede">Devices in these groups keep the resolver configuration they already have. Separate group IDs with commas.</p>
+    <GroupPicker label="Groups excluded from DNS management" groups={allGroups} value={excluded} onChange={setExcluded} />
+    <p className="lede">Choose groups managed in Identity &amp; Access. Devices in any excluded group keep their existing resolver configuration. Exclusion takes precedence over every nameserver assignment, including assignments through other groups the device belongs to.</p>
+    {excludedAssignments.length > 0 && <p role="note">These exclusions overlap distribution groups for: {excludedAssignments.map(group => group.name).join(", ")}. Devices in the excluded groups will not use those managed resolvers.</p>}
     <div className="actions"><button className="primary" onClick={saveSettings}>Save DNS settings</button></div>
 
     <h3>Nameserver groups</h3>
@@ -64,7 +73,7 @@ export function Dns() {
             <td><strong>{group.name}</strong>{group.description && <><br /><span className="lede">{group.description}</span></>}</td>
             <td>{group.nameservers.map((server) => <div key={server.ip}><code>{server.ip}:{server.port}</code></div>)}</td>
             <td>{group.primary ? "All domains (primary)" : group.domains.join(", ") || "—"}</td>
-            <td>{group.groups.join(", ") || "—"}</td>
+            <td>{names(group.groups) || "—"}{group.groups.some(id => savedExcluded.includes(id)) && <p className="lede">Includes excluded groups; exclusion takes precedence.</p>}</td>
             <td><Status state={group.enabled ? "healthy" : "unknown"} label={group.enabled ? "enabled" : "disabled"} /></td>
             <td><div className="actions">
               <button onClick={() => { const { id, ...rest } = group; setDraft({ value: rest, id }); }}>Edit</button>
@@ -84,7 +93,9 @@ export function Dns() {
         <div className="actions"><button type="button" onClick={() => setDraft((current) => current && { ...current, value: { ...current.value, nameservers: [...current.value.nameservers, { ip: "", ns_type: "udp", port: 53 }] } })}>Add another nameserver</button></div>
         <label><input type="checkbox" checked={draft?.value.primary ?? false} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, primary: event.target.checked, domains: event.target.checked ? [] : current.value.domains } })} /> Primary — resolve every domain through these servers</label>
         {!draft?.value.primary && <label>Match domains<input aria-label="Match domains" placeholder="corp.example.com, internal.test" value={(draft?.value.domains ?? []).join(", ")} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, domains: idList(event.target.value) } })} /></label>}
-        <label>Distribution group IDs<input aria-label="Nameserver distribution group IDs" placeholder="group-engineering" value={(draft?.value.groups ?? []).join(", ")} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, groups: idList(event.target.value) } })} /></label>
+        <GroupPicker label="Distribution groups" groups={allGroups} value={draft?.value.groups ?? []} onChange={selected => setDraft(current => current && { ...current, value: { ...current.value, groups: selected } })} />
+        <p className="lede">Choose groups from Identity &amp; Access whose devices should use these resolvers. Devices belonging to any group excluded from DNS management keep their existing resolvers, even when selected here.</p>
+        {overlap.length > 0 && <p role="note">Excluded from DNS management: {names(overlap)}. This assignment will not apply to devices in these groups. To manage their DNS, remove the exclusion and save DNS settings.</p>}
         <label><input type="checkbox" checked={draft?.value.enabled ?? true} onChange={(event) => setDraft((current) => current && { ...current, value: { ...current.value, enabled: event.target.checked } })} /> Enabled</label>
         <div className="actions"><button type="button" onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit">{draft?.id ? "Save group" : "Add group"}</button></div>
       </form>
