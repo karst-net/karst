@@ -3934,10 +3934,15 @@ fn bring_up_interface(config: &Config, attachment: DeviceOrigin) -> io::Result<N
     if let NetworkDevice::Tun(inner) = &tun {
         if config.dns.enabled
             && config.netmap_dns.magic_dns
-            && config.dns.stub_address.ip() == karst_dns::STUB_ADDRESS
+            && (config.dns.stub_address.ip() == karst_dns::STUB_ADDRESS
+                || config.dns.stub_address.ip()
+                    == std::net::IpAddr::V4(std::net::Ipv4Addr::new(100, 100, 100, 100)))
         {
+            if config.dns.stub_address.ip() != karst_dns::STUB_ADDRESS {
+                tracing::warn!("Explicit legacy DNS endpoint overlaps Tailscale Quad100; remove dns.stub_address to use the platform default");
+            }
             inner
-                .add_secondary_address(karst_dns::STUB_ADDRESS, 32)
+                .add_secondary_address(config.dns.stub_address.ip(), 32)
                 .map_err(|e| io::Error::other(e.to_string()))?;
         }
     }
@@ -5141,6 +5146,10 @@ fn dns_report(
     let _ = writeln!(out, "cache_entries = {}", cache.entries);
     let _ = writeln!(out, "cache_hits = {}", cache.hits);
     let _ = writeln!(out, "cache_misses = {}", cache.misses);
+    let mut failures = failures.to_vec();
+    if config.dns.enabled && config.netmap_dns.magic_dns && !listener_live {
+        failures.push(format!("DNS listener unavailable at {}; check daemon logs for a bind/configuration error and configure dns.stub_address to a free endpoint", config.dns.stub_address));
+    }
     let _ = writeln!(out, "recent_failures = {failures:?}");
     out
 }

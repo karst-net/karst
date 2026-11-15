@@ -632,8 +632,13 @@ impl Runtime {
         resolver: Resolver,
         on_answered: Arc<AnswerHook>,
     ) -> std::io::Result<Self> {
-        let udp = bind_retrying(|| UdpSocket::bind(address))?;
-        let tcp = bind_retrying(|| TcpListener::bind(address))?;
+        let bind_error = |transport: &str, error: std::io::Error| {
+            std::io::Error::new(error.kind(), format!("DNS {transport} listener at {address}: {error}; configure dns.stub_address to a free endpoint"))
+        };
+        let udp =
+            bind_retrying(|| UdpSocket::bind(address)).map_err(|error| bind_error("UDP", error))?;
+        let tcp = bind_retrying(|| TcpListener::bind(address))
+            .map_err(|error| bind_error("TCP", error))?;
         udp.set_read_timeout(Some(Duration::from_millis(100)))?;
         tcp.set_nonblocking(true)?;
         let stopping = Arc::new(AtomicBool::new(false));
@@ -965,7 +970,11 @@ pub fn from_config(config: &crate::config::Config) -> Result<Option<Resolver>, E
     let nameservers = if config.dns.upstream.is_empty() && config.dns.dot_upstream.is_empty() {
         let netmap = parse_upstreams(&config.netmap_dns.nameservers)?;
         if netmap.is_empty() {
-            host_resolvers()?.into_iter().map(Upstream::plain).collect()
+            host_resolvers()?
+                .into_iter()
+                .filter(|address| *address != config.dns.stub_address)
+                .map(Upstream::plain)
+                .collect()
         } else {
             netmap
         }
@@ -1025,12 +1034,13 @@ pub fn from_config(config: &crate::config::Config) -> Result<Option<Resolver>, E
         })
         .collect::<Result<Vec<_>, Error>>()?;
     Ok(Some(Resolver::new(
-        Config::new(
+        Config::for_listener(
             nameservers,
             config.netmap_dns.search_domains.clone(),
             routes,
             &config.netmap_dns.zone,
             true,
+            config.dns.stub_address,
         )?,
         peers,
     )))
@@ -1137,7 +1147,7 @@ fn host_resolvers() -> Result<Vec<SocketAddr>, Error> {
             value: address.to_owned(),
         })?;
         let resolver = SocketAddr::new(ip, 53);
-        if resolver.ip() != karst_dns::STUB_ADDRESS {
+        if !resolvers.contains(&resolver) {
             resolvers.push(resolver);
         }
     }
@@ -1601,6 +1611,61 @@ mod tests {
             wire_upstream(&upstream),
             Err(Error::SpkiPin { .. })
         ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wildcard_dns_server_conflict_is_reported_without_claiming_tunnel_address() {
+        let occupied = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let address = SocketAddr::new(
+            karst_dns::default_stub_address().ip(),
+            occupied.local_addr().unwrap().port(),
+        );
+        let resolver = Resolver::new(
+            Config::new(vec![], vec![], vec![], "karst", true).unwrap(),
+            [],
+        );
+        let error = Runtime::start(address, resolver, Arc::new(|_, _| {}))
+            .map(Runtime::stop)
+            .expect_err("wildcard DNS conflict was ignored");
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(error.to_string().contains("127.0.0.153"));
+    }
+
+    #[test]
+    fn occupied_tcp_port_reports_endpoint_and_releases_udp() {
+        let occupied = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = occupied.local_addr().unwrap();
+        let resolver = Resolver::new(
+            Config::new(vec![], vec![], vec![], "karst", true).unwrap(),
+            [],
+        );
+        let error = Runtime::start(address, resolver, Arc::new(|_, _| {}))
+            .map(Runtime::stop)
+            .expect_err("occupied TCP endpoint was accepted");
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(error.to_string().contains(&address.to_string()));
+        assert!(error.to_string().contains("TCP"));
+        assert!(
+            UdpSocket::bind(address).is_ok(),
+            "failed startup leaked its UDP listener"
+        );
+    }
+
+    #[test]
+    fn occupied_udp_port_reports_endpoint() {
+        let occupied = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let address = occupied.local_addr().unwrap();
+        let resolver = Resolver::new(
+            Config::new(vec![], vec![], vec![], "karst", true).unwrap(),
+            [],
+        );
+        let error = Runtime::start(address, resolver, Arc::new(|_, _| {}))
+            .map(Runtime::stop)
+            .expect_err("occupied UDP endpoint was accepted");
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(error.to_string().contains(&address.to_string()));
+        assert!(error.to_string().contains("UDP"));
     }
 
     #[test]

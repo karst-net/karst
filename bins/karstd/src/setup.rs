@@ -106,6 +106,7 @@ fn readiness(config: &Path) -> Result<String, String> {
         if let Some((synchronized, peers)) = daemon_readiness() {
             saw_daemon = true;
             if synchronized {
+                check_daemon_dns()?;
                 return Ok(connected_message(peers));
             }
         }
@@ -155,6 +156,7 @@ fn readiness(config: &Path) -> Result<String, String> {
     // its configuration. Wait for its protected local status socket as well.
     for _ in 0..20 {
         if let Some((true, peers)) = daemon_readiness() {
+            check_daemon_dns()?;
             return Ok(connected_message(peers));
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -174,7 +176,44 @@ fn approval_message() -> String {
     "Waiting for administrator approval. This device is registered; ask your administrator to approve it in Bedrock, then choose Retry. No new invitation is needed.".to_owned()
 }
 
+fn check_daemon_dns() -> Result<(), String> {
+    let response = daemon_response(b"dns-status\n")
+        .ok_or("The service is connected, but DNS readiness could not be checked. Choose Retry.")?;
+    check_dns_readiness(&response)
+}
+
+fn check_dns_readiness(response: &str) -> Result<(), String> {
+    let status: toml::Value =
+        toml::from_str(response).map_err(|_| "The service returned invalid DNS status.")?;
+    for key in ["enabled", "magic_dns", "listener"] {
+        if status.get(key).and_then(toml::Value::as_bool).is_none() {
+            return Err("The service returned incomplete DNS status.".into());
+        }
+    }
+    let flag = |key: &str| {
+        status
+            .get(key)
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
+    };
+    if flag("enabled") && flag("magic_dns") {
+        if !flag("listener") {
+            return Err("The service is connected, but mesh DNS could not start. Run karst dns status and check for a port conflict; configure dns.stub_address to a free endpoint, then choose Retry.".into());
+        }
+        let integration = status.get("host_integration").and_then(toml::Value::as_str);
+        let state = status.get("host_state").and_then(toml::Value::as_str);
+        if integration != Some("none") && state != Some("configured") {
+            return Err("The DNS listener is running, but host DNS integration is not configured. Run karst dns status, resolve the host resolver configuration, then choose Retry.".into());
+        }
+    }
+    Ok(())
+}
+
 fn daemon_readiness() -> Option<(bool, usize)> {
+    parse_daemon_readiness(&daemon_response(b"status\n")?)
+}
+
+fn daemon_response(command: &[u8]) -> Option<String> {
     let Ok(mut stream) = std::os::unix::net::UnixStream::connect(crate::ipc::DEFAULT_SOCKET) else {
         return None;
     };
@@ -184,7 +223,7 @@ fn daemon_readiness() -> Option<(bool, usize)> {
         || stream
             .set_write_timeout(Some(Duration::from_secs(1)))
             .is_err()
-        || stream.write_all(b"status\n").is_err()
+        || stream.write_all(command).is_err()
         || stream.shutdown(std::net::Shutdown::Write).is_err()
     {
         return None;
@@ -198,7 +237,7 @@ fn daemon_readiness() -> Option<(bool, usize)> {
     {
         return None;
     }
-    parse_daemon_readiness(&response)
+    Some(response)
 }
 
 fn parse_daemon_readiness(response: &str) -> Option<(bool, usize)> {
@@ -267,6 +306,17 @@ mod tests {
             "interface = \"karst0\"\naddresses = []\n"
         ));
         assert!(!status_has_interface("error = \"not running\"\n"));
+    }
+
+    #[test]
+    fn setup_requires_dns_listener_and_host_configuration() {
+        assert!(check_dns_readiness("").is_err());
+        let base = "enabled = true\nmagic_dns = true\nlistener = false\nhost_integration = \"systemd-resolved\"\nhost_state = \"not configured\"\n";
+        assert!(check_dns_readiness(base).is_err());
+        let listening = base.replace("listener = false", "listener = true");
+        assert!(check_dns_readiness(&listening).is_err());
+        assert!(check_dns_readiness(&listening.replace("not configured", "configured")).is_ok());
+        assert!(check_dns_readiness(&base.replace("enabled = true", "enabled = false")).is_ok());
     }
 
     #[test]

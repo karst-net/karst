@@ -184,7 +184,7 @@ ADR-0007 chose AGPL — so a modified server must be published.
 
 | Threat | Mitigation | Decided | Validated by |
 |---|---|---|---|
-| DNS leak to LAN resolver | Stub resolver on 100.100.100.100; per-platform integration | §7 | Per-platform leak tests |
+| DNS leak to LAN resolver | Platform-local stub resolver with mesh-scoped host integration; per-platform integration | §7 | Per-platform leak tests |
 | Stale resolver config after VPN flap | Explicit teardown paths; `karst doctor` | §7 | Flap tests |
 | Node key theft at rest | OS keystore or passphrase-derived sealing; `Zeroizing<>` in memory | ADR-0001 | Review |
 

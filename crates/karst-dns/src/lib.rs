@@ -38,9 +38,9 @@ pub use split::{Route, RoutingTable};
 pub use upstream::{Transport, Upstream};
 pub use zone::{MeshPeer, MeshZone, Record, RecordType, Response, ResponseKind};
 
-/// The address exposed to host resolver integrations. It is deliberately not
-/// accepted as an upstream: forwarding to it would recurse into this resolver.
-pub const STUB_ADDRESS: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(100, 100, 100, 100));
+/// Virtual tunnel DNS endpoint for platforms that need an assigned address.
+/// Linux uses a loopback listener instead; see `default_stub_address`.
+pub const STUB_ADDRESS: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(100, 100, 100, 153));
 
 /// A netmap-derived DNS configuration. Names are normalized when constructed,
 /// so every lookup compares case-insensitively without depending on callers.
@@ -53,6 +53,19 @@ pub struct Config {
     pub magic_dns: bool,
 }
 
+/// Linux can bind a loopback endpoint without adding a tunnel address that
+/// interface-scanning DNS servers might claim. Other platforms retain a
+/// virtual tunnel endpoint, distinct from Tailscale Quad100.
+#[must_use]
+pub fn default_stub_address() -> std::net::SocketAddr {
+    let ip = if cfg!(target_os = "linux") {
+        IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 153))
+    } else {
+        STUB_ADDRESS
+    };
+    std::net::SocketAddr::new(ip, 53)
+}
+
 impl Config {
     /// Validate configuration before it reaches a forwarding socket.
     pub fn new(
@@ -62,10 +75,26 @@ impl Config {
         zone: impl AsRef<str>,
         magic_dns: bool,
     ) -> Result<Self, Error> {
-        if nameservers
-            .iter()
-            .any(|server| server.addr.ip() == STUB_ADDRESS)
-        {
+        Self::for_listener(
+            nameservers,
+            search_domains,
+            routes,
+            zone,
+            magic_dns,
+            default_stub_address(),
+        )
+    }
+
+    /// Reject forwarding back to the actual listener, including custom ports.
+    pub fn for_listener(
+        nameservers: Vec<Upstream>,
+        search_domains: Vec<String>,
+        routes: Vec<Route>,
+        zone: impl AsRef<str>,
+        magic_dns: bool,
+        listener: std::net::SocketAddr,
+    ) -> Result<Self, Error> {
+        if nameservers.iter().any(|server| server.addr == listener) {
             return Err(Error::UpstreamLoop);
         }
         let zone = canonical_name(zone.as_ref())?;
@@ -80,7 +109,7 @@ impl Config {
         if routes
             .iter()
             .flat_map(|route| route.resolvers.iter())
-            .any(|server| server.addr.ip() == STUB_ADDRESS)
+            .any(|server| server.addr == listener)
         {
             return Err(Error::UpstreamLoop);
         }
@@ -252,7 +281,51 @@ pub fn canonical_name(raw: &str) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn custom_listener_rejects_loops_but_allows_tailscale() {
+        let listener = "127.0.0.153:5354".parse().unwrap();
+        assert!(Config::for_listener(
+            vec![Upstream::plain(listener)],
+            vec![],
+            vec![],
+            "karst",
+            true,
+            listener
+        )
+        .is_err());
+        let route = Route {
+            match_domain: "example.org".into(),
+            resolvers: vec![Upstream::plain(listener)],
+        };
+        assert!(
+            Config::for_listener(vec![], vec![], vec![route], "karst", true, listener).is_err()
+        );
+        assert!(Config::for_listener(
+            vec![
+                Upstream::plain("100.100.100.100:53".parse().unwrap()),
+                Upstream::plain("127.0.0.153:53".parse().unwrap())
+            ],
+            vec![],
+            vec![],
+            "karst",
+            true,
+            listener
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn default_endpoint_does_not_claim_tailscale() {
+        assert_ne!(
+            default_stub_address().ip(),
+            "100.100.100.100".parse::<std::net::IpAddr>().unwrap()
+        );
+        if cfg!(target_os = "linux") {
+            assert!(default_stub_address().ip().is_loopback());
+        }
+    }
 
     fn config(routes: Vec<Route>) -> Config {
         Config::new(
@@ -301,7 +374,7 @@ mod tests {
     fn rejects_upstream_loop() {
         assert_eq!(
             Config::new(
-                vec![Upstream::plain(SocketAddr::new(STUB_ADDRESS, 53))],
+                vec![Upstream::plain(default_stub_address())],
                 vec![],
                 vec![],
                 "aquifer.karst",
@@ -319,7 +392,7 @@ mod tests {
                 vec![],
                 vec![Route {
                     match_domain: "internal.example".to_owned(),
-                    resolvers: vec![Upstream::plain(SocketAddr::new(STUB_ADDRESS, 53))],
+                    resolvers: vec![Upstream::plain(default_stub_address())],
                 }],
                 "aquifer.karst",
                 true

@@ -410,7 +410,7 @@ impl From<DnsSection> for DnsSettings {
             enabled: section.enabled,
             stub_address: section
                 .stub_address
-                .unwrap_or_else(|| SocketAddr::new(karst_dns::STUB_ADDRESS, 53)),
+                .unwrap_or_else(karst_dns::default_stub_address),
             accept_netmap_config: section.accept_netmap_config,
             upstream: section.upstream,
             dot_upstream: section.dot_upstream,

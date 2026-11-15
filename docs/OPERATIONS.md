@@ -329,3 +329,33 @@ Release automation discovers real artifacts with
 platforms that were not built. Validate Linux packaging with
 `just packages-verify` and the service/DNS lifecycle with
 `just packages-verify-systemd` before publishing.
+
+### Local DNS coexistence and upgrade checks
+
+New configurations use `127.0.0.153:53` on Linux, with systemd-resolved routing
+only the mesh suffix to Karst. The address is loopback-local and is not added to
+the tunnel, so interface-scanning servers such as BIND cannot discover a newly
+created tunnel DNS address and claim it first. Platforms requiring a virtual
+tunnel endpoint use `100.100.100.153:53`. Neither default claims Tailscale's
+`100.100.100.100` (Quad100) endpoint.
+
+Omitting `[dns].stub_address` selects the platform default after an upgrade.
+Explicit settings remain explicit, including the legacy Quad100 address; remove
+that setting to migrate to the new default. A legacy endpoint generates a warning.
+Karst does not rewrite BIND, Tailscale, or other DNS services' configuration.
+
+Both UDP and TCP must bind before host DNS is changed. A wildcard DNS listener
+can still occupy the new endpoint; `karst dns status` reports an unavailable
+listener and daemon logs identify the endpoint and transport. Configure a free
+`dns.stub_address` or explicitly exclude that address in the competing server.
+Linux systemd-resolved integration currently requires port 53. Automatic fallback
+to arbitrary ports or silently taking another DNS server's socket is not used.
+
+After installation or an endpoint change, check `sudo karst dns status`: with
+MagicDNS enabled, expect `listener = true` and `host_state = "configured"` when
+host integration is enabled. Desktop setup checks these states before reporting
+connected success. Then query a known peer's full mesh name using the normal OS
+resolver (`resolvectl query <peer>.<suffix>` on Linux), check a Tailscale name if
+installed, and repeat after restarting the agent. Resolver status checks establish
+readiness; an actual lookup confirms the host resolver path. Disabled MagicDNS
+and deliberately disabled host integration remain supported.

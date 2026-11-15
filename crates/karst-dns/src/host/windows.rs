@@ -599,7 +599,7 @@ pub fn system_resolvers() -> Vec<SocketAddr> {
                 }
                 if let Ok(ip) = candidate.parse() {
                     let resolver = SocketAddr::new(ip, 53);
-                    if resolver.ip() != crate::STUB_ADDRESS && !out.contains(&resolver) {
+                    if !out.contains(&resolver) {
                         out.push(resolver);
                     }
                 }

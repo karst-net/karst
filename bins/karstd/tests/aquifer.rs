@@ -5526,7 +5526,7 @@ question=b''.join(bytes([len(label)])+label.encode() for label in name.split('.'
 query=struct.pack('!HHHHHH',1234,256,1,0,0,0)+question
 s=socket.socket(socket.AF_INET,socket.SOCK_STREAM if {tcp} else socket.SOCK_DGRAM)
 s.settimeout(3)
-s.connect(('100.100.100.100',53))
+s.connect(('127.0.0.153',53))
 if {tcp}:
  s.sendall(struct.pack('!H',len(query))+query)
  def read(n):
