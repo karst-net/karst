@@ -262,7 +262,7 @@ test("a user can be edited and blocked", async ({ page }) => {
   await expect(row.getByRole("button", { name: "Unblock" })).toBeVisible();
 });
 
-test("an identity provider connector can be added, edited and removed", async ({ page }) => {
+test("an external Keycloak identity provider connector can be added, edited and removed", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
   await page.goto("/#/identity-providers");
   const seeded = page.locator("tbody tr").filter({ hasText: "Corporate SSO" });
@@ -295,7 +295,7 @@ test("an identity provider connector can be added, edited and removed", async ({
   await expect(page.locator("tbody tr").filter({ hasText: "Okta production" })).toHaveCount(0);
 });
 
-test("identity providers are server startup configuration without the embedded IdP", async ({ page }) => {
+test("identity providers explain unsupported deployment configuration", async ({ page }) => {
   await setEmbeddedIdpEnabled(page, false);
   await page.goto("/#/identity-providers");
   await expect(page.getByRole("heading", { name: "Identity providers" })).toBeVisible();

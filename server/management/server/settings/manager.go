@@ -31,8 +31,9 @@ type Manager interface {
 // IdpConfig holds IdP-related configuration that is set at runtime
 // and not stored in the database.
 type IdpConfig struct {
-	EmbeddedIdpEnabled bool
-	LocalAuthDisabled  bool
+	IdentityProviderManagementEnabled bool
+	EmbeddedIdpEnabled                bool
+	LocalAuthDisabled                 bool
 }
 
 type managerImpl struct {
@@ -88,6 +89,7 @@ func (m *managerImpl) GetSettings(ctx context.Context, accountID, userID string)
 	}
 
 	// Fill in IdP-related runtime settings
+	settings.IdentityProviderManagementEnabled = m.idpConfig.IdentityProviderManagementEnabled
 	settings.EmbeddedIdpEnabled = m.idpConfig.EmbeddedIdpEnabled
 	settings.LocalAuthDisabled = m.idpConfig.LocalAuthDisabled
 

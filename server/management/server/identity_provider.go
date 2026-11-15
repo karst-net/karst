@@ -23,6 +23,23 @@ import (
 	"github.com/netbirdio/netbird/shared/management/status"
 )
 
+// connectorManager is implemented by embedded Dex and external Keycloak.
+type connectorManager interface {
+	ListConnectors(context.Context) ([]*dex.ConnectorConfig, error)
+	GetConnector(context.Context, string) (*dex.ConnectorConfig, error)
+	CreateConnector(context.Context, *dex.ConnectorConfig) (*dex.ConnectorConfig, error)
+	UpdateConnector(context.Context, *dex.ConnectorConfig) error
+	DeleteConnector(context.Context, string) error
+}
+
+func (am *DefaultAccountManager) connectorManager(accountID string) (connectorManager, bool) {
+	if keycloak, ok := am.idpManager.(*idp.KeycloakManager); ok {
+		return keycloak.ConnectorsForAccount(accountID), true
+	}
+	manager, ok := am.idpManager.(connectorManager)
+	return manager, ok
+}
+
 // oidcProviderJSON represents the OpenID Connect discovery document
 type oidcProviderJSON struct {
 	Issuer string `json:"issuer"`
@@ -96,9 +113,9 @@ func (am *DefaultAccountManager) GetIdentityProviders(ctx context.Context, accou
 		return nil, status.NewPermissionDeniedError()
 	}
 
-	embeddedManager, ok := am.idpManager.(*idp.EmbeddedIdPManager)
+	embeddedManager, ok := am.connectorManager(accountID)
 	if !ok {
-		log.Warn("identity provider management requires embedded IdP")
+		log.Warn("identity provider management is unavailable for this deployment")
 		return []*types.IdentityProvider{}, nil
 	}
 
@@ -125,9 +142,9 @@ func (am *DefaultAccountManager) GetIdentityProvider(ctx context.Context, accoun
 		return nil, status.NewPermissionDeniedError()
 	}
 
-	embeddedManager, ok := am.idpManager.(*idp.EmbeddedIdPManager)
+	embeddedManager, ok := am.connectorManager(accountID)
 	if !ok {
-		return nil, status.Errorf(status.Internal, "identity provider management requires embedded IdP")
+		return nil, status.Errorf(status.Internal, "identity provider management is unavailable for this deployment")
 	}
 
 	conn, err := embeddedManager.GetConnector(ctx, idpID)
@@ -155,9 +172,9 @@ func (am *DefaultAccountManager) CreateIdentityProvider(ctx context.Context, acc
 		return nil, err
 	}
 
-	embeddedManager, ok := am.idpManager.(*idp.EmbeddedIdPManager)
+	embeddedManager, ok := am.connectorManager(accountID)
 	if !ok {
-		return nil, status.Errorf(status.Internal, "identity provider management requires embedded IdP")
+		return nil, status.Errorf(status.Internal, "identity provider management is unavailable for this deployment")
 	}
 
 	// Generate ID if not provided
@@ -168,11 +185,12 @@ func (am *DefaultAccountManager) CreateIdentityProvider(ctx context.Context, acc
 
 	connCfg := identityProviderToConnectorConfig(idpConfig)
 
-	_, err = embeddedManager.CreateConnector(ctx, connCfg)
+	created, err := embeddedManager.CreateConnector(ctx, connCfg)
 	if err != nil {
 		return nil, status.Errorf(status.Internal, "failed to create identity provider: %v", err)
 	}
 
+	idpConfig.ID = created.ID
 	am.StoreEvent(ctx, userID, idpConfig.ID, accountID, activity.IdentityProviderCreated, idpConfig.EventMeta())
 
 	return idpConfig, nil
@@ -192,9 +210,9 @@ func (am *DefaultAccountManager) UpdateIdentityProvider(ctx context.Context, acc
 		return nil, err
 	}
 
-	embeddedManager, ok := am.idpManager.(*idp.EmbeddedIdPManager)
+	embeddedManager, ok := am.connectorManager(accountID)
 	if !ok {
-		return nil, status.Errorf(status.Internal, "identity provider management requires embedded IdP")
+		return nil, status.Errorf(status.Internal, "identity provider management is unavailable for this deployment")
 	}
 
 	idpConfig.ID = idpID
@@ -221,9 +239,9 @@ func (am *DefaultAccountManager) DeleteIdentityProvider(ctx context.Context, acc
 		return status.NewPermissionDeniedError()
 	}
 
-	embeddedManager, ok := am.idpManager.(*idp.EmbeddedIdPManager)
+	embeddedManager, ok := am.connectorManager(accountID)
 	if !ok {
-		return status.Errorf(status.Internal, "identity provider management requires embedded IdP")
+		return status.Errorf(status.Internal, "identity provider management is unavailable for this deployment")
 	}
 
 	// Get the IDP info before deleting for the activity event

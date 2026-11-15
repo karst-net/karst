@@ -381,6 +381,10 @@ components:
           example: false
         dashboard_features:
           $ref: '#/components/schemas/AccountDashboardFeatures'
+        identity_provider_management_enabled:
+          description: Whether this deployment supports identity provider connector management.
+          type: boolean
+          readOnly: true
         embedded_idp_enabled:
           description: Indicates whether the embedded identity provider (Dex) is enabled for this account. This is a read-only field.
           type: boolean

@@ -74,8 +74,11 @@ func (s *BaseServer) SettingsManager() settings.Manager {
 		extraSettingsManager := integrations.NewManager(s.EventStore())
 
 		idpConfig := settings.IdpConfig{}
+		_, keycloak := s.IdpManager().(*idp.KeycloakManager)
+		idpConfig.IdentityProviderManagementEnabled = keycloak
 		if s.Config.EmbeddedIdP != nil && s.Config.EmbeddedIdP.Enabled {
 			idpConfig.EmbeddedIdpEnabled = true
+			idpConfig.IdentityProviderManagementEnabled = true
 			idpConfig.LocalAuthDisabled = s.Config.EmbeddedIdP.LocalAuthDisabled
 		}
 

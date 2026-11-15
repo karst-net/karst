@@ -87,7 +87,8 @@ type Settings struct {
 
 	// EmbeddedIdpEnabled indicates if the embedded identity provider is enabled.
 	// This is a runtime-only field, not stored in the database.
-	EmbeddedIdpEnabled bool `gorm:"-"`
+	EmbeddedIdpEnabled                bool `gorm:"-"`
+	IdentityProviderManagementEnabled bool `gorm:"-"`
 
 	// LocalAuthDisabled indicates if local (email/password) authentication is disabled.
 	// This is a runtime-only field, not stored in the database.
@@ -112,21 +113,22 @@ func (s *Settings) Copy() *Settings {
 		PeerInactivityExpirationEnabled: s.PeerInactivityExpirationEnabled,
 		PeerInactivityExpiration:        s.PeerInactivityExpiration,
 
-		RoutingPeerDNSResolutionEnabled: s.RoutingPeerDNSResolutionEnabled,
-		PeerExposeEnabled:               s.PeerExposeEnabled,
-		PeerExposeGroups:                slices.Clone(s.PeerExposeGroups),
-		LazyConnectionEnabled:           s.LazyConnectionEnabled,
-		DNSDomain:                       s.DNSDomain,
-		NetworkRange:                    s.NetworkRange,
-		NetworkRangeV6:                  s.NetworkRangeV6,
-		AutoUpdateVersion:               s.AutoUpdateVersion,
-		AutoUpdateAlways:                s.AutoUpdateAlways,
-		IPv6EnabledGroups:               slices.Clone(s.IPv6EnabledGroups),
-		MetricsPushEnabled:              s.MetricsPushEnabled,
-		AgentNetworkOnly:                s.AgentNetworkOnly,
-		EmbeddedIdpEnabled:              s.EmbeddedIdpEnabled,
-		LocalAuthDisabled:               s.LocalAuthDisabled,
-		LocalMfaEnabled:                 s.LocalMfaEnabled,
+		RoutingPeerDNSResolutionEnabled:   s.RoutingPeerDNSResolutionEnabled,
+		PeerExposeEnabled:                 s.PeerExposeEnabled,
+		PeerExposeGroups:                  slices.Clone(s.PeerExposeGroups),
+		LazyConnectionEnabled:             s.LazyConnectionEnabled,
+		DNSDomain:                         s.DNSDomain,
+		NetworkRange:                      s.NetworkRange,
+		NetworkRangeV6:                    s.NetworkRangeV6,
+		AutoUpdateVersion:                 s.AutoUpdateVersion,
+		AutoUpdateAlways:                  s.AutoUpdateAlways,
+		IPv6EnabledGroups:                 slices.Clone(s.IPv6EnabledGroups),
+		MetricsPushEnabled:                s.MetricsPushEnabled,
+		AgentNetworkOnly:                  s.AgentNetworkOnly,
+		EmbeddedIdpEnabled:                s.EmbeddedIdpEnabled,
+		IdentityProviderManagementEnabled: s.IdentityProviderManagementEnabled,
+		LocalAuthDisabled:                 s.LocalAuthDisabled,
+		LocalMfaEnabled:                   s.LocalMfaEnabled,
 	}
 	if s.Extra != nil {
 		settings.Extra = s.Extra.Copy()

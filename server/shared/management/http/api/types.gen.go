@@ -1650,6 +1650,7 @@ type AccountRequest struct {
 
 // AccountSettings defines model for AccountSettings.
 type AccountSettings struct {
+	IdentityProviderManagementEnabled *bool `json:"identity_provider_management_enabled,omitempty"`
 	// AgentNetworkOnly Limits the dashboard to the Agent Network surface for this account. Set for accounts created via netbird.ai signups and can be disabled later. Enabling this requires dashboard_features.agent_network to be true in the same request.
 	AgentNetworkOnly *bool `json:"agent_network_only,omitempty"`
 

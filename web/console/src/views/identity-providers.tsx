@@ -31,25 +31,18 @@ const draftFor = (provider: IdentityProvider): ProviderDraft => ({ id: provider.
 
 export function IdentityProviders() {
   const account = useResource(api.account);
-  // Skipped while embedded_idp_enabled is unknown or false: a deployment on
-  // a single external identity provider has no connectors to list, and the
-  // server would otherwise be asked for a resource this page is about to
-  // say doesn't apply here.
-  const embeddedIdpEnabled = account.value?.embedded_idp_enabled ?? false;
-  const providers = useResource(() => embeddedIdpEnabled ? api.identityProviders() : Promise.resolve([]), [embeddedIdpEnabled]);
+  const managementEnabled = account.value?.settings.identity_provider_management_enabled ?? account.value?.settings.embedded_idp_enabled ?? false;
+  const providers = useResource(() => managementEnabled ? api.identityProviders() : Promise.resolve([]), [managementEnabled]);
   const { message, setMessage, run } = useMutation(providers.reload);
   const [draft, setDraft] = useState<ProviderDraft>();
 
   if (account.loading) return <p>Loading identity providers…</p>;
   if (account.error) return <Failure message={account.error} retry={account.reload} />;
 
-  // SSO configured once, server-wide, via startup config (auth0/okta/
-  // keycloak/…) rather than the per-connector embedded-IdP API this page
-  // otherwise manages -- see the embedded_idp_enabled comment in api.ts.
-  if (!embeddedIdpEnabled) {
+  if (!managementEnabled) {
     return <section>
       <h2>Identity providers</h2>
-      <p className="lede">This deployment signs people in through a single external identity provider configured on the coordination server at startup, not here — a console that pretended to own it would be editing a file it cannot read. See <code>management.json</code> and the getting-started guide. This page manages identity-provider connectors only for deployments using Karst's embedded identity provider.</p>
+      <p className="lede">This deployment signs people in through a single external identity provider configured on the coordination server at startup, not here — a console that pretended to own it would be editing a file it cannot read. See <code>management.json</code> and the getting-started guide. Connector management is available for embedded identity and Keycloak deployments.</p>
     </section>;
   }
 

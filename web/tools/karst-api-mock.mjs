@@ -53,7 +53,7 @@ let users = seedUsers();
 let groups = seedGroups();
 let sinks = [];
 let identityProviders = seedIdentityProviders();
-const account = { id: "account-fixture", domain: "example.test", domain_category: "private", created_at: "2026-01-01T00:00:00Z", created_by: "user-it", embedded_idp_enabled: true };
+const account = { id: "account-fixture", domain: "example.test", domain_category: "private", created_at: "2026-01-01T00:00:00Z", created_by: "user-it", settings: { embedded_idp_enabled: false, identity_provider_management_enabled: true } };
 // Mirrors server/management/internals/karst/policy/schema.go's shape closely
 // enough to exercise the console's own autocomplete against — not the full
 // document (descriptions, patterns), which nothing here reads.
@@ -298,7 +298,7 @@ const server = http.createServer((request, response) => {
     });
   }
   if (path === "/__mock__/embedded-idp" && method === "PUT") {
-    return readBody(request).then((body) => { account.embedded_idp_enabled = Boolean(body.enabled); return json(response, 200, account); });
+    return readBody(request).then((body) => { account.settings.identity_provider_management_enabled = Boolean(body.enabled); return json(response, 200, account); });
   }
   if (path === "/__mock__/fixture" && method === "PUT") {
     return readBody(request).then((body) => {

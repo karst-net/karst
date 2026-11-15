@@ -133,15 +133,8 @@ export type Token = { id: string; name: string; expiration_date: string; created
 
 export type DnsSettings = { disabled_management_groups: string[] };
 
-// Only the identifying fields the console actually shows, plus
-// embedded_idp_enabled -- the one settings field read outside Settings
-// itself, since it decides whether identity-provider connectors are
-// console-managed (see identity-providers.tsx) or purely server startup
-// configuration (Settings' own note). The fork's own `Account` also carries
-// a large settings blob (peer login expiration, DNS, JWT groups, …) that is
-// not part of Karst's product surface here, so nothing else from that blob
-// belongs on these pages even though the endpoint returns it.
-export type Account = { id: string; domain: string; created_at: string; created_by: string; embedded_idp_enabled?: boolean };
+// Account capabilities are returned inside settings by the management API.
+export type Account = { id: string; domain: string; created_at: string; created_by: string; settings: { embedded_idp_enabled?: boolean; identity_provider_management_enabled?: boolean } };
 
 export type IdentityProviderType = "oidc" | "zitadel" | "entra" | "google" | "okta" | "pocketid" | "microsoft" | "authentik" | "keycloak" | "adfs";
 export type IdentityProvider = { id?: string; type: IdentityProviderType; name: string; issuer: string; client_id: string };
@@ -344,10 +337,7 @@ export const api = {
   deprovisionUser: (id: string) => management<void>(`/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── identity providers ────────────────────────────────────────────────────
-  // Only meaningful when the account's embedded_idp_enabled is true (see
-  // identity-providers.tsx) -- create/update/delete 500 on the server, and
-  // list silently returns [], when this deployment instead uses a single
-  // external identity provider configured at startup.
+  // Management capability is reported by account.settings.
   identityProviders: () => management<IdentityProvider[]>("/identity-providers"),
   createIdentityProvider: (draft: IdentityProviderDraft) => management<IdentityProvider>("/identity-providers", { method: "POST", body: body(draft) }),
   updateIdentityProvider: (id: string, draft: IdentityProviderDraft) => management<IdentityProvider>(`/identity-providers/${encodeURIComponent(id)}`, { method: "PUT", body: body(draft) }),

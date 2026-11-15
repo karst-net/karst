@@ -166,3 +166,22 @@ reaches `ready`, neither of them a separate process or host:
 above) to pick up the two new control task env vars. Confirm a real
 allocation reaches `ready` and later `deprovisioned` with no manual step
 beyond the console form and the one-time Settings configuration above.
+
+## Identity provider connectors with Keycloak
+
+The console supports adding, editing and removing OIDC login brokers when the
+coordination server uses Keycloak as its identity manager. Keep the existing
+external authentication configuration; embedded Dex does not need enabling.
+Grant the identity manager's service account the `realm-management` client role
+`manage-identity-providers` in its configured Keycloak realm. This allows broker
+administration throughout that realm, so use a dedicated realm for the deployment.
+The console API still requires the account's Identity Providers permissions.
+
+Karst creates aliases prefixed with `karst-<account-id>-` and only lists or changes
+providers with that account's prefix. Existing providers created in Keycloak's
+admin console remain managed there. Generic OIDC and the listed vendor presets
+use the issuer's discovery endpoints; Google and Microsoft have built-in issuers.
+Register the Keycloak broker callback URL with the upstream provider:
+`<public-keycloak-base>/realms/<realm>/broker/<provider-id>/endpoint`.
+Provider IDs appear in the API response after creation. Client secrets are never
+returned by the console API and must be re-entered when editing a connector.
