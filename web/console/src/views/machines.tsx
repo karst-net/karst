@@ -98,6 +98,7 @@ export function Machines({ defaultTab = "manage" }: { defaultTab?: "manage" | "s
         <button aria-pressed={tab === "status"} onClick={() => { location.hash = "/machines/status"; }}>Status</button>
       </nav>
       <button className="primary" onClick={() => { location.hash = "/machines/add"; }}>Add Device</button>
+      <a href="https://github.com/karst-net/karst/releases/latest" target="_blank" rel="noopener noreferrer">Download Karst</a>
     </div>
     {tab === "add" ? <Setup go={(route) => { location.hash = `/${route}`; }} /> : tab === "manage" ? <>
       <p className="lede">Add a device by creating an enrollment invitation.</p>
