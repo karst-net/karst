@@ -1,0 +1,250 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright the Karst contributors. */
+
+/* Karst look for Keycloak's keycloak.v2 (PatternFly 5) login pages.
+   Colors and type are web/packages/tokens/theme.css's Cave palette -- the
+   same tokens the console and portal use -- copied rather than imported
+   because Keycloak serves this file on its own, outside the web build.
+   Change them there first, then mirror here. */
+
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap");
+
+/* Cave palette, light mode. */
+:root {
+  --karst-surface: #fbf8ee;
+  --karst-surface-raised: #f3eedc;
+  --karst-text: #073d47;
+  --karst-muted: #51717a;
+  --karst-border: #d2d8d2;
+  --karst-accent: #0c6c78;
+  --karst-accent-hover: #095560;
+  --karst-accent-text: #ffffff;
+  --karst-danger: #a61b1b;
+  --karst-focus: #005fcc;
+  --karst-glow: #d6f0e7;
+  --karst-font-sans: "DM Sans", system-ui, sans-serif;
+  --karst-font-mono: "DM Mono", ui-monospace, monospace;
+  --karst-font-display: Fraunces, serif;
+  --karst-radius: 0.45rem;
+}
+
+/* Cave palette, dark mode -- karst-net.github.io's own rendered theme.
+   keycloak.v2's template toggles .pf-v5-theme-dark on <html> from
+   prefers-color-scheme, so keying off that class keeps this in lockstep
+   with PatternFly's own dark variables. */
+html.pf-v5-theme-dark {
+  --karst-surface: #131716;
+  --karst-surface-raised: #1b1f1a;
+  --karst-text: #e2dfc5;
+  --karst-muted: #aca88e;
+  --karst-border: #3c3f39;
+  --karst-accent: #d9aa55;
+  --karst-accent-hover: #e6bd72;
+  --karst-accent-text: #151612;
+  --karst-danger: #ff9b9b;
+  --karst-focus: #8fd3ff;
+  --karst-glow: #22251f;
+}
+
+/* Map the tokens onto PatternFly's globals, so every component the
+   inherited templates render (alerts, checkboxes, OTP, WebAuthn, social
+   buttons...) picks them up without a per-page rule. */
+:root,
+html.pf-v5-theme-dark {
+  --pf-v5-global--FontFamily--text: var(--karst-font-sans);
+  --pf-v5-global--FontFamily--heading: var(--karst-font-display);
+  --pf-v5-global--FontFamily--monospace: var(--karst-font-mono);
+  --pf-v5-global--BackgroundColor--100: var(--karst-surface-raised);
+  --pf-v5-global--BackgroundColor--200: var(--karst-surface);
+  --pf-v5-global--Color--100: var(--karst-text);
+  --pf-v5-global--Color--200: var(--karst-muted);
+  --pf-v5-global--BorderColor--100: var(--karst-border);
+  --pf-v5-global--BorderColor--300: var(--karst-border);
+  --pf-v5-global--primary-color--100: var(--karst-accent);
+  --pf-v5-global--primary-color--200: var(--karst-accent-hover);
+  --pf-v5-global--link--Color: var(--karst-accent);
+  --pf-v5-global--link--Color--hover: var(--karst-accent-hover);
+  --pf-v5-global--active-color--100: var(--karst-accent);
+  --pf-v5-global--danger-color--100: var(--karst-danger);
+  --pf-v5-global--BorderRadius--sm: var(--karst-radius);
+  --keycloak-card-top-color: var(--karst-accent);
+}
+
+/* Page: a lit cave mouth fading into the surface, replacing Keycloak's
+   own background artwork. */
+.login-pf body {
+  min-height: 100vh;
+  background: radial-gradient(ellipse 70rem 34rem at 50% -6rem, var(--karst-glow), transparent 70%) var(--karst-surface);
+  color: var(--karst-text);
+  font-family: var(--karst-font-sans);
+}
+
+.pf-v5-c-login__container {
+  grid-template-columns: minmax(0, 28rem);
+  padding-inline: 1rem;
+}
+
+/* Header: the otter field-guide avatar above the KARST wordmark. The realm's
+   own display name stays in the DOM (font-size 0, not display:none) so
+   screen readers still announce it. */
+#kc-header-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 1rem 0 0.5rem;
+  font-size: 0;
+  color: var(--karst-text) !important;
+}
+
+#kc-header-wrapper::before {
+  content: "";
+  width: 7.5rem;
+  height: 7.5rem;
+  border-radius: 50%;
+  background: url("../img/otter.png") center 42% / 112% auto no-repeat var(--karst-surface-raised);
+  border: 2px solid var(--karst-accent);
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 18%);
+}
+
+/* The wordmark is drawn through a mask so it takes --karst-text in either
+   theme, rather than shipping a light and a dark copy of the PNG. */
+#kc-header-wrapper::after {
+  content: "";
+  width: 13rem;
+  aspect-ratio: 601 / 122;
+  background-color: var(--karst-text);
+  -webkit-mask: url("../img/karst-logo.png") center / contain no-repeat;
+  mask: url("../img/karst-logo.png") center / contain no-repeat;
+}
+
+/* Card. */
+.pf-v5-c-login__main {
+  background: var(--karst-surface-raised);
+  border: 1px solid var(--karst-border);
+  border-radius: var(--karst-radius);
+  box-shadow: 0 1.25rem 3rem rgb(0 0 0 / 12%);
+  overflow: hidden;
+}
+
+.pf-v5-c-login__main-header {
+  border-top: 4px solid var(--karst-accent);
+}
+
+/* keycloak.v2 splits this header 70/30 at desktop widths to leave room for
+   a language picker, which wraps even a short title onto two lines. */
+@media (min-width: 768px) {
+  div.pf-v5-c-login__main-header {
+    grid-template-columns: 1fr auto;
+  }
+}
+
+#kc-page-title {
+  font-family: var(--karst-font-display);
+  font-weight: 600;
+  font-size: 1.85rem;
+  letter-spacing: -0.02em;
+  color: var(--karst-text);
+}
+
+/* Forms. */
+.pf-v5-c-form__label-text {
+  font-weight: 600;
+  color: var(--karst-text);
+}
+
+.pf-v5-c-form-control {
+  --pf-v5-c-form-control--BackgroundColor: var(--karst-surface);
+  --pf-v5-c-form-control--before--BorderColor: var(--karst-border);
+  --pf-v5-c-form-control--after--BorderColor: var(--karst-border);
+  --pf-v5-c-form-control--hover--after--BorderColor: var(--karst-accent);
+  --pf-v5-c-form-control--focus--after--BorderColor: var(--karst-accent);
+  border-radius: var(--karst-radius);
+  color: var(--karst-text);
+}
+
+.pf-v5-c-form-control::before,
+.pf-v5-c-form-control::after {
+  border-radius: var(--karst-radius);
+}
+
+.pf-v5-c-form-control:focus-within {
+  outline: 2px solid var(--karst-focus);
+  outline-offset: 1px;
+}
+
+/* Password field + show/hide toggle read as one joined control. */
+.pf-v5-c-input-group > .pf-v5-c-input-group__item:not(:last-child) .pf-v5-c-form-control,
+.pf-v5-c-input-group > .pf-v5-c-input-group__item:not(:last-child) .pf-v5-c-form-control::before,
+.pf-v5-c-input-group > .pf-v5-c-input-group__item:not(:last-child) .pf-v5-c-form-control::after {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+  --pf-v5-c-button--m-control--BackgroundColor: var(--karst-surface);
+  --pf-v5-c-button--m-control--Color: var(--karst-muted);
+  --pf-v5-c-button--m-control--hover--Color: var(--karst-accent);
+  --pf-v5-c-button--m-control--after--BorderColor: var(--karst-border);
+  --pf-v5-c-button--m-control--hover--after--BorderColor: var(--karst-accent);
+  border-radius: 0 var(--karst-radius) var(--karst-radius) 0;
+}
+
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control::after {
+  border-radius: inherit;
+}
+
+.pf-v5-c-button {
+  --pf-v5-c-button--BorderRadius: var(--karst-radius);
+  font-weight: 700;
+}
+
+.pf-v5-c-button.pf-m-primary {
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--karst-accent);
+  --pf-v5-c-button--m-primary--Color: var(--karst-accent-text);
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--karst-accent-hover);
+  --pf-v5-c-button--m-primary--hover--Color: var(--karst-accent-text);
+  --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--karst-accent-hover);
+  --pf-v5-c-button--m-primary--focus--Color: var(--karst-accent-text);
+  --pf-v5-c-button--m-primary--active--BackgroundColor: var(--karst-accent-hover);
+  --pf-v5-c-button--m-primary--active--Color: var(--karst-accent-text);
+}
+
+.pf-v5-c-button.pf-m-secondary {
+  --pf-v5-c-button--m-secondary--Color: var(--karst-accent);
+  --pf-v5-c-button--m-secondary--hover--Color: var(--karst-accent-hover);
+  --pf-v5-c-button--after--BorderColor: var(--karst-accent);
+}
+
+.login-pf a,
+.pf-v5-c-button.pf-m-link {
+  color: var(--karst-accent);
+}
+
+.login-pf a:hover,
+.pf-v5-c-button.pf-m-link:hover {
+  color: var(--karst-accent-hover);
+}
+
+.login-pf a:focus-visible,
+.pf-v5-c-button:focus-visible,
+.pf-v5-c-check__input:focus-visible {
+  outline: 3px solid var(--karst-focus);
+  outline-offset: 2px;
+}
+
+.pf-v5-c-check__input {
+  accent-color: var(--karst-accent);
+}
+
+/* Narrow phones: tighten the header so the form stays above the fold. */
+@media (max-width: 30rem) {
+  #kc-header-wrapper {
+    padding: 1.5rem 0 1rem;
+  }
+
+  #kc-header-wrapper::before {
+    width: 5.5rem;
+    height: 5.5rem;
+  }
+}
