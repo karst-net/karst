@@ -8,8 +8,10 @@ import { api, type ManagedEstavelleService } from "../api";
 import { EstavelleReadiness } from "./estavelle-readiness";
 import { EstavelleAccess } from "./estavelle-access";
 import { AllocateEstavelle } from "./estavelle-allocation";
-import { Failure, Notice, Rows, useMutation, usePolledResource } from "../common";
+import { Failure, Notice, Rows, useMutation, usePolledResource, useResource } from "../common";
 import { allocationStatus } from "../estavelle-allocation-status";
+import { replacementStatus } from "../estavelle-replacement-status";
+import { recentKarstReleases } from "../karst-releases";
 import { EstavelleInstallation } from "./estavelle-installation";
 import { EstavelleRegistration } from "./estavelle-registration";
 
@@ -20,6 +22,10 @@ export function EstavelleServices() {
   const gateways = usePolledResource(api.avens, 15_000);
   const admission = usePolledResource(api.estavelleAdmissionTargets, 15_000);
   const allocations = usePolledResource(api.estavelleAllocations, 15_000);
+  // Issue #560's "Change version" stop-gap -- see karst-releases.ts's own
+  // doc comment, and issue #561 for the real admin-approved, per-connection
+  // registry this is meant to be replaced by.
+  const releases = useResource(recentKarstReleases);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5_000); return () => clearInterval(timer); }, []);
   const reload = () => { resource.reload(); endpoints.reload(); groups.reload(); gateways.reload(); admission.reload(); allocations.reload(); setNow(Date.now()); };
@@ -38,6 +44,11 @@ export function EstavelleServices() {
   const [acknowledged, setAcknowledged] = useState(false);
   const [modeDraft, setModeDraft] = useState<{ service: EstavelleService; ponor: boolean }>();
   const [modeAcknowledged, setModeAcknowledged] = useState(false);
+  // Issue #560: zero-downtime version replacement -- replaceDraft holds the
+  // allocation being replaced and the desired-image text field, mirroring
+  // modeDraft's own inline-dialog shape rather than a separate component.
+  const [replaceDraft, setReplaceDraft] = useState<EstavelleAllocation>();
+  const [desiredImage, setDesiredImage] = useState("");
   if (resource.loading || endpoints.loading) return <p>Loading estavelles…</p>;
   const { services, publication } = resource.value ?? { services: [], publication: { mode: "legacy" } };
   const ponor = endpoints.value ?? [];
@@ -56,6 +67,10 @@ export function EstavelleServices() {
     if (!allocation.id || allocation.revision === undefined) return;
     if (!confirm(`Remove the ${allocation.name} allocation record?`)) return;
     void run(() => api.deleteEstavelleAllocation(allocation.id!, allocation.revision!), `${allocation.name} allocation record was removed.`);
+  };
+  const retryReplacement = (allocation: EstavelleAllocation) => {
+    if (!allocation.id || allocation.revision === undefined) return;
+    void run(() => api.retryEstavelleAllocationReplacement(allocation.id!, allocation.revision!), `${allocation.name} replacement retried.`);
   };
 
   return <section>
@@ -76,7 +91,7 @@ export function EstavelleServices() {
       {publication.mode === "services" && <button disabled={saving || Boolean(resource.error)} onClick={async () => { if (!confirm("Return to legacy registry publication? Previously unassociated legacy endpoints may become available to clients again.")) return; setSaving(true); await run(() => api.setEstavellePublication("legacy"), "Legacy registry publication restored."); setSaving(false); }}>Restore legacy publication</button>}
     </div>
     </details>
-    {!modeDraft && !details && !addRelayStep && preview === undefined && <Notice message={message} />}
+    {!modeDraft && !details && !addRelayStep && !replaceDraft && preview === undefined && <Notice message={message} />}
     {!resource.error && !endpoints.error && services.length === 0 && ponor.length === 0 ? <EmptyState title="No estavelles configured">Add a running estavelle, then choose its allowed groups and optional internet egress.</EmptyState> :
       <Rows head={<><th>Estavelle</th><th>Endpoint and health</th><th>Access</th><th>Operational status</th><th>Actions</th></>}>
         {services.map((service) => {
@@ -106,17 +121,24 @@ export function EstavelleServices() {
     {allocations.error && <Failure message={allocations.error} retry={allocations.reload} />}
     {!allocations.error && (allocations.value ?? []).length === 0
       ? <EmptyState title="No estavelle allocations">Use Add estavelle — "No, provision one for me" — to provision a new host through a real infrastructure connection.</EmptyState>
-      : <Rows head={<><th>Name</th><th>Location</th><th>Permitted groups</th><th>Status</th><th>Actions</th></>}>
+      : <Rows head={<><th>Name</th><th>Location</th><th>Version</th><th>Permitted groups</th><th>Status</th><th>Actions</th></>}>
         {(allocations.value ?? []).map(allocation => {
           const status = allocationStatus(allocation);
+          const replacement = replacementStatus(allocation);
           const canDeprovision = allocation.state === "ready" || allocation.state === "failed";
           const canRemove = allocation.state === "requested" || allocation.state === "deprovisioned";
+          // Issue #560: only offer a fresh replacement from a ready
+          // allocation with nothing already in flight; a failed one must
+          // be retried or left alone, never started over.
+          const canChangeVersion = allocation.state === "ready" && !allocation.replacement_state;
+          const canRetryReplacement = allocation.replacement_state === "failed";
           return <tr key={`allocation-${allocation.id}`}>
             <td>{allocation.name}</td>
             <td>{allocation.infra_connection_id}: <code>{allocation.location}</code></td>
+            <td>{allocation.running_image || "Connection default"}</td>
             <td>{groups.error ? "Group names unavailable" : allocation.permitted_groups.map(id => groups.value?.find(group => group.id === id)?.name ?? "Unavailable group").join(", ")}</td>
-            <td><Status state={status.state} label={status.label} /></td>
-            <td>{canDeprovision && <button onClick={() => deprovisionAllocation(allocation)}>Deprovision</button>}{canRemove && <button className="danger" onClick={() => removeAllocation(allocation)}>Remove</button>}</td>
+            <td><Status state={status.state} label={status.label} />{replacement && <><br /><Status state={replacement.state} label={replacement.label} /></>}</td>
+            <td>{canDeprovision && <button onClick={() => deprovisionAllocation(allocation)}>Deprovision</button>}{canChangeVersion && <button onClick={() => { setMessage(undefined); setDesiredImage(""); setReplaceDraft(allocation); }}>Change version</button>}{canRetryReplacement && <button onClick={() => retryReplacement(allocation)}>Retry replacement</button>}{canRemove && <button className="danger" onClick={() => removeAllocation(allocation)}>Remove</button>}</td>
           </tr>;
         })}
       </Rows>}
@@ -148,6 +170,21 @@ export function EstavelleServices() {
         <label><input type="checkbox" checked={modeDraft.ponor} onChange={(event) => setModeDraft({ ...modeDraft, ponor: event.target.checked })} />Enable estavelle</label>
         <label><input type="checkbox" checked={modeAcknowledged} onChange={(event) => setModeAcknowledged(event.target.checked)} />I understand mode changes may interrupt client connectivity.</label>
         <div className="actions"><button disabled={saving} onClick={() => setModeDraft(undefined)}>Cancel</button><button disabled={!modeAcknowledged || saving} onClick={async () => { setSaving(true); if (await run(() => api.setEstavelleServiceModes(modeDraft.service.id, modeDraft.ponor), `Estavelle modes for ${modeDraft.service.id} were updated.`)) setModeDraft(undefined); setSaving(false); }}>Apply availability</button></div>
+      </>}
+    </Dialog>
+    <Dialog open={Boolean(replaceDraft)} title="Change estavelle version" onClose={() => { if (!saving) setReplaceDraft(undefined); }}>
+      {replaceDraft && <><Notice message={message} />
+        <p>Allocation: <strong>{replaceDraft.name}</strong>. Running version: <strong>{replaceDraft.running_image || "Connection default"}</strong>.</p>
+        <p className="lede">Provisions a new instance at the desired version, waits for it to admit before draining and removing the current one, then shows the whole replacement's progress here — no estavelle-admission gap.</p>
+        {releases.error
+          ? <><p role="alert">Could not load recent Karst releases: {releases.error}. Enter a version manually.</p>
+            <label>Desired image/version<input required value={desiredImage} onChange={event => setDesiredImage(event.target.value)} /></label></>
+          : <label>Desired image/version<select required disabled={releases.loading} value={desiredImage} onChange={event => setDesiredImage(event.target.value)}>
+            <option value="">{releases.loading ? "Loading recent releases…" : "Choose one…"}</option>
+            {(releases.value ?? []).map(tag => <option key={tag} value={tag}>{tag}</option>)}
+          </select></label>}
+        <p className="lede">This list is recent karst-net/karst release tags, not a verified-for-your-connection catalog — picking one does not yet guarantee it resolves to a real image for this connection (issue #561).</p>
+        <div className="actions"><button disabled={saving} onClick={() => setReplaceDraft(undefined)}>Cancel</button><button className="primary" disabled={saving || !desiredImage.trim()} onClick={async () => { setSaving(true); if (await run(() => api.replaceEstavelleAllocation(replaceDraft.id!, replaceDraft.revision!, desiredImage.trim()), `${replaceDraft.name} version replacement started.`)) setReplaceDraft(undefined); setSaving(false); }}>Start replacement</button></div>
       </>}
     </Dialog>
     <Dialog open={preview !== undefined} title="Preview service publication" onClose={() => { if (!saving) setPreview(undefined); }}>

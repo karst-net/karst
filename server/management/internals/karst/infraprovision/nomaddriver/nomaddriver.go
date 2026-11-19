@@ -41,6 +41,12 @@ const (
 	tokenMetaKey          = "token"
 	tlsServerNameMetaKey  = "tls_server_name"
 	datacenterMetaKey     = "datacenter"
+	// imageMetaKey carries CreateRequest.Image through, when set, for the
+	// operator's own job template to read -- issue #560's zero-downtime
+	// version replacement, the only caller that ever sets it. Omitted
+	// entirely (not sent as "") when empty, the same convention
+	// datacenterMetaKey already follows.
+	imageMetaKey = "image"
 )
 
 // drainTimeout/drainPollInterval mirror awsdriver's own values -- Nomad
@@ -134,6 +140,9 @@ func (d *Driver) Create(ctx context.Context, allocationID string, req infraprovi
 	}
 	if d.datacenter != "" {
 		meta[datacenterMetaKey] = d.datacenter
+	}
+	if req.Image != "" {
+		meta[imageMetaKey] = req.Image
 	}
 	resp, _, err := d.jobs.Dispatch(d.jobID, meta, nil, "", (&nomadapi.WriteOptions{}).WithContext(ctx))
 	if err != nil {

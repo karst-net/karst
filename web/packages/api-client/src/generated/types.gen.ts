@@ -737,6 +737,27 @@ export type EstavelleAllocation = {
     readonly revision?: number;
     readonly created_at?: string;
     readonly updated_at?: string;
+    /**
+     * Issue #560: the image/version a replacement is targeting, once one has been requested -- empty when no replacement has ever been requested.
+     */
+    readonly desired_image?: string;
+    /**
+     * Issue #560: the image/version actually running, once a replacement has completed at least once. Empty means the current instance came from the connection's own launch defaults and was never explicitly versioned through this mechanism.
+     */
+    readonly running_image?: string;
+    /**
+     * Issue #560: empty means no replacement is in flight. Never changes allocation state itself -- the access grant stays untouched throughout.
+     */
+    readonly replacement_state?: 'provisioning' | 'admitting' | 'draining' | 'destroying' | 'failed';
+    /**
+     * The new instance
+     */
+    readonly replacement_instance_id?: string;
+    /**
+     * Only meaningful while replacement_state is failed.
+     */
+    readonly replacement_failed_step?: 'provisioning' | 'admitting' | 'draining' | 'destroying';
+    readonly replacement_failure_reason?: string;
 };
 
 export type RolloutPlan = {
@@ -3216,6 +3237,73 @@ export type DeprovisionEstavelleAllocationResponses = {
 };
 
 export type DeprovisionEstavelleAllocationResponse = DeprovisionEstavelleAllocationResponses[keyof DeprovisionEstavelleAllocationResponses];
+
+export type ReplaceEstavelleAllocationData = {
+    body: {
+        revision: number;
+        desired_image: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/estavelle-allocations/{id}/replace';
+};
+
+export type ReplaceEstavelleAllocationErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ReplaceEstavelleAllocationError = ReplaceEstavelleAllocationErrors[keyof ReplaceEstavelleAllocationErrors];
+
+export type ReplaceEstavelleAllocationResponses = {
+    /**
+     * Replacement started
+     */
+    200: EstavelleAllocation;
+};
+
+export type ReplaceEstavelleAllocationResponse = ReplaceEstavelleAllocationResponses[keyof ReplaceEstavelleAllocationResponses];
+
+export type RetryEstavelleAllocationReplacementData = {
+    body: {
+        revision: number;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/estavelle-allocations/{id}/retry-replacement';
+};
+
+export type RetryEstavelleAllocationReplacementErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type RetryEstavelleAllocationReplacementError = RetryEstavelleAllocationReplacementErrors[keyof RetryEstavelleAllocationReplacementErrors];
+
+export type RetryEstavelleAllocationReplacementResponses = {
+    /**
+     * Replacement resumed
+     */
+    200: EstavelleAllocation;
+};
+
+export type RetryEstavelleAllocationReplacementResponse = RetryEstavelleAllocationReplacementResponses[keyof RetryEstavelleAllocationReplacementResponses];
 
 export type PollPendingEstavelleAllocationsData = {
     body?: never;

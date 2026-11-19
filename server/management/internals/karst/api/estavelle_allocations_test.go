@@ -261,6 +261,8 @@ func TestEstavelleAllocationAPIScalerIsNarrowerThanAdminButUserHasNeither(t *tes
 		{http.MethodPost, "", `{"name":"x","infra_connection_id":"conn-1","location":"us-west-2","estavelle_transport":true,"permitted_groups":["engineering"]}`},
 		{http.MethodDelete, "/" + created.ID + "?revision=1", ""},
 		{http.MethodPost, "/" + created.ID + "/deprovision", `{"revision":1,"acknowledge_deprovision":true}`},
+		{http.MethodPut, "/" + created.ID + "/replace", `{"revision":1,"desired_image":"v2"}`},
+		{http.MethodPost, "/" + created.ID + "/retry-replacement", `{"revision":1}`},
 	}
 	scalerOnlyRoutes := []struct{ method, path, body string }{
 		{http.MethodPost, "/pending", ""},
@@ -345,4 +347,93 @@ func TestEstavelleAllocationAPIRejectsUnauthenticated(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
 	require.NotEqual(t, http.StatusOK, w.Code)
+}
+
+// readyAllocationOverHTTP drives a freshly created allocation to
+// StateReady purely over HTTP (admin create, scaler provisioning/grant),
+// mirroring TestEstavelleAllocationAPIHappyPathToReadyAndBackToDeprovisioned's
+// own setup -- the fixture issue #560's replacement tests below start from.
+func readyAllocationOverHTTP(t *testing.T, e estavelleAllocationEnv, admin, scaler *mux.Router) estavellealloc.Allocation {
+	t.Helper()
+	created := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
+		`{"name":"denver","infra_connection_id":"conn-1","location":"us-west-2","estavelle_transport":true,"permitted_groups":["engineering"]}`))
+	provisioning := decodeAllocation(t, allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/provisioning",
+		fmt.Sprintf(`{"expected_revision":%d,"instance_id":"i-1"}`, created.Revision)))
+
+	relay, err := e.registry.Create(estavellereg.WithAccount(context.Background(), "a"), estavellereg.Entry{
+		Address:       "203.0.113.5:443",
+		TLSServerName: "denver.aws.karst.internal",
+		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, estavellereg.IdentityKeySize)),
+	})
+	require.NoError(t, err)
+	require.NoError(t, e.grants.RefreshAdmissionLease(relay.ID))
+	_, err = e.grants.SetPublication(estavelleservice.WithAccount(context.Background(), "a"), "services")
+	require.NoError(t, err)
+
+	w := allocationRequest(scaler, http.MethodPost, "/"+created.ID+"/grant",
+		fmt.Sprintf(`{"expected_revision":%d,"tls_server_name":"denver.aws.karst.internal"}`, provisioning.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	ready := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.StateReady, ready.State)
+	return ready
+}
+
+// TestEstavelleAllocationReplaceStartsAReplacementAndRejectsWhenNotReady is
+// issue #560's console entry point: PUT .../replace sets DesiredImage and
+// kicks off ReplacementStateProvisioning, and is refused outright on an
+// allocation that is not yet ready (store.RequestReplace's own guard).
+func TestEstavelleAllocationReplaceStartsAReplacementAndRejectsWhenNotReady(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
+
+	notReady := decodeAllocation(t, allocationRequest(admin, http.MethodPost, "",
+		`{"name":"aurora","infra_connection_id":"conn-1","location":"us-west-2","estavelle_transport":true,"permitted_groups":["engineering"]}`))
+	w := allocationRequest(admin, http.MethodPut, "/"+notReady.ID+"/replace", fmt.Sprintf(`{"revision":%d,"desired_image":"v2"}`, notReady.Revision))
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+
+	ready := readyAllocationOverHTTP(t, e, admin, scaler)
+	w = allocationRequest(admin, http.MethodPut, "/"+ready.ID+"/replace", fmt.Sprintf(`{"revision":%d,"desired_image":"v2"}`, ready.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	replacing := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.StateReady, replacing.State, "the main state must never move for a replacement")
+	require.Equal(t, "v2", replacing.DesiredImage)
+	require.Equal(t, estavellealloc.ReplacementStateProvisioning, replacing.ReplacementState)
+	assertAllocationResponseFields(t, w, "/estavelle-allocations/{id}/replace", "put", "200")
+
+	// A second replace request while one is already in flight is refused.
+	w = allocationRequest(admin, http.MethodPut, "/"+ready.ID+"/replace", fmt.Sprintf(`{"revision":%d,"desired_image":"v3"}`, replacing.Revision))
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+}
+
+// TestEstavelleAllocationRetryReplacementResumesFromTheFailedStep exercises
+// the API surface over store.RetryReplacement -- the replacement itself is
+// driven by the in-process loop (drive_loop.go), not HTTP, so this test
+// pushes the row into ReplacementStateFailed directly through the store
+// (standing in for a tick that already called store.FailReplacement) and
+// confirms the HTTP action resumes it rather than rejecting or restarting.
+func TestEstavelleAllocationRetryReplacementResumesFromTheFailedStep(t *testing.T) {
+	e := estavelleAllocationFixture(t)
+	admin := estavelleAllocationRouter(e, types.UserRoleAdmin)
+	scaler := estavelleAllocationRouter(e, types.UserRoleScaler)
+	ready := readyAllocationOverHTTP(t, e, admin, scaler)
+
+	// Refused with no failed replacement to retry -- still idle at this
+	// correct revision.
+	w := allocationRequest(admin, http.MethodPost, "/"+ready.ID+"/retry-replacement", fmt.Sprintf(`{"revision":%d}`, ready.Revision))
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+
+	ctx := estavellealloc.WithAccount(context.Background(), "a")
+	replacing, err := e.alloc.RequestReplace(ctx, ready.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+	admitting, err := e.alloc.TransitionReplacement(ctx, ready.ID, replacing.Revision, estavellealloc.ReplacementStateProvisioning, estavellealloc.ReplacementStateAdmitting, "i-2")
+	require.NoError(t, err)
+	failed, err := e.alloc.FailReplacement(ctx, ready.ID, admitting.Revision, estavellealloc.ReplacementStateAdmitting, "never admitted")
+	require.NoError(t, err)
+
+	w = allocationRequest(admin, http.MethodPost, "/"+ready.ID+"/retry-replacement", fmt.Sprintf(`{"revision":%d}`, failed.Revision))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	retried := decodeAllocation(t, w)
+	require.Equal(t, estavellealloc.ReplacementStateAdmitting, retried.ReplacementState, "must resume at admitting, never back at provisioning")
+	assertAllocationResponseFields(t, w, "/estavelle-allocations/{id}/retry-replacement", "post", "200")
 }

@@ -56,6 +56,22 @@ const (
 	StateFailed         = "failed"
 )
 
+// ReplacementState is a side-channel on top of StateReady (issue #560): a
+// zero-downtime version replacement never changes Allocation.State or
+// touches the access grant, so "no estavelle-admission gap" is structural,
+// not something the orchestration has to get right by timing. Empty means
+// no replacement is in flight. Unlike the main state machine, a replacement
+// can resume into itself after StateFailed -- every step is written to be
+// idempotent/resumable (RetryReplacement), so there is no reason to force a
+// restart from ReplacementStateProvisioning.
+const (
+	ReplacementStateProvisioning = "provisioning"
+	ReplacementStateAdmitting    = "admitting"
+	ReplacementStateDraining     = "draining"
+	ReplacementStateDestroying   = "destroying"
+	ReplacementStateFailed       = "failed"
+)
+
 type accountKey struct{}
 
 func WithAccount(ctx context.Context, account string) context.Context {
@@ -91,6 +107,26 @@ type Allocation struct {
 	Revision           uint64    `gorm:"not null;default:0" json:"revision"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+
+	// DesiredImage/RunningImage are issue #560's version tracking.
+	// RunningImage is "" for an allocation whose current instance came from
+	// the connection's own launch defaults and was never explicitly
+	// versioned through this mechanism -- it only becomes a real value once
+	// a replacement completes (CompleteReplacement).
+	DesiredImage string `json:"desired_image,omitempty"`
+	RunningImage string `json:"running_image,omitempty"`
+	// ReplacementState/ReplacementInstanceID/ReplacementFailedStep/
+	// ReplacementFailureReason/ReplacementUpdatedAt track one in-flight
+	// zero-downtime replacement -- see the ReplacementState consts' own doc
+	// comment for why this is a side-channel on State rather than a new
+	// main lifecycle state. InstanceID/EstavelleID keep pointing at the
+	// instance actually serving traffic until CompleteReplacement cuts
+	// over; ReplacementInstanceID is the new instance in the meantime.
+	ReplacementState         string    `json:"replacement_state,omitempty"`
+	ReplacementInstanceID    string    `json:"replacement_instance_id,omitempty"`
+	ReplacementFailedStep    string    `json:"replacement_failed_step,omitempty"`
+	ReplacementFailureReason string    `json:"replacement_failure_reason,omitempty"`
+	ReplacementUpdatedAt     time.Time `json:"-"`
 }
 
 func (Allocation) TableName() string { return "karst_estavelle_allocations" }
@@ -453,12 +489,343 @@ func (s *Store) Transition(ctx context.Context, id string, expectedRevision uint
 	return &current, nil
 }
 
+// validReplacementTransition is TransitionReplacement's own allow-list,
+// mirroring validAllocationTransition's role for the main machine --
+// "failed" is deliberately never a `to` here (FailReplacement is the only
+// path into it, since it needs a reason and a fromStep, not a bare CAS).
+func validReplacementTransition(from, to string) bool {
+	switch from {
+	case ReplacementStateProvisioning:
+		return to == ReplacementStateAdmitting
+	case ReplacementStateAdmitting:
+		return to == ReplacementStateDraining
+	case ReplacementStateDraining:
+		return to == ReplacementStateDestroying
+	default:
+		return false
+	}
+}
+
+// RequestReplace starts a zero-downtime version replacement (issue #560):
+// an administrator names a desired image/version different from the one
+// currently running, and the reconciliation loop takes it from there
+// (drive_loop.go's replacementTick). Only ever starts a *fresh* replacement
+// from idle (ReplacementState == "") -- resuming a failed one is
+// RetryReplacement's job, not this method's, so a caller can never
+// accidentally restart create-new-instance while a previous attempt's
+// instance is still around (see TransitionReplacement's own doc comment on
+// why the correlation ID this drives is distinct from the original
+// instance's).
+func (s *Store) RequestReplace(ctx context.Context, id string, expectedRevision uint64, desiredImage string) (*Allocation, error) {
+	account, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	desiredImage = strings.TrimSpace(desiredImage)
+	if desiredImage == "" {
+		return nil, fmt.Errorf("%w: desired image is required", ErrInvalid)
+	}
+	now := time.Now().UTC()
+	var current Allocation
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("account_id = ? AND id = ?", account, id).First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if current.Revision != expectedRevision {
+			return ErrExists
+		}
+		if current.State != StateReady {
+			return fmt.Errorf("%w: allocation must be ready before replacing its running version", ErrInvalid)
+		}
+		if current.ReplacementState != "" {
+			return fmt.Errorf("%w: a version replacement is already in progress", ErrInvalid)
+		}
+		if desiredImage == current.RunningImage {
+			return fmt.Errorf("%w: desired image already matches the running image", ErrInvalid)
+		}
+		updates := map[string]any{
+			"desired_image":              desiredImage,
+			"replacement_state":          ReplacementStateProvisioning,
+			"replacement_instance_id":    "",
+			"replacement_failed_step":    "",
+			"replacement_failure_reason": "",
+			"replacement_updated_at":     now,
+			"revision":                   current.Revision + 1,
+			"updated_at":                 now,
+		}
+		result := tx.Model(&Allocation{}).Where("account_id = ? AND id = ? AND revision = ?", account, id, expectedRevision).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrExists
+		}
+		if err := tx.Create(&AllocationHistory{AccountID: account, AllocationID: id, FromState: current.State, ToState: current.State, Reason: fmt.Sprintf("replacement requested: desired image %q", desiredImage), CreatedAt: now}).Error; err != nil {
+			return err
+		}
+		current.DesiredImage = desiredImage
+		current.ReplacementState = ReplacementStateProvisioning
+		current.ReplacementInstanceID = ""
+		current.ReplacementFailedStep = ""
+		current.ReplacementFailureReason = ""
+		current.ReplacementUpdatedAt = now
+		current.Revision++
+		current.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &current, nil
+}
+
+// RetryReplacement resumes a failed replacement from exactly the step it
+// failed at -- never from ReplacementStateProvisioning again, since every
+// step is written to be idempotent/resumable (mirroring how grantStep/
+// deprovisionStep already resume the main machine after a crash): retrying
+// after a failed drain/destroy must never call Create a second time.
+func (s *Store) RetryReplacement(ctx context.Context, id string, expectedRevision uint64) (*Allocation, error) {
+	account, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	var current Allocation
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("account_id = ? AND id = ?", account, id).First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if current.Revision != expectedRevision {
+			return ErrExists
+		}
+		if current.ReplacementState != ReplacementStateFailed {
+			return fmt.Errorf("%w: no failed replacement to retry", ErrInvalid)
+		}
+		resumeAt := current.ReplacementFailedStep
+		updates := map[string]any{
+			"replacement_state":          resumeAt,
+			"replacement_failed_step":    "",
+			"replacement_failure_reason": "",
+			"replacement_updated_at":     now,
+			"revision":                   current.Revision + 1,
+			"updated_at":                 now,
+		}
+		result := tx.Model(&Allocation{}).Where("account_id = ? AND id = ? AND revision = ?", account, id, expectedRevision).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrExists
+		}
+		if err := tx.Create(&AllocationHistory{AccountID: account, AllocationID: id, FromState: current.State, ToState: current.State, Reason: fmt.Sprintf("replacement retried from %s", resumeAt), CreatedAt: now}).Error; err != nil {
+			return err
+		}
+		current.ReplacementState = resumeAt
+		current.ReplacementFailedStep = ""
+		current.ReplacementFailureReason = ""
+		current.ReplacementUpdatedAt = now
+		current.Revision++
+		current.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &current, nil
+}
+
+// TransitionReplacement applies one compare-and-set step change to
+// ReplacementState, the drive_loop.go replacement steps' own analog of
+// Transition -- refused outright once State has moved off StateReady (a
+// replacement must never still be running once teardown has started;
+// RequestDeprovision's own guard is what's supposed to prevent that from
+// ever being reached, this is defense in depth). replacementInstanceID is
+// recorded when non-empty, exactly like Transition's own instanceID
+// parameter.
+func (s *Store) TransitionReplacement(ctx context.Context, id string, expectedRevision uint64, expectedState, to, replacementInstanceID string) (*Allocation, error) {
+	account, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !validReplacementTransition(expectedState, to) {
+		return nil, fmt.Errorf("%w: replacement %s to %s is not a valid transition", ErrInvalid, expectedState, to)
+	}
+	now := time.Now().UTC()
+	var current Allocation
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("account_id = ? AND id = ?", account, id).First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if current.Revision != expectedRevision || current.ReplacementState != expectedState {
+			return ErrExists
+		}
+		if current.State != StateReady {
+			return fmt.Errorf("%w: allocation is no longer ready", ErrInvalid)
+		}
+		updates := map[string]any{"replacement_state": to, "replacement_updated_at": now, "revision": current.Revision + 1, "updated_at": now}
+		if replacementInstanceID != "" {
+			updates["replacement_instance_id"] = replacementInstanceID
+		}
+		result := tx.Model(&Allocation{}).Where("account_id = ? AND id = ? AND revision = ?", account, id, expectedRevision).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrExists
+		}
+		if err := tx.Create(&AllocationHistory{AccountID: account, AllocationID: id, FromState: current.State, ToState: current.State, Reason: fmt.Sprintf("replacement: %s to %s", expectedState, to), CreatedAt: now}).Error; err != nil {
+			return err
+		}
+		current.ReplacementState = to
+		current.ReplacementUpdatedAt = now
+		if replacementInstanceID != "" {
+			current.ReplacementInstanceID = replacementInstanceID
+		}
+		current.Revision++
+		current.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &current, nil
+}
+
+// FailReplacement records that the replacement stuck at fromStep -- the old
+// instance (State/InstanceID/EstavelleID) is never touched by this call, by
+// construction: a replacement failure must never put the allocation's
+// existing, already-working grant at risk.
+func (s *Store) FailReplacement(ctx context.Context, id string, expectedRevision uint64, fromStep, reason string) (*Allocation, error) {
+	account, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	var current Allocation
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("account_id = ? AND id = ?", account, id).First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if current.Revision != expectedRevision || current.ReplacementState != fromStep {
+			return ErrExists
+		}
+		updates := map[string]any{
+			"replacement_state":          ReplacementStateFailed,
+			"replacement_failed_step":    fromStep,
+			"replacement_failure_reason": reason,
+			"replacement_updated_at":     now,
+			"revision":                   current.Revision + 1,
+			"updated_at":                 now,
+		}
+		result := tx.Model(&Allocation{}).Where("account_id = ? AND id = ? AND revision = ?", account, id, expectedRevision).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrExists
+		}
+		if err := tx.Create(&AllocationHistory{AccountID: account, AllocationID: id, FromState: current.State, ToState: current.State, Reason: fmt.Sprintf("replacement failed at %s: %s", fromStep, reason), CreatedAt: now}).Error; err != nil {
+			return err
+		}
+		current.ReplacementState = ReplacementStateFailed
+		current.ReplacementFailedStep = fromStep
+		current.ReplacementFailureReason = reason
+		current.ReplacementUpdatedAt = now
+		current.Revision++
+		current.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &current, nil
+}
+
+// CompleteReplacement is the cutover: the new instance becomes the
+// allocation's instance of record (InstanceID/EstavelleID/RunningImage),
+// and every Replacement* field clears back to idle. Only valid from
+// ReplacementStateDestroying -- the old instance must already be gone
+// before the record stops pointing at it.
+func (s *Store) CompleteReplacement(ctx context.Context, id string, expectedRevision uint64, newInstanceID, newEstavelleID, newRunningImage string) (*Allocation, error) {
+	account, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	var current Allocation
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("account_id = ? AND id = ?", account, id).First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if current.Revision != expectedRevision || current.ReplacementState != ReplacementStateDestroying {
+			return ErrExists
+		}
+		updates := map[string]any{
+			"instance_id":                newInstanceID,
+			"estavelle_id":               newEstavelleID,
+			"running_image":              newRunningImage,
+			"replacement_state":          "",
+			"replacement_instance_id":    "",
+			"replacement_failed_step":    "",
+			"replacement_failure_reason": "",
+			"replacement_updated_at":     now,
+			"revision":                   current.Revision + 1,
+			"updated_at":                 now,
+		}
+		result := tx.Model(&Allocation{}).Where("account_id = ? AND id = ? AND revision = ?", account, id, expectedRevision).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrExists
+		}
+		if err := tx.Create(&AllocationHistory{AccountID: account, AllocationID: id, FromState: current.State, ToState: current.State, Reason: fmt.Sprintf("replacement completed: running image now %q", newRunningImage), CreatedAt: now}).Error; err != nil {
+			return err
+		}
+		current.InstanceID = newInstanceID
+		current.EstavelleID = newEstavelleID
+		current.RunningImage = newRunningImage
+		current.ReplacementState = ""
+		current.ReplacementInstanceID = ""
+		current.ReplacementFailedStep = ""
+		current.ReplacementFailureReason = ""
+		current.ReplacementUpdatedAt = now
+		current.Revision++
+		current.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &current, nil
+}
+
 // RequestDeprovision moves a ready or failed allocation into revoking --
 // the first step of ADR-0063's reversed teardown order (withdraw the grant
 // before touching compute). Refused from any in-flight state: an
 // allocation the reconciliation loop is actively driving must finish (or
 // fail) that step on its own before teardown can begin, so teardown never
-// races a step already in progress.
+// races a step already in progress. Also refused while a zero-downtime
+// replacement (issue #560) is in flight, including a failed one: a replaced
+// instance a failed replacement already created would otherwise never be
+// destroyed, since deprovisioning only ever acts on InstanceID -- an
+// administrator must resolve the replacement (RetryReplacement to
+// completion) before tearing down the whole allocation.
 func (s *Store) RequestDeprovision(ctx context.Context, id string, expectedRevision uint64) (*Allocation, error) {
 	account, err := accountFromContext(ctx)
 	if err != nil {
@@ -478,6 +845,9 @@ func (s *Store) RequestDeprovision(ctx context.Context, id string, expectedRevis
 		}
 		if current.State != StateReady && current.State != StateFailed {
 			return fmt.Errorf("%w: allocation is still in progress", ErrInvalid)
+		}
+		if current.ReplacementState != "" {
+			return fmt.Errorf("%w: a version replacement is in progress -- resolve it before deprovisioning", ErrInvalid)
 		}
 		from := current.State
 		result := tx.Model(&Allocation{}).Where("account_id = ? AND id = ? AND revision = ?", account, id, expectedRevision).
@@ -556,6 +926,24 @@ func (s *Store) PendingAcrossAccounts(ctx context.Context) ([]Allocation, error)
 		Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("estavelle allocation: list pending across accounts: %w", err)
+	}
+	return rows, nil
+}
+
+// PendingReplacementsAcrossAccounts returns every allocation, across every
+// account, with a zero-downtime replacement (issue #560) still in flight --
+// drive_loop.go's replacementTick's own entry point, the replacement
+// analog of PendingAcrossAccounts above. "failed" is deliberately excluded,
+// matching the main machine's own no-auto-retry-from-failed convention: an
+// administrator must call RetryReplacement explicitly.
+func (s *Store) PendingReplacementsAcrossAccounts(ctx context.Context) ([]Allocation, error) {
+	rows := make([]Allocation, 0)
+	err := s.db.WithContext(ctx).
+		Where("state = ? AND replacement_state IN ?", StateReady, []string{ReplacementStateProvisioning, ReplacementStateAdmitting, ReplacementStateDraining, ReplacementStateDestroying}).
+		Order("created_at, id").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("estavelle allocation: list pending replacements across accounts: %w", err)
 	}
 	return rows, nil
 }

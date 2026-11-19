@@ -52,6 +52,15 @@ type CreateRequest struct {
 	// minted by the caller (estavellealloc's own enrollMinter) immediately
 	// before calling Create -- a Driver never mints its own.
 	Token string
+	// Image, when non-empty, overrides the connection's own stored launch
+	// image (LaunchDefaults.AMIID for awsdriver; a dispatch Meta entry for
+	// nomaddriver) for this one instance -- issue #560's zero-downtime
+	// version replacement, the only caller that ever sets this today.
+	// Empty (every other caller) means "use the connection's own launch
+	// defaults," unchanged from before this field existed: the request
+	// still can't choose the launch shape in general (ADR-0045 §6's
+	// addendum), only the one dimension a replacement needs to vary.
+	Image string
 }
 
 // DriverError is a Driver operation's own failure -- deliberately one
