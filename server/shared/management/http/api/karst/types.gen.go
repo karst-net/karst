@@ -654,6 +654,57 @@ func (e EstavelleAllocationFailedStep) Valid() bool {
 	}
 }
 
+// Defines values for EstavelleAllocationReplacementFailedStep.
+const (
+	EstavelleAllocationReplacementFailedStepAdmitting    EstavelleAllocationReplacementFailedStep = "admitting"
+	EstavelleAllocationReplacementFailedStepDestroying   EstavelleAllocationReplacementFailedStep = "destroying"
+	EstavelleAllocationReplacementFailedStepDraining     EstavelleAllocationReplacementFailedStep = "draining"
+	EstavelleAllocationReplacementFailedStepProvisioning EstavelleAllocationReplacementFailedStep = "provisioning"
+)
+
+// Valid indicates whether the value is a known member of the EstavelleAllocationReplacementFailedStep enum.
+func (e EstavelleAllocationReplacementFailedStep) Valid() bool {
+	switch e {
+	case EstavelleAllocationReplacementFailedStepAdmitting:
+		return true
+	case EstavelleAllocationReplacementFailedStepDestroying:
+		return true
+	case EstavelleAllocationReplacementFailedStepDraining:
+		return true
+	case EstavelleAllocationReplacementFailedStepProvisioning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EstavelleAllocationReplacementState.
+const (
+	EstavelleAllocationReplacementStateAdmitting    EstavelleAllocationReplacementState = "admitting"
+	EstavelleAllocationReplacementStateDestroying   EstavelleAllocationReplacementState = "destroying"
+	EstavelleAllocationReplacementStateDraining     EstavelleAllocationReplacementState = "draining"
+	EstavelleAllocationReplacementStateFailed       EstavelleAllocationReplacementState = "failed"
+	EstavelleAllocationReplacementStateProvisioning EstavelleAllocationReplacementState = "provisioning"
+)
+
+// Valid indicates whether the value is a known member of the EstavelleAllocationReplacementState enum.
+func (e EstavelleAllocationReplacementState) Valid() bool {
+	switch e {
+	case EstavelleAllocationReplacementStateAdmitting:
+		return true
+	case EstavelleAllocationReplacementStateDestroying:
+		return true
+	case EstavelleAllocationReplacementStateDraining:
+		return true
+	case EstavelleAllocationReplacementStateFailed:
+		return true
+	case EstavelleAllocationReplacementStateProvisioning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EstavelleAllocationState.
 const (
 	EstavelleAllocationStateDeprovisioned  EstavelleAllocationState = "deprovisioned"
@@ -2257,6 +2308,9 @@ type EstavelleAlertFeed struct {
 type EstavelleAllocation struct {
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 
+	// DesiredImage Issue #560: the image/version a replacement is targeting, once one has been requested -- empty when no replacement has ever been requested.
+	DesiredImage *string `json:"desired_image,omitempty"`
+
 	// EgressV4 Not yet supported; rejected if set until Aven-identity binding is designed.
 	EgressV4 *bool `json:"egress_v4,omitempty"`
 
@@ -2289,14 +2343,33 @@ type EstavelleAllocation struct {
 	// PermittedGroups Stable account group IDs granted access once ready.
 	PermittedGroups []string `json:"permitted_groups"`
 
+	// ReplacementFailedStep Only meaningful while replacement_state is failed.
+	ReplacementFailedStep    *EstavelleAllocationReplacementFailedStep `json:"replacement_failed_step,omitempty"`
+	ReplacementFailureReason *string                                   `json:"replacement_failure_reason,omitempty"`
+
+	// ReplacementInstanceId The new instance
+	ReplacementInstanceId *string `json:"replacement_instance_id,omitempty"`
+
+	// ReplacementState Issue #560: empty means no replacement is in flight. Never changes allocation state itself -- the access grant stays untouched throughout.
+	ReplacementState *EstavelleAllocationReplacementState `json:"replacement_state,omitempty"`
+
 	// Revision Expected revision for the next compare-and-set action against this allocation.
-	Revision  *int                      `json:"revision,omitempty"`
-	State     *EstavelleAllocationState `json:"state,omitempty"`
-	UpdatedAt *time.Time                `json:"updated_at,omitempty"`
+	Revision *int `json:"revision,omitempty"`
+
+	// RunningImage Issue #560: the image/version actually running, once a replacement has completed at least once. Empty means the current instance came from the connection's own launch defaults and was never explicitly versioned through this mechanism.
+	RunningImage *string                   `json:"running_image,omitempty"`
+	State        *EstavelleAllocationState `json:"state,omitempty"`
+	UpdatedAt    *time.Time                `json:"updated_at,omitempty"`
 }
 
 // EstavelleAllocationFailedStep Only meaningful while state is failed.
 type EstavelleAllocationFailedStep string
+
+// EstavelleAllocationReplacementFailedStep Only meaningful while replacement_state is failed.
+type EstavelleAllocationReplacementFailedStep string
+
+// EstavelleAllocationReplacementState Issue #560: empty means no replacement is in flight. Never changes allocation state itself -- the access grant stays untouched throughout.
+type EstavelleAllocationReplacementState string
 
 // EstavelleAllocationState defines model for EstavelleAllocation.State.
 type EstavelleAllocationState string
@@ -3302,6 +3375,17 @@ type RecordEstavelleAllocationProvisioningJSONBody struct {
 	InstanceId       string `json:"instance_id"`
 }
 
+// ReplaceEstavelleAllocationJSONBody defines parameters for ReplaceEstavelleAllocation.
+type ReplaceEstavelleAllocationJSONBody struct {
+	DesiredImage string `json:"desired_image"`
+	Revision     int    `json:"revision"`
+}
+
+// RetryEstavelleAllocationReplacementJSONBody defines parameters for RetryEstavelleAllocationReplacement.
+type RetryEstavelleAllocationReplacementJSONBody struct {
+	Revision int `json:"revision"`
+}
+
 // RevokeEstavelleAllocationJSONBody defines parameters for RevokeEstavelleAllocation.
 type RevokeEstavelleAllocationJSONBody struct {
 	ExpectedRevision int `json:"expected_revision"`
@@ -3526,6 +3610,12 @@ type GrantEstavelleAllocationJSONRequestBody GrantEstavelleAllocationJSONBody
 
 // RecordEstavelleAllocationProvisioningJSONRequestBody defines body for RecordEstavelleAllocationProvisioning for application/json ContentType.
 type RecordEstavelleAllocationProvisioningJSONRequestBody RecordEstavelleAllocationProvisioningJSONBody
+
+// ReplaceEstavelleAllocationJSONRequestBody defines body for ReplaceEstavelleAllocation for application/json ContentType.
+type ReplaceEstavelleAllocationJSONRequestBody ReplaceEstavelleAllocationJSONBody
+
+// RetryEstavelleAllocationReplacementJSONRequestBody defines body for RetryEstavelleAllocationReplacement for application/json ContentType.
+type RetryEstavelleAllocationReplacementJSONRequestBody RetryEstavelleAllocationReplacementJSONBody
 
 // RevokeEstavelleAllocationJSONRequestBody defines body for RevokeEstavelleAllocation for application/json ContentType.
 type RevokeEstavelleAllocationJSONRequestBody RevokeEstavelleAllocationJSONBody
