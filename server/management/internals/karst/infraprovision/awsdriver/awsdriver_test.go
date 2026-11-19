@@ -24,6 +24,9 @@ type fakeEC2 struct {
 	nextID    int
 	runErr    error
 	runCalls  int
+	// lastImageID records the most recent RunInstances call's own ImageId --
+	// issue #560's Create(Image override) test asserts against it.
+	lastImageID string
 }
 
 type fakeInstance struct {
@@ -35,6 +38,7 @@ func newFakeEC2() *fakeEC2 { return &fakeEC2{instances: map[string]*fakeInstance
 
 func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
 	f.runCalls++
+	f.lastImageID = aws.ToString(in.ImageId)
 	if f.runErr != nil {
 		return nil, f.runErr
 	}
@@ -140,6 +144,30 @@ func TestCreateLaunchesOnceAndFindsExistingOnRetry(t *testing.T) {
 	}
 	if fake.runCalls != 1 {
 		t.Fatalf("got %d RunInstances calls after a retry, want still exactly 1 (find-before-create)", fake.runCalls)
+	}
+}
+
+// TestCreateHonorsAnImageOverride is issue #560's zero-downtime version
+// replacement: CreateRequest.Image, when set, must launch that AMI instead
+// of the connection's own stored LaunchDefaults.AMIID. Empty must still
+// behave exactly as every pre-#560 caller already relies on.
+func TestCreateHonorsAnImageOverride(t *testing.T) {
+	fake := newFakeEC2()
+	d := testDriver(fake)
+	ctx := context.Background()
+
+	if _, err := d.Create(ctx, "alloc-1", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-1"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if fake.lastImageID != "ami-test" {
+		t.Fatalf("got image %q with no override, want the connection's own default %q", fake.lastImageID, "ami-test")
+	}
+
+	if _, err := d.Create(ctx, "alloc-2", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-2", Image: "ami-v2"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if fake.lastImageID != "ami-v2" {
+		t.Fatalf("got image %q with an override set, want %q", fake.lastImageID, "ami-v2")
 	}
 }
 

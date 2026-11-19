@@ -535,3 +535,223 @@ func TestHasNonTerminalAllocations(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, inUse, "a fully deprovisioned allocation must not block deleting its connection")
 }
+
+// readyAllocation drives a freshly created allocation straight to
+// StateReady with instance-1/relay-1 -- the fixture every replacement test
+// below starts from, since RequestReplace only ever applies to a ready
+// allocation.
+func readyAllocation(t *testing.T, e env, ctx context.Context, created *Allocation) *Allocation {
+	t.Helper()
+	provisioning, err := e.store.Transition(ctx, created.ID, created.Revision, StateRequested, StateProvisioning, "", "instance-1", "")
+	require.NoError(t, err)
+	granting, err := e.store.Transition(ctx, created.ID, provisioning.Revision, StateProvisioning, StateGranting, "", "", "")
+	require.NoError(t, err)
+	ready, err := e.store.Transition(ctx, created.ID, granting.Revision, StateGranting, StateReady, "", "", "relay-1")
+	require.NoError(t, err)
+	return ready
+}
+
+func TestRequestReplaceStartsAFreshReplacement(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+	require.Equal(t, StateReady, replacing.State, "the main state must never move for a replacement")
+	require.Equal(t, "v2", replacing.DesiredImage)
+	require.Equal(t, ReplacementStateProvisioning, replacing.ReplacementState)
+	require.Equal(t, "instance-1", replacing.InstanceID, "the old instance stays of record until cutover")
+}
+
+func TestRequestReplaceRejectsWhenNotReady(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+
+	_, err = e.store.RequestReplace(ctx, created.ID, created.Revision, "v2")
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestRequestReplaceRejectsANoopImage(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+
+	_, err = e.store.RequestReplace(ctx, created.ID, ready.Revision, ready.RunningImage)
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestRequestReplaceRejectsWhileAlreadyInFlight(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+
+	_, err = e.store.RequestReplace(ctx, created.ID, replacing.Revision, "v3")
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestRequestDeprovisionRefusedWhileReplacementInFlight(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+
+	_, err = e.store.RequestDeprovision(ctx, created.ID, replacing.Revision)
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestTransitionReplacementWalksProvisioningToDestroying(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+
+	admitting, err := e.store.TransitionReplacement(ctx, created.ID, replacing.Revision, ReplacementStateProvisioning, ReplacementStateAdmitting, "instance-2")
+	require.NoError(t, err)
+	require.Equal(t, ReplacementStateAdmitting, admitting.ReplacementState)
+	require.Equal(t, "instance-2", admitting.ReplacementInstanceID)
+	require.Equal(t, "instance-1", admitting.InstanceID, "cutover has not happened yet")
+
+	draining, err := e.store.TransitionReplacement(ctx, created.ID, admitting.Revision, ReplacementStateAdmitting, ReplacementStateDraining, "")
+	require.NoError(t, err)
+	require.Equal(t, ReplacementStateDraining, draining.ReplacementState)
+
+	destroying, err := e.store.TransitionReplacement(ctx, created.ID, draining.Revision, ReplacementStateDraining, ReplacementStateDestroying, "")
+	require.NoError(t, err)
+	require.Equal(t, ReplacementStateDestroying, destroying.ReplacementState)
+}
+
+func TestTransitionReplacementRejectsAnIllegalEdge(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+
+	_, err = e.store.TransitionReplacement(ctx, created.ID, replacing.Revision, ReplacementStateProvisioning, ReplacementStateDraining, "")
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestFailReplacementNeverTouchesTheOldInstance(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+
+	failed, err := e.store.FailReplacement(ctx, created.ID, replacing.Revision, ReplacementStateProvisioning, "quota exceeded")
+	require.NoError(t, err)
+	require.Equal(t, StateReady, failed.State, "the allocation must stay ready; its own grant was never at risk")
+	require.Equal(t, "instance-1", failed.InstanceID)
+	require.Equal(t, ReplacementStateFailed, failed.ReplacementState)
+	require.Equal(t, ReplacementStateProvisioning, failed.ReplacementFailedStep)
+	require.Equal(t, "quota exceeded", failed.ReplacementFailureReason)
+}
+
+func TestRetryReplacementResumesFromTheFailedStepNotFromScratch(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+	admitting, err := e.store.TransitionReplacement(ctx, created.ID, replacing.Revision, ReplacementStateProvisioning, ReplacementStateAdmitting, "instance-2")
+	require.NoError(t, err)
+	failed, err := e.store.FailReplacement(ctx, created.ID, admitting.Revision, ReplacementStateAdmitting, "never admitted")
+	require.NoError(t, err)
+
+	retried, err := e.store.RetryReplacement(ctx, created.ID, failed.Revision)
+	require.NoError(t, err)
+	require.Equal(t, ReplacementStateAdmitting, retried.ReplacementState, "must resume at admitting, never back at provisioning")
+	require.Equal(t, "instance-2", retried.ReplacementInstanceID, "the already-created replacement instance must not be forgotten")
+	require.Empty(t, retried.ReplacementFailureReason)
+}
+
+func TestRetryReplacementOnlyFromFailed(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+
+	_, err = e.store.RetryReplacement(ctx, created.ID, replacing.Revision)
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestCompleteReplacementCutsOverAndClearsReplacementFields(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+	admitting, err := e.store.TransitionReplacement(ctx, created.ID, replacing.Revision, ReplacementStateProvisioning, ReplacementStateAdmitting, "instance-2")
+	require.NoError(t, err)
+	draining, err := e.store.TransitionReplacement(ctx, created.ID, admitting.Revision, ReplacementStateAdmitting, ReplacementStateDraining, "")
+	require.NoError(t, err)
+	destroying, err := e.store.TransitionReplacement(ctx, created.ID, draining.Revision, ReplacementStateDraining, ReplacementStateDestroying, "")
+	require.NoError(t, err)
+
+	done, err := e.store.CompleteReplacement(ctx, created.ID, destroying.Revision, "instance-2", "relay-2", "v2")
+	require.NoError(t, err)
+	require.Equal(t, StateReady, done.State)
+	require.Equal(t, "instance-2", done.InstanceID)
+	require.Equal(t, "relay-2", done.EstavelleID)
+	require.Equal(t, "v2", done.RunningImage)
+	require.Empty(t, done.ReplacementState)
+	require.Empty(t, done.ReplacementInstanceID)
+
+	canDeprovisionAgain, err := e.store.RequestDeprovision(ctx, created.ID, done.Revision)
+	require.NoError(t, err)
+	require.Equal(t, StateRevoking, canDeprovisionAgain.State)
+}
+
+func TestPendingReplacementsAcrossAccountsExcludesFailedAndIdle(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	ready := readyAllocation(t, e, ctx, created)
+
+	pending, err := e.store.PendingReplacementsAcrossAccounts(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, pending, "idle (no replacement requested) must not be pending")
+
+	replacing, err := e.store.RequestReplace(ctx, created.ID, ready.Revision, "v2")
+	require.NoError(t, err)
+	pending, err = e.store.PendingReplacementsAcrossAccounts(context.Background())
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Equal(t, created.ID, pending[0].ID)
+
+	failed, err := e.store.FailReplacement(ctx, created.ID, replacing.Revision, ReplacementStateProvisioning, "boom")
+	require.NoError(t, err)
+	_ = failed
+	pending, err = e.store.PendingReplacementsAcrossAccounts(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, pending, "a failed replacement must never auto-retry")
+}

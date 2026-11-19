@@ -152,8 +152,15 @@ func (d *Driver) Create(ctx context.Context, allocationID string, req infraprovi
 	}
 	name := infraprovision.TLSServerNameFor(allocationID, req.Token, tlsServerNameSuffix)
 	userData := base64.StdEncoding.EncodeToString([]byte(encodeEnrollBundleTOML(req.ControlAPIBase, req.Token, name)))
+	// req.Image overrides the connection's own stored AMI when set (issue
+	// #560's zero-downtime version replacement) -- empty keeps today's
+	// behavior exactly.
+	amiID := d.defaults.AMIID
+	if req.Image != "" {
+		amiID = req.Image
+	}
 	out, err := d.client.RunInstances(ctx, &ec2.RunInstancesInput{
-		ImageId:          aws.String(d.defaults.AMIID),
+		ImageId:          aws.String(amiID),
 		InstanceType:     ec2types.InstanceType(d.defaults.InstanceType),
 		MinCount:         aws.Int32(1),
 		MaxCount:         aws.Int32(1),

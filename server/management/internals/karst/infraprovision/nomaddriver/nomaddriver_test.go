@@ -108,6 +108,33 @@ func TestCreateDispatchesOnceAndFindsExistingOnRetry(t *testing.T) {
 	}
 }
 
+// TestCreateHonorsAnImageOverride is issue #560's zero-downtime version
+// replacement: CreateRequest.Image, when set, must flow through as dispatch
+// Meta for the operator's own job template to read. Omitted entirely
+// (never sent as "") when empty, the same convention datacenterMetaKey
+// already follows.
+func TestCreateHonorsAnImageOverride(t *testing.T) {
+	fake := newFakeJobs()
+	d := testDriver(fake)
+	ctx := context.Background()
+
+	withoutOverride, err := d.Create(ctx, "alloc-1", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-1"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, ok := fake.jobs[withoutOverride.ID].meta[imageMetaKey]; ok {
+		t.Fatalf("got an image meta key with no override set, want it omitted entirely")
+	}
+
+	withOverride, err := d.Create(ctx, "alloc-2", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-2", Image: "job-v2"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got := fake.jobs[withOverride.ID].meta[imageMetaKey]; got != "job-v2" {
+		t.Fatalf("got image meta %q, want %q", got, "job-v2")
+	}
+}
+
 func TestCreateIgnoresADeadDispatchWithTheSameAllocationID(t *testing.T) {
 	fake := newFakeJobs()
 	d := testDriver(fake)

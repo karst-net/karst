@@ -272,6 +272,12 @@ export const api = {
   allocateEstavelle: (draft: EstavelleAllocationDraft) => request<EstavelleAllocation>("/estavelle-allocations", { method: "POST", body: body(draft) }),
   deprovisionEstavelleAllocation: (id: string, revision: number) => request<EstavelleAllocation>(`/estavelle-allocations/${encodeURIComponent(id)}/deprovision`, { method: "POST", body: body({ revision, acknowledge_deprovision: true }) }),
   deleteEstavelleAllocation: (id: string, revision: number) => request<void>(`/estavelle-allocations/${encodeURIComponent(id)}?revision=${revision}`, { method: "DELETE" }),
+  // Issue #560: zero-downtime version replacement -- name a desired image/
+  // version different from the one currently running; the in-process
+  // reconciliation loop takes it from there. The allocation's own state
+  // and access grant never change, only replacement_state.
+  replaceEstavelleAllocation: (id: string, revision: number, desiredImage: string) => request<EstavelleAllocation>(`/estavelle-allocations/${encodeURIComponent(id)}/replace`, { method: "PUT", body: body({ revision, desired_image: desiredImage }) }),
+  retryEstavelleAllocationReplacement: (id: string, revision: number) => request<EstavelleAllocation>(`/estavelle-allocations/${encodeURIComponent(id)}/retry-replacement`, { method: "POST", body: body({ revision }) }),
 
   // ── component rollout (ADR-0066, #484) ──────────────────────────────────────
   // Control only computes/tracks/verifies-by-attestation here; it never calls

@@ -488,7 +488,11 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			Estavelles:       relayStore,
 			Deenroll:         relayStore,
 			Grants:           relayServiceStore,
-			ControlAPIBase:   relayAllocateControlAPIBase,
+			// relayStore (estavellereg.Store) already implements
+			// LatestTelemetry -- issue #560's zero-downtime replacement
+			// "admitting" check reuses it rather than a second dependency.
+			Telemetry:      relayStore,
+			ControlAPIBase: relayAllocateControlAPIBase,
 		}, relayAllocatePollInterval, func(err error) {
 			log.WithError(err).Error("karst: relay allocation: allocate worker tick failed")
 		})

@@ -30,6 +30,11 @@ type estavelleAllocationStore interface {
 	Transition(ctx context.Context, id string, expectedRevision uint64, expectedState, to, reason, instanceID, estavelleID string) (*estavellealloc.Allocation, error)
 	RequestDeprovision(ctx context.Context, id string, expectedRevision uint64) (*estavellealloc.Allocation, error)
 	Delete(ctx context.Context, id string, expectedRevision uint64) error
+	// RequestReplace/RetryReplacement are issue #560's zero-downtime
+	// version replacement console entry points -- see estavellealloc.Store's
+	// own doc comments on each.
+	RequestReplace(ctx context.Context, id string, expectedRevision uint64, desiredImage string) (*estavellealloc.Allocation, error)
+	RetryReplacement(ctx context.Context, id string, expectedRevision uint64) (*estavellealloc.Allocation, error)
 }
 
 type estavelleAllocationRegistry interface {
@@ -131,6 +136,10 @@ func RegisterEstavelleAllocationEndpoints(router *mux.Router, manager permission
 			handleRelayAllocationFailed(w, r, allocCtx, store)
 		case "estavelle-allocation-deprovision":
 			handleRelayAllocationDeprovision(w, r, allocCtx, store)
+		case "estavelle-allocation-replace":
+			handleEstavelleAllocationReplace(w, r, allocCtx, store)
+		case "estavelle-allocation-retry-replacement":
+			handleEstavelleAllocationRetryReplacement(w, r, allocCtx, store)
 		default:
 			switch r.Method {
 			case http.MethodGet:
@@ -151,6 +160,8 @@ func RegisterEstavelleAllocationEndpoints(router *mux.Router, manager permission
 	routes.HandleFunc("/{id}/deprovisioned", handle).Methods(http.MethodPost).Name("estavelle-allocation-deprovisioned")
 	routes.HandleFunc("/{id}/failed", handle).Methods(http.MethodPost).Name("estavelle-allocation-failed")
 	routes.HandleFunc("/{id}/deprovision", handle).Methods(http.MethodPost, http.MethodOptions).Name("estavelle-allocation-deprovision")
+	routes.HandleFunc("/{id}/replace", handle).Methods(http.MethodPut, http.MethodOptions).Name("estavelle-allocation-replace")
+	routes.HandleFunc("/{id}/retry-replacement", handle).Methods(http.MethodPost, http.MethodOptions).Name("estavelle-allocation-retry-replacement")
 	routes.HandleFunc("/{id}", handle).Methods(http.MethodDelete, http.MethodOptions)
 }
 
@@ -242,6 +253,60 @@ func handleRelayAllocationDeprovision(w http.ResponseWriter, r *http.Request, ct
 		return
 	}
 	allocation, err := store.RequestDeprovision(ctx, mux.Vars(r)["id"], *request.ExpectedRevision)
+	if err != nil {
+		relayAllocationError(ctx, w, err)
+		return
+	}
+	util.WriteJSONObject(ctx, w, allocation)
+}
+
+// handleEstavelleAllocationReplace is issue #560's console entry point for
+// a zero-downtime version replacement: name a desired image/version
+// different from the one currently running, and the in-process
+// reconciliation loop (estavellealloc's own replacementTick) takes it from
+// there. Mirrors handleRelayAllocationDeprovision's revision-required
+// shape; store.RequestReplace itself enforces state == ready, no
+// replacement already in flight, and a real change.
+func handleEstavelleAllocationReplace(w http.ResponseWriter, r *http.Request, ctx context.Context, store estavelleAllocationStore) {
+	var request struct {
+		ExpectedRevision *uint64 `json:"revision"`
+		DesiredImage     string  `json:"desired_image"`
+	}
+	if !decodeRelayAllocationRequest(w, r, 1024, &request) {
+		return
+	}
+	if request.ExpectedRevision == nil {
+		util.WriteErrorResponse("revision is required", http.StatusBadRequest, w)
+		return
+	}
+	if request.DesiredImage == "" {
+		util.WriteErrorResponse("desired_image is required", http.StatusBadRequest, w)
+		return
+	}
+	allocation, err := store.RequestReplace(ctx, mux.Vars(r)["id"], *request.ExpectedRevision, request.DesiredImage)
+	if err != nil {
+		relayAllocationError(ctx, w, err)
+		return
+	}
+	util.WriteJSONObject(ctx, w, allocation)
+}
+
+// handleEstavelleAllocationRetryReplacement resumes a replacement that
+// reached ReplacementStateFailed, from exactly the step it failed at --
+// store.RetryReplacement's own doc comment explains why this never
+// restarts from "provisioning."
+func handleEstavelleAllocationRetryReplacement(w http.ResponseWriter, r *http.Request, ctx context.Context, store estavelleAllocationStore) {
+	var request struct {
+		ExpectedRevision *uint64 `json:"revision"`
+	}
+	if !decodeRelayAllocationRequest(w, r, 256, &request) {
+		return
+	}
+	if request.ExpectedRevision == nil {
+		util.WriteErrorResponse("revision is required", http.StatusBadRequest, w)
+		return
+	}
+	allocation, err := store.RetryReplacement(ctx, mux.Vars(r)["id"], *request.ExpectedRevision)
 	if err != nil {
 		relayAllocationError(ctx, w, err)
 		return
