@@ -4635,7 +4635,13 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
     // second one under CI load. Retry for a bounded window instead, the
     // same fix the failover dial below already applies to the identical
     // "offers non-zero but not yet actually active" gap.
-    let deadline = Instant::now() + Duration::from_secs(15);
+    //
+    // The window has to be well past `dial`'s own 15s connect timeout: a
+    // route that is not active yet does not refuse the connection, it just
+    // never answers, so a failed attempt consumes the whole 15s on its own.
+    // A 15s deadline here let exactly one attempt run before CI flagged it
+    // flaky; mirror the failover loop below's 10x margin over that timeout.
+    let deadline = Instant::now() + Duration::from_secs(150);
     let (reply, reply_err) = loop {
         let result = dial();
         if result.0.contains("via A") || Instant::now() >= deadline {
