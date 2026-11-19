@@ -626,8 +626,11 @@ test("network lock re-acknowledges when the cut-off set moves under it", async (
 
 test("DNS settings save is keyboard accessible", async ({ page }) => {
   await page.goto("/#/dns");
-  await page.getByLabel("Groups excluded from DNS management").focus();
-  await page.keyboard.type("group-ops");
+  // Groups excluded from DNS management moved from a freeform text input to
+  // a GroupPicker fieldset of checkboxes (c755a93), so the keyboard flow is
+  // Tab+Space on a real group's checkbox rather than typing a group ID.
+  await page.getByRole("group", { name: "Groups excluded from DNS management" }).getByRole("checkbox", { name: "sre" }).focus();
+  await page.keyboard.press("Space");
   await page.getByRole("button", { name: "Save DNS settings" }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("status")).toContainText("saved");

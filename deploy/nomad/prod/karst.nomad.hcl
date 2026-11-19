@@ -66,6 +66,12 @@ variable "jobspec_dir" {
   description = "Where this job file (and its sibling Caddyfile) actually live on the host -- Nomad docker volumes need an absolute host path, unlike compose's cwd-relative ./Caddyfile."
 }
 
+variable "keycloak_theme_dir" {
+  type        = string
+  default     = "/home/adrian/code/mycelium/deploy/keycloak/themes/karst"
+  description = "Absolute host path of this checkout's deploy/keycloak/themes/karst -- the Karst login theme, mounted read-only into Keycloak. See deploy/keycloak/README.md."
+}
+
 variable "docker_network" {
   type        = string
   default     = "karst"
@@ -216,6 +222,7 @@ job "karst" {
         volumes = [
           "${var.prod_dir}/state/keycloak:/opt/keycloak/data",
           "${var.prod_dir}/state/keycloak-realm.json:/opt/keycloak/data/import/karst-realm.json:ro",
+          "${var.keycloak_theme_dir}:/opt/keycloak/themes/karst:ro",
         ]
       }
 

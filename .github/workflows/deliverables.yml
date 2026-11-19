@@ -34,7 +34,19 @@ jobs:
   packages:
     name: Linux packages (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    container: rockylinux:9
+    # The upstream image stopped declaring a PATH of its own (it used to set
+    # the standard one). Harmless on its own, but it collides with a runner
+    # bug in container jobs: once any step appends to $GITHUB_PATH, the
+    # runner rebuilds PATH as the image's declared PATH plus that addition —
+    # and with no declared PATH to extend, later steps get only the new entry
+    # and lose /usr/bin, /bin, etc., so even `bash` stops resolving.
+    # dtolnay/rust-toolchain's rustup-install step does exactly that append.
+    # Declaring PATH here ourselves keeps a base to extend regardless of what
+    # the image does. https://github.com/actions/runner/issues/3210
+    container:
+      image: rockylinux:9
+      env:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     strategy:
       fail-fast: false
       matrix:

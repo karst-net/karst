@@ -1,6 +1,8 @@
 {
   "realm": "karst",
+  "displayName": "Karst",
   "enabled": true,
+  "loginTheme": "karst",
   "sslRequired": "none",
   "clients": [
     {

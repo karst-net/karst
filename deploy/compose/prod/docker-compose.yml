@@ -81,6 +81,9 @@ services:
     volumes:
       - ./state/keycloak:/opt/keycloak/data
       - ./state/keycloak-realm.json:/opt/keycloak/data/import/karst-realm.json:ro
+      # Karst-branded login pages (deploy/keycloak/README.md). Mounting it
+      # only makes the theme available; a realm opts in via its loginTheme.
+      - ../../keycloak/themes/karst:/opt/keycloak/themes/karst:ro
 
   caddy:
     image: caddy:2.10
