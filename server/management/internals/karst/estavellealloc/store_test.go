@@ -250,6 +250,28 @@ func TestCreateIgnoresCallerSuppliedIdentityFields(t *testing.T) {
 	require.EqualValues(t, 1, created.Revision)
 }
 
+func TestCreateSeedsRunningImageFromTheRequestedImageAndTrimsIt(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	draft := e.draft()
+	draft.Image = "  v1.2.3  "
+	created, err := e.store.Create(ctx, draft)
+	require.NoError(t, err)
+	require.Equal(t, "v1.2.3", created.RunningImage)
+
+	var stored Allocation
+	require.NoError(t, e.db.Where("id = ?", created.ID).First(&stored).Error)
+	require.Equal(t, "v1.2.3", stored.RunningImage)
+}
+
+func TestCreateLeavesRunningImageEmptyWhenNoImageIsRequested(t *testing.T) {
+	e := fixture(t)
+	ctx := WithAccount(context.Background(), "a")
+	created, err := e.store.Create(ctx, e.draft())
+	require.NoError(t, err)
+	require.Empty(t, created.RunningImage)
+}
+
 func TestTransitionWalksTheHappyPathToReady(t *testing.T) {
 	e := fixture(t)
 	ctx := WithAccount(context.Background(), "a")

@@ -257,6 +257,20 @@ func TestProvisionStepMovesRequestedToProvisioning(t *testing.T) {
 	require.Equal(t, 1, driver.createCalls)
 }
 
+func TestProvisionStepPassesTheAllocationsRunningImageThrough(t *testing.T) {
+	driver := &fakeDriver{instance: infraprovision.Instance{ID: "i-1", TLSServerName: "alloc-x-abc.aws.karst.internal"}}
+	de := newDriveEnv(t, driver, nil)
+	draft := de.draft()
+	draft.Image = "v1.2.3"
+	created, err := de.store.Create(de.ctx.alloc, draft)
+	require.NoError(t, err)
+	require.Equal(t, "v1.2.3", created.RunningImage, "Create must have already seeded RunningImage from the requested Image")
+
+	require.NoError(t, provisionStep(de.ctx, de.store, de.deps, *created))
+
+	require.Equal(t, []string{"v1.2.3"}, driver.createImages)
+}
+
 func TestProvisionStepFailsWhenControlAPIBaseMissing(t *testing.T) {
 	driver := &fakeDriver{instance: infraprovision.Instance{ID: "i-1", TLSServerName: "name"}}
 	de := newDriveEnv(t, driver, nil)

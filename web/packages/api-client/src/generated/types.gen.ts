@@ -738,11 +738,15 @@ export type EstavelleAllocation = {
     readonly created_at?: string;
     readonly updated_at?: string;
     /**
+     * The version/image to launch this allocation's first instance with, instead of the infrastructure connection's own launch default. Accepted only on creation and never returned -- running_image below is the single source of truth for what actually ends up running.
+     */
+    image?: string;
+    /**
      * Issue #560: the image/version a replacement is targeting, once one has been requested -- empty when no replacement has ever been requested.
      */
     readonly desired_image?: string;
     /**
-     * Issue #560: the image/version actually running, once a replacement has completed at least once. Empty means the current instance came from the connection's own launch defaults and was never explicitly versioned through this mechanism.
+     * The image/version actually running, once a replacement has completed at least once, or the allocation's own `image` was set at creation. Empty means the current instance came from the connection's own launch defaults and was never explicitly versioned through this mechanism.
      */
     readonly running_image?: string;
     /**
@@ -1332,6 +1336,10 @@ export type EstavelleAllocationWritable = {
      * Stable account group IDs granted access once ready.
      */
     permitted_groups: Array<string>;
+    /**
+     * The version/image to launch this allocation's first instance with, instead of the infrastructure connection's own launch default. Accepted only on creation and never returned -- running_image below is the single source of truth for what actually ends up running.
+     */
+    image?: string;
 };
 
 export type RolloutPlanWritable = {

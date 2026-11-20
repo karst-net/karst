@@ -2154,8 +2154,9 @@ components:
         revision: {type: integer, minimum: 0, readOnly: true, description: Expected revision for the next compare-and-set action against this allocation.}
         created_at: {type: string, format: date-time, readOnly: true}
         updated_at: {type: string, format: date-time, readOnly: true}
+        image: {type: string, description: "The version/image to launch this allocation's first instance with, instead of the infrastructure connection's own launch default. Accepted only on creation and never returned -- running_image below is the single source of truth for what actually ends up running."}
         desired_image: {type: string, readOnly: true, description: "Issue #560: the image/version a replacement is targeting, once one has been requested -- empty when no replacement has ever been requested."}
-        running_image: {type: string, readOnly: true, description: "Issue #560: the image/version actually running, once a replacement has completed at least once. Empty means the current instance came from the connection's own launch defaults and was never explicitly versioned through this mechanism."}
+        running_image: {type: string, readOnly: true, description: "The image/version actually running, once a replacement has completed at least once, or the allocation's own `image` was set at creation. Empty means the current instance came from the connection's own launch defaults and was never explicitly versioned through this mechanism."}
         replacement_state: {type: string, readOnly: true, enum: [provisioning, admitting, draining, destroying, failed], description: "Issue #560: empty means no replacement is in flight. Never changes allocation state itself -- the access grant stays untouched throughout."}
         replacement_instance_id: {type: string, readOnly: true, description: The new instance, once its Create call returned. instance_id itself keeps pointing at the old instance until cutover.}
         replacement_failed_step: {type: string, readOnly: true, enum: [provisioning, admitting, draining, destroying], description: Only meaningful while replacement_state is failed.}

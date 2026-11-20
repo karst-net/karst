@@ -13,6 +13,14 @@ const group = { id: "group-engineering", name: "engineering", peers_count: 32, r
 // resources[0]'s coordinates exactly, the same way a real admin would have
 // added it from the discovered region before allocating against it.
 const authorizedLocations = [{ id: "location-us-west-2", lat: 45.84, lon: -119.7, label: "US West (Oregon)" }];
+// AllocateEstavelle fetches this directly (karst-releases.ts), the same
+// live GitHub endpoint "Change version" already uses -- mocked here so
+// opening the dialog never makes a real network call, and so the default
+// version selection ("v1.3.0", the newest) is deterministic.
+const karstReleases = [
+  { tag_name: "v1.3.0", draft: false, published_at: "2026-11-01T00:00:00Z" },
+  { tag_name: "v1.2.0", draft: false, published_at: "2026-10-01T00:00:00Z" },
+];
 
 async function mockEstavelleServicesPage(page: import("@playwright/test").Page) {
   await page.route("**/api/karst/v1/estavelles", (route) => route.fulfill({ json: [] }));
@@ -27,6 +35,7 @@ async function mockEstavelleServicesPage(page: import("@playwright/test").Page) 
   await page.route("**/api/karst/v1/infrastructure-connections", (route) => route.fulfill({ json: [connection] }));
   await page.route(`**/api/karst/v1/infrastructure-connections/${connection.id}/resources`, (route) => route.fulfill({ json: resources }));
   await page.route("**/api/karst/v1/locations", (route) => route.fulfill({ json: authorizedLocations }));
+  await page.route("https://api.github.com/repos/karst-net/karst/releases**", (route) => route.fulfill({ json: karstReleases }));
 }
 
 test("allocating a relay walks discovery, reviews, and posts the expected request", async ({ page }) => {
@@ -51,18 +60,48 @@ test("allocating a relay walks discovery, reviews, and posts the expected reques
   await page.getByLabel("Infrastructure connection", { exact: true }).selectOption(connection.id);
   await page.getByLabel("Location", { exact: true }).selectOption("us-west-2");
   await page.getByRole("checkbox", { name: "engineering" }).check();
+  // Defaults to the most recent release tag, with no admin action needed.
+  await expect(page.getByLabel("Version", { exact: true })).toHaveValue("v1.3.0");
 
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   await page.getByRole("button", { name: "Review allocation" }).click();
+  await expect(page.getByText("Version: v1.3.0.")).toBeVisible();
   await expect(page.getByText("Permitted groups: engineering.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Apply allocation" })).toBeDisabled();
   await page.getByRole("checkbox", { name: "I reviewed this allocation." }).check();
   await page.getByRole("button", { name: "Apply allocation" }).click();
 
   await expect(page.getByText("Estavelle allocation requested.", { exact: false })).toBeVisible();
-  expect(created).toEqual([{ name: "denver", infra_connection_id: connection.id, location: "us-west-2", relay_transport: true, permitted_groups: [group.id] }]);
+  expect(created).toEqual([{ name: "denver", infra_connection_id: connection.id, location: "us-west-2", relay_transport: true, permitted_groups: [group.id], image: "v1.3.0" }]);
   await expect(page.getByRole("cell", { name: "denver" })).toBeVisible();
+});
+
+test("the version picker falls back to the connection default when deliberately cleared", async ({ page }) => {
+  const created: unknown[] = [];
+  await mockEstavelleServicesPage(page);
+  await page.route("**/api/karst/v1/estavelle-allocations", async (route) => {
+    if (route.request().method() === "GET") { await route.fulfill({ json: [] }); return; }
+    created.push(route.request().postDataJSON());
+    await route.fulfill({ status: 201, json: { id: "alloc-1", ...route.request().postDataJSON(), state: "requested", revision: 1 } });
+  });
+
+  await page.goto("/#/estavelles");
+  await page.getByRole("button", { name: "Add estavelle" }).click();
+  await page.getByRole("button", { name: "No, provision one for me" }).click();
+  await page.getByLabel("Name", { exact: true }).fill("denver");
+  await page.getByLabel("Infrastructure connection", { exact: true }).selectOption(connection.id);
+  await page.getByLabel("Location", { exact: true }).selectOption("us-west-2");
+  await page.getByRole("checkbox", { name: "engineering" }).check();
+  await expect(page.getByLabel("Version", { exact: true })).toHaveValue("v1.3.0");
+
+  await page.getByLabel("Version", { exact: true }).selectOption("");
+  await page.getByRole("button", { name: "Review allocation" }).click();
+  await expect(page.getByText("Version: Connection default.")).toBeVisible();
+  await page.getByRole("checkbox", { name: "I reviewed this allocation." }).check();
+  await page.getByRole("button", { name: "Apply allocation" }).click();
+
+  await expect.poll(() => created).toEqual([{ name: "denver", infra_connection_id: connection.id, location: "us-west-2", relay_transport: true, permitted_groups: [group.id] }]);
 });
 
 test("a ready allocation offers deprovision; a requested one offers remove instead", async ({ page }) => {
@@ -118,6 +157,7 @@ test("only resources already in Authorized Locations are offered", async ({ page
   // Two discovered regions; only one (resources[0]) is in Authorized Locations.
   await page.route(`**/api/karst/v1/infrastructure-connections/${connection.id}/resources`, (route) => route.fulfill({ json: [...resources, unauthorized] }));
   await page.route("**/api/karst/v1/locations", (route) => route.fulfill({ json: authorizedLocations }));
+  await page.route("https://api.github.com/repos/karst-net/karst/releases**", (route) => route.fulfill({ json: karstReleases }));
 
   await page.goto("/#/estavelles");
   await page.getByRole("button", { name: "Add estavelle" }).click();

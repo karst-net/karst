@@ -236,6 +236,9 @@ func driveOne(ctx scopedContexts, store *Store, deps AllocateDeps, allocation Al
 // an already-live instance under this allocation's own correlation first
 // (a retry after a crash between a previous successful Create and this
 // function's own Transition call landing) before provisioning a new one.
+// RunningImage is already populated at this point if the console's
+// allocation request named one (Store.Create) -- empty just means "use
+// the connection's own launch default," passed through unchanged.
 func provisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocation Allocation) error {
 	driver, err := deps.InfraConnections.ActuationDriver(ctx.infra, allocation.InfraConnectionID)
 	if err != nil {
@@ -252,6 +255,7 @@ func provisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocati
 	instance, err := driver.Create(ctx.infra, allocation.ID, infraprovision.CreateRequest{
 		ControlAPIBase: deps.ControlAPIBase,
 		Token:          token,
+		Image:          allocation.RunningImage,
 	})
 	if err != nil {
 		return failAllocation(ctx.alloc, store, allocation, StateRequested, err)

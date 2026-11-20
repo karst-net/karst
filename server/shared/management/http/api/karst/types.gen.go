@@ -2330,6 +2330,9 @@ type EstavelleAllocation struct {
 	// Id Server-generated; never accepted from callers.
 	Id *string `json:"id,omitempty"`
 
+	// Image The version/image to launch this allocation's first instance with, instead of the infrastructure connection's own launch default. Accepted only on creation and never returned -- running_image below is the single source of truth for what actually ends up running.
+	Image *string `json:"image,omitempty"`
+
 	// InfraConnectionId Existing account-local infrastructure connection ID.
 	InfraConnectionId string `json:"infra_connection_id"`
 
@@ -2356,7 +2359,7 @@ type EstavelleAllocation struct {
 	// Revision Expected revision for the next compare-and-set action against this allocation.
 	Revision *int `json:"revision,omitempty"`
 
-	// RunningImage Issue #560: the image/version actually running, once a replacement has completed at least once. Empty means the current instance came from the connection's own launch defaults and was never explicitly versioned through this mechanism.
+	// RunningImage The image/version actually running, once a replacement has completed at least once, or the allocation's own `image` was set at creation. Empty means the current instance came from the connection's own launch defaults and was never explicitly versioned through this mechanism.
 	RunningImage *string                   `json:"running_image,omitempty"`
 	State        *EstavelleAllocationState `json:"state,omitempty"`
 	UpdatedAt    *time.Time                `json:"updated_at,omitempty"`

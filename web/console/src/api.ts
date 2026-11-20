@@ -110,8 +110,11 @@ export type AccountUser = { id: string; name: string; email: string; role: strin
 export type ManagedEstavelleService = EstavelleService & { access_managed?: boolean; allowed_groups?: string[]; aven_handle?: string; exit_ipv4?: boolean; exit_ipv6?: boolean; metric?: number; revision?: number };
 /** The writable fields of an EstavelleAllocation — everything else on that
  * type (state, revision, failed_step, …) is server-derived and never
- * accepted from callers (karst-openapi.yml's own `readonly` markings). */
-export type EstavelleAllocationDraft = { name: string; infra_connection_id: string; location: string; relay_transport: boolean; permitted_groups: string[] };
+ * accepted from callers (karst-openapi.yml's own `readonly` markings).
+ * `image` is the one write-only exception: the version to launch the
+ * first instance with, instead of the connection's own launch default —
+ * omit it (or leave it empty) for that default. */
+export type EstavelleAllocationDraft = { name: string; infra_connection_id: string; location: string; relay_transport: boolean; permitted_groups: string[]; image?: string };
 
 /** The writable fields of a RolloutComponent/RolloutPlan — status, observed_digest,
  * compatibility, etc. are server-derived (karst-openapi.yml's own `readOnly`

@@ -111,10 +111,24 @@ type Allocation struct {
 	// DesiredImage/RunningImage are issue #560's version tracking.
 	// RunningImage is "" for an allocation whose current instance came from
 	// the connection's own launch defaults and was never explicitly
-	// versioned through this mechanism -- it only becomes a real value once
-	// a replacement completes (CompleteReplacement).
+	// versioned through this mechanism -- it becomes a real value either
+	// once a replacement completes (CompleteReplacement) or, for the first
+	// instance, straight out of Create below when the caller named an
+	// Image to launch it with.
 	DesiredImage string `json:"desired_image,omitempty"`
 	RunningImage string `json:"running_image,omitempty"`
+	// Image is accepted only on Create: the version/image to launch this
+	// allocation's first instance with, instead of the infrastructure
+	// connection's own launch default -- the console's "Allocate an
+	// estavelle" dialog prompts for it, defaulting to the most recent
+	// karst-net/karst release tag (see karst-releases.ts). Not itself a
+	// persisted column (gorm:"-") and never echoed back: Create copies a
+	// non-empty value straight into RunningImage above, since that
+	// genuinely is what the first instance ends up running, and
+	// provisionStep (drive_loop.go) reads RunningImage back out to pass
+	// through to Driver.Create, the exact same CreateRequest.Image path
+	// replaceProvisionStep already uses for DesiredImage.
+	Image string `gorm:"-" json:"image,omitempty"`
 	// ReplacementState/ReplacementInstanceID/ReplacementFailedStep/
 	// ReplacementFailureReason/ReplacementUpdatedAt track one in-flight
 	// zero-downtime replacement -- see the ReplacementState consts' own doc
@@ -317,6 +331,7 @@ func (s *Store) Create(ctx context.Context, draft Allocation) (*Allocation, erro
 		EgressV6:           draft.EgressV6,
 		PermittedGroups:    draft.PermittedGroups,
 		State:              StateRequested,
+		RunningImage:       strings.TrimSpace(draft.Image),
 		Revision:           1,
 		CreatedAt:          now,
 		UpdatedAt:          now,

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog } from "@karst-net/ui";
 import type { DiscoveredResource } from "@karst-net/api-client";
 import { api } from "../api";
 import { Failure, useResource } from "../common";
 import { GroupPicker } from "./access";
+import { recentKarstReleases } from "../karst-releases";
 
 /** Allocate an estavelle: name a host, pick its infrastructure connection and
  * location, and choose the groups permitted to use it once ready — issue
@@ -37,6 +38,17 @@ export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => voi
   const infraConnections = { ...infraConnectionsResource, value: infraConnectionsResource.value?.filter(c => c.supports_allocation) };
   const groups = useResource(api.groups);
   const authorizedLocations = useResource(api.locations);
+  // Issue #560's "Change version" stop-gap, reused here for the version
+  // this allocation's own first instance launches with -- see
+  // karst-releases.ts's own doc comment, and issue #561 for the real
+  // admin-approved, per-connection registry this is meant to be replaced
+  // by.
+  const releases = useResource(recentKarstReleases);
+  const [image, setImage] = useState("");
+  // Defaults to the most recent release tag once it loads, but only once:
+  // an admin who deliberately picks "Connection default" afterward must
+  // not have it silently overwritten back.
+  useEffect(() => { if (!image && releases.value?.length) setImage(releases.value[0]); }, [releases.value]);
   const [connectionId, setConnectionId] = useState("");
   const resources = useResource(() => connectionId ? api.infrastructureConnectionResources(connectionId) : Promise.resolve([] as DiscoveredResource[]), [connectionId]);
   const [resourceCode, setResourceCode] = useState("");
@@ -66,7 +78,7 @@ export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => voi
   const apply = async () => {
     setBusy(true); setMessage(undefined);
     try {
-      await api.allocateEstavelle({ name: name.trim(), infra_connection_id: connectionId, location: resourceCode, relay_transport: true, permitted_groups: permittedGroups });
+      await api.allocateEstavelle({ name: name.trim(), infra_connection_id: connectionId, location: resourceCode, relay_transport: true, permitted_groups: permittedGroups, ...(image ? { image } : {}) });
       onAllocated();
     } catch (error) { setMessage((error as Error).message); setReview(false); }
     finally { setBusy(false); }
@@ -96,6 +108,14 @@ export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => voi
             </select></label>
             <p className="lede">Only locations already in Authorized Locations are offered. {authorizedResources.length === 0 ? "None of this connection's discovered regions/zones/namespaces are authorized yet — " : "Missing one? "}add it on the Authorized locations page first.</p></>)}
       {notEnabled && selectedResource && <p className="lede">{selectedResource.name || selectedResource.code} is not opted into use yet — enable it on the Authorized locations page first.</p>}
+      {releases.error
+        ? <><p role="alert">Could not load recent Karst releases: {releases.error}. Enter a version manually, or leave it blank for the connection default.</p>
+          <label>Version<input value={image} onChange={event => setImage(event.target.value)} /></label></>
+        : <label>Version<select aria-label="Version" disabled={releases.loading} value={image} onChange={event => setImage(event.target.value)}>
+          <option value="">Connection default</option>
+          {(releases.value ?? []).map(tag => <option key={tag} value={tag}>{tag}</option>)}
+        </select></label>}
+      <p className="lede">Defaults to the most recent Karst release tag. This list is recent karst-net/karst release tags, not a verified-for-your-connection catalog — picking one does not yet guarantee it resolves to a real image for this connection (issue #561).</p>
       <fieldset><legend>Capabilities</legend>
         <label><input type="checkbox" checked readOnly disabled />Estavelle transport</label>
         <p className="lede">Internet egress is not yet available through this workflow — it needs an explicitly bound Aven identity this form does not collect yet. Configure access to this estavelle directly once it is ready if egress is needed.</p>
@@ -105,6 +125,7 @@ export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => voi
     </form> : <>
       <p>Name: <strong>{name}</strong></p>
       <p>Infrastructure connection: <strong>{selectedConnection?.label || selectedConnection?.type}</strong>. Location: <strong>{selectedResource?.name || resourceCode}</strong>.</p>
+      <p>Version: <strong>{image || "Connection default"}</strong>.</p>
       <p>Permitted groups: {permittedGroups.map(id => groups.value?.find(g => g.id === id)?.name ?? "Unavailable group").join(", ")}.</p>
       <p>Provisioning a real host takes time; the new allocation shows as pending until it registers and access is granted. Deprovisioning later withdraws access before the host is destroyed.</p>
       <label><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} />I reviewed this allocation.</label>
