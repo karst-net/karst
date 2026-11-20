@@ -272,7 +272,7 @@ function ThemeChooser() {
  *  configured — the `just api-mock` dev flow) skips this and renders the app
  *  directly, matching the console's pre-auth behavior. Signing in is a full
  *  redirect to the IdP, so there is nothing to wire up for success here —
- *  `bootstrap` completes the flow on the next load, at `/auth/callback`. */
+ *  `bootstrap` completes the flow on the next load, at `/oidc/callback`. */
 function LoginGate({ config }: { config: AuthConfig }) {
   return <div className="shell"><main><h1>Karst</h1><p>Sign in to administer this deployment.</p>
     <button onClick={() => login(config)}>Log in</button>
@@ -280,10 +280,15 @@ function LoginGate({ config }: { config: AuthConfig }) {
 }
 
 async function boot() {
-  const config = await loadConfig();
-  const auth = await bootstrap(config);
   const root = createRoot(document.getElementById("root")!);
-  root.render(<StrictMode>{auth === "anonymous" ? <LoginGate config={config} /> : <App auth={auth} config={config} />}</StrictMode>);
+  try {
+    const config = await loadConfig();
+    const auth = await bootstrap(config);
+    root.render(<StrictMode>{auth === "anonymous" ? <LoginGate config={config} /> : <App auth={auth} config={config} />}</StrictMode>);
+  } catch (error) {
+    console.error("karst: failed to start", error);
+    root.render(<div className="shell"><main><h1>Karst</h1><p>Something went wrong starting the console. Please reload the page.</p></main></div>);
+  }
 }
 
 void boot();

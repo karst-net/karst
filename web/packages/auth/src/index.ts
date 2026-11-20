@@ -63,7 +63,16 @@ export function createAuth(basePath = "/") {
     const userManager = getManager(config);
 
     if (location.pathname === `${basePath}oidc/callback`) {
-      currentUser = await userManager.signinRedirectCallback();
+      // The state store entry is consumed on the first read, so a refresh,
+      // back/forward navigation, or a duplicate request reprocessing the
+      // same code/state throws here. Fall back to anonymous rather than
+      // leaving the query string in place and the app unrendered.
+      try {
+        currentUser = await userManager.signinRedirectCallback();
+      } catch (error) {
+        console.error("karst: oidc callback failed", error);
+        currentUser = undefined;
+      }
       const hash = sessionStorage.getItem(postLoginHashKey) ?? "";
       sessionStorage.removeItem(postLoginHashKey);
       history.replaceState(null, "", basePath + hash);
