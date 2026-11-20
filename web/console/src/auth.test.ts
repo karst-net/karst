@@ -5,12 +5,14 @@ import { createAuth, SessionExpiredError } from "@karst-net/auth";
 const oidc = vi.hoisted(() => ({
   signinSilent: vi.fn(),
   signinRedirect: vi.fn(),
+  signinRedirectCallback: vi.fn(),
   expired: undefined as (() => void) | undefined,
 }));
 vi.mock("oidc-client-ts", () => ({
   UserManager: class {
     signinSilent = oidc.signinSilent;
     signinRedirect = oidc.signinRedirect;
+    signinRedirectCallback = oidc.signinRedirectCallback;
     events = {
       addUserLoaded: vi.fn(), addUserUnloaded: vi.fn(), addSilentRenewError: vi.fn(),
       addAccessTokenExpired: (callback: () => void) => { oidc.expired = callback; },
@@ -102,6 +104,30 @@ test("expiry while idle forces login when the identity session has ended", async
   oidc.expired!();
   await vi.waitFor(() => expect(oidc.signinRedirect).toHaveBeenCalledTimes(1));
   expect(apiFetch).not.toHaveBeenCalled();
+});
+
+test("the oidc callback consumes the code once and returns to the post-login location", async () => {
+  const auth = createAuth();
+  vi.stubGlobal("location", { origin: "https://console.test", pathname: "/oidc/callback", hash: "" });
+  vi.stubGlobal("history", { replaceState: vi.fn() });
+  const stored: Record<string, string> = { "karst.postLoginHash:/": "#/machines" };
+  vi.stubGlobal("sessionStorage", {
+    setItem: vi.fn((key: string, value: string) => { stored[key] = value; }),
+    getItem: vi.fn((key: string) => stored[key] ?? null),
+    removeItem: vi.fn((key: string) => { delete stored[key]; }),
+  });
+  oidc.signinRedirectCallback.mockResolvedValue(user());
+  await expect(auth.bootstrap(config)).resolves.toBe("authenticated");
+  expect(sessionStorage.removeItem).toHaveBeenCalledWith("karst.postLoginHash:/");
+});
+
+test("a failed oidc callback (stale or reused state) resolves to anonymous instead of leaving boot() unresolved", async () => {
+  const auth = createAuth();
+  vi.stubGlobal("location", { origin: "https://console.test", pathname: "/oidc/callback", hash: "" });
+  vi.stubGlobal("history", { replaceState: vi.fn() });
+  vi.stubGlobal("sessionStorage", { setItem: vi.fn(), getItem: vi.fn(() => null), removeItem: vi.fn() });
+  oidc.signinRedirectCallback.mockRejectedValue(new Error("No matching state found in storage"));
+  await expect(auth.bootstrap(config)).resolves.toBe("anonymous");
 });
 
 test("unconfigured development requests still reach the mock API", async () => {
