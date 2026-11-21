@@ -49,6 +49,27 @@ console digest and vars before changing it. The console, control and
 Keycloak use the pre-created Docker network; all groups are pinned to
 `node_name` because this deployment's persistent files live on that node.
 
+The `ghcr.io/karst-net/*` images are private, so the node's Nomad docker
+driver must be able to authenticate to GHCR itself. Images already in the
+local Docker cache hide a missing login until the first digest that has to
+be pulled. The agent runs as root, so point the plugin at root's docker
+login (a token with `read:packages`) in the agent config:
+
+```hcl
+plugin "docker" {
+  config {
+    auth {
+      config = "/root/.docker/config.json"
+    }
+  }
+}
+```
+
+The job's `update` block sets `auto_revert = true`: if the new allocations
+never become healthy within `progress_deadline` (for example, an image that
+cannot be pulled), Nomad redeploys the last stable job version rather than
+leaving the replaced services stopped.
+
 ```sh
 nomad job validate -var-file=deployment.vars.hcl deploy/nomad/prod/karst.nomad.hcl
 docker run --rm -e KARST_CONSOLE_HOST="$KARST_CONSOLE_HOST" \
