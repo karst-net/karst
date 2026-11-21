@@ -129,6 +129,21 @@ job "karst" {
   datacenters = ["dc1"]
   type        = "service"
 
+  # A deployment whose new allocations never become healthy (e.g. an image
+  # the docker driver cannot pull) reverts to the last stable job version
+  # instead of leaving the stopped services down. No task defines a service
+  # check, so health is judged on task state. No canaries: control and
+  # estavelle share bind-mounted state and estavelle uses host networking,
+  # so two copies cannot run side by side.
+  update {
+    max_parallel      = 1
+    health_check      = "task_states"
+    min_healthy_time  = "10s"
+    healthy_deadline  = "3m"
+    progress_deadline = "5m"
+    auto_revert       = true
+  }
+
   group "control" {
     count = 1
 
