@@ -39,6 +39,11 @@ question it answers is whether `karst-scaler spot-report` itself correctly
 weighs savings against reclaim churn, not a claim about any real
 deployment's actual numbers.
 
+`handshake-cpu-2026-11-24.md` replaces a placeholder on `performance.html`
+(an illustrative "2 ms" PQ setup cost) with a real one: PHREATIC's
+ML-KEM-1024 handshake against WireGuard's real `device` package, both called
+directly in-process on the same dev machine, server-side CPU only.
+
 ## Runs
 
 | File | Result |
@@ -51,6 +56,7 @@ deployment's actual numbers.
 | `quic-relay-2026-09-12.md` | issue #122 / ADR-0020, clean-loopback only — QUIC's handshake costs ~45% more median latency than TCP+TLS but a much shorter tail (worst case 5–6 ms vs 31–34 ms), and forwards 5–13% faster once established; the loss-recovery property the transport is actually for is not measured here and is left as a documented follow-up |
 | `vpn-comparison-2026-09-30.md` | issue #201 — karst, WireGuard, Nebula, Headscale, and real Tailscale within a fairly narrow band on an uncontended LAN (806–900 Mbps TCP, sub-ms ping); NAT/relay-forced paths, multi-stream scaling, and reconvergence timing left as documented follow-ups |
 | `spot-capacity-evaluation-2026-10-15.md` | issue #339 / ADR-0045 Open Question #4 — `karst-scaler spot-report`, new in this issue, against a documented synthetic fixture: ~49% savings on one pool's headroom at an illustrative discount/reclaim-rate pairing, for ~2.3 modeled forced re-homes over three months; closes "can this gate be checked at all," not "should we build the driver," which still needs a real operator's own telemetry |
+| `handshake-cpu-2026-11-24.md` | PHREATIC's ML-KEM-1024 handshake costs **~340 µs** of server CPU vs. real WireGuard's **~205 µs**, both measured in-process against production handshake code — a ~135 µs PQ premium, not the "2 ms" illustrative placeholder `performance.html` used before this |
 
 Both ran between `turing` and `lovelace` (48-core Xeon, Ubuntu 24.04) over a
 3×1G bonded link, under continuous `iperf3` load so that every rekey happened
