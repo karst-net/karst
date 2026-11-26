@@ -73,7 +73,7 @@ test("allocating a relay walks discovery, reviews, and posts the expected reques
   await page.getByRole("button", { name: "Apply allocation" }).click();
 
   await expect(page.getByText("Estavelle allocation requested.", { exact: false })).toBeVisible();
-  expect(created).toEqual([{ name: "denver", infra_connection_id: connection.id, location: "us-west-2", relay_transport: true, permitted_groups: [group.id], image: "v1.3.0" }]);
+  expect(created).toEqual([{ name: "denver", infra_connection_id: connection.id, location: "us-west-2", estavelle_transport: true, permitted_groups: [group.id], image: "v1.3.0" }]);
   await expect(page.getByRole("cell", { name: "denver" })).toBeVisible();
 });
 
@@ -101,7 +101,7 @@ test("the version picker falls back to the connection default when deliberately 
   await page.getByRole("checkbox", { name: "I reviewed this allocation." }).check();
   await page.getByRole("button", { name: "Apply allocation" }).click();
 
-  await expect.poll(() => created).toEqual([{ name: "denver", infra_connection_id: connection.id, location: "us-west-2", relay_transport: true, permitted_groups: [group.id] }]);
+  await expect.poll(() => created).toEqual([{ name: "denver", infra_connection_id: connection.id, location: "us-west-2", estavelle_transport: true, permitted_groups: [group.id] }]);
 });
 
 test("a ready allocation offers deprovision; a requested one offers remove instead", async ({ page }) => {

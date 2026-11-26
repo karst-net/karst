@@ -114,7 +114,7 @@ export type ManagedEstavelleService = EstavelleService & { access_managed?: bool
  * `image` is the one write-only exception: the version to launch the
  * first instance with, instead of the connection's own launch default —
  * omit it (or leave it empty) for that default. */
-export type EstavelleAllocationDraft = { name: string; infra_connection_id: string; location: string; relay_transport: boolean; permitted_groups: string[]; image?: string };
+export type EstavelleAllocationDraft = { name: string; infra_connection_id: string; location: string; estavelle_transport: boolean; permitted_groups: string[]; image?: string };
 
 /** The writable fields of a RolloutComponent/RolloutPlan — status, observed_digest,
  * compatibility, etc. are server-derived (karst-openapi.yml's own `readOnly`

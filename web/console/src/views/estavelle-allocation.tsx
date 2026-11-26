@@ -78,7 +78,7 @@ export function AllocateEstavelle({ onClose, onAllocated }: { onClose: () => voi
   const apply = async () => {
     setBusy(true); setMessage(undefined);
     try {
-      await api.allocateEstavelle({ name: name.trim(), infra_connection_id: connectionId, location: resourceCode, relay_transport: true, permitted_groups: permittedGroups, ...(image ? { image } : {}) });
+      await api.allocateEstavelle({ name: name.trim(), infra_connection_id: connectionId, location: resourceCode, estavelle_transport: true, permitted_groups: permittedGroups, ...(image ? { image } : {}) });
       onAllocated();
     } catch (error) { setMessage((error as Error).message); setReview(false); }
     finally { setBusy(false); }
