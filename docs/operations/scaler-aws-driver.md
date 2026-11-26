@@ -138,46 +138,53 @@ EC2 instance profile when `karst-scaler` itself runs on EC2 — the same
 "this driver adds no connection configuration of its own" posture the
 Kubernetes driver's kubeconfig discovery already has.
 
-## Configuring ADR-0063's relay allocation (ADR-0045's 2026-11-04 addendum)
+## Configuring ADR-0063's estavelle allocation (ADR-0045's 2026-11-04 addendum)
 
-Relay allocation's own AWS actuation used to be `karst-scaler allocate`, a
-second binary sharing this driver's `[driver]` TOML shape (`AllocateConfig`
+Estavelle allocation's own AWS actuation used to be `karst-scaler allocate`,
+a second binary sharing this driver's `[driver]` TOML shape (`AllocateConfig`
 reusing `DriverSection` directly). That external process is gone:
 allocation is now actuated **in-process**, inside `server/management`
-itself (package `internals/karst/relayalloc`, files `awsdrive.go`/
-`awsdrive_loop.go`) — a Go port of this same tagging/bundle/lifecycle
-logic, not a reuse of this crate (`bins/karst-scaler-aws` stays exactly as
+itself (package `internals/karst/estavellealloc`, files `store.go`/
+`drive_loop.go`) — a Go port of this same tagging/bundle/lifecycle logic,
+not a reuse of this crate (`bins/karst-scaler-aws` stays exactly as
 documented above, still the actuator `drive`'s own continuous pool
 autoscaling uses).
 
 What used to be `ALLOCATE_CONFIG.toml`'s fields now live in two places:
 
 - `control_api_base` and `poll_interval_secs` are now
-  `KARST_RELAY_ALLOCATE_CONTROL_API_BASE` (an env var on the control
+  `KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE` (an env var on the control
   server) and a fixed 15-second interval (no longer operator-configurable —
-  see `relayAllocatePollInterval` in `internals/karst/bootstrap`).
+  see `relayAllocatePollInterval` in `internals/karst/bootstrap`, itself
+  still a pre-rename name).
 - The `[driver]` table's `region`/`ami_id`/`instance_type`/`subnet_id`/
   `security_group_ids` are now **launch defaults** set once, in the
   console's Settings page, on the AWS infrastructure connection itself
   (`PUT /infrastructure-connections/{id}/launch-defaults`) — not a file on
   disk. `enroll_pat_file` no longer exists: minting an enroll token is now
-  a direct, in-process call (`DefaultAccountManager.MintRelayEnrollKey`),
+  a direct, in-process call (`DefaultAccountManager.MintEstavelleEnrollKey`),
   not an HTTP round trip through a `UserRoleScaler`-scoped PAT.
 
-Same IAM policy (`deploy/aws/scaler/iam-policy.json` conditions on
-`karst:pool`, which this loop populates with the allocation's own id, not a
-pool id — ADR-0063's reuse of the same tag) and the same ambient-credential
-posture in spirit, except the credential is now the infrastructure
-connection's own stored, encrypted AWS access key rather than a separate
-host's instance profile — see ADR-0045's 2026-11-04 addendum for the
-security-boundary reasoning and the compensating controls (the launch
-shape is never request-supplied, a code-level launch-defaults allowlist
-check, a mandatory per-account concurrency ceiling). Because the
-unconditional `ec2:RunInstances` statement in that IAM policy
-(`KarstScalerRunInstancesTemplate`) grants no tag condition on
-`subnet`/`security-group`/`image` resources (AWS allows none there),
-**consider scoping that statement to the specific AMI/subnet/security-group
-ARNs you configure as launch defaults**, now that the credential runs
-inside the always-on control process rather than a separate, narrowly
-deployed host. `deploy/nomad/prod/README.md`'s "Relay allocation" section
-has the two operator-configured env vars this needs.
+This driver's own IAM policy (`deploy/aws/scaler/iam-policy.json`,
+`karst:pool`-conditioned) and its direct `ec2:RunInstances` actuation are
+no longer what ADR-0063 allocation uses for AWS, though -- the `karst:pool`
+tag convention above is this driver's and this loop's point of similarity,
+not a shared credential or a shared call path. ADR-0067 moved AWS
+actuation onto CloudFormation entirely (package
+`internals/karst/infraprovision/cloudformationdriver`): the loop launches
+`deploy/aws/scaler/estavelle-instance.yaml`, one stack per allocation,
+instead of calling `RunInstances` itself. That stack's own prerequisites
+(a security group plus an IAM user/policy scoped to the AMI/subnet/
+security-group ARNs you configure as launch defaults, never granted on
+`*`) come from `deploy/aws/scaler/estavelle-launch-defaults.yaml` -- run
+once, before the connection's first allocation; see that file's own header
+for the exact command and `deploy/nomad/prod/README.md`'s "Estavelle
+allocation" section for the operator-facing walkthrough and the two
+control-task env vars this needs. The credential itself is still the
+infrastructure connection's own stored, encrypted AWS access key rather
+than a separate host's instance profile, same as before this move -- see
+ADR-0045's 2026-11-04 addendum for that security-boundary reasoning and the
+compensating controls (the launch shape is never request-supplied, a
+code-level launch-defaults allowlist check, a mandatory per-account
+concurrency ceiling), all unchanged by which AWS API actually provisions
+the instance.

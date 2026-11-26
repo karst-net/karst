@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# One karst-estavelle EC2 instance for exactly one estavelle allocation
+# (ADR-0063; ADR-0067's CloudFormation actuation path). Launched and torn
+# down only by server/management/internals/karst/infraprovision/
+# cloudformationdriver -- the Go source there embeds this exact content as
+# a string constant (go:embed cannot reach outside that Go module's own
+# tree up to here, so the two are kept byte-identical by hand; see that
+# package's own doc comment). Never run this by hand against a real
+# account -- it exists here only so the actual template is reviewable
+# outside the Go source.
+#
+# Depends on the one-time prerequisites in estavelle-launch-defaults.yaml
+# (security group, IAM user/policy) already existing. AmiId/InstanceType/
+# SubnetId/SecurityGroupIds are exactly the AWS infrastructure connection's
+# own stored launch defaults (Settings -> Infrastructure connections),
+# passed straight through by the driver unchanged.
+
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  One estavelle EC2 instance for one estavellealloc allocation -- driven
+  only by cloudformationdriver, never deployed by hand.
+
+Parameters:
+  AmiId:
+    Type: AWS::EC2::Image::Id
+  InstanceType:
+    Type: String
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+  PoolId:
+    Type: String
+    Description: >
+      estavellealloc's own allocation id -- the karst:pool tag value
+      deploy/aws/scaler/iam-policy.json's RunInstances statement conditions
+      on, and the value awsdriver's describeLiveInstanceByPool-equivalent
+      lookup filters by.
+  TlsServerName:
+    Type: String
+    Description: >
+      infraprovision.TLSServerNameFor's own derived correlation label --
+      the karst:tls-server-name tag value the driver reads back via
+      TLSServerName/Drain/Destroy.
+  UserData:
+    Type: String
+    NoEcho: true
+    Description: >
+      Base64 enroll bundle, already encoded by the driver exactly as
+      awsdriver.go's encodeEnrollBundleTOML does. Opaque here on purpose --
+      never templated by CloudFormation's own Fn::Sub, so the single-use
+      enrollment token inside it is never subject to Fn::Sub's escaping
+      rules. NoEcho is correct here (a Parameter, not an Output -- see
+      estavelle-launch-defaults.yaml's own note on why that distinction
+      matters).
+
+Resources:
+  EstavelleInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: !Ref SecurityGroupIds
+      UserData: !Ref UserData
+      Tags:
+        - Key: "karst:pool"
+          Value: !Ref PoolId
+        - Key: "karst:tls-server-name"
+          Value: !Ref TlsServerName
+
+Outputs:
+  InstanceId:
+    Value: !Ref EstavelleInstance

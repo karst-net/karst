@@ -1,0 +1,204 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# Provisions the one-time AWS prerequisites for an AWS infrastructure
+# connection's estavelle allocation "launch defaults" (ADR-0063; ADR-0045's
+# 2026-11-04 addendum; ADR-0067's CloudFormation actuation path) -- see
+# docs/operations/scaler-aws-driver.md's "Configuring ADR-0063's relay
+# allocation" section and deploy/nomad/prod/README.md's "Estavelle
+# allocation" section, step 2.
+#
+# This stack does NOT create an estavelle itself, by design: the console's
+# own "Allocate an estavelle" button is the only thing that does that now
+# (ADR-0067) -- the server's own infraprovision/cloudformationdriver, the
+# only AWS actuation mechanism there is (no per-connection toggle), then
+# launches deploy/aws/scaler/estavelle-instance.yaml, one stack per
+# allocation, using the exact same AllocatorUser credential this stack
+# creates. (An earlier version of this file had a custom resource that
+# called POST /estavelle-allocations itself -- removed: once the console
+# creates the allocation row before any instance exists, a second call from
+# here would just create a second, orphaned one.)
+#
+# This stack does NOT build the AMI either: AmiId must already point at an
+# image with karst-relay/karst-estavelle installed and configured to run
+# `enroll` from its own boot path (scaler-aws-driver.md's own caveat).
+#
+# Deploy:
+#   aws cloudformation deploy \
+#     --stack-name karst-estavelle-launch-defaults \
+#     --template-file deploy/aws/scaler/estavelle-launch-defaults.yaml \
+#     --capabilities CAPABILITY_NAMED_IAM \
+#     --parameter-overrides VpcId=vpc-xxxx SubnetId=subnet-xxxx AmiId=ami-xxxx
+#
+# This stack deliberately does NOT create an IAM access key or put one in
+# Outputs: CloudFormation's NoEcho attribute only applies to Parameters, not
+# Outputs -- anything placed in Outputs sits in plaintext in the stack's
+# permanent history, readable by anyone with cloudformation:DescribeStacks,
+# for as long as the stack exists. Mint the key yourself, once, outside
+# CloudFormation's own state:
+#
+#   user=$(aws cloudformation describe-stacks --stack-name karst-estavelle-launch-defaults \
+#     --query "Stacks[0].Outputs[?OutputKey=='AllocatorUserName'].OutputValue" --output text)
+#   aws iam create-access-key --user-name "$user"
+#
+# `create-access-key` prints the secret exactly once; paste both values
+# straight into the console's AWS infrastructure connection and discard
+# your shell history of that command.
+
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  One-time AWS prerequisites (security group + scoped IAM user/policy) for
+  an estavelle allocation's AWS infrastructure connection launch defaults.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC the estavelle's subnet lives in.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: >
+      Subnet to launch estavelle instances into -- must already be one of
+      the console's Authorized Locations resources.
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: >
+      AMI with karst-relay/karst-estavelle preinstalled, configured to run
+      `enroll` from its own boot path (see this file's header comment).
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: Matches scaler-aws-driver.md's own example launch shape.
+  AdminSshCidr:
+    Type: String
+    Default: ""
+    Description: >
+      Optional CIDR allowed SSH (22/tcp) to the estavelle security group for
+      operator access. Leave blank to omit the rule entirely.
+
+Conditions:
+  EnableSshIngress: !Not [!Equals [!Ref AdminSshCidr, ""]]
+
+Resources:
+  EstavelleSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: >
+        Karst estavelle transport -- Ponor spec Section 4.1 TCP/TLS listener
+        (port 443 by default) and ADR-0020 additive QUIC listener on the
+        same port number over UDP.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: Estavelle transport (TCP/TLS)
+        - IpProtocol: udp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: Estavelle transport (QUIC, when enabled)
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-estavelle"
+
+  EstavelleSecurityGroupSshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: EnableSshIngress
+    Properties:
+      GroupId: !GetAtt EstavelleSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref AdminSshCidr
+      Description: Operator SSH access
+
+  AllocatorUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "karst-estavelle-allocator-${AWS::StackName}"
+
+  # Same shape as deploy/aws/scaler/iam-policy.json (ADR-0063 reuses the
+  # scaler-aws driver's karst:pool tag convention -- see
+  # scaler-aws-driver.md's "Tag convention and IAM" section), except the
+  # unconditional RunInstances statement is scoped to this stack's own
+  # subnet/security-group/AMI ARNs instead of "*", per that same doc's
+  # recommendation now that this credential runs inside the always-on
+  # control process rather than a narrowly deployed host.
+  AllocatorPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: karst-estavelle-allocate
+      Users:
+        - !Ref AllocatorUser
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: KarstEstavelleRunInstancesTagged
+            Effect: Allow
+            Action: ec2:RunInstances
+            Resource:
+              - "arn:aws:ec2:*:*:instance/*"
+              - "arn:aws:ec2:*:*:volume/*"
+              - "arn:aws:ec2:*:*:network-interface/*"
+            Condition:
+              StringEquals:
+                "aws:RequestTag/karst:pool": "*"
+          - Sid: KarstEstavelleRunInstancesTemplate
+            Effect: Allow
+            Action: ec2:RunInstances
+            Resource:
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${SubnetId}"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${EstavelleSecurityGroup.GroupId}"
+              - !Sub "arn:aws:ec2:${AWS::Region}::image/${AmiId}"
+          - Sid: KarstEstavelleManageTaggedInstances
+            Effect: Allow
+            Action:
+              - ec2:StopInstances
+              - ec2:TerminateInstances
+              - ec2:CreateTags
+            Resource: "arn:aws:ec2:*:*:instance/*"
+            Condition:
+              StringEquals:
+                "aws:ResourceTag/karst:pool": "*"
+          - Sid: KarstEstavelleDescribe
+            Effect: Allow
+            Action: ec2:DescribeInstances
+            Resource: "*"
+          # ADR-0067's CloudFormation actuation path: cloudformationdriver
+          # calls these three with this same connection credential, once per
+          # allocation, against deploy/aws/scaler/estavelle-instance.yaml --
+          # scoped to that template's own stack-naming convention
+          # (cloudformationdriver.stackNameFor: "karst-estavelle-<allocation
+          # id>"), never granted on "*". Required: this is the only AWS
+          # actuation mechanism, not an opt-in one.
+          - Sid: KarstEstavelleManageInstanceStacks
+            Effect: Allow
+            Action:
+              - cloudformation:CreateStack
+              - cloudformation:DescribeStacks
+              - cloudformation:DeleteStack
+            Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/karst-estavelle-*/*"
+
+Outputs:
+  Region:
+    Description: Launch defaults -- Region
+    Value: !Ref AWS::Region
+  AmiId:
+    Description: Launch defaults -- AMI id (as given)
+    Value: !Ref AmiId
+  InstanceType:
+    Description: Launch defaults -- Instance type
+    Value: !Ref InstanceType
+  SubnetId:
+    Description: Launch defaults -- Subnet id (as given)
+    Value: !Ref SubnetId
+  SecurityGroupId:
+    Description: Launch defaults -- Security group id
+    Value: !GetAtt EstavelleSecurityGroup.GroupId
+  AllocatorUserName:
+    Description: >
+      IAM user to mint an access key for (see this file's header comment --
+      CloudFormation never sees or stores the key itself).
+    Value: !Ref AllocatorUser
