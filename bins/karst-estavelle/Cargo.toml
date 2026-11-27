@@ -74,14 +74,20 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc
 # silent downgrade for whichever transport a client happened to pick.
 # `runtime-tokio` rather than `async-io`/`smol`: the relay is tokio throughout.
 quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+# Self-signed certificates: the listener test's own fixture, and now also
+# `command_run`'s own first-boot bootstrap for a container-based driver
+# (ADR-0067's Fargate/Kubernetes self-enroll convention), which has no
+# volume to mount a real certificate from. `default-features = false` plus
+# the explicit `aws_lc_rs` feature for the same reason every other TLS
+# dependency above picks it: rcgen's own default features pull in `ring`,
+# which is exactly the version/feature unification conflict that already
+# broke `karst-dns`'s tests once (see `ureq`'s own comment above).
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.6", features = ["fs"] }
 
 [dev-dependencies]
-# Self-signed certificates for the listener test. A relay whose TLS is only
-# ever exercised against a real CA is a relay whose TLS is never exercised.
-rcgen = "0.14"
 # `tests/telemetry_vector.rs` reads the Go-generated
 # `spec/vectors/relay-telemetry-v1.json` — the same tooling
 # `karst-control-client`'s own vector test already depends on for the

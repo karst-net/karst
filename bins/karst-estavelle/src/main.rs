@@ -6,7 +6,7 @@
 //!
 //! See `spec/ponor-v1.md`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use base64ct::{Base64, Encoding as _};
@@ -44,9 +44,12 @@ A container image with no cloud-init/systemd step to run `enroll --bundle`
 separately (ADR-0067's kubernetesdriver, and any Fargate/ECS driver built the
 same way) may instead set KARST_CONTROL_API_BASE, KARST_ENROLL_TOKEN, and
 KARST_TLS_SERVER_NAME: `[--config PATH]` enrolls itself the same way `enroll
---bundle` does, once, before it starts serving. KARST_CONTROL_API_CA_PEM is
-optional alongside those three: PEM text for an additional trust anchor, for
-a control_api_base not already covered by the OS's own certificate store.
+--bundle` does, once, before it starts serving. If PATH does not exist yet,
+it is written for you first (a self-signed certificate and an empty
+roster) -- the same thing an AMI's cloud-init step or a Nomad job template
+would otherwise have provisioned. KARST_CONTROL_API_CA_PEM is optional
+alongside those three: PEM text for an additional trust anchor, for a
+control_api_base not already covered by the OS's own certificate store.
 ";
 
 fn main() -> ExitCode {
@@ -442,9 +445,85 @@ fn enroll(control_api_base: &str, token: &str, entry: &RegistryEntry<'_>) -> Res
     Ok(())
 }
 
+/// Writes a minimal, self-signed config at `path`, for a container-based
+/// driver's very first boot (ADR-0067's Fargate/Kubernetes self-enroll
+/// convention) -- `command_run` only ever calls this when `path` does not
+/// already exist *and* all three self-enroll env vars are set, so a
+/// genuinely misconfigured non-container deployment (a missing config file
+/// is almost certainly an operator mistake there) still fails loudly
+/// instead of silently starting with a config nobody wrote. Idempotent in
+/// spirit with `Identity::load_or_create`: a restart that finds `path`
+/// already written (by this same container's own previous boot, or a
+/// persistent volume) never reaches this function at all.
+///
+/// The certificate is self-signed because there is no real one to
+/// provision at boot and no operator present to hand one over --
+/// `tls_server_name`'s own point (ADR-0067's correlation label, not DNS)
+/// is that a client never validates this cert against that name anyway;
+/// see `TLSServerNameFor`'s own doc comment. The roster starts empty:
+/// spec/ponor-v1.md §5.3 admission is exactly who the roster names, and a
+/// container nobody has told about any client correctly admits none until
+/// something populates it -- a separate, not-yet-built concern from
+/// enrollment itself.
+fn bootstrap_config(path: &Path) -> Result<(), String> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+
+    let tls_cert = dir.join("tls.crt");
+    let tls_key = dir.join("tls.key");
+    if !tls_cert.exists() || !tls_key.exists() {
+        let cert = rcgen::generate_simple_self_signed(vec!["karst-estavelle".to_owned()])
+            .map_err(|e| format!("self-signed certificate: {e}"))?;
+        std::fs::write(&tls_cert, cert.cert.pem())
+            .map_err(|e| format!("{}: {e}", tls_cert.display()))?;
+        std::fs::write(&tls_key, cert.signing_key.serialize_pem())
+            .map_err(|e| format!("{}: {e}", tls_key.display()))?;
+    }
+
+    let roster = dir.join("roster.toml");
+    if !roster.exists() {
+        std::fs::write(&roster, "").map_err(|e| format!("{}: {e}", roster.display()))?;
+    }
+
+    // identity_key has its own default (Config's own doc comment), but
+    // that default is a fixed /etc/karst path -- wrong when `dir` is
+    // anywhere else, and Identity::load_or_create's own write would fail
+    // outright if that fixed path is not writable (as it is not for an
+    // unprivileged test run, unlike the real container image's own
+    // `mkdir -p /etc/karst` under root). Setting it explicitly keeps
+    // every file this boot creates together, wherever `dir` is. roster,
+    // tls_cert, and tls_key are the only fields with no default at all.
+    let identity_key = dir.join("identity.key");
+    let text = format!(
+        "identity_key = \"{}\"\nroster = \"{}\"\ntls_cert = \"{}\"\ntls_key = \"{}\"\n",
+        identity_key.display(),
+        roster.display(),
+        tls_cert.display(),
+        tls_key.display(),
+    );
+    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 fn command_run(args: &[&str]) -> ExitCode {
-    let (_, cfg) = match load(args) {
-        Ok(v) => v,
+    let path = match config_path(args) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("karst-estavelle: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // Resolved once, up front: both the bootstrap decision below and the
+    // enroll step further down need to know whether this is a
+    // self-enrolling container before `cfg` exists to ask.
+    let bundle = env_enroll_bundle();
+    if !path.exists() && matches!(bundle, Some(Ok(_))) {
+        if let Err(e) = bootstrap_config(&path) {
+            eprintln!("karst-estavelle: bootstrap: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    let cfg = match Config::load(&path) {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("karst-estavelle: {e}");
             return ExitCode::FAILURE;
@@ -475,7 +554,7 @@ fn command_run(args: &[&str]) -> ExitCode {
     // misconfigured container fails fast at startup -- surfaced by whatever
     // orchestrator launched it -- rather than serving traffic no client was
     // ever told to admit through.
-    match env_enroll_bundle() {
+    match bundle {
         Some(Ok(bundle)) => match runtime.block_on(enroll_bundle(&cfg, &bundle)) {
             Ok(identity_key) => {
                 println!("karst-estavelle: enrolled via {ENV_CONTROL_API_BASE} (identity_pk {identity_key})");
@@ -552,6 +631,31 @@ mod tests {
     #[test]
     fn extra_ca_certs_rejects_pem_with_no_certificate() {
         assert!(extra_ca_certs("not a pem file").is_err());
+    }
+
+    #[test]
+    fn bootstrap_config_writes_a_config_that_loads_and_validates() {
+        let dir = std::env::temp_dir().join(format!(
+            "karst-estavelle-bootstrap-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("estavelle.toml");
+
+        bootstrap_config(&path).expect("bootstrap");
+        let cfg = Config::load(&path).expect("load");
+        cfg.validate().expect("validate");
+
+        // Idempotent, the same way `Identity::load_or_create` is: a second
+        // call against files a first call already wrote must not fail or
+        // regenerate them (a restart must keep the same certificate, not
+        // hand every client a new one on every boot).
+        let cert_before = std::fs::read(dir.join("tls.crt")).expect("read cert");
+        bootstrap_config(&path).expect("bootstrap again");
+        let cert_after = std::fs::read(dir.join("tls.crt")).expect("read cert again");
+        assert_eq!(cert_before, cert_after);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
