@@ -37,6 +37,12 @@ OPTIONS:
 A relay admits only nodes present in its roster (spec/ponor-v1.md §5.3); it
 cannot verify a node it has not been told about. Use `check` after every roster
 change.
+
+A container image with no cloud-init/systemd step to run `enroll --bundle`
+separately (ADR-0067's kubernetesdriver, and any Fargate/ECS driver built the
+same way) may instead set KARST_CONTROL_API_BASE, KARST_ENROLL_TOKEN, and
+KARST_TLS_SERVER_NAME: `[--config PATH]` enrolls itself the same way `enroll
+--bundle` does, once, before it starts serving.
 ";
 
 fn main() -> ExitCode {
@@ -270,72 +276,102 @@ fn command_enroll(args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // Same identity every other subcommand uses -- created on first run if
-    // this is a genuinely new instance, loaded unchanged if `enroll` is
-    // ever re-run against the same `identity_key` path.
-    let identity = match Identity::load_or_create(&cfg.identity_key) {
-        Ok(i) => i,
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
         Err(e) => {
-            eprintln!("karst-estavelle: {e}");
+            eprintln!("karst-estavelle: building the async runtime: {e}");
             return ExitCode::FAILURE;
         }
     };
-    // A bundle with no `address` is one `karst-scaler-aws` wrote (see its
-    // own crate doc): an EC2 instance's address is unknowable to the
-    // driver before `RunInstances` returns, so `enroll` resolves its own
-    // via cloud instance metadata instead. The `Runtime` is built here,
-    // not held across the whole command, since this is the one place
-    // this otherwise-synchronous subcommand needs an async call at all.
-    let address = if let Some(address) = bundle.address {
+    match rt.block_on(enroll_bundle(&cfg, &bundle)) {
+        Ok(identity_key) => {
+            println!("karst-estavelle: enrolled (identity_pk {identity_key})");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("karst-estavelle: {}: {e}", bundle_path.display());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The shared half of `enroll --bundle` and `command_run`'s own
+/// env-var-driven self-enroll: resolve `bundle`'s address (explicit, or via
+/// cloud instance metadata when absent -- see `EnrollBundle::address`'s own
+/// doc comment for why a bundle can omit it), build the registry entry, and
+/// POST it. Returns the enrolled identity's own public key (base64), for
+/// each caller's own success message. Async only because cloud-metadata
+/// resolution is; callers `block_on` it from whichever runtime they already
+/// hold rather than each building their own.
+async fn enroll_bundle(cfg: &Config, bundle: &EnrollBundle) -> Result<String, String> {
+    // Same identity every other subcommand uses -- created on first run if
+    // this is a genuinely new instance, loaded unchanged if enrollment ever
+    // runs again against the same `identity_key` path.
+    let identity = Identity::load_or_create(&cfg.identity_key).map_err(|e| e.to_string())?;
+    let address = if let Some(address) = &bundle.address {
+        address.clone()
+    } else if let Some(address) = cloud_location::self_address().await {
         address
     } else {
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                eprintln!("karst-estavelle: building the async runtime: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
-        if let Some(address) = rt.block_on(cloud_location::self_address()) {
-            address
-        } else {
-            eprintln!(
-                "karst-estavelle: {}: no address, and this instance's own cloud metadata did \
-                 not yield one",
-                bundle_path.display()
-            );
-            return ExitCode::FAILURE;
-        }
+        return Err(
+            "no address, and this instance's own cloud metadata did not yield one".to_owned(),
+        );
     };
-    let address = match resolve_address(&address) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!(
-                "karst-estavelle: {}: address {address:?}: {e}",
-                bundle_path.display()
-            );
-            return ExitCode::FAILURE;
-        }
-    };
+    let address = resolve_address(&address).map_err(|e| format!("address {address:?}: {e}"))?;
     let entry = RegistryEntry {
         address: &address,
         tls_server_name: &bundle.tls_server_name,
         identity_key: Base64::encode_string(identity.public_key()),
         region: &cfg.region,
     };
-    match enroll(&bundle.control_api_base, &bundle.token, &entry) {
-        Ok(()) => {
-            println!(
-                "karst-estavelle: enrolled (identity_pk {})",
-                entry.identity_key
-            );
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("karst-estavelle: enroll: {e}");
-            ExitCode::FAILURE
-        }
+    enroll(&bundle.control_api_base, &bundle.token, &entry)?;
+    Ok(entry.identity_key)
+}
+
+const ENV_CONTROL_API_BASE: &str = "KARST_CONTROL_API_BASE";
+const ENV_ENROLL_TOKEN: &str = "KARST_ENROLL_TOKEN";
+const ENV_TLS_SERVER_NAME: &str = "KARST_TLS_SERVER_NAME";
+
+/// `None` when none of the three env vars are set at all -- an
+/// already-enrolled relay (the EC2/AMI path's `enroll --bundle` already ran
+/// once at boot; an operator running this directly with a pre-populated
+/// roster) must not be forced through enrollment again just because
+/// `command_run` now checks for these. `Some(Err(..))` when some but not
+/// all three are set, since that is almost certainly a missing env var, not
+/// "don't enroll" -- the same "an unknown flag is an error, not something
+/// to skip" posture `config_path` already takes for exactly this reason.
+/// The resulting bundle never carries an address: a container's own address
+/// is exactly the case `enroll_bundle` already resolves via cloud instance
+/// metadata.
+fn env_enroll_bundle() -> Option<Result<EnrollBundle, String>> {
+    env_enroll_bundle_from(|key| std::env::var(key).ok())
+}
+
+/// `env_enroll_bundle`'s own logic, taking a lookup function rather than
+/// reading `std::env::var` directly -- `std::env::set_var` is `unsafe` as of
+/// Rust 1.82 (this crate forbids unsafe code outright), so a real env var
+/// cannot be set from a test; a plain closure over a local map can.
+fn env_enroll_bundle_from(
+    get: impl Fn(&str) -> Option<String>,
+) -> Option<Result<EnrollBundle, String>> {
+    let base = get(ENV_CONTROL_API_BASE);
+    let token = get(ENV_ENROLL_TOKEN);
+    let tls_server_name = get(ENV_TLS_SERVER_NAME);
+    if base.is_none() && token.is_none() && tls_server_name.is_none() {
+        return None;
     }
+    Some(match (base, token, tls_server_name) {
+        (Some(control_api_base), Some(token), Some(tls_server_name)) => Ok(EnrollBundle {
+            control_api_base,
+            token,
+            address: None,
+            tls_server_name,
+        }),
+        _ => Err(format!(
+            "{ENV_CONTROL_API_BASE}/{ENV_ENROLL_TOKEN}/{ENV_TLS_SERVER_NAME} must be set \
+             together or not at all"
+        )),
+    })
 }
 
 /// POSTs `entry` to `control_api_base`'s relay-enroll endpoint, bearing
@@ -395,6 +431,30 @@ fn command_run(args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // See USAGE's own paragraph on this: a container image with no
+    // cloud-init/systemd step of its own to run `enroll --bundle`
+    // separately sets these instead. Enrolling before `server::run` means a
+    // misconfigured container fails fast at startup -- surfaced by whatever
+    // orchestrator launched it -- rather than serving traffic no client was
+    // ever told to admit through.
+    match env_enroll_bundle() {
+        Some(Ok(bundle)) => match runtime.block_on(enroll_bundle(&cfg, &bundle)) {
+            Ok(identity_key) => {
+                println!("karst-estavelle: enrolled via {ENV_CONTROL_API_BASE} (identity_pk {identity_key})");
+            }
+            Err(e) => {
+                eprintln!("karst-estavelle: enroll: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        Some(Err(e)) => {
+            eprintln!("karst-estavelle: {e}");
+            return ExitCode::FAILURE;
+        }
+        None => {}
+    }
+
     match runtime.block_on(karst_estavelle::server::run(&cfg)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -489,5 +549,53 @@ mod tests {
     #[test]
     fn resolve_address_rejects_a_name_with_no_port() {
         assert!(resolve_address("localhost").is_err());
+    }
+
+    fn lookup(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |key| {
+            vars.iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| (*v).to_owned())
+        }
+    }
+
+    #[test]
+    fn env_enroll_bundle_is_none_when_nothing_is_set() {
+        assert!(env_enroll_bundle_from(lookup(&[])).is_none());
+    }
+
+    #[test]
+    fn env_enroll_bundle_is_some_ok_when_all_three_are_set() {
+        let bundle = env_enroll_bundle_from(lookup(&[
+            (ENV_CONTROL_API_BASE, "https://control.example.test/api"),
+            (ENV_ENROLL_TOKEN, "tok"),
+            (ENV_TLS_SERVER_NAME, "relay.example.test"),
+        ]))
+        .expect("some")
+        .expect("ok");
+        assert_eq!(bundle.control_api_base, "https://control.example.test/api");
+        assert_eq!(bundle.token, "tok");
+        assert_eq!(bundle.tls_server_name, "relay.example.test");
+        // A container's own address is exactly what `enroll_bundle` resolves
+        // via cloud instance metadata -- never carried in this bundle.
+        assert!(bundle.address.is_none());
+    }
+
+    #[test]
+    fn env_enroll_bundle_is_some_err_when_only_some_are_set() {
+        // A missing env var is a misconfiguration to surface, not a silent
+        // "don't enroll" -- the same reasoning `an_unknown_option_is_refused`
+        // above already established for `config_path`.
+        assert!(
+            env_enroll_bundle_from(lookup(&[(ENV_CONTROL_API_BASE, "https://x.test/api")]))
+                .expect("some")
+                .is_err()
+        );
+        assert!(env_enroll_bundle_from(lookup(&[
+            (ENV_CONTROL_API_BASE, "https://x.test/api"),
+            (ENV_ENROLL_TOKEN, "tok"),
+        ]))
+        .expect("some")
+        .is_err());
     }
 }
