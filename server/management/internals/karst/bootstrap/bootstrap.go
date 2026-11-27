@@ -161,7 +161,7 @@ const relayAllocatePollInterval = 15 * time.Second
 // allocation closed with a clear reason, the same "configured-but-absent"
 // posture scalerAdvisorURL already has -- see estavellealloc.Store.Create and
 // provisionStep's own doc comments.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstEstavelle, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration, relayAllocateControlAPIBase string, relayAllocateMaxConcurrent int) (*Karst, error) {
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstEstavelle, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration, relayAllocateControlAPIBase, relayAllocateControlAPICACertPEM string, relayAllocateMaxConcurrent int) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -491,8 +491,9 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			// relayStore (estavellereg.Store) already implements
 			// LatestTelemetry -- issue #560's zero-downtime replacement
 			// "admitting" check reuses it rather than a second dependency.
-			Telemetry:      relayStore,
-			ControlAPIBase: relayAllocateControlAPIBase,
+			Telemetry:           relayStore,
+			ControlAPIBase:      relayAllocateControlAPIBase,
+			ControlAPICACertPEM: relayAllocateControlAPICACertPEM,
 		}, relayAllocatePollInterval, func(err error) {
 			log.WithError(err).Error("karst: relay allocation: allocate worker tick failed")
 		})

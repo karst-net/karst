@@ -140,6 +140,13 @@ type AllocateDeps struct {
 	// clear reason, rather than creating an instance that can never
 	// enroll.
 	ControlAPIBase string
+	// ControlAPICACertPEM is an optional, additional trust anchor (PEM
+	// text) for every created instance's own enroll call to
+	// ControlAPIBase -- KARST_RELAY_ALLOCATE_CONTROL_API_CA_PEM, threaded
+	// down the same way ControlAPIBase is. Empty (every deployment behind
+	// a publicly-issued certificate) means unchanged behavior from before
+	// this field existed.
+	ControlAPICACertPEM string
 }
 
 // RunAllocateWorker drives every pending ADR-0063 estavelle allocation,
@@ -253,9 +260,10 @@ func provisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, allocati
 		return failAllocation(ctx.alloc, store, allocation, StateRequested, err)
 	}
 	instance, err := driver.Create(ctx.infra, allocation.ID, infraprovision.CreateRequest{
-		ControlAPIBase: deps.ControlAPIBase,
-		Token:          token,
-		Image:          allocation.RunningImage,
+		ControlAPIBase:      deps.ControlAPIBase,
+		ControlAPICACertPEM: deps.ControlAPICACertPEM,
+		Token:               token,
+		Image:               allocation.RunningImage,
 	})
 	if err != nil {
 		return failAllocation(ctx.alloc, store, allocation, StateRequested, err)
@@ -449,9 +457,10 @@ func replaceProvisionStep(ctx scopedContexts, store *Store, deps AllocateDeps, a
 		return failReplacement(ctx.alloc, store, allocation, ReplacementStateProvisioning, err)
 	}
 	instance, err := driver.Create(ctx.infra, correlationID, infraprovision.CreateRequest{
-		ControlAPIBase: deps.ControlAPIBase,
-		Token:          token,
-		Image:          allocation.DesiredImage,
+		ControlAPIBase:      deps.ControlAPIBase,
+		ControlAPICACertPEM: deps.ControlAPICACertPEM,
+		Token:               token,
+		Image:               allocation.DesiredImage,
 	})
 	if err != nil {
 		return failReplacement(ctx.alloc, store, allocation, ReplacementStateProvisioning, err)

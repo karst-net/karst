@@ -77,6 +77,15 @@ Parameters:
       correct here (a Parameter, not an Output -- see
       estavelle-launch-defaults.yaml's own note on why that distinction
       matters).
+  ControlApiCaPem:
+    Type: String
+    Default: ""
+    Description: >
+      Optional additional trust anchor (PEM text) for the container's own
+      enroll call to ControlApiBase -- empty (the default, every
+      deployment behind a publicly-issued certificate) means the
+      container's OS trust store alone must validate it. Not a secret: a
+      CA certificate, unlike EnrollToken, is public by design -- no NoEcho.
 
 Resources:
   EstavelleTaskDefinition:
@@ -109,6 +118,8 @@ Resources:
               Value: !Ref EnrollToken
             - Name: KARST_TLS_SERVER_NAME
               Value: !Ref TlsServerName
+            - Name: KARST_CONTROL_API_CA_PEM
+              Value: !Ref ControlApiCaPem
           LogConfiguration:
             LogDriver: awslogs
             Options:

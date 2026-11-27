@@ -14,6 +14,8 @@ use karst_estavelle::cloud_location;
 use karst_estavelle::config::Config;
 use karst_estavelle::roster::FileRoster;
 use karst_estavelle::sign::Identity;
+use rustls_pki_types::pem::PemObject as _;
+use rustls_pki_types::CertificateDer;
 
 const DEFAULT_CONFIG: &str = "/etc/karst/relay.toml";
 
@@ -42,7 +44,9 @@ A container image with no cloud-init/systemd step to run `enroll --bundle`
 separately (ADR-0067's kubernetesdriver, and any Fargate/ECS driver built the
 same way) may instead set KARST_CONTROL_API_BASE, KARST_ENROLL_TOKEN, and
 KARST_TLS_SERVER_NAME: `[--config PATH]` enrolls itself the same way `enroll
---bundle` does, once, before it starts serving.
+--bundle` does, once, before it starts serving. KARST_CONTROL_API_CA_PEM is
+optional alongside those three: PEM text for an additional trust anchor, for
+a control_api_base not already covered by the OS's own certificate store.
 ";
 
 fn main() -> ExitCode {
@@ -331,6 +335,14 @@ async fn enroll_bundle(cfg: &Config, bundle: &EnrollBundle) -> Result<String, St
 const ENV_CONTROL_API_BASE: &str = "KARST_CONTROL_API_BASE";
 const ENV_ENROLL_TOKEN: &str = "KARST_ENROLL_TOKEN";
 const ENV_TLS_SERVER_NAME: &str = "KARST_TLS_SERVER_NAME";
+/// Optional, additional trust anchor for `enroll`'s own outbound HTTPS call
+/// -- unlike the mesh-peer CAs `tls::client_config` loads from a file, a
+/// container has no volume to put one on, so this carries the PEM text
+/// itself (a CA certificate is not a secret; nothing here is `NoEcho`-shaped).
+/// Needed when `control_api_base` is a deployment that is not behind a
+/// publicly-issued certificate, e.g. a demo console's own internal CA --
+/// `rustls-native-certs`' OS trust store alone cannot validate that.
+const ENV_CONTROL_API_CA_PEM: &str = "KARST_CONTROL_API_CA_PEM";
 
 /// `None` when none of the three env vars are set at all -- an
 /// already-enrolled relay (the EC2/AMI path's `enroll --bundle` already ran
@@ -374,6 +386,22 @@ fn env_enroll_bundle_from(
     })
 }
 
+/// Parses `pem`'s own certificates, for `ENV_CONTROL_API_CA_PEM` -- split out
+/// from `enroll` so the parsing itself is testable without touching the real
+/// environment (`std::env::set_var` is unsafe; see `env_enroll_bundle_from`'s
+/// own doc comment for the same reasoning).
+fn extra_ca_certs(pem: &str) -> Result<Vec<CertificateDer<'static>>, String> {
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(pem.as_bytes())
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("{ENV_CONTROL_API_CA_PEM}: {e}"))?;
+    if certs.is_empty() {
+        return Err(format!(
+            "{ENV_CONTROL_API_CA_PEM} is set but contains no certificate"
+        ));
+    }
+    Ok(certs)
+}
+
 /// POSTs `entry` to `control_api_base`'s relay-enroll endpoint, bearing
 /// `token` — the one outbound HTTP call this crate makes; see
 /// `Cargo.toml`'s own comment on the `ureq` dependency this needs.
@@ -383,8 +411,17 @@ fn enroll(control_api_base: &str, token: &str, entry: &RegistryEntry<'_>) -> Res
     if loaded.certs.is_empty() {
         return Err("the host has no usable certificate authority roots".to_owned());
     }
-    let roots: ureq::tls::RootCerts = loaded
-        .certs
+    let mut certs = loaded.certs;
+    // Empty, not just unset, means "no override": a Fargate/ECS driver
+    // always sets this CloudFormation parameter (empty string is its own
+    // default), unlike the three enroll-bundle vars above, which are either
+    // all set or all absent.
+    if let Ok(extra_pem) = std::env::var(ENV_CONTROL_API_CA_PEM) {
+        if !extra_pem.is_empty() {
+            certs.extend(extra_ca_certs(&extra_pem)?);
+        }
+    }
+    let roots: ureq::tls::RootCerts = certs
         .into_iter()
         .map(|der| ureq::tls::Certificate::from_der(der.as_ref()).to_owned())
         .collect::<Vec<_>>()
@@ -502,6 +539,19 @@ mod tests {
         // operator believes it is not running with.
         assert!(config_path(&["--verbose"]).is_err());
         assert!(config_path(&["-c"]).is_err());
+    }
+
+    #[test]
+    fn extra_ca_certs_parses_a_real_pem_certificate() {
+        let cert = rcgen::generate_simple_self_signed(vec!["ca.test".to_owned()])
+            .expect("self-signed certificate");
+        let certs = extra_ca_certs(&cert.cert.pem()).expect("ok");
+        assert_eq!(certs.len(), 1);
+    }
+
+    #[test]
+    fn extra_ca_certs_rejects_pem_with_no_certificate() {
+        assert!(extra_ca_certs("not a pem file").is_err());
     }
 
     #[test]
