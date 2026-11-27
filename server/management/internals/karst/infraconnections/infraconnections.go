@@ -192,13 +192,21 @@ func accountFromContext(ctx context.Context) (string, error) {
 // rows get zero values for them, which is exactly "no declared location"/
 // "not yet validated".
 //
-// LaunchRegion/LaunchAMIID/LaunchInstanceType/LaunchSubnetID/
-// LaunchSecurityGroupIDs (ADR-0045's 2026-11-04 addendum) are the AWS
-// launch shape ADR-0063's reconciliation loop actuates a named estavelle
-// allocation against -- set once here, in Settings, never by an allocation
-// request itself. Meaningful only for Type TypeAWS, Mode ModeReadWrite;
-// zero value on every other row, including pre-existing ones, which is
-// exactly "no launch defaults configured yet".
+// LaunchRegion/LaunchClusterARN/LaunchExecutionRoleARN/LaunchCPU/
+// LaunchMemory/LaunchLogGroup/LaunchSubnetID/LaunchSecurityGroupIDs
+// (ADR-0045's 2026-11-04 addendum; ADR-0067's CloudFormation actuation
+// path) are the AWS launch shape ADR-0063's reconciliation loop actuates a
+// named estavelle allocation against -- set once here, in Settings, never
+// by an allocation request itself. Meaningful only for Type TypeAWS, Mode
+// ModeReadWrite; zero value on every other row, including pre-existing
+// ones, which is exactly "no launch defaults configured yet". This
+// actuates as an ECS Fargate Spot service (cloudformationdriver), not an
+// EC2 instance: there is no AMI id here, since an allocation's own
+// desired/running image already supplies a real
+// ghcr.io/karst-net/karst-estavelle:<tag> reference (every release
+// publishes one), and no instance type either -- Fargate sizes a task by
+// Cpu/Memory instead, which is why this needs a cluster and a task
+// execution role neither an EC2-based mechanism would.
 //
 // LaunchNomadJobID/LaunchNomadDatacenter (ADR-0067) are the Nomad analog:
 // a pre-registered, parameterized job this connection dispatches an estavelle
@@ -228,8 +236,11 @@ type Account struct {
 	LastValidatedAt                *time.Time
 	LastError                      string
 	LaunchRegion                   string   `gorm:"column:launch_region"`
-	LaunchAMIID                    string   `gorm:"column:launch_ami_id"`
-	LaunchInstanceType             string   `gorm:"column:launch_instance_type"`
+	LaunchClusterARN               string   `gorm:"column:launch_cluster_arn"`
+	LaunchExecutionRoleARN         string   `gorm:"column:launch_execution_role_arn"`
+	LaunchCPU                      string   `gorm:"column:launch_cpu"`
+	LaunchMemory                   string   `gorm:"column:launch_memory"`
+	LaunchLogGroup                 string   `gorm:"column:launch_log_group"`
 	LaunchSubnetID                 string   `gorm:"column:launch_subnet_id"`
 	LaunchSecurityGroupIDs         []string `gorm:"column:launch_security_group_ids;serializer:json"`
 	LaunchNomadJobID               string   `gorm:"column:launch_nomad_job_id"`
@@ -289,8 +300,11 @@ type Response struct {
 	LastValidatedAt                *time.Time `json:"last_validated_at,omitempty"`
 	LastError                      string     `json:"last_error,omitempty"`
 	LaunchRegion                   string     `json:"launch_region,omitempty"`
-	LaunchAMIID                    string     `json:"launch_ami_id,omitempty"`
-	LaunchInstanceType             string     `json:"launch_instance_type,omitempty"`
+	LaunchClusterARN               string     `json:"launch_cluster_arn,omitempty"`
+	LaunchExecutionRoleARN         string     `json:"launch_execution_role_arn,omitempty"`
+	LaunchCPU                      string     `json:"launch_cpu,omitempty"`
+	LaunchMemory                   string     `json:"launch_memory,omitempty"`
+	LaunchLogGroup                 string     `json:"launch_log_group,omitempty"`
 	LaunchSubnetID                 string     `json:"launch_subnet_id,omitempty"`
 	LaunchSecurityGroupIDs         []string   `json:"launch_security_group_ids,omitempty"`
 	LaunchNomadJobID               string     `json:"launch_nomad_job_id,omitempty"`
@@ -311,7 +325,8 @@ func (a *Account) ToResponse() Response {
 		ID: a.ID, Type: a.Type, Mode: a.Mode, Label: a.Label, CreatedAt: a.CreatedAt,
 		Lat: a.Lat, Lon: a.Lon, LocationLabel: a.LocationLabel,
 		Status: a.Status, LastValidatedAt: a.LastValidatedAt, LastError: a.LastError,
-		LaunchRegion: a.LaunchRegion, LaunchAMIID: a.LaunchAMIID, LaunchInstanceType: a.LaunchInstanceType,
+		LaunchRegion: a.LaunchRegion, LaunchClusterARN: a.LaunchClusterARN, LaunchExecutionRoleARN: a.LaunchExecutionRoleARN,
+		LaunchCPU: a.LaunchCPU, LaunchMemory: a.LaunchMemory, LaunchLogGroup: a.LaunchLogGroup,
 		LaunchSubnetID: a.LaunchSubnetID, LaunchSecurityGroupIDs: a.LaunchSecurityGroupIDs,
 		LaunchNomadJobID: a.LaunchNomadJobID, LaunchNomadDatacenter: a.LaunchNomadDatacenter,
 		LaunchKubernetesNamespace: a.LaunchKubernetesNamespace, LaunchKubernetesImage: a.LaunchKubernetesImage,
@@ -509,8 +524,11 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 // writes (Create itself never merges either).
 type UpdateLaunchDefaultsRequest struct {
 	Region           string   `json:"region,omitempty"`
-	AMIID            string   `json:"ami_id,omitempty"`
-	InstanceType     string   `json:"instance_type,omitempty"`
+	ClusterARN       string   `json:"cluster_arn,omitempty"`
+	ExecutionRoleARN string   `json:"execution_role_arn,omitempty"`
+	CPU              string   `json:"cpu,omitempty"`
+	Memory           string   `json:"memory,omitempty"`
+	LogGroup         string   `json:"log_group,omitempty"`
 	SubnetID         string   `json:"subnet_id,omitempty"`
 	SecurityGroupIDs []string `json:"security_group_ids,omitempty"`
 }
@@ -537,18 +555,23 @@ func (s *Store) UpdateLaunchDefaults(ctx context.Context, id string, req UpdateL
 	}
 	update := Account{
 		LaunchRegion:           req.Region,
-		LaunchAMIID:            req.AMIID,
-		LaunchInstanceType:     req.InstanceType,
+		LaunchClusterARN:       req.ClusterARN,
+		LaunchExecutionRoleARN: req.ExecutionRoleARN,
+		LaunchCPU:              req.CPU,
+		LaunchMemory:           req.Memory,
+		LaunchLogGroup:         req.LogGroup,
 		LaunchSubnetID:         req.SubnetID,
 		LaunchSecurityGroupIDs: req.SecurityGroupIDs,
 	}
 	err = s.db.WithContext(ctx).Model(&record).
-		Select("LaunchRegion", "LaunchAMIID", "LaunchInstanceType", "LaunchSubnetID", "LaunchSecurityGroupIDs").
+		Select("LaunchRegion", "LaunchClusterARN", "LaunchExecutionRoleARN", "LaunchCPU", "LaunchMemory",
+			"LaunchLogGroup", "LaunchSubnetID", "LaunchSecurityGroupIDs").
 		Updates(update).Error
 	if err != nil {
 		return nil, fmt.Errorf("cloud accounts: update launch defaults: %w", err)
 	}
-	record.LaunchRegion, record.LaunchAMIID, record.LaunchInstanceType = update.LaunchRegion, update.LaunchAMIID, update.LaunchInstanceType
+	record.LaunchRegion, record.LaunchClusterARN, record.LaunchExecutionRoleARN = update.LaunchRegion, update.LaunchClusterARN, update.LaunchExecutionRoleARN
+	record.LaunchCPU, record.LaunchMemory, record.LaunchLogGroup = update.LaunchCPU, update.LaunchMemory, update.LaunchLogGroup
 	record.LaunchSubnetID, record.LaunchSecurityGroupIDs = update.LaunchSubnetID, update.LaunchSecurityGroupIDs
 	return &record, nil
 }

@@ -1,71 +1,141 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright the Karst contributors.
 #
-# One karst-estavelle EC2 instance for exactly one estavelle allocation
-# (ADR-0063; ADR-0067's CloudFormation actuation path). Launched and torn
-# down only by server/management/internals/karst/infraprovision/
-# cloudformationdriver -- the Go source there embeds this exact content as
-# a string constant (go:embed cannot reach outside that Go module's own
-# tree up to here, so the two are kept byte-identical by hand; see that
-# package's own doc comment). Never run this by hand against a real
-# account -- it exists here only so the actual template is reviewable
-# outside the Go source.
+# One karst-estavelle ECS Fargate Spot service for exactly one estavelle
+# allocation (ADR-0063; ADR-0067's CloudFormation actuation path).
+# Launched and torn down only by server/management/internals/karst/
+# infraprovision/cloudformationdriver -- the Go source there embeds this
+# exact content as a string constant (go:embed cannot reach outside that
+# Go module's own tree up to here, so the two are kept byte-identical by
+# hand; see that package's own doc comment). Never run this by hand against
+# a real account -- it exists here only so the actual template is
+# reviewable outside the Go source.
 #
 # Depends on the one-time prerequisites in estavelle-launch-defaults.yaml
-# (security group, IAM user/policy) already existing. AmiId/InstanceType/
-# SubnetId/SecurityGroupIds are exactly the AWS infrastructure connection's
-# own stored launch defaults (Settings -> Infrastructure connections),
-# passed straight through by the driver unchanged.
+# (cluster, execution role, log group, security group) already existing.
+# ClusterArn/ExecutionRoleArn/Cpu/Memory/LogGroup/SubnetId/SecurityGroupIds
+# are exactly the AWS infrastructure connection's own stored launch
+# defaults (Settings -> Infrastructure connections), passed straight
+# through by the driver unchanged. Image is the estavelle allocation's own
+# desired/running image -- a real ghcr.io/karst-net/karst-estavelle:<tag>
+# reference, since every release already publishes one
+# (.github/workflows/deliverables.yml) -- never an AMI id: this mechanism
+# needs no AMI-build pipeline at all, which is the whole reason it
+# actuates via Fargate rather than a direct EC2 instance.
+#
+# There is no UserData/cloud-init step here: Fargate has no boot script of
+# its own to run one in. Enrollment instead happens in-binary --
+# bins/karst-estavelle/src/main.rs's command_run checks for
+# KARST_CONTROL_API_BASE/KARST_ENROLL_TOKEN/KARST_TLS_SERVER_NAME and
+# self-enrolls before serving, the same convention kubernetesdriver already
+# established for container-based actuation (see that package's own doc
+# comment).
 
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
-  One estavelle EC2 instance for one estavellealloc allocation -- driven
-  only by cloudformationdriver, never deployed by hand.
+  One estavelle ECS Fargate Spot service for one estavellealloc allocation
+  -- driven only by cloudformationdriver, never deployed by hand.
 
 Parameters:
-  AmiId:
-    Type: AWS::EC2::Image::Id
-  InstanceType:
+  ClusterArn:
+    Type: String
+  ExecutionRoleArn:
+    Type: String
+  Cpu:
+    Type: String
+  Memory:
+    Type: String
+  LogGroup:
     Type: String
   SubnetId:
     Type: AWS::EC2::Subnet::Id
   SecurityGroupIds:
     Type: List<AWS::EC2::SecurityGroup::Id>
-  PoolId:
+  Image:
     Type: String
     Description: >
-      estavellealloc's own allocation id -- the karst:pool tag value
-      deploy/aws/scaler/iam-policy.json's RunInstances statement conditions
-      on, and the value awsdriver's describeLiveInstanceByPool-equivalent
-      lookup filters by.
+      ghcr.io/karst-net/karst-estavelle:<release tag> -- the allocation's
+      own desired/running image, passed through unchanged.
+  PoolId:
+    Type: String
+    Description: estavellealloc's own allocation id -- the karst:pool tag value.
   TlsServerName:
     Type: String
     Description: >
       infraprovision.TLSServerNameFor's own derived correlation label --
       the karst:tls-server-name tag value the driver reads back via
-      TLSServerName/Drain/Destroy.
-  UserData:
+      TLSServerName/Drain/Destroy, and the same value passed to the
+      container as KARST_TLS_SERVER_NAME for self-enrollment.
+  ControlApiBase:
+    Type: String
+  EnrollToken:
     Type: String
     NoEcho: true
     Description: >
-      Base64 enroll bundle, already encoded by the driver exactly as
-      awsdriver.go's encodeEnrollBundleTOML does. Opaque here on purpose --
-      never templated by CloudFormation's own Fn::Sub, so the single-use
-      enrollment token inside it is never subject to Fn::Sub's escaping
-      rules. NoEcho is correct here (a Parameter, not an Output -- see
+      A single-use relay-enroll token (ADR-0045 Sec7 Phase 2). NoEcho is
+      correct here (a Parameter, not an Output -- see
       estavelle-launch-defaults.yaml's own note on why that distinction
       matters).
 
 Resources:
-  EstavelleInstance:
-    Type: AWS::EC2::Instance
+  EstavelleTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
     Properties:
-      ImageId: !Ref AmiId
-      InstanceType: !Ref InstanceType
-      SubnetId: !Ref SubnetId
-      SecurityGroupIds: !Ref SecurityGroupIds
-      UserData: !Ref UserData
+      # A fixed family name, not CloudFormation's own default (derived from
+      # logical id + stack name): AllocatorPolicy's own
+      # RegisterTaskDefinition statement in estavelle-launch-defaults.yaml
+      # scopes to this exact "karst-estavelle-*" ARN pattern, the same
+      # convention stackNameFor already uses.
+      Family: !Sub "karst-estavelle-${PoolId}"
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      ExecutionRoleArn: !Ref ExecutionRoleArn
+      ContainerDefinitions:
+        - Name: karst-estavelle
+          Image: !Ref Image
+          Essential: true
+          PortMappings:
+            - ContainerPort: 443
+              Protocol: tcp
+            - ContainerPort: 443
+              Protocol: udp
+          Environment:
+            - Name: KARST_CONTROL_API_BASE
+              Value: !Ref ControlApiBase
+            - Name: KARST_ENROLL_TOKEN
+              Value: !Ref EnrollToken
+            - Name: KARST_TLS_SERVER_NAME
+              Value: !Ref TlsServerName
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: estavelle
+
+  EstavelleService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ClusterArn
+      TaskDefinition: !Ref EstavelleTaskDefinition
+      DesiredCount: 1
+      # Spot only, no on-demand fallback: this mechanism's whole point is
+      # Spot's lower cost, and a Spot interruption's replacement task is
+      # exactly what estavellealloc's own drive_loop retry/reconciliation
+      # already handles for any other failure mode.
+      CapacityProviderStrategy:
+        - CapacityProvider: FARGATE_SPOT
+          Weight: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: [!Ref SubnetId]
+          SecurityGroups: !Ref SecurityGroupIds
+          AssignPublicIp: ENABLED
+      EnableECSManagedTags: true
+      PropagateTags: SERVICE
       Tags:
         - Key: "karst:pool"
           Value: !Ref PoolId
@@ -73,5 +143,5 @@ Resources:
           Value: !Ref TlsServerName
 
 Outputs:
-  InstanceId:
-    Value: !Ref EstavelleInstance
+  ServiceArn:
+    Value: !Ref EstavelleService

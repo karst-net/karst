@@ -46,18 +46,23 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # does, confirmed against kube's own feature list (not assumed) before this
 # dependency was added.
 #
-# Pinned to exactly 4.2.0, not "4" (issue #353, revisited after the zbus 6
-# migration moved this workspace's MSRV to 1.89): 4.2.0 is the newest
-# release (there is no 4.1.0) and the only other one besides 4.0.0, so this
-# is also the newest kube gets until its next release. Confirmed by
-# `cargo build`, not just `cargo info`'s declared `rust-version` -- the
-# same gap bins/karst-scaler-aws/Cargo.toml's own comment already flags for
-# a different crate family. 4.2.0's `rustls-tls` feature also pulls in
-# `rustls-platform-verifier` (new in this release; 4.0.0's `rustls-tls`
-# did not), which is what actually needed CDLA-Permissive-2.0 added to
-# deny.toml -- not an MSRV gap at all, once the MSRV one was already
-# cleared.
-kube = { version = "=4.2.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
+# Pinned to exactly 4.2.1, not "4" (issue #353, revisited after the zbus 6
+# migration moved this workspace's MSRV to 1.89, then again for
+# RUSTSEC-2026-0600). 4.2.0's `openssl-tls` connector trusted OpenSSL's
+# default CA store in addition to the configured cluster CA; 4.2.1 is the
+# patch release that fixes it (5.2.0 is the other, but that's a 5.x major
+# bump this crate hasn't evaluated) -- not a concern this crate's own
+# `rustls-tls` feature selection was ever exposed to at runtime (the
+# advisory is specific to `openssl-tls`), but cargo-deny's advisory check
+# has no way to know this crate never enables that feature, only that the
+# vulnerable version is in the lockfile. Confirmed by `cargo build`, not
+# just `cargo info`'s declared `rust-version` -- the same gap
+# bins/karst-scaler-aws/Cargo.toml's own comment already flags for a
+# different crate family. 4.2.0/4.2.1's `rustls-tls` feature also pulls in
+# `rustls-platform-verifier` (new in 4.2.0; 4.0.0's `rustls-tls` did not),
+# which is what actually needed CDLA-Permissive-2.0 added to deny.toml --
+# not an MSRV gap at all, once the MSRV one was already cleared.
+kube = { version = "=4.2.1", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
 k8s-openapi = { version = "0.28", features = ["latest"] }
 # The mint-enrollment-token call (POST to the control server, a different
 # host than the k8s API server kube::Client talks to, so that client can't

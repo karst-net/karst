@@ -4,31 +4,32 @@
 # Provisions the one-time AWS prerequisites for an AWS infrastructure
 # connection's estavelle allocation "launch defaults" (ADR-0063; ADR-0045's
 # 2026-11-04 addendum; ADR-0067's CloudFormation actuation path) -- see
-# docs/operations/scaler-aws-driver.md's "Configuring ADR-0063's relay
+# docs/operations/scaler-aws-driver.md's "Configuring ADR-0063's estavelle
 # allocation" section and deploy/nomad/prod/README.md's "Estavelle
 # allocation" section, step 2.
 #
 # This stack does NOT create an estavelle itself, by design: the console's
-# own "Allocate an estavelle" button is the only thing that does that now
+# own "Allocate an estavelle" button is the only thing that does that
 # (ADR-0067) -- the server's own infraprovision/cloudformationdriver, the
 # only AWS actuation mechanism there is (no per-connection toggle), then
 # launches deploy/aws/scaler/estavelle-instance.yaml, one stack per
 # allocation, using the exact same AllocatorUser credential this stack
-# creates. (An earlier version of this file had a custom resource that
-# called POST /estavelle-allocations itself -- removed: once the console
-# creates the allocation row before any instance exists, a second call from
-# here would just create a second, orphaned one.)
+# creates.
 #
-# This stack does NOT build the AMI either: AmiId must already point at an
-# image with karst-relay/karst-estavelle installed and configured to run
-# `enroll` from its own boot path (scaler-aws-driver.md's own caveat).
+# This mechanism actuates estavelles as ECS Fargate Spot services, not EC2
+# instances, and so needs no AMI at all: every release already publishes
+# ghcr.io/karst-net/karst-estavelle:<tag> (.github/workflows/
+# deliverables.yml), a real, already-signed container image a Fargate task
+# pulls directly -- an allocation's desired_image/running_image is that
+# tag, never an AMI id, and there is no operator-run AMI-build pipeline to
+# maintain for this at all.
 #
 # Deploy:
 #   aws cloudformation deploy \
 #     --stack-name karst-estavelle-launch-defaults \
 #     --template-file deploy/aws/scaler/estavelle-launch-defaults.yaml \
 #     --capabilities CAPABILITY_NAMED_IAM \
-#     --parameter-overrides VpcId=vpc-xxxx SubnetId=subnet-xxxx AmiId=ami-xxxx
+#     --parameter-overrides VpcId=vpc-xxxx SubnetId=subnet-xxxx
 #
 # This stack deliberately does NOT create an IAM access key or put one in
 # Outputs: CloudFormation's NoEcho attribute only applies to Parameters, not
@@ -48,8 +49,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
-  One-time AWS prerequisites (security group + scoped IAM user/policy) for
-  an estavelle allocation's AWS infrastructure connection launch defaults.
+  One-time AWS prerequisites (ECS cluster, task execution role, log group,
+  security group, scoped IAM user/policy) for an estavelle allocation's
+  AWS infrastructure connection launch defaults.
 
 Parameters:
   VpcId:
@@ -58,28 +60,32 @@ Parameters:
   SubnetId:
     Type: AWS::EC2::Subnet::Id
     Description: >
-      Subnet to launch estavelle instances into -- must already be one of
-      the console's Authorized Locations resources.
-  AmiId:
-    Type: AWS::EC2::Image::Id
-    Description: >
-      AMI with karst-relay/karst-estavelle preinstalled, configured to run
-      `enroll` from its own boot path (see this file's header comment).
-  InstanceType:
-    Type: String
-    Default: t3.micro
-    Description: Matches scaler-aws-driver.md's own example launch shape.
-  AdminSshCidr:
-    Type: String
-    Default: ""
-    Description: >
-      Optional CIDR allowed SSH (22/tcp) to the estavelle security group for
-      operator access. Leave blank to omit the rule entirely.
-
-Conditions:
-  EnableSshIngress: !Not [!Equals [!Ref AdminSshCidr, ""]]
+      Subnet to place estavelle tasks' ENIs into -- must already be one of
+      the console's Authorized Locations resources, and must route to the
+      internet (an IGW or NAT) so the task can pull its own public image
+      and reach the control API.
 
 Resources:
+  EstavelleCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}-cluster"
+
+  EstavelleClusterCapacityProviders:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !Ref EstavelleCluster
+      CapacityProviders: [FARGATE, FARGATE_SPOT]
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE_SPOT
+          Weight: 1
+
+  EstavelleLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/karst/estavelle/${AWS::StackName}"
+      RetentionInDays: 14
+
   EstavelleSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -103,29 +109,38 @@ Resources:
         - Key: Name
           Value: !Sub "${AWS::StackName}-estavelle"
 
-  EstavelleSecurityGroupSshIngress:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: EnableSshIngress
+  # The Fargate agent's own role (log delivery only -- there is no ECR
+  # image to authenticate for, since ghcr.io/karst-net/karst-estavelle is a
+  # public image a task with a public IP pulls directly).
+  EstavelleExecutionRole:
+    Type: AWS::IAM::Role
     Properties:
-      GroupId: !GetAtt EstavelleSecurityGroup.GroupId
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      CidrIp: !Ref AdminSshCidr
-      Description: Operator SSH access
+      RoleName: !Sub "karst-estavelle-execution-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: karst-estavelle-execution-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt EstavelleLogGroup.Arn
 
   AllocatorUser:
     Type: AWS::IAM::User
     Properties:
       UserName: !Sub "karst-estavelle-allocator-${AWS::StackName}"
 
-  # Same shape as deploy/aws/scaler/iam-policy.json (ADR-0063 reuses the
-  # scaler-aws driver's karst:pool tag convention -- see
-  # scaler-aws-driver.md's "Tag convention and IAM" section), except the
-  # unconditional RunInstances statement is scoped to this stack's own
-  # subnet/security-group/AMI ARNs instead of "*", per that same doc's
-  # recommendation now that this credential runs inside the always-on
-  # control process rather than a narrowly deployed host.
+  # Every statement scoped to this stack's own resources, never granted on
+  # "*" except the read-only Describe/TagResource calls this mechanism
+  # needs. The cloudformation:* statement is scoped to
+  # cloudformationdriver.stackNameFor's own convention
+  # ("karst-estavelle-<allocation id>").
   AllocatorPolicy:
     Type: AWS::IAM::Policy
     Properties:
@@ -135,44 +150,6 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: KarstEstavelleRunInstancesTagged
-            Effect: Allow
-            Action: ec2:RunInstances
-            Resource:
-              - "arn:aws:ec2:*:*:instance/*"
-              - "arn:aws:ec2:*:*:volume/*"
-              - "arn:aws:ec2:*:*:network-interface/*"
-            Condition:
-              StringEquals:
-                "aws:RequestTag/karst:pool": "*"
-          - Sid: KarstEstavelleRunInstancesTemplate
-            Effect: Allow
-            Action: ec2:RunInstances
-            Resource:
-              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${SubnetId}"
-              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${EstavelleSecurityGroup.GroupId}"
-              - !Sub "arn:aws:ec2:${AWS::Region}::image/${AmiId}"
-          - Sid: KarstEstavelleManageTaggedInstances
-            Effect: Allow
-            Action:
-              - ec2:StopInstances
-              - ec2:TerminateInstances
-              - ec2:CreateTags
-            Resource: "arn:aws:ec2:*:*:instance/*"
-            Condition:
-              StringEquals:
-                "aws:ResourceTag/karst:pool": "*"
-          - Sid: KarstEstavelleDescribe
-            Effect: Allow
-            Action: ec2:DescribeInstances
-            Resource: "*"
-          # ADR-0067's CloudFormation actuation path: cloudformationdriver
-          # calls these three with this same connection credential, once per
-          # allocation, against deploy/aws/scaler/estavelle-instance.yaml --
-          # scoped to that template's own stack-naming convention
-          # (cloudformationdriver.stackNameFor: "karst-estavelle-<allocation
-          # id>"), never granted on "*". Required: this is the only AWS
-          # actuation mechanism, not an opt-in one.
           - Sid: KarstEstavelleManageInstanceStacks
             Effect: Allow
             Action:
@@ -180,17 +157,60 @@ Resources:
               - cloudformation:DescribeStacks
               - cloudformation:DeleteStack
             Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/karst-estavelle-*/*"
+          # ecs:cluster is only a valid condition key for actions that take
+          # a cluster in their own request (CreateService/UpdateService/
+          # DeleteService/DescribeServices) -- putting it on
+          # RegisterTaskDefinition/DeregisterTaskDefinition/
+          # DescribeTaskDefinition/TagResource below would silently deny
+          # those instead (a missing context key fails a StringEquals
+          # condition), since task definitions are account/region-scoped,
+          # never cluster-scoped.
+          - Sid: KarstEstavelleEcsManageService
+            Effect: Allow
+            Action:
+              - ecs:CreateService
+              - ecs:UpdateService
+              - ecs:DeleteService
+              - ecs:DescribeServices
+            Resource: "*"
+            Condition:
+              StringEquals:
+                "ecs:cluster": !GetAtt EstavelleCluster.Arn
+          # Scoped by the task definition family name instead (set via
+          # estavelle-instance.yaml's own explicit Family property) -- the
+          # "karst-estavelle-*" convention stackNameFor already uses.
+          - Sid: KarstEstavelleEcsManageTaskDefinition
+            Effect: Allow
+            Action:
+              - ecs:RegisterTaskDefinition
+              - ecs:DeregisterTaskDefinition
+              - ecs:DescribeTaskDefinition
+            Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/karst-estavelle-*:*"
+          # Tagging has no per-resource-type ARN pattern IAM can scope
+          # tightly here; narrow by action instead -- this policy's other
+          # statements already gate which resources ever get created.
+          - Sid: KarstEstavelleEcsTagResources
+            Effect: Allow
+            Action: ecs:TagResource
+            Resource: "*"
+          - Sid: KarstEstavellePassExecutionRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt EstavelleExecutionRole.Arn
+            Condition:
+              StringEquals:
+                "iam:PassedToService": ecs-tasks.amazonaws.com
 
 Outputs:
-  Region:
-    Description: Launch defaults -- Region
-    Value: !Ref AWS::Region
-  AmiId:
-    Description: Launch defaults -- AMI id (as given)
-    Value: !Ref AmiId
-  InstanceType:
-    Description: Launch defaults -- Instance type
-    Value: !Ref InstanceType
+  ClusterArn:
+    Description: Launch defaults -- ECS cluster ARN
+    Value: !GetAtt EstavelleCluster.Arn
+  ExecutionRoleArn:
+    Description: Launch defaults -- Task execution role ARN
+    Value: !GetAtt EstavelleExecutionRole.Arn
+  LogGroup:
+    Description: Launch defaults -- CloudWatch Logs group name
+    Value: !Ref EstavelleLogGroup
   SubnetId:
     Description: Launch defaults -- Subnet id (as given)
     Value: !Ref SubnetId

@@ -175,31 +175,35 @@ reaches `ready`, neither of them a separate process or host:
    [deploy/aws/scaler/estavelle-launch-defaults.yaml](../../aws/scaler/estavelle-launch-defaults.yaml)
    (see that file's own header for the exact `aws cloudformation deploy`
    command and how to mint an access key for it afterward without ever
-   putting the secret in CloudFormation's own state). It creates a security
-   group for the estavelle's transport and an IAM user/policy scoped to the
-   AMI/subnet/security-group you pass it — grant the connection's own
+   putting the secret in CloudFormation's own state). It creates an ECS
+   cluster, a task execution role, a CloudWatch Logs group, a security
+   group for the estavelle's transport, and an IAM user/policy scoped to
+   the subnet/security-group you pass it — grant the connection's own
    access key to that same IAM user. Then, in the console's Settings page,
    on the AWS infrastructure connection to allocate against, set its
-   **launch defaults** (AMI id, instance type, subnet, security group id)
-   from that stack's own Outputs.
+   **launch defaults** (cluster ARN, execution role ARN, CPU, memory, log
+   group, subnet, security group id) from that stack's own Outputs.
 
    AWS actuation has exactly one mechanism (ADR-0067's CloudFormation
    path, `server/management/internals/karst/infraprovision/
    cloudformationdriver`) — there is no per-connection choice to make and
-   no separate IAM policy to apply by hand. For every real allocation, the
-   in-process allocate worker launches
+   no separate IAM policy to apply by hand. It actuates an estavelle as an
+   ECS Fargate Spot service, not an EC2 instance: every release already
+   publishes a real, signed `ghcr.io/karst-net/karst-estavelle:<tag>`
+   container image (`.github/workflows/deliverables.yml`), so there is no
+   AMI to bake first the way a direct EC2 approach would need. For every
+   real allocation, the in-process allocate worker launches
    [deploy/aws/scaler/estavelle-instance.yaml](../../aws/scaler/estavelle-instance.yaml)
-   as its own one-instance-per-allocation stack, using the same connection
+   as its own one-service-per-allocation stack, using the same connection
    credential; `estavelle-launch-defaults.yaml`'s own IAM policy already
    grants that credential the `cloudformation:CreateStack`/`DescribeStacks`/
-   `DeleteStack` permissions it needs, scoped to that template's own stack-naming
-   convention (`karst-estavelle-<allocation id>`). An earlier revision of
-   this setup actuated AWS with a direct `ec2:RunInstances` call and
-   `deploy/aws/scaler/iam-policy.json` (still current for the unrelated,
-   separate `karst-scaler-aws` continuous pool autoscaler,
-   [docs/operations/scaler-aws-driver.md](../../../docs/operations/scaler-aws-driver.md)) --
-   that direct path and its own IAM policy no longer apply to estavelle
-   allocation.
+   `DeleteStack` and `ecs:*`/`iam:PassRole` permissions it needs, scoped to
+   that template's own stack-naming convention
+   (`karst-estavelle-<allocation id>`). This has no relationship to
+   `deploy/aws/scaler/iam-policy.json` or direct `ec2:RunInstances` (still
+   current for the unrelated, separate `karst-scaler-aws` continuous pool
+   autoscaler,
+   [docs/operations/scaler-aws-driver.md](../../../docs/operations/scaler-aws-driver.md)).
 
 `nomad job plan` / `nomad job run` as usual (see "Rollout and rollback"
 above) to pick up the two new control task env vars. Confirm a real

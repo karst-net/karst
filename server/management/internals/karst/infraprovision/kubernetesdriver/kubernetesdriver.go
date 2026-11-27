@@ -133,11 +133,13 @@ func (d *Driver) buildPod(name, allocationID, tlsServerName string, req infrapro
 	// The three KARST_* env vars are this driver's own enroll-bundle
 	// convention, the Kubernetes analog of awsdriver's UserData TOML and
 	// nomaddriver's dispatch Meta: there is no pre-existing image to stay
-	// wire-compatible with (see the package doc comment), so a prebuilt
-	// karst-relay container image's own entrypoint is expected to read
-	// these three and call `karst-relay enroll` itself, the same
-	// responsibility an AWS AMI's cloud-init script or a Nomad job
-	// template already carries for the other two drivers.
+	// wire-compatible with (see the package doc comment), so
+	// bins/karst-estavelle/src/main.rs's own command_run checks for these
+	// three and self-enrolls (the same enroll_bundle logic `enroll
+	// --bundle` uses) before it starts serving -- the same responsibility
+	// an AWS AMI's cloud-init script or a Nomad job template already
+	// carries for the other two drivers, just done in-binary here since a
+	// container image has no boot script of its own to run one in.
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,

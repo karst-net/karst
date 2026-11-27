@@ -161,9 +161,20 @@ What used to be `ALLOCATE_CONFIG.toml`'s fields now live in two places:
   `security_group_ids` are now **launch defaults** set once, in the
   console's Settings page, on the AWS infrastructure connection itself
   (`PUT /infrastructure-connections/{id}/launch-defaults`) — not a file on
-  disk. `enroll_pat_file` no longer exists: minting an enroll token is now
+  disk, and a different shape besides: ADR-0067's AWS mechanism actuates
+  an estavelle as an ECS Fargate Spot service, not an EC2 instance, so
+  launch defaults are `region`/`cluster_arn`/`execution_role_arn`/`cpu`/
+  `memory`/`log_group`/`subnet_id`/`security_group_ids` -- there is no
+  `ami_id`/`instance_type` at all; an allocation's own desired/running
+  image is a real `ghcr.io/karst-net/karst-estavelle:<tag>` reference
+  instead (every release already publishes one), not an AMI this driver's
+  own concerns about operator-provisioned images would otherwise apply to.
+  `enroll_pat_file` no longer exists: minting an enroll token is now
   a direct, in-process call (`DefaultAccountManager.MintEstavelleEnrollKey`),
-  not an HTTP round trip through a `UserRoleScaler`-scoped PAT.
+  not an HTTP round trip through a `UserRoleScaler`-scoped PAT, and
+  enrollment itself happens in-binary via three `KARST_*` container
+  environment variables (`bins/karst-estavelle/src/main.rs`'s
+  `command_run`), not a `UserData`/cloud-init boot script.
 
 This driver's own IAM policy (`deploy/aws/scaler/iam-policy.json`,
 `karst:pool`-conditioned) and its direct `ec2:RunInstances` actuation are
@@ -174,13 +185,15 @@ actuation onto CloudFormation entirely (package
 `internals/karst/infraprovision/cloudformationdriver`): the loop launches
 `deploy/aws/scaler/estavelle-instance.yaml`, one stack per allocation,
 instead of calling `RunInstances` itself. That stack's own prerequisites
-(a security group plus an IAM user/policy scoped to the AMI/subnet/
-security-group ARNs you configure as launch defaults, never granted on
-`*`) come from `deploy/aws/scaler/estavelle-launch-defaults.yaml` -- run
-once, before the connection's first allocation; see that file's own header
-for the exact command and `deploy/nomad/prod/README.md`'s "Estavelle
-allocation" section for the operator-facing walkthrough and the two
-control-task env vars this needs. The credential itself is still the
+(an ECS cluster, a task execution role, a log group, a security group,
+and an IAM user/policy scoped to the subnet/security-group ARNs you
+configure as launch defaults and to this template's own stack-naming
+convention, never granted on `*`) come from
+`deploy/aws/scaler/estavelle-launch-defaults.yaml` -- run once, before the
+connection's first allocation; see that file's own header for the exact
+command and `deploy/nomad/prod/README.md`'s "Estavelle allocation" section
+for the operator-facing walkthrough and the two control-task env vars this
+needs. The credential itself is still the
 infrastructure connection's own stored, encrypted AWS access key rather
 than a separate host's instance profile, same as before this move -- see
 ADR-0045's 2026-11-04 addendum for that security-boundary reasoning and the

@@ -367,12 +367,12 @@ func TestUpdateLaunchDefaultsRoundTripsAndRejectsTheWrongTypeOrMode(t *testing.T
 		t.Fatalf("create read-write: %v", err)
 	}
 
-	req := UpdateLaunchDefaultsRequest{Region: "us-east-1", AMIID: "ami-0123456789abcdef0", InstanceType: "t3.micro", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1", "sg-2"}}
+	req := UpdateLaunchDefaultsRequest{Region: "us-east-1", ClusterARN: "arn:aws:ecs:us-east-1:111111111111:cluster/karst", ExecutionRoleARN: "arn:aws:iam::111111111111:role/karst-exec", CPU: "256", Memory: "512", LogGroup: "/karst/estavelle", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1", "sg-2"}}
 	updated, err := s.UpdateLaunchDefaults(ctx, rw.ID, req)
 	if err != nil {
 		t.Fatalf("update launch defaults: %v", err)
 	}
-	if updated.LaunchAMIID != req.AMIID || updated.LaunchSubnetID != req.SubnetID || len(updated.LaunchSecurityGroupIDs) != 2 {
+	if updated.LaunchClusterARN != req.ClusterARN || updated.LaunchSubnetID != req.SubnetID || len(updated.LaunchSecurityGroupIDs) != 2 {
 		t.Fatalf("got %+v, want the request's own fields persisted", updated)
 	}
 
@@ -406,7 +406,8 @@ func TestActuationDriverRequiresCompleteAWSLaunchDefaults(t *testing.T) {
 	}
 
 	if _, err := s.UpdateLaunchDefaults(ctx, rw.ID, UpdateLaunchDefaultsRequest{
-		Region: "us-east-1", AMIID: "ami-0123456789abcdef0", InstanceType: "t3.micro", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1"},
+		Region: "us-east-1", ClusterARN: "arn:aws:ecs:us-east-1:111111111111:cluster/karst", ExecutionRoleARN: "arn:aws:iam::111111111111:role/karst-exec",
+		CPU: "256", Memory: "512", LogGroup: "/karst/estavelle", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1"},
 	}); err != nil {
 		t.Fatalf("update launch defaults: %v", err)
 	}

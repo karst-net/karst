@@ -2629,8 +2629,9 @@ type InfrastructureConnection struct {
 	LastError              *string    `json:"last_error,omitempty"`
 	LastValidatedAt        *time.Time `json:"last_validated_at,omitempty"`
 	Lat                    *float32   `json:"lat,omitempty"`
-	LaunchAmiId            *string    `json:"launch_ami_id,omitempty"`
-	LaunchInstanceType     *string    `json:"launch_instance_type,omitempty"`
+	LaunchClusterArn       *string    `json:"launch_cluster_arn,omitempty"`
+	LaunchCpu              *string    `json:"launch_cpu,omitempty"`
+	LaunchExecutionRoleArn *string    `json:"launch_execution_role_arn,omitempty"`
 	LaunchKubernetesCpu    *string    `json:"launch_kubernetes_cpu,omitempty"`
 	LaunchKubernetesImage  *string    `json:"launch_kubernetes_image,omitempty"`
 	LaunchKubernetesMemory *string    `json:"launch_kubernetes_memory,omitempty"`
@@ -2638,12 +2639,14 @@ type InfrastructureConnection struct {
 	// LaunchKubernetesNamespace ADR-0067. The Kubernetes launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Kubernetes connection, set via PUT .../kubernetes-launch-defaults.
 	LaunchKubernetesNamespace      *string `json:"launch_kubernetes_namespace,omitempty"`
 	LaunchKubernetesServiceAccount *string `json:"launch_kubernetes_service_account,omitempty"`
+	LaunchLogGroup                 *string `json:"launch_log_group,omitempty"`
+	LaunchMemory                   *string `json:"launch_memory,omitempty"`
 	LaunchNomadDatacenter          *string `json:"launch_nomad_datacenter,omitempty"`
 
 	// LaunchNomadJobId ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
 	LaunchNomadJobId *string `json:"launch_nomad_job_id,omitempty"`
 
-	// LaunchRegion ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself.
+	// LaunchRegion ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself. Actuates as an ECS Fargate Spot service (ADR-0067's CloudFormation actuation path), not an EC2 instance.
 	LaunchRegion           *string                      `json:"launch_region,omitempty"`
 	LaunchSecurityGroupIds *[]string                    `json:"launch_security_group_ids,omitempty"`
 	LaunchSubnetId         *string                      `json:"launch_subnet_id,omitempty"`
@@ -2696,10 +2699,13 @@ type InfrastructureConnectionKubernetesLaunchDefaults struct {
 	ServiceAccount *string `json:"service_account,omitempty"`
 }
 
-// InfrastructureConnectionLaunchDefaults ADR-0045's 2026-11-04 addendum. Every field replaces the stored value, including to empty -- there is no partial-update shape. Only meaningful for a read-write AWS connection; refused otherwise.
+// InfrastructureConnectionLaunchDefaults ADR-0045's 2026-11-04 addendum; ADR-0067's CloudFormation actuation path. Every field replaces the stored value, including to empty -- there is no partial-update shape. Only meaningful for a read-write AWS connection; refused otherwise. Actuates as an ECS Fargate Spot service: cluster_arn/execution_role_arn/cpu/memory/log_group size and place the task, and there is no AMI id here -- an allocation's own desired/running image already supplies a real ghcr.io/karst-net/karst-estavelle:<tag> reference.
 type InfrastructureConnectionLaunchDefaults struct {
-	AmiId            *string   `json:"ami_id,omitempty"`
-	InstanceType     *string   `json:"instance_type,omitempty"`
+	ClusterArn       *string   `json:"cluster_arn,omitempty"`
+	Cpu              *string   `json:"cpu,omitempty"`
+	ExecutionRoleArn *string   `json:"execution_role_arn,omitempty"`
+	LogGroup         *string   `json:"log_group,omitempty"`
+	Memory           *string   `json:"memory,omitempty"`
 	Region           *string   `json:"region,omitempty"`
 	SecurityGroupIds *[]string `json:"security_group_ids,omitempty"`
 	SubnetId         *string   `json:"subnet_id,omitempty"`
