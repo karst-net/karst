@@ -1036,11 +1036,14 @@ export type InfrastructureConnection = {
     readonly last_validated_at?: string;
     readonly last_error?: string;
     /**
-     * ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself.
+     * ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself. Actuates as an ECS Fargate Spot service (ADR-0067's CloudFormation actuation path), not an EC2 instance.
      */
     launch_region?: string;
-    launch_ami_id?: string;
-    launch_instance_type?: string;
+    launch_cluster_arn?: string;
+    launch_execution_role_arn?: string;
+    launch_cpu?: string;
+    launch_memory?: string;
+    launch_log_group?: string;
     launch_subnet_id?: string;
     launch_security_group_ids?: Array<string>;
     /**
@@ -1063,12 +1066,15 @@ export type InfrastructureConnection = {
 };
 
 /**
- * ADR-0045's 2026-11-04 addendum. Every field replaces the stored value, including to empty -- there is no partial-update shape. Only meaningful for a read-write AWS connection; refused otherwise.
+ * ADR-0045's 2026-11-04 addendum; ADR-0067's CloudFormation actuation path. Every field replaces the stored value, including to empty -- there is no partial-update shape. Only meaningful for a read-write AWS connection; refused otherwise. Actuates as an ECS Fargate Spot service: cluster_arn/execution_role_arn/cpu/memory/log_group size and place the task, and there is no AMI id here -- an allocation's own desired/running image already supplies a real ghcr.io/karst-net/karst-estavelle:<tag> reference.
  */
 export type InfrastructureConnectionLaunchDefaults = {
     region?: string;
-    ami_id?: string;
-    instance_type?: string;
+    cluster_arn?: string;
+    execution_role_arn?: string;
+    cpu?: string;
+    memory?: string;
+    log_group?: string;
     subnet_id?: string;
     security_group_ids?: Array<string>;
 };
@@ -1398,11 +1404,14 @@ export type InfrastructureConnectionWritable = {
      */
     status?: 'ok' | 'error';
     /**
-     * ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself.
+     * ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself. Actuates as an ECS Fargate Spot service (ADR-0067's CloudFormation actuation path), not an EC2 instance.
      */
     launch_region?: string;
-    launch_ami_id?: string;
-    launch_instance_type?: string;
+    launch_cluster_arn?: string;
+    launch_execution_role_arn?: string;
+    launch_cpu?: string;
+    launch_memory?: string;
+    launch_log_group?: string;
     launch_subnet_id?: string;
     launch_security_group_ids?: Array<string>;
     /**

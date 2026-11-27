@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
 
 	"github.com/netbirdio/netbird/management/internals/karst/infraprovision"
 	"github.com/netbirdio/netbird/management/internals/karst/infraprovision/cloudformationdriver"
@@ -58,7 +58,9 @@ func (s *Store) ActuationDriver(ctx context.Context, id string) (infraprovision.
 // nothing here reads anything off record beyond the launch defaults every
 // AWS connection already needs.
 func (s *Store) awsActuationDriver(ctx context.Context, record *Account) (infraprovision.Driver, error) {
-	if record.LaunchRegion == "" || record.LaunchAMIID == "" || record.LaunchInstanceType == "" || record.LaunchSubnetID == "" || len(record.LaunchSecurityGroupIDs) == 0 {
+	if record.LaunchRegion == "" || record.LaunchClusterARN == "" || record.LaunchExecutionRoleARN == "" ||
+		record.LaunchCPU == "" || record.LaunchMemory == "" || record.LaunchLogGroup == "" ||
+		record.LaunchSubnetID == "" || len(record.LaunchSecurityGroupIDs) == 0 {
 		return nil, fmt.Errorf("%w: configure launch defaults for this connection before allocating a relay against it", ErrInvalid)
 	}
 	cfg, err := awsConfig(ctx, record.Secret, record.LaunchRegion)
@@ -66,12 +68,15 @@ func (s *Store) awsActuationDriver(ctx context.Context, record *Account) (infrap
 		return nil, fmt.Errorf("aws: configure client: %w", err)
 	}
 	defaults := cloudformationdriver.LaunchDefaults{
-		AMIID:            record.LaunchAMIID,
-		InstanceType:     record.LaunchInstanceType,
+		ClusterARN:       record.LaunchClusterARN,
+		ExecutionRoleARN: record.LaunchExecutionRoleARN,
+		CPU:              record.LaunchCPU,
+		Memory:           record.LaunchMemory,
+		LogGroup:         record.LaunchLogGroup,
 		SubnetID:         record.LaunchSubnetID,
 		SecurityGroupIDs: record.LaunchSecurityGroupIDs,
 	}
-	return cloudformationdriver.New(cloudformation.NewFromConfig(cfg), ec2.NewFromConfig(cfg), defaults), nil
+	return cloudformationdriver.New(cloudformation.NewFromConfig(cfg), ecs.NewFromConfig(cfg), defaults), nil
 }
 
 func (s *Store) nomadActuationDriver(record *Account) (infraprovision.Driver, error) {

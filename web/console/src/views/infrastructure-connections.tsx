@@ -12,17 +12,23 @@ type ConnectionType = InfrastructureConnection["type"];
 type ConnectionMode = InfrastructureConnection["mode"];
 
 /** Draft for the "Launch defaults" dialog -- ADR-0045's 2026-11-04
- *  addendum. Security groups are entered newline/comma-separated and
- *  split on submit, matching how every multi-value field elsewhere in
- *  this console (e.g. GroupPicker) avoids inventing a tag-input widget
- *  for a short, rarely-edited list. */
+ *  addendum; ADR-0067's CloudFormation actuation path. Security groups are
+ *  entered newline/comma-separated and split on submit, matching how every
+ *  multi-value field elsewhere in this console (e.g. GroupPicker) avoids
+ *  inventing a tag-input widget for a short, rarely-edited list. This
+ *  actuates as an ECS Fargate Spot service, not an EC2 instance: there is
+ *  no AMI id field here -- an allocation's own desired/running image
+ *  already supplies a real ghcr.io/karst-net/karst-estavelle:<tag>. */
 type LaunchDefaultsDraft = {
-  region: string; amiId: string; instanceType: string; subnetId: string; securityGroupIds: string;
+  region: string; clusterArn: string; executionRoleArn: string; cpu: string; memory: string;
+  logGroup: string; subnetId: string; securityGroupIds: string;
 };
 function blankLaunchDefaultsDraft(connection: InfrastructureConnection): LaunchDefaultsDraft {
   return {
-    region: connection.launch_region ?? "", amiId: connection.launch_ami_id ?? "",
-    instanceType: connection.launch_instance_type ?? "", subnetId: connection.launch_subnet_id ?? "",
+    region: connection.launch_region ?? "", clusterArn: connection.launch_cluster_arn ?? "",
+    executionRoleArn: connection.launch_execution_role_arn ?? "", cpu: connection.launch_cpu ?? "",
+    memory: connection.launch_memory ?? "", logGroup: connection.launch_log_group ?? "",
+    subnetId: connection.launch_subnet_id ?? "",
     securityGroupIds: (connection.launch_security_group_ids ?? []).join(", "),
   };
 }
@@ -147,8 +153,10 @@ export function InfrastructureConnections() {
   const saveLaunchDefaults = async () => {
     if (!launchDefaultsFor || !launchDefaultsDraft) return;
     const defaults = {
-      region: launchDefaultsDraft.region.trim(), ami_id: launchDefaultsDraft.amiId.trim(),
-      instance_type: launchDefaultsDraft.instanceType.trim(), subnet_id: launchDefaultsDraft.subnetId.trim(),
+      region: launchDefaultsDraft.region.trim(), cluster_arn: launchDefaultsDraft.clusterArn.trim(),
+      execution_role_arn: launchDefaultsDraft.executionRoleArn.trim(), cpu: launchDefaultsDraft.cpu.trim(),
+      memory: launchDefaultsDraft.memory.trim(), log_group: launchDefaultsDraft.logGroup.trim(),
+      subnet_id: launchDefaultsDraft.subnetId.trim(),
       security_group_ids: launchDefaultsDraft.securityGroupIds.split(/[\n,]/).map((id) => id.trim()).filter(Boolean),
     };
     if (await run(() => api.updateInfrastructureConnectionLaunchDefaults(launchDefaultsFor.id, defaults), `Launch defaults for ${launchDefaultsFor.label || launchDefaultsFor.type} were saved.`)) {
@@ -278,8 +286,11 @@ export function InfrastructureConnections() {
       <p>The AWS shape an estavelle allocated against {launchDefaultsFor?.label || launchDefaultsFor?.type} on the Estavelle allocations page actually launches as — set once here, not on the allocation itself.</p>
       {launchDefaultsDraft && <form onSubmit={(event) => { event.preventDefault(); void saveLaunchDefaults(); }}>
         <label>Region<input aria-label="Launch region" placeholder="us-east-1" required value={launchDefaultsDraft.region} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, region: event.target.value })} /></label>
-        <label>AMI ID<input aria-label="Launch AMI ID" placeholder="ami-0123456789abcdef0" required value={launchDefaultsDraft.amiId} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, amiId: event.target.value })} /></label>
-        <label>Instance type<input aria-label="Launch instance type" placeholder="t3.micro" required value={launchDefaultsDraft.instanceType} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, instanceType: event.target.value })} /></label>
+        <label>Cluster ARN<input aria-label="Launch cluster ARN" placeholder="arn:aws:ecs:us-east-1:111111111111:cluster/karst-estavelle-launch-defaults-cluster" required value={launchDefaultsDraft.clusterArn} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, clusterArn: event.target.value })} /></label>
+        <label>Execution role ARN<input aria-label="Launch execution role ARN" placeholder="arn:aws:iam::111111111111:role/karst-estavelle-execution-..." required value={launchDefaultsDraft.executionRoleArn} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, executionRoleArn: event.target.value })} /></label>
+        <label>CPU<input aria-label="Launch CPU" placeholder="256" required value={launchDefaultsDraft.cpu} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, cpu: event.target.value })} /></label>
+        <label>Memory<input aria-label="Launch memory" placeholder="512" required value={launchDefaultsDraft.memory} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, memory: event.target.value })} /></label>
+        <label>Log group<input aria-label="Launch log group" placeholder="/karst/estavelle/karst-estavelle-launch-defaults" required value={launchDefaultsDraft.logGroup} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, logGroup: event.target.value })} /></label>
         <label>Subnet ID<input aria-label="Launch subnet ID" placeholder="subnet-0123456789abcdef0" required value={launchDefaultsDraft.subnetId} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, subnetId: event.target.value })} /></label>
         <label>Security group IDs<textarea aria-label="Launch security group IDs" rows={3} placeholder={"sg-0123456789abcdef0\nsg-0123456789abcdef1"} required value={launchDefaultsDraft.securityGroupIds} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, securityGroupIds: event.target.value })} /></label>
         <p className="lede">One per line or comma-separated.</p>

@@ -11,91 +11,64 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	cftypes "github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 
 	"github.com/netbirdio/netbird/management/internals/karst/infraprovision"
 )
 
-// fakeEC2 holds the DescribeInstances/StopInstances surface this driver
-// reads and acts on -- it never calls RunInstances/TerminateInstances
-// itself (fakeCFN's own CreateStack/DeleteStack simulate those side
-// effects instead, exactly as the real CloudFormation service would).
-type fakeEC2 struct {
-	instances map[string]*fakeInstance
-	nextID    int
+// fakeECS holds the DescribeServices/UpdateService surface this driver
+// reads and acts on -- it never calls CreateService/DeleteService itself
+// (fakeCFN's own CreateStack/DeleteStack simulate those side effects
+// instead, exactly as the real CloudFormation service would).
+type fakeECS struct {
+	services map[string]*fakeService
 }
 
-type fakeInstance struct {
-	state ec2types.InstanceStateName
-	tags  []ec2types.Tag
+type fakeService struct {
+	arn          string
+	runningCount int32
+	tags         []ecstypes.Tag
 }
 
-func newFakeEC2() *fakeEC2 { return &fakeEC2{instances: map[string]*fakeInstance{}} }
+func newFakeECS() *fakeECS { return &fakeECS{services: map[string]*fakeService{}} }
 
-func (f *fakeEC2) addInstance(tags []ec2types.Tag) string {
-	f.nextID++
-	id := fmt.Sprintf("i-%d", f.nextID)
-	f.instances[id] = &fakeInstance{state: ec2types.InstanceStateNameRunning, tags: tags}
-	return id
+func (f *fakeECS) addService(name string, tags []ecstypes.Tag) {
+	f.services[name] = &fakeService{arn: "arn:aws:ecs:test:service/" + name, runningCount: 1, tags: tags}
 }
 
-func (f *fakeEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
-	var matched []ec2types.Instance
-	for id, inst := range f.instances {
-		if len(in.InstanceIds) > 0 && !containsStr(in.InstanceIds, id) {
-			continue
-		}
-		if len(in.Filters) > 0 && !matchesFilters(inst, in.Filters) {
-			continue
-		}
-		matched = append(matched, ec2types.Instance{
-			InstanceId: aws.String(id),
-			State:      &ec2types.InstanceState{Name: inst.state},
-			Tags:       inst.tags,
-		})
-	}
-	return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: matched}}}, nil
-}
-
-func (f *fakeEC2) StopInstances(_ context.Context, in *ec2.StopInstancesInput, _ ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error) {
-	for _, id := range in.InstanceIds {
-		if inst, ok := f.instances[id]; ok {
-			inst.state = ec2types.InstanceStateNameStopped
+func (f *fakeECS) DescribeServices(_ context.Context, in *ecs.DescribeServicesInput, _ ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
+	var out []ecstypes.Service
+	for _, name := range in.Services {
+		if svc, ok := f.services[name]; ok {
+			out = append(out, ecstypes.Service{
+				ServiceArn:   aws.String(svc.arn),
+				RunningCount: svc.runningCount,
+				Tags:         svc.tags,
+			})
 		}
 	}
-	return &ec2.StopInstancesOutput{}, nil
+	return &ecs.DescribeServicesOutput{Services: out}, nil
 }
 
-func containsStr(values []string, want string) bool {
-	for _, v := range values {
-		if v == want {
-			return true
+func (f *fakeECS) UpdateService(_ context.Context, in *ecs.UpdateServiceInput, _ ...func(*ecs.Options)) (*ecs.UpdateServiceOutput, error) {
+	name := aws.ToString(in.Service)
+	if svc, ok := f.services[name]; ok {
+		if in.DesiredCount != nil && *in.DesiredCount == 0 {
+			svc.runningCount = 0
 		}
 	}
-	return false
-}
-
-func matchesFilters(inst *fakeInstance, filters []ec2types.Filter) bool {
-	for _, filter := range filters {
-		name := aws.ToString(filter.Name)
-		if name == "tag:"+poolTagKey {
-			if !containsStr(filter.Values, tagValue(inst.tags, poolTagKey)) {
-				return false
-			}
-		}
-	}
-	return true
+	return &ecs.UpdateServiceOutput{}, nil
 }
 
 // fakeCFN simulates just enough of CloudFormation for this driver:
 // CreateStack records the stack and, unless instantComplete is false,
-// immediately plays out what a real stack would eventually do -- create
-// the tagged EC2 instance and mark itself CREATE_COMPLETE. instantComplete
+// immediately plays out what a real stack would eventually do -- register
+// the tagged ECS service and mark itself CREATE_COMPLETE. instantComplete
 // = false lets a test observe the CREATE_IN_PROGRESS window TLSServerName
 // must treat as "not yet", not a failure.
 type fakeCFN struct {
-	ec2             *fakeEC2
+	ecs             *fakeECS
 	stacks          map[string]*fakeStack
 	instantComplete bool
 	createErr       error
@@ -108,8 +81,8 @@ type fakeStack struct {
 	status cftypes.StackStatus
 }
 
-func newFakeCFN(ec2Fake *fakeEC2) *fakeCFN {
-	return &fakeCFN{ec2: ec2Fake, stacks: map[string]*fakeStack{}, instantComplete: true}
+func newFakeCFN(ecsFake *fakeECS) *fakeCFN {
+	return &fakeCFN{ecs: ecsFake, stacks: map[string]*fakeStack{}, instantComplete: true}
 }
 
 func (f *fakeCFN) CreateStack(_ context.Context, in *cloudformation.CreateStackInput, _ ...func(*cloudformation.Options)) (*cloudformation.CreateStackOutput, error) {
@@ -125,7 +98,7 @@ func (f *fakeCFN) CreateStack(_ context.Context, in *cloudformation.CreateStackI
 	status := cftypes.StackStatusCreateInProgress
 	if f.instantComplete {
 		status = cftypes.StackStatusCreateComplete
-		f.ec2.addInstance([]ec2types.Tag{
+		f.ecs.addService(name, []ecstypes.Tag{
 			{Key: aws.String(poolTagKey), Value: aws.String(f.lastParams["PoolId"])},
 			{Key: aws.String(tlsServerNameTagKey), Value: aws.String(f.lastParams["TlsServerName"])},
 		})
@@ -150,28 +123,32 @@ func (f *fakeCFN) DeleteStack(_ context.Context, in *cloudformation.DeleteStackI
 	return &cloudformation.DeleteStackOutput{}, nil
 }
 
-// completeStack flips an in-progress stack to CREATE_COMPLETE and spawns
-// its instance -- simulating a later tick after CloudFormation finishes.
+// completeStack flips an in-progress stack to CREATE_COMPLETE and
+// registers its service -- simulating a later tick after CloudFormation
+// finishes.
 func (f *fakeCFN) completeStack(name string) {
 	f.stacks[name].status = cftypes.StackStatusCreateComplete
-	f.ec2.addInstance([]ec2types.Tag{
+	f.ecs.addService(name, []ecstypes.Tag{
 		{Key: aws.String(poolTagKey), Value: aws.String(f.lastParams["PoolId"])},
 		{Key: aws.String(tlsServerNameTagKey), Value: aws.String(f.lastParams["TlsServerName"])},
 	})
 }
 
-func testDriver(cfn cfnAPI, ec2Fake ec2API) *Driver {
-	return &Driver{cfn: cfn, ec2: ec2Fake, defaults: LaunchDefaults{
-		AMIID: "ami-test", InstanceType: "t3.micro", SubnetID: "subnet-test", SecurityGroupIDs: []string{"sg-test"},
+func testDriver(cfn cfnAPI, ecsFake ecsAPI) *Driver {
+	return &Driver{cfn: cfn, ecs: ecsFake, defaults: LaunchDefaults{
+		ClusterARN: "arn:aws:ecs:test:cluster/karst-test", ExecutionRoleARN: "arn:aws:iam::test:role/exec",
+		CPU: "256", Memory: "512", LogGroup: "/karst/test", SubnetID: "subnet-test", SecurityGroupIDs: []string{"sg-test"},
 	}}
 }
 
+const testImage = "ghcr.io/karst-net/karst-estavelle:v0.1.0-rc.49"
+
 func TestCreateLaunchesStackOnceAndFindsExistingOnRetry(t *testing.T) {
-	ec2Fake := newFakeEC2()
-	cfn := newFakeCFN(ec2Fake)
-	d := testDriver(cfn, ec2Fake)
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
+	d := testDriver(cfn, ecsFake)
 	ctx := context.Background()
-	req := infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-1"}
+	req := infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-1", Image: testImage}
 
 	first, err := d.Create(ctx, "alloc-1", req)
 	if err != nil {
@@ -196,14 +173,27 @@ func TestCreateLaunchesStackOnceAndFindsExistingOnRetry(t *testing.T) {
 	}
 }
 
+func TestCreateRequiresAnImage(t *testing.T) {
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
+	d := testDriver(cfn, ecsFake)
+
+	if _, err := d.Create(context.Background(), "alloc-0", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-0"}); err == nil {
+		t.Fatal("got nil error with no Image set, want a failure: there is no connection-wide default image")
+	}
+	if cfn.createCalls != 0 {
+		t.Fatalf("got %d CreateStack calls with no image, want 0", cfn.createCalls)
+	}
+}
+
 func TestTLSServerNameRetriesWhileStackInProgressThenResolves(t *testing.T) {
-	ec2Fake := newFakeEC2()
-	cfn := newFakeCFN(ec2Fake)
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
 	cfn.instantComplete = false
-	d := testDriver(cfn, ec2Fake)
+	d := testDriver(cfn, ecsFake)
 	ctx := context.Background()
 
-	created, err := d.Create(ctx, "alloc-2", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-2"})
+	created, err := d.Create(ctx, "alloc-2", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-2", Image: testImage})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -227,13 +217,13 @@ func TestTLSServerNameRetriesWhileStackInProgressThenResolves(t *testing.T) {
 }
 
 func TestTLSServerNameReturnsErrorOnStackFailure(t *testing.T) {
-	ec2Fake := newFakeEC2()
-	cfn := newFakeCFN(ec2Fake)
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
 	cfn.instantComplete = false
-	d := testDriver(cfn, ec2Fake)
+	d := testDriver(cfn, ecsFake)
 	ctx := context.Background()
 
-	created, err := d.Create(ctx, "alloc-3", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-3"})
+	created, err := d.Create(ctx, "alloc-3", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-3", Image: testImage})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -245,12 +235,12 @@ func TestTLSServerNameReturnsErrorOnStackFailure(t *testing.T) {
 }
 
 func TestDestroyDeletesStackAndReturnsTag(t *testing.T) {
-	ec2Fake := newFakeEC2()
-	cfn := newFakeCFN(ec2Fake)
-	d := testDriver(cfn, ec2Fake)
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
+	d := testDriver(cfn, ecsFake)
 	ctx := context.Background()
 
-	created, err := d.Create(ctx, "alloc-4", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-4"})
+	created, err := d.Create(ctx, "alloc-4", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-4", Image: testImage})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -271,62 +261,57 @@ func TestDestroyDeletesStackAndReturnsTag(t *testing.T) {
 	}
 }
 
-func TestDrainStopsTheUnderlyingInstance(t *testing.T) {
-	ec2Fake := newFakeEC2()
-	cfn := newFakeCFN(ec2Fake)
-	d := testDriver(cfn, ec2Fake)
+func TestDrainScalesTheServiceToZero(t *testing.T) {
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
+	d := testDriver(cfn, ecsFake)
 	ctx := context.Background()
 
-	created, err := d.Create(ctx, "alloc-5", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-5"})
+	created, err := d.Create(ctx, "alloc-5", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-5", Image: testImage})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if err := d.Drain(ctx, created.ID); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
-	var stopped bool
-	for _, inst := range ec2Fake.instances {
-		if inst.state == ec2types.InstanceStateNameStopped {
-			stopped = true
-		}
-	}
-	if !stopped {
-		t.Fatal("no instance reached stopped after Drain")
+	if ecsFake.services[created.ID].runningCount != 0 {
+		t.Fatalf("got running count %d after Drain, want 0", ecsFake.services[created.ID].runningCount)
 	}
 }
 
 func TestCreatePropagatesACreateStackFailure(t *testing.T) {
-	ec2Fake := newFakeEC2()
-	cfn := newFakeCFN(ec2Fake)
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
 	cfn.createErr = fmt.Errorf("quota exceeded")
-	d := testDriver(cfn, ec2Fake)
+	d := testDriver(cfn, ecsFake)
 
-	if _, err := d.Create(context.Background(), "alloc-6", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-6"}); err == nil {
+	if _, err := d.Create(context.Background(), "alloc-6", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-6", Image: testImage}); err == nil {
 		t.Fatal("got nil error, want the underlying CreateStack failure surfaced")
 	}
 }
 
-// TestCreateHonorsAnImageOverride mirrors awsdriver's own test for issue
-// #560's zero-downtime version replacement: CreateRequest.Image, when set,
-// must be the AMI passed to CreateStack instead of the connection's own
-// stored LaunchDefaults.AMIID.
-func TestCreateHonorsAnImageOverride(t *testing.T) {
-	ec2Fake := newFakeEC2()
-	cfn := newFakeCFN(ec2Fake)
-	d := testDriver(cfn, ec2Fake)
+// TestCreateUsesTheRequestImageDirectly mirrors issue #560's own zero-
+// downtime version replacement test shape, except there is no
+// connection-wide default to fall back to here: every Create must name
+// its own image explicitly.
+func TestCreateUsesTheRequestImageDirectly(t *testing.T) {
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
+	d := testDriver(cfn, ecsFake)
 	ctx := context.Background()
 
-	if _, err := d.Create(ctx, "alloc-7", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-7"}); err != nil {
+	if _, err := d.Create(ctx, "alloc-7", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-7", Image: testImage}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if cfn.lastParams["AmiId"] != "ami-test" {
-		t.Fatalf("got AmiId %q with no override, want the connection's own default %q", cfn.lastParams["AmiId"], "ami-test")
+	if cfn.lastParams["Image"] != testImage {
+		t.Fatalf("got Image %q, want %q", cfn.lastParams["Image"], testImage)
 	}
 
-	if _, err := d.Create(ctx, "alloc-8", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-8", Image: "ami-v2"}); err != nil {
+	other := "ghcr.io/karst-net/karst-estavelle:v0.1.0-rc.50"
+	if _, err := d.Create(ctx, "alloc-8", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-8", Image: other}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if cfn.lastParams["AmiId"] != "ami-v2" {
-		t.Fatalf("got AmiId %q with an override set, want %q", cfn.lastParams["AmiId"], "ami-v2")
+	if cfn.lastParams["Image"] != other {
+		t.Fatalf("got Image %q, want %q", cfn.lastParams["Image"], other)
 	}
 }
