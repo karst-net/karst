@@ -45,6 +45,25 @@
 # `create-access-key` prints the secret exactly once; paste both values
 # straight into the console's AWS infrastructure connection and discard
 # your shell history of that command.
+#
+# ghcr.io/karst-net/karst-estavelle may be a private package (check your
+# own org's GHCR settings -- a release workflow publishing to a private
+# repo does not make its package public by default). If it is, a Fargate
+# task has no registry credentials of its own and every pull fails with
+# 401 Unauthorized, even though the image exists and the task's own
+# networking is otherwise fine. Fix: create a Secrets Manager secret
+# holding a classic PAT scoped to read:packages only (ideally from a
+# bot/service account, not a personal one), pass its ARN as this stack's
+# own PullCredentialsSecretArn parameter so the execution role above can
+# read it, and paste the same ARN into the console's launch defaults
+# (InfrastructureConnectionLaunchDefaults.pull_credentials_secret_arn) so
+# cloudformationdriver passes it to every per-allocation instance stack:
+#
+#   aws secretsmanager create-secret --name karst-estavelle-ghcr-pull \
+#     --secret-string '{"username":"<gh-username>","password":"<classic PAT>"}'
+#
+# Leave PullCredentialsSecretArn empty (the default) if the package is
+# public -- ECS will then pull anonymously, as this file originally assumed.
 
 AWSTemplateFormatVersion: "2010-09-09"
 
@@ -64,6 +83,19 @@ Parameters:
       the console's Authorized Locations resources, and must route to the
       internet (an IGW or NAT) so the task can pull its own public image
       and reach the control API.
+  PullCredentialsSecretArn:
+    Type: String
+    Default: ""
+    Description: >
+      Optional. An already-existing Secrets Manager secret ARN (see this
+      file's own header comment) the execution role below is granted
+      secretsmanager:GetSecretValue on -- needed only if
+      ghcr.io/karst-net/karst-estavelle is a private package. Empty (the
+      default) grants nothing extra; the execution role stays scoped to
+      log delivery only.
+
+Conditions:
+  HasPullCredentials: !Not [!Equals [!Ref PullCredentialsSecretArn, ""]]
 
 Resources:
   EstavelleCluster:
@@ -109,9 +141,11 @@ Resources:
         - Key: Name
           Value: !Sub "${AWS::StackName}-estavelle"
 
-  # The Fargate agent's own role (log delivery only -- there is no ECR
-  # image to authenticate for, since ghcr.io/karst-net/karst-estavelle is a
-  # public image a task with a public IP pulls directly).
+  # The Fargate agent's own role -- log delivery always, plus (via the
+  # conditional policy below) permission to read the pull-credentials
+  # secret if ghcr.io/karst-net/karst-estavelle turns out to be a private
+  # package rather than the public one this mechanism was designed around
+  # (see this file's own header comment).
   EstavelleExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -130,6 +164,24 @@ Resources:
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !GetAtt EstavelleLogGroup.Arn
+
+  # A separate resource (not a second statement on the Policies list
+  # above) so the whole thing can be skipped outright via Condition when
+  # ghcr.io/karst-net/karst-estavelle is public and this was never set --
+  # an empty-string Resource on an always-present statement would instead
+  # be a policy CloudFormation accepts but that can never match anything.
+  EstavelleExecutionPullCredentialsPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasPullCredentials
+    Properties:
+      PolicyName: karst-estavelle-execution-pull-credentials
+      Roles: [!Ref EstavelleExecutionRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource: !Ref PullCredentialsSecretArn
 
   AllocatorUser:
     Type: AWS::IAM::User

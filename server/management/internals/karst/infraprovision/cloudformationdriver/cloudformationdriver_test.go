@@ -315,3 +315,28 @@ func TestCreateUsesTheRequestImageDirectly(t *testing.T) {
 		t.Fatalf("got Image %q, want %q", cfn.lastParams["Image"], other)
 	}
 }
+
+func TestCreatePassesThePullCredentialsSecretArnFromLaunchDefaults(t *testing.T) {
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
+	d := testDriver(cfn, ecsFake)
+	ctx := context.Background()
+
+	// Unset in LaunchDefaults (testDriver's own default): the Parameter is
+	// still sent, but empty -- the template's own Condition is what turns
+	// that into "no RepositoryCredentials", not an empty string here.
+	if _, err := d.Create(ctx, "alloc-9", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-9", Image: testImage}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got := cfn.lastParams["PullCredentialsSecretArn"]; got != "" {
+		t.Fatalf("got PullCredentialsSecretArn %q, want empty", got)
+	}
+
+	d.defaults.PullCredentialsSecretARN = "arn:aws:secretsmanager:test:secret:karst-estavelle-ghcr-pull"
+	if _, err := d.Create(ctx, "alloc-10", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-10", Image: testImage}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got, want := cfn.lastParams["PullCredentialsSecretArn"], d.defaults.PullCredentialsSecretARN; got != want {
+		t.Fatalf("got PullCredentialsSecretArn %q, want %q", got, want)
+	}
+}

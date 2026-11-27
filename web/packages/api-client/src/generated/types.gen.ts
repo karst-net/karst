@@ -1047,6 +1047,10 @@ export type InfrastructureConnection = {
     launch_subnet_id?: string;
     launch_security_group_ids?: Array<string>;
     /**
+     * Optional. An AWS Secrets Manager secret ARN (holding {"username","password"}) the ECS task execution role may read to pull a private ghcr.io/karst-net/karst-estavelle image -- empty (the default) means an anonymous/public pull, unchanged from before this field existed.
+     */
+    launch_pull_credentials_secret_arn?: string;
+    /**
      * ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
      */
     launch_nomad_job_id?: string;
@@ -1077,6 +1081,10 @@ export type InfrastructureConnectionLaunchDefaults = {
     log_group?: string;
     subnet_id?: string;
     security_group_ids?: Array<string>;
+    /**
+     * Optional. See InfrastructureConnection.launch_pull_credentials_secret_arn.
+     */
+    pull_credentials_secret_arn?: string;
 };
 
 /**
@@ -1414,6 +1422,10 @@ export type InfrastructureConnectionWritable = {
     launch_log_group?: string;
     launch_subnet_id?: string;
     launch_security_group_ids?: Array<string>;
+    /**
+     * Optional. An AWS Secrets Manager secret ARN (holding {"username","password"}) the ECS task execution role may read to pull a private ghcr.io/karst-net/karst-estavelle image -- empty (the default) means an anonymous/public pull, unchanged from before this field existed.
+     */
+    launch_pull_credentials_secret_arn?: string;
     /**
      * ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
      */

@@ -202,6 +202,15 @@ reaches `ready`, neither of them a separate process or host:
    **launch defaults** (cluster ARN, execution role ARN, CPU, memory, log
    group, subnet, security group id) from that stack's own Outputs.
 
+   If `ghcr.io/karst-net/karst-estavelle` is a private package rather than
+   public, also pass a `PullCredentialsSecretArn` to the launch-defaults
+   stack (see that file's own header for the exact `aws secretsmanager
+   create-secret` command) and paste the same ARN into the connection's
+   launch defaults' **pull credentials secret ARN** field — otherwise
+   every allocated Fargate task fails to pull with a 401 Unauthorized
+   that has nothing to do with networking or launch defaults being
+   correctly configured. Leave both empty if the package is public.
+
    AWS actuation has exactly one mechanism (ADR-0067's CloudFormation
    path, `server/management/internals/karst/infraprovision/
    cloudformationdriver`) — there is no per-connection choice to make and

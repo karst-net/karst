@@ -121,6 +121,12 @@ Parameters:
   ControlApiCaPem:
     Type: String
     Default: ""
+  PullCredentialsSecretArn:
+    Type: String
+    Default: ""
+
+Conditions:
+  HasPullCredentials: !Not [!Equals [!Ref PullCredentialsSecretArn, ""]]
 
 Resources:
   EstavelleTaskDefinition:
@@ -136,6 +142,10 @@ Resources:
         - Name: karst-estavelle
           Image: !Ref Image
           Essential: true
+          RepositoryCredentials: !If
+            - HasPullCredentials
+            - CredentialsParameter: !Ref PullCredentialsSecretArn
+            - !Ref "AWS::NoValue"
           PortMappings:
             - ContainerPort: 443
               Protocol: tcp
@@ -199,6 +209,13 @@ type LaunchDefaults struct {
 	LogGroup         string
 	SubnetID         string
 	SecurityGroupIDs []string
+	// PullCredentialsSecretARN is optional: an AWS Secrets Manager secret
+	// ARN the task execution role may read to pull a private
+	// ghcr.io/karst-net/karst-estavelle image -- empty means an
+	// anonymous/public pull, unchanged from before this field existed. See
+	// estavelle-launch-defaults.yaml's own header comment for how to
+	// create the secret and grant the execution role access to it.
+	PullCredentialsSecretARN string
 }
 
 // cfnAPI/ecsAPI are the handful of calls this driver makes, narrowed so
@@ -371,6 +388,7 @@ func (d *Driver) Create(ctx context.Context, allocationID string, req infraprovi
 			{ParameterKey: aws.String("ControlApiBase"), ParameterValue: aws.String(req.ControlAPIBase)},
 			{ParameterKey: aws.String("EnrollToken"), ParameterValue: aws.String(req.Token)},
 			{ParameterKey: aws.String("ControlApiCaPem"), ParameterValue: aws.String(req.ControlAPICACertPEM)},
+			{ParameterKey: aws.String("PullCredentialsSecretArn"), ParameterValue: aws.String(d.defaults.PullCredentialsSecretARN)},
 		},
 		Tags: []cftypes.Tag{{Key: aws.String(poolTagKey), Value: aws.String(allocationID)}},
 	})

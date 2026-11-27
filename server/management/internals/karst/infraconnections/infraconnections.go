@@ -243,6 +243,7 @@ type Account struct {
 	LaunchLogGroup                 string   `gorm:"column:launch_log_group"`
 	LaunchSubnetID                 string   `gorm:"column:launch_subnet_id"`
 	LaunchSecurityGroupIDs         []string `gorm:"column:launch_security_group_ids;serializer:json"`
+	LaunchPullCredentialsSecretARN string   `gorm:"column:launch_pull_credentials_secret_arn"`
 	LaunchNomadJobID               string   `gorm:"column:launch_nomad_job_id"`
 	LaunchNomadDatacenter          string   `gorm:"column:launch_nomad_datacenter"`
 	LaunchKubernetesNamespace      string   `gorm:"column:launch_kubernetes_namespace"`
@@ -307,6 +308,7 @@ type Response struct {
 	LaunchLogGroup                 string     `json:"launch_log_group,omitempty"`
 	LaunchSubnetID                 string     `json:"launch_subnet_id,omitempty"`
 	LaunchSecurityGroupIDs         []string   `json:"launch_security_group_ids,omitempty"`
+	LaunchPullCredentialsSecretARN string     `json:"launch_pull_credentials_secret_arn,omitempty"`
 	LaunchNomadJobID               string     `json:"launch_nomad_job_id,omitempty"`
 	LaunchNomadDatacenter          string     `json:"launch_nomad_datacenter,omitempty"`
 	LaunchKubernetesNamespace      string     `json:"launch_kubernetes_namespace,omitempty"`
@@ -328,7 +330,8 @@ func (a *Account) ToResponse() Response {
 		LaunchRegion: a.LaunchRegion, LaunchClusterARN: a.LaunchClusterARN, LaunchExecutionRoleARN: a.LaunchExecutionRoleARN,
 		LaunchCPU: a.LaunchCPU, LaunchMemory: a.LaunchMemory, LaunchLogGroup: a.LaunchLogGroup,
 		LaunchSubnetID: a.LaunchSubnetID, LaunchSecurityGroupIDs: a.LaunchSecurityGroupIDs,
-		LaunchNomadJobID: a.LaunchNomadJobID, LaunchNomadDatacenter: a.LaunchNomadDatacenter,
+		LaunchPullCredentialsSecretARN: a.LaunchPullCredentialsSecretARN,
+		LaunchNomadJobID:               a.LaunchNomadJobID, LaunchNomadDatacenter: a.LaunchNomadDatacenter,
 		LaunchKubernetesNamespace: a.LaunchKubernetesNamespace, LaunchKubernetesImage: a.LaunchKubernetesImage,
 		LaunchKubernetesCPU: a.LaunchKubernetesCPU, LaunchKubernetesMemory: a.LaunchKubernetesMemory,
 		LaunchKubernetesServiceAccount: a.LaunchKubernetesServiceAccount,
@@ -531,6 +534,15 @@ type UpdateLaunchDefaultsRequest struct {
 	LogGroup         string   `json:"log_group,omitempty"`
 	SubnetID         string   `json:"subnet_id,omitempty"`
 	SecurityGroupIDs []string `json:"security_group_ids,omitempty"`
+	// PullCredentialsSecretARN is optional: an AWS Secrets Manager secret
+	// ARN (holding {"username","password"}) the task execution role may
+	// read to pull a private ghcr.io/karst-net/karst-estavelle image --
+	// empty means an anonymous/public pull, unchanged from before this
+	// field existed. The secret itself, and the execution role's
+	// permission to read it, are provisioned out-of-band by
+	// estavelle-launch-defaults.yaml -- this field only ever carries the
+	// ARN through to the per-allocation instance stack.
+	PullCredentialsSecretARN string `json:"pull_credentials_secret_arn,omitempty"`
 }
 
 // UpdateLaunchDefaults sets this connection's AWS launch shape. Refused for
@@ -554,18 +566,19 @@ func (s *Store) UpdateLaunchDefaults(ctx context.Context, id string, req UpdateL
 		return nil, fmt.Errorf("%w: launch defaults only apply to a read-write AWS connection", ErrInvalid)
 	}
 	update := Account{
-		LaunchRegion:           req.Region,
-		LaunchClusterARN:       req.ClusterARN,
-		LaunchExecutionRoleARN: req.ExecutionRoleARN,
-		LaunchCPU:              req.CPU,
-		LaunchMemory:           req.Memory,
-		LaunchLogGroup:         req.LogGroup,
-		LaunchSubnetID:         req.SubnetID,
-		LaunchSecurityGroupIDs: req.SecurityGroupIDs,
+		LaunchRegion:                   req.Region,
+		LaunchClusterARN:               req.ClusterARN,
+		LaunchExecutionRoleARN:         req.ExecutionRoleARN,
+		LaunchCPU:                      req.CPU,
+		LaunchMemory:                   req.Memory,
+		LaunchLogGroup:                 req.LogGroup,
+		LaunchSubnetID:                 req.SubnetID,
+		LaunchSecurityGroupIDs:         req.SecurityGroupIDs,
+		LaunchPullCredentialsSecretARN: req.PullCredentialsSecretARN,
 	}
 	err = s.db.WithContext(ctx).Model(&record).
 		Select("LaunchRegion", "LaunchClusterARN", "LaunchExecutionRoleARN", "LaunchCPU", "LaunchMemory",
-			"LaunchLogGroup", "LaunchSubnetID", "LaunchSecurityGroupIDs").
+			"LaunchLogGroup", "LaunchSubnetID", "LaunchSecurityGroupIDs", "LaunchPullCredentialsSecretARN").
 		Updates(update).Error
 	if err != nil {
 		return nil, fmt.Errorf("cloud accounts: update launch defaults: %w", err)
@@ -573,6 +586,7 @@ func (s *Store) UpdateLaunchDefaults(ctx context.Context, id string, req UpdateL
 	record.LaunchRegion, record.LaunchClusterARN, record.LaunchExecutionRoleARN = update.LaunchRegion, update.LaunchClusterARN, update.LaunchExecutionRoleARN
 	record.LaunchCPU, record.LaunchMemory, record.LaunchLogGroup = update.LaunchCPU, update.LaunchMemory, update.LaunchLogGroup
 	record.LaunchSubnetID, record.LaunchSecurityGroupIDs = update.LaunchSubnetID, update.LaunchSecurityGroupIDs
+	record.LaunchPullCredentialsSecretARN = update.LaunchPullCredentialsSecretARN
 	return &record, nil
 }
 

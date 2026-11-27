@@ -68,13 +68,14 @@ func (s *Store) awsActuationDriver(ctx context.Context, record *Account) (infrap
 		return nil, fmt.Errorf("aws: configure client: %w", err)
 	}
 	defaults := cloudformationdriver.LaunchDefaults{
-		ClusterARN:       record.LaunchClusterARN,
-		ExecutionRoleARN: record.LaunchExecutionRoleARN,
-		CPU:              record.LaunchCPU,
-		Memory:           record.LaunchMemory,
-		LogGroup:         record.LaunchLogGroup,
-		SubnetID:         record.LaunchSubnetID,
-		SecurityGroupIDs: record.LaunchSecurityGroupIDs,
+		ClusterARN:               record.LaunchClusterARN,
+		ExecutionRoleARN:         record.LaunchExecutionRoleARN,
+		CPU:                      record.LaunchCPU,
+		Memory:                   record.LaunchMemory,
+		LogGroup:                 record.LaunchLogGroup,
+		SubnetID:                 record.LaunchSubnetID,
+		SecurityGroupIDs:         record.LaunchSecurityGroupIDs,
+		PullCredentialsSecretARN: record.LaunchPullCredentialsSecretARN,
 	}
 	return cloudformationdriver.New(cloudformation.NewFromConfig(cfg), ecs.NewFromConfig(cfg), defaults), nil
 }

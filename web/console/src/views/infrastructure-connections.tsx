@@ -21,7 +21,7 @@ type ConnectionMode = InfrastructureConnection["mode"];
  *  already supplies a real ghcr.io/karst-net/karst-estavelle:<tag>. */
 type LaunchDefaultsDraft = {
   region: string; clusterArn: string; executionRoleArn: string; cpu: string; memory: string;
-  logGroup: string; subnetId: string; securityGroupIds: string;
+  logGroup: string; subnetId: string; securityGroupIds: string; pullCredentialsSecretArn: string;
 };
 function blankLaunchDefaultsDraft(connection: InfrastructureConnection): LaunchDefaultsDraft {
   return {
@@ -30,6 +30,7 @@ function blankLaunchDefaultsDraft(connection: InfrastructureConnection): LaunchD
     memory: connection.launch_memory ?? "", logGroup: connection.launch_log_group ?? "",
     subnetId: connection.launch_subnet_id ?? "",
     securityGroupIds: (connection.launch_security_group_ids ?? []).join(", "),
+    pullCredentialsSecretArn: connection.launch_pull_credentials_secret_arn ?? "",
   };
 }
 
@@ -158,6 +159,7 @@ export function InfrastructureConnections() {
       memory: launchDefaultsDraft.memory.trim(), log_group: launchDefaultsDraft.logGroup.trim(),
       subnet_id: launchDefaultsDraft.subnetId.trim(),
       security_group_ids: launchDefaultsDraft.securityGroupIds.split(/[\n,]/).map((id) => id.trim()).filter(Boolean),
+      pull_credentials_secret_arn: launchDefaultsDraft.pullCredentialsSecretArn.trim(),
     };
     if (await run(() => api.updateInfrastructureConnectionLaunchDefaults(launchDefaultsFor.id, defaults), `Launch defaults for ${launchDefaultsFor.label || launchDefaultsFor.type} were saved.`)) {
       setLaunchDefaultsFor(undefined);
@@ -293,6 +295,7 @@ export function InfrastructureConnections() {
         <label>Log group<input aria-label="Launch log group" placeholder="/karst/estavelle/karst-estavelle-launch-defaults" required value={launchDefaultsDraft.logGroup} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, logGroup: event.target.value })} /></label>
         <label>Subnet ID<input aria-label="Launch subnet ID" placeholder="subnet-0123456789abcdef0" required value={launchDefaultsDraft.subnetId} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, subnetId: event.target.value })} /></label>
         <label>Security group IDs<textarea aria-label="Launch security group IDs" rows={3} placeholder={"sg-0123456789abcdef0\nsg-0123456789abcdef1"} required value={launchDefaultsDraft.securityGroupIds} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, securityGroupIds: event.target.value })} /></label>
+        <label>Pull credentials secret ARN (optional)<input aria-label="Launch pull credentials secret ARN" placeholder="arn:aws:secretsmanager:us-east-1:111111111111:secret:karst-estavelle-ghcr-pull" value={launchDefaultsDraft.pullCredentialsSecretArn} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, pullCredentialsSecretArn: event.target.value })} /></label>
         <p className="lede">One per line or comma-separated.</p>
         <div className="actions"><button type="button" onClick={() => setLaunchDefaultsFor(undefined)}>Cancel</button><button className="primary" type="submit">Save launch defaults</button></div>
       </form>}
