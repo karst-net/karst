@@ -2646,6 +2646,9 @@ type InfrastructureConnection struct {
 	// LaunchNomadJobId ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
 	LaunchNomadJobId *string `json:"launch_nomad_job_id,omitempty"`
 
+	// LaunchPullCredentialsSecretArn Optional. An AWS Secrets Manager secret ARN (holding {"username","password"}) the ECS task execution role may read to pull a private ghcr.io/karst-net/karst-estavelle image -- empty (the default) means an anonymous/public pull, unchanged from before this field existed.
+	LaunchPullCredentialsSecretArn *string `json:"launch_pull_credentials_secret_arn,omitempty"`
+
 	// LaunchRegion ADR-0045 2026-11-04 addendum. The AWS launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write AWS connection, set via PUT .../launch-defaults, never by the allocation request itself. Actuates as an ECS Fargate Spot service (ADR-0067's CloudFormation actuation path), not an EC2 instance.
 	LaunchRegion           *string                      `json:"launch_region,omitempty"`
 	LaunchSecurityGroupIds *[]string                    `json:"launch_security_group_ids,omitempty"`
@@ -2701,14 +2704,17 @@ type InfrastructureConnectionKubernetesLaunchDefaults struct {
 
 // InfrastructureConnectionLaunchDefaults ADR-0045's 2026-11-04 addendum; ADR-0067's CloudFormation actuation path. Every field replaces the stored value, including to empty -- there is no partial-update shape. Only meaningful for a read-write AWS connection; refused otherwise. Actuates as an ECS Fargate Spot service: cluster_arn/execution_role_arn/cpu/memory/log_group size and place the task, and there is no AMI id here -- an allocation's own desired/running image already supplies a real ghcr.io/karst-net/karst-estavelle:<tag> reference.
 type InfrastructureConnectionLaunchDefaults struct {
-	ClusterArn       *string   `json:"cluster_arn,omitempty"`
-	Cpu              *string   `json:"cpu,omitempty"`
-	ExecutionRoleArn *string   `json:"execution_role_arn,omitempty"`
-	LogGroup         *string   `json:"log_group,omitempty"`
-	Memory           *string   `json:"memory,omitempty"`
-	Region           *string   `json:"region,omitempty"`
-	SecurityGroupIds *[]string `json:"security_group_ids,omitempty"`
-	SubnetId         *string   `json:"subnet_id,omitempty"`
+	ClusterArn       *string `json:"cluster_arn,omitempty"`
+	Cpu              *string `json:"cpu,omitempty"`
+	ExecutionRoleArn *string `json:"execution_role_arn,omitempty"`
+	LogGroup         *string `json:"log_group,omitempty"`
+	Memory           *string `json:"memory,omitempty"`
+
+	// PullCredentialsSecretArn Optional. See InfrastructureConnection.launch_pull_credentials_secret_arn.
+	PullCredentialsSecretArn *string   `json:"pull_credentials_secret_arn,omitempty"`
+	Region                   *string   `json:"region,omitempty"`
+	SecurityGroupIds         *[]string `json:"security_group_ids,omitempty"`
+	SubnetId                 *string   `json:"subnet_id,omitempty"`
 }
 
 // InfrastructureConnectionNomadLaunchDefaults ADR-0067. The Nomad analog of InfrastructureConnectionLaunchDefaults -- every field replaces the stored value, including to empty. Only meaningful for a read-write Nomad connection; refused otherwise. job_id names a parameterized job the operator has already registered against this connection's Nomad cluster; this endpoint does not register or validate the job itself.

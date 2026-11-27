@@ -86,6 +86,20 @@ Parameters:
       deployment behind a publicly-issued certificate) means the
       container's OS trust store alone must validate it. Not a secret: a
       CA certificate, unlike EnrollToken, is public by design -- no NoEcho.
+  PullCredentialsSecretArn:
+    Type: String
+    Default: ""
+    Description: >
+      Optional AWS Secrets Manager secret ARN (holding
+      {"username","password"}) the task execution role may read to pull a
+      private ghcr.io/karst-net/karst-estavelle image -- empty (the
+      default) means an anonymous/public pull. The secret itself, and the
+      execution role's permission to read it, are provisioned out-of-band
+      by estavelle-launch-defaults.yaml -- this parameter only carries the
+      ARN through to this one stack's own RepositoryCredentials.
+
+Conditions:
+  HasPullCredentials: !Not [!Equals [!Ref PullCredentialsSecretArn, ""]]
 
 Resources:
   EstavelleTaskDefinition:
@@ -106,6 +120,14 @@ Resources:
         - Name: karst-estavelle
           Image: !Ref Image
           Essential: true
+          # Fn::If with the false branch as AWS::NoValue omits this
+          # property entirely for the (default, public-image) case, rather
+          # than passing an empty CredentialsParameter ECS would try and
+          # fail to resolve as a real secret ARN.
+          RepositoryCredentials: !If
+            - HasPullCredentials
+            - CredentialsParameter: !Ref PullCredentialsSecretArn
+            - !Ref "AWS::NoValue"
           PortMappings:
             - ContainerPort: 443
               Protocol: tcp
