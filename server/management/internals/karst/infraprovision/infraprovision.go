@@ -61,6 +61,13 @@ type CreateRequest struct {
 	// still can't choose the launch shape in general (ADR-0045 §6's
 	// addendum), only the one dimension a replacement needs to vary.
 	Image string
+	// ControlAPICACertPEM is an optional, additional trust anchor (PEM
+	// text) for the newly created instance's own enroll call to
+	// ControlAPIBase -- empty (every deployment behind a publicly-issued
+	// certificate) means the instance's own OS trust store alone must
+	// validate it, unchanged from before this field existed. Not a
+	// secret: a CA certificate, unlike Token, is public by design.
+	ControlAPICACertPEM string
 }
 
 // DriverError is a Driver operation's own failure -- deliberately one

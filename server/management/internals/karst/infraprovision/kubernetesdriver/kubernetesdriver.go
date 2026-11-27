@@ -140,6 +140,19 @@ func (d *Driver) buildPod(name, allocationID, tlsServerName string, req infrapro
 	// an AWS AMI's cloud-init script or a Nomad job template already
 	// carries for the other two drivers, just done in-binary here since a
 	// container image has no boot script of its own to run one in.
+	env := []corev1.EnvVar{
+		{Name: "KARST_CONTROL_API_BASE", Value: req.ControlAPIBase},
+		{Name: "KARST_ENROLL_TOKEN", Value: req.Token},
+		{Name: "KARST_TLS_SERVER_NAME", Value: tlsServerName},
+	}
+	// Omitted rather than sent empty: karst-estavelle's own command_run
+	// only treats the three vars above as "set together or not at all" --
+	// a fourth, always-present-but-empty KARST_CONTROL_API_CA_PEM would be
+	// harmless there too (it checks for an empty string), but there is no
+	// reason to send it when there is nothing to override.
+	if req.ControlAPICACertPEM != "" {
+		env = append(env, corev1.EnvVar{Name: "KARST_CONTROL_API_CA_PEM", Value: req.ControlAPICACertPEM})
+	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
@@ -150,13 +163,9 @@ func (d *Driver) buildPod(name, allocationID, tlsServerName string, req infrapro
 			RestartPolicy:      corev1.RestartPolicyNever,
 			ServiceAccountName: d.defaults.ServiceAccount,
 			Containers: []corev1.Container{{
-				Name:  "karst-relay",
-				Image: d.defaults.Image,
-				Env: []corev1.EnvVar{
-					{Name: "KARST_CONTROL_API_BASE", Value: req.ControlAPIBase},
-					{Name: "KARST_ENROLL_TOKEN", Value: req.Token},
-					{Name: "KARST_TLS_SERVER_NAME", Value: tlsServerName},
-				},
+				Name:      "karst-relay",
+				Image:     d.defaults.Image,
+				Env:       env,
 				Resources: resources,
 			}},
 		},

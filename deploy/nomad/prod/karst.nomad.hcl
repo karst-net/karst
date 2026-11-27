@@ -119,6 +119,12 @@ variable "estavelle_allocate_control_api_base" {
   description = "ADR-0045's 2026-11-04 addendum (ADR-0063): this deployment's own externally-reachable control API base, embedded in an estavelle allocation's launched instance's own enroll bundle. Sets KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE on the control task -- the in-process allocate worker always runs, but every allocation fails closed with a clear reason while this is empty. See docs/OPERATIONS.md's Scaler section."
 }
 
+variable "estavelle_allocate_control_api_ca_pem" {
+  type        = string
+  default     = ""
+  description = "Optional, additional trust anchor (PEM text) for every allocated instance's own enroll call to estavelle_allocate_control_api_base -- needed only when that base is not already covered by a publicly-issued certificate (e.g. a self-signed/internal-CA deployment). Sets KARST_ESTAVELLE_ALLOCATE_CONTROL_API_CA_PEM; empty (the default) is unchanged behavior. Not a secret: a CA certificate, unlike an enroll token, is public by design."
+}
+
 variable "estavelle_allocate_max_concurrent" {
   type        = number
   default     = 0
@@ -180,8 +186,9 @@ job "karst" {
         # just configure it. Empty/0 (the defaults) mean every allocation
         # fails closed with a clear reason -- no separate task, binary, or
         # opt-in flag the way the now-removed scaler-allocate group needed.
-        KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE = var.estavelle_allocate_control_api_base
-        KARST_ESTAVELLE_ALLOCATE_MAX_CONCURRENT   = var.estavelle_allocate_max_concurrent
+        KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE     = var.estavelle_allocate_control_api_base
+        KARST_ESTAVELLE_ALLOCATE_CONTROL_API_CA_PEM   = var.estavelle_allocate_control_api_ca_pem
+        KARST_ESTAVELLE_ALLOCATE_MAX_CONCURRENT       = var.estavelle_allocate_max_concurrent
       }
 
       resources {

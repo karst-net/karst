@@ -131,6 +131,15 @@ const karstScalerAdvisorURLEnv = "KARST_SCALER_ADVISOR_URL"
 // instead of launching an instance that can never enroll.
 const karstEstavelleAllocateControlAPIBaseEnv = "KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE"
 
+// karstEstavelleAllocateControlAPICACertPEMEnv is an optional, additional
+// trust anchor (PEM text) for every allocated instance's own enroll call to
+// karstEstavelleAllocateControlAPIBaseEnv -- needed only when that base is
+// not already covered by a publicly-issued certificate (e.g. a deployment
+// behind a self-signed/internal CA). Unset means unchanged behavior: the
+// instance's own OS trust store alone must validate it. Not a secret: a CA
+// certificate, unlike an enroll token, is public by design.
+const karstEstavelleAllocateControlAPICACertPEMEnv = "KARST_ESTAVELLE_ALLOCATE_CONTROL_API_CA_PEM"
+
 // karstEstavelleAllocateMaxConcurrentEnv is the per-account ceiling on
 // non-terminal (not yet fully deprovisioned) relay allocations --
 // ADR-0045 §6 bullet 4's "hard ceilings... are mandatory configuration,
@@ -244,6 +253,7 @@ func main() {
 	}
 	scalerAdvisorURL := strings.TrimSuffix(os.Getenv(karstScalerAdvisorURLEnv), "/")
 	estavelleAllocateControlAPIBase := strings.TrimSuffix(os.Getenv(karstEstavelleAllocateControlAPIBaseEnv), "/")
+	estavelleAllocateControlAPICACertPEM := os.Getenv(karstEstavelleAllocateControlAPICACertPEMEnv)
 
 	estavelleAllocateMaxConcurrent, warnRefuseAll, err := parseEstavelleAllocateMaxConcurrent(os.Getenv(karstEstavelleAllocateMaxConcurrentEnv))
 	if err != nil {
@@ -297,7 +307,7 @@ func main() {
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, estavelles, tenancyGrants, allowedRegions, ephemeralAnchors, scalerAdvisorURL, demandHistoryInterval, demandHistoryRetention, estavelleAllocateControlAPIBase, estavelleAllocateMaxConcurrent)
+		k, err := bootstrap.Install(s, pol, estavelles, tenancyGrants, allowedRegions, ephemeralAnchors, scalerAdvisorURL, demandHistoryInterval, demandHistoryRetention, estavelleAllocateControlAPIBase, estavelleAllocateControlAPICACertPEM, estavelleAllocateMaxConcurrent)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no

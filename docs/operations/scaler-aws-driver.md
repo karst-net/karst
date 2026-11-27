@@ -156,7 +156,11 @@ What used to be `ALLOCATE_CONFIG.toml`'s fields now live in two places:
   `KARST_ESTAVELLE_ALLOCATE_CONTROL_API_BASE` (an env var on the control
   server) and a fixed 15-second interval (no longer operator-configurable —
   see `relayAllocatePollInterval` in `internals/karst/bootstrap`, itself
-  still a pre-rename name).
+  still a pre-rename name). An optional sibling,
+  `KARST_ESTAVELLE_ALLOCATE_CONTROL_API_CA_PEM`, adds a trust anchor (PEM
+  text) for every allocated instance's own enroll call to that base, for a
+  deployment not already behind a publicly-issued certificate — not a
+  secret, and empty (the default) is unchanged behavior.
 - The `[driver]` table's `region`/`ami_id`/`instance_type`/`subnet_id`/
   `security_group_ids` are now **launch defaults** set once, in the
   console's Settings page, on the AWS infrastructure connection itself

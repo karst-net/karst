@@ -171,6 +171,24 @@ reaches `ready`, neither of them a separate process or host:
    Until both are set, every estavelle allocation request fails closed with a
    clear reason instead of silently doing nothing.
 
+   If `estavelle_allocate_control_api_base` is not already behind a
+   publicly-issued certificate (e.g. a demo deployment behind a self-signed
+   or internal-CA cert), also set `estavelle_allocate_control_api_ca_pem` to
+   that CA's own PEM text -- every allocated instance's enroll call
+   otherwise fails TLS validation, since its own OS trust store has no
+   reason to know about a private CA:
+
+   ```hcl
+   estavelle_allocate_control_api_ca_pem = <<-EOT
+     -----BEGIN CERTIFICATE-----
+     ...
+     -----END CERTIFICATE-----
+   EOT
+   ```
+
+   Not a secret (a CA certificate, unlike an enroll token, is public by
+   design) -- empty (the default) is unchanged behavior.
+
 2. Run the one-time AWS prerequisites stack,
    [deploy/aws/scaler/estavelle-launch-defaults.yaml](../../aws/scaler/estavelle-launch-defaults.yaml)
    (see that file's own header for the exact `aws cloudformation deploy`

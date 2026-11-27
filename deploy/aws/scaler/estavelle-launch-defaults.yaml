@@ -89,7 +89,7 @@ Resources:
   EstavelleSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: >
+      GroupDescription: >-
         Karst estavelle transport -- Ponor spec Section 4.1 TCP/TLS listener
         (port 443 by default) and ADR-0020 additive QUIC listener on the
         same port number over UDP.

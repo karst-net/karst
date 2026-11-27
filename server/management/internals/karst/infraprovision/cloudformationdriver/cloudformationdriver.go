@@ -118,6 +118,9 @@ Parameters:
   EnrollToken:
     Type: String
     NoEcho: true
+  ControlApiCaPem:
+    Type: String
+    Default: ""
 
 Resources:
   EstavelleTaskDefinition:
@@ -145,6 +148,8 @@ Resources:
               Value: !Ref EnrollToken
             - Name: KARST_TLS_SERVER_NAME
               Value: !Ref TlsServerName
+            - Name: KARST_CONTROL_API_CA_PEM
+              Value: !Ref ControlApiCaPem
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -365,6 +370,7 @@ func (d *Driver) Create(ctx context.Context, allocationID string, req infraprovi
 			{ParameterKey: aws.String("TlsServerName"), ParameterValue: aws.String(name)},
 			{ParameterKey: aws.String("ControlApiBase"), ParameterValue: aws.String(req.ControlAPIBase)},
 			{ParameterKey: aws.String("EnrollToken"), ParameterValue: aws.String(req.Token)},
+			{ParameterKey: aws.String("ControlApiCaPem"), ParameterValue: aws.String(req.ControlAPICACertPEM)},
 		},
 		Tags: []cftypes.Tag{{Key: aws.String(poolTagKey), Value: aws.String(allocationID)}},
 	})
