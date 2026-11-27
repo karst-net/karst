@@ -44,8 +44,181 @@ pub async fn detect(cfg: &TelemetryConfig) -> Option<DetectedLocation> {
 /// into *reporting* its own location, a privacy-relevant choice: knowing
 /// which address to enroll under is an operational necessity `enroll`
 /// has no sensible way to opt out of when its bundle omits one.
+///
+/// Tries ECS's own task metadata endpoint first: an ECS Fargate task has
+/// no EC2 instance metadata service at all (there is no EC2 instance to
+/// ask -- Fargate does not expose the underlying host), so
+/// `aws_imds::self_address` would otherwise always time out there. Checking
+/// `ecs_task_metadata`'s own env var first, rather than trying both and
+/// taking whichever answers, also means an EC2-hosted relay is not left
+/// waiting out the ECS attempt's own timeout window for nothing.
 pub async fn self_address() -> Option<String> {
+    if let Some(addr) = ecs_task_metadata::self_address().await {
+        return Some(addr);
+    }
     aws_imds::self_address().await
+}
+
+mod ecs_task_metadata {
+    use std::time::Duration;
+
+    use serde::Deserialize;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpStream;
+
+    /// Set by the ECS agent itself on every Fargate (and EC2-backed ECS)
+    /// task -- `http://169.254.170.2/v4/<id>` by convention, but never
+    /// hardcoded here: that address is an implementation detail the
+    /// container never needs to know, only the env var naming it.
+    const ENV_METADATA_URI: &str = "ECS_CONTAINER_METADATA_URI_V4";
+
+    /// Same bound as `aws_imds::PROBE_BUDGET` and the same reasoning: a
+    /// relay not running on ECS has no env var to find at all (an
+    /// instant, local check, not a network wait), but this still bounds
+    /// a stalled connection to a URI that happened to be set but does not
+    /// answer.
+    const PROBE_BUDGET: Duration = Duration::from_secs(1);
+
+    /// Only the fields this needs out of the container metadata response
+    /// (`GET $ECS_CONTAINER_METADATA_URI_V4`) -- no `deny_unknown_fields`,
+    /// since AWS's own schema is much larger and not this crate's to
+    /// pin. The private IPv4 only: Fargate's own task metadata has no
+    /// public IP field at all (it is not present in the response even
+    /// when the task has one), so a relay behind a NAT/IGW still enrolls
+    /// under the address its mesh peers and nodes inside the same VPC can
+    /// actually reach -- the same "whatever address this instance itself
+    /// believes it has" posture `aws_imds::self_address`'s own
+    /// local-ipv4 fallback already takes.
+    #[derive(Debug, Deserialize)]
+    struct ContainerMetadata {
+        #[serde(rename = "Networks", default)]
+        networks: Vec<NetworkMetadata>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct NetworkMetadata {
+        #[serde(rename = "IPv4Addresses", default)]
+        ipv4_addresses: Vec<String>,
+    }
+
+    pub(super) async fn self_address() -> Option<String> {
+        let uri = std::env::var(ENV_METADATA_URI).ok()?;
+        self_address_at(&uri).await
+    }
+
+    async fn self_address_at(uri: &str) -> Option<String> {
+        tokio::time::timeout(PROBE_BUDGET, fetch(uri))
+            .await
+            .ok()
+            .flatten()
+    }
+
+    async fn fetch(uri: &str) -> Option<String> {
+        let body = http_get(uri).await?;
+        let meta: ContainerMetadata = serde_json::from_str(&body).ok()?;
+        meta.networks
+            .into_iter()
+            .find_map(|n| n.ipv4_addresses.into_iter().next())
+    }
+
+    /// `uri` is always `http://<link-local-ip>[:port]/<path>` by the ECS
+    /// agent's own convention -- no query string, no TLS, nothing this
+    /// relay reaches outside its own task's network namespace, the same
+    /// trust boundary `aws_imds`'s own plain-HTTP exchange relies on.
+    async fn http_get(uri: &str) -> Option<String> {
+        let rest = uri.strip_prefix("http://")?;
+        let (host_port, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let (host, port) = host_port
+            .split_once(':')
+            .map_or((host_port, Some(80)), |(h, p)| (h, p.parse().ok()));
+        let port = port?;
+
+        let request =
+            format!("GET /{path} HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n");
+        let mut stream = TcpStream::connect((host, port)).await.ok()?;
+        stream.write_all(request.as_bytes()).await.ok()?;
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).await.ok()?;
+        let response = String::from_utf8_lossy(&buf);
+        let mut parts = response.split("\r\n\r\n");
+        let status_line = parts.next()?.lines().next()?;
+        if !(status_line.starts_with("HTTP/1.1 2") || status_line.starts_with("HTTP/1.0 2")) {
+            return None;
+        }
+        Some(parts.next().unwrap_or_default().to_owned())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+        use tokio::net::TcpListener;
+
+        use super::*;
+
+        /// Accepts one connection and answers with `body` as a JSON
+        /// response, the same shape a real ECS agent's container
+        /// metadata endpoint produces.
+        async fn serve_once(listener: TcpListener, body: &'static str) {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 512];
+            let _ = stream.read(&mut buf).await.expect("read request");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+        }
+
+        #[tokio::test]
+        async fn the_first_network_s_first_ipv4_address_is_returned() {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let addr = listener.local_addr().expect("local addr");
+            tokio::spawn(serve_once(
+                listener,
+                r#"{"Networks":[{"IPv4Addresses":["10.0.1.23"]}]}"#,
+            ));
+
+            let got = self_address_at(&format!("http://{addr}/v4/task-id")).await;
+
+            assert_eq!(got, Some("10.0.1.23".to_owned()));
+        }
+
+        #[tokio::test]
+        async fn no_networks_is_none_not_a_panic() {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let addr = listener.local_addr().expect("local addr");
+            tokio::spawn(serve_once(listener, r#"{"Networks":[]}"#));
+
+            let got = self_address_at(&format!("http://{addr}/v4/task-id")).await;
+
+            assert_eq!(got, None);
+        }
+
+        #[tokio::test]
+        async fn a_refused_connection_is_none_promptly() {
+            // Nothing is listening on this port -- mirrors aws_imds's own
+            // test of the same name. self_address (not self_address_at)
+            // reading ENV_METADATA_URI is not exercised here:
+            // std::env::set_var/remove_var are both unsafe as of Rust
+            // 1.82 (this crate forbids unsafe code outright), so a real
+            // env var cannot be set or cleared from a test -- see
+            // bins/karst-estavelle/src/main.rs's own
+            // env_enroll_bundle_from doc comment for the same reasoning.
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let addr = listener.local_addr().expect("local addr");
+            drop(listener);
+
+            let started = std::time::Instant::now();
+            let got = self_address_at(&format!("http://{addr}/v4/task-id")).await;
+
+            assert_eq!(got, None);
+            assert!(started.elapsed() < PROBE_BUDGET);
+        }
+    }
 }
 
 mod aws_imds {
