@@ -30,23 +30,12 @@ dir="${1:-server}"
 
 # Vulnerability IDs we accept, each with the reason it cannot be fixed here.
 #
-# GO-2026-4887  Moby AuthZ plugin bypass on oversized request bodies
-# GO-2026-4883  Moby off-by-one in plugin privilege validation
-#
-#   Both reach us through testcontainers-go -> github.com/docker/docker, and
-#   only from management/server/testutil, which spins up a Postgres container
-#   for upstream's store tests. They are not on any path the coordination
-#   server takes at run time.
-#
-#   Neither has a fixed version in github.com/docker/docker: the advisories
-#   record a fix only in github.com/moby/moby/v2 >= 2.0.0-beta.8, a module
-#   rename. Migrating to it is testcontainers-go's change to make, not
-#   something a version bump here can reach.
-#
-#   Both are also flaws in the Docker *daemon's* handling of authz plugins,
-#   which requires running a daemon so configured — not a consequence of
-#   linking the client library into a test helper.
-ALLOWED="GO-2026-4887 GO-2026-4883"
+# (none right now — GO-2026-4887/GO-2026-4883, Moby AuthZ-plugin flaws
+# reached only through testcontainers-go's management/server/testutil use,
+# stopped being reported as called and were removed 2026-11-27 per this
+# script's own "a stale exception is itself a failure" rule above; if
+# govulncheck flags them again, re-add with the reasoning this replaced.)
+ALLOWED=""
 
 report="$(mktemp)"
 trap 'rm -f "$report"' EXIT
