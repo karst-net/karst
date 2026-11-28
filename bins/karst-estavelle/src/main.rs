@@ -317,8 +317,12 @@ async fn enroll_bundle(cfg: &Config, bundle: &EnrollBundle) -> Result<String, St
     let identity = Identity::load_or_create(&cfg.identity_key).map_err(|e| e.to_string())?;
     let address = if let Some(address) = &bundle.address {
         address.clone()
-    } else if let Some(address) = cloud_location::self_address().await {
-        address
+    } else if let Some(ip) = cloud_location::self_address().await {
+        // Cloud metadata (either source `cloud_location::self_address`
+        // tries) only ever answers with a bare IP, never a port -- the
+        // port a mesh peer or node must actually dial is this relay's own
+        // listener, not something the cloud platform could know.
+        format!("{ip}:{}", cfg.listen.port())
     } else {
         return Err(
             "no address, and this instance's own cloud metadata did not yield one".to_owned(),
