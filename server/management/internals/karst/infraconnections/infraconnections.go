@@ -244,6 +244,8 @@ type Account struct {
 	LaunchSubnetID                 string   `gorm:"column:launch_subnet_id"`
 	LaunchSecurityGroupIDs         []string `gorm:"column:launch_security_group_ids;serializer:json"`
 	LaunchPullCredentialsSecretARN string   `gorm:"column:launch_pull_credentials_secret_arn"`
+	LaunchComputeType              string   `gorm:"column:launch_compute_type"`
+	LaunchEc2CapacityProvider      string   `gorm:"column:launch_ec2_capacity_provider"`
 	LaunchNomadJobID               string   `gorm:"column:launch_nomad_job_id"`
 	LaunchNomadDatacenter          string   `gorm:"column:launch_nomad_datacenter"`
 	LaunchKubernetesNamespace      string   `gorm:"column:launch_kubernetes_namespace"`
@@ -309,6 +311,8 @@ type Response struct {
 	LaunchSubnetID                 string     `json:"launch_subnet_id,omitempty"`
 	LaunchSecurityGroupIDs         []string   `json:"launch_security_group_ids,omitempty"`
 	LaunchPullCredentialsSecretARN string     `json:"launch_pull_credentials_secret_arn,omitempty"`
+	LaunchComputeType              string     `json:"launch_compute_type,omitempty"`
+	LaunchEc2CapacityProvider      string     `json:"launch_ec2_capacity_provider,omitempty"`
 	LaunchNomadJobID               string     `json:"launch_nomad_job_id,omitempty"`
 	LaunchNomadDatacenter          string     `json:"launch_nomad_datacenter,omitempty"`
 	LaunchKubernetesNamespace      string     `json:"launch_kubernetes_namespace,omitempty"`
@@ -331,7 +335,8 @@ func (a *Account) ToResponse() Response {
 		LaunchCPU: a.LaunchCPU, LaunchMemory: a.LaunchMemory, LaunchLogGroup: a.LaunchLogGroup,
 		LaunchSubnetID: a.LaunchSubnetID, LaunchSecurityGroupIDs: a.LaunchSecurityGroupIDs,
 		LaunchPullCredentialsSecretARN: a.LaunchPullCredentialsSecretARN,
-		LaunchNomadJobID:               a.LaunchNomadJobID, LaunchNomadDatacenter: a.LaunchNomadDatacenter,
+		LaunchComputeType:              a.LaunchComputeType, LaunchEc2CapacityProvider: a.LaunchEc2CapacityProvider,
+		LaunchNomadJobID: a.LaunchNomadJobID, LaunchNomadDatacenter: a.LaunchNomadDatacenter,
 		LaunchKubernetesNamespace: a.LaunchKubernetesNamespace, LaunchKubernetesImage: a.LaunchKubernetesImage,
 		LaunchKubernetesCPU: a.LaunchKubernetesCPU, LaunchKubernetesMemory: a.LaunchKubernetesMemory,
 		LaunchKubernetesServiceAccount: a.LaunchKubernetesServiceAccount,
@@ -543,6 +548,15 @@ type UpdateLaunchDefaultsRequest struct {
 	// estavelle-launch-defaults.yaml -- this field only ever carries the
 	// ARN through to the per-allocation instance stack.
 	PullCredentialsSecretARN string `json:"pull_credentials_secret_arn,omitempty"`
+	// ComputeType is "fargate" (the default) or "ec2". AWS Fargate is not
+	// supported in Local Zones at all; "ec2" actuates against an EC2
+	// capacity provider (estavelle-launch-defaults.yaml's own
+	// Ec2CapacityProviderName output, named here by EC2CapacityProvider)
+	// instead, for exactly that case.
+	ComputeType string `json:"compute_type,omitempty"`
+	// EC2CapacityProvider is required when ComputeType is "ec2",
+	// meaningless (and left empty) for the default, fargate, path.
+	EC2CapacityProvider string `json:"ec2_capacity_provider,omitempty"`
 }
 
 // UpdateLaunchDefaults sets this connection's AWS launch shape. Refused for
@@ -575,10 +589,13 @@ func (s *Store) UpdateLaunchDefaults(ctx context.Context, id string, req UpdateL
 		LaunchSubnetID:                 req.SubnetID,
 		LaunchSecurityGroupIDs:         req.SecurityGroupIDs,
 		LaunchPullCredentialsSecretARN: req.PullCredentialsSecretARN,
+		LaunchComputeType:              req.ComputeType,
+		LaunchEc2CapacityProvider:      req.EC2CapacityProvider,
 	}
 	err = s.db.WithContext(ctx).Model(&record).
 		Select("LaunchRegion", "LaunchClusterARN", "LaunchExecutionRoleARN", "LaunchCPU", "LaunchMemory",
-			"LaunchLogGroup", "LaunchSubnetID", "LaunchSecurityGroupIDs", "LaunchPullCredentialsSecretARN").
+			"LaunchLogGroup", "LaunchSubnetID", "LaunchSecurityGroupIDs", "LaunchPullCredentialsSecretARN",
+			"LaunchComputeType", "LaunchEc2CapacityProvider").
 		Updates(update).Error
 	if err != nil {
 		return nil, fmt.Errorf("cloud accounts: update launch defaults: %w", err)
@@ -587,6 +604,7 @@ func (s *Store) UpdateLaunchDefaults(ctx context.Context, id string, req UpdateL
 	record.LaunchCPU, record.LaunchMemory, record.LaunchLogGroup = update.LaunchCPU, update.LaunchMemory, update.LaunchLogGroup
 	record.LaunchSubnetID, record.LaunchSecurityGroupIDs = update.LaunchSubnetID, update.LaunchSecurityGroupIDs
 	record.LaunchPullCredentialsSecretARN = update.LaunchPullCredentialsSecretARN
+	record.LaunchComputeType, record.LaunchEc2CapacityProvider = update.LaunchComputeType, update.LaunchEc2CapacityProvider
 	return &record, nil
 }
 

@@ -63,6 +63,14 @@ func (s *Store) awsActuationDriver(ctx context.Context, record *Account) (infrap
 		record.LaunchSubnetID == "" || len(record.LaunchSecurityGroupIDs) == 0 {
 		return nil, fmt.Errorf("%w: configure launch defaults for this connection before allocating a relay against it", ErrInvalid)
 	}
+	// AWS Fargate is not supported in Local Zones at all, so ec2 names a
+	// real capacity provider to use instead -- a connection with
+	// ComputeType=ec2 and no provider name would otherwise fail much
+	// later, as an opaque CloudFormation parameter error, rather than
+	// here with a clear reason.
+	if record.LaunchComputeType == "ec2" && record.LaunchEc2CapacityProvider == "" {
+		return nil, fmt.Errorf("%w: compute_type is ec2 but ec2_capacity_provider is not set", ErrInvalid)
+	}
 	cfg, err := awsConfig(ctx, record.Secret, record.LaunchRegion)
 	if err != nil {
 		return nil, fmt.Errorf("aws: configure client: %w", err)
@@ -76,6 +84,8 @@ func (s *Store) awsActuationDriver(ctx context.Context, record *Account) (infrap
 		SubnetID:                 record.LaunchSubnetID,
 		SecurityGroupIDs:         record.LaunchSecurityGroupIDs,
 		PullCredentialsSecretARN: record.LaunchPullCredentialsSecretARN,
+		ComputeType:              record.LaunchComputeType,
+		Ec2CapacityProviderName:  record.LaunchEc2CapacityProvider,
 	}
 	return cloudformationdriver.New(cloudformation.NewFromConfig(cfg), ecs.NewFromConfig(cfg), defaults), nil
 }

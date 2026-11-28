@@ -367,12 +367,12 @@ func TestUpdateLaunchDefaultsRoundTripsAndRejectsTheWrongTypeOrMode(t *testing.T
 		t.Fatalf("create read-write: %v", err)
 	}
 
-	req := UpdateLaunchDefaultsRequest{Region: "us-east-1", ClusterARN: "arn:aws:ecs:us-east-1:111111111111:cluster/karst", ExecutionRoleARN: "arn:aws:iam::111111111111:role/karst-exec", CPU: "256", Memory: "512", LogGroup: "/karst/estavelle", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1", "sg-2"}, PullCredentialsSecretARN: "arn:aws:secretsmanager:us-east-1:111111111111:secret:karst-estavelle-ghcr-pull"}
+	req := UpdateLaunchDefaultsRequest{Region: "us-east-1", ClusterARN: "arn:aws:ecs:us-east-1:111111111111:cluster/karst", ExecutionRoleARN: "arn:aws:iam::111111111111:role/karst-exec", CPU: "256", Memory: "512", LogGroup: "/karst/estavelle", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1", "sg-2"}, PullCredentialsSecretARN: "arn:aws:secretsmanager:us-east-1:111111111111:secret:karst-estavelle-ghcr-pull", ComputeType: "ec2", EC2CapacityProvider: "karst-estavelle-launch-defaults-asg"}
 	updated, err := s.UpdateLaunchDefaults(ctx, rw.ID, req)
 	if err != nil {
 		t.Fatalf("update launch defaults: %v", err)
 	}
-	if updated.LaunchClusterARN != req.ClusterARN || updated.LaunchSubnetID != req.SubnetID || len(updated.LaunchSecurityGroupIDs) != 2 || updated.LaunchPullCredentialsSecretARN != req.PullCredentialsSecretARN {
+	if updated.LaunchClusterARN != req.ClusterARN || updated.LaunchSubnetID != req.SubnetID || len(updated.LaunchSecurityGroupIDs) != 2 || updated.LaunchPullCredentialsSecretARN != req.PullCredentialsSecretARN || updated.LaunchComputeType != req.ComputeType || updated.LaunchEc2CapacityProvider != req.EC2CapacityProvider {
 		t.Fatalf("got %+v, want the request's own fields persisted", updated)
 	}
 
@@ -425,6 +425,41 @@ func TestActuationDriverRequiresCompleteAWSLaunchDefaults(t *testing.T) {
 	}
 	if _, err := s.ActuationDriver(ctx, ro.ID); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("got %v, want ErrInvalid for a read-only connection even with no launch defaults set", err)
+	}
+}
+
+func TestActuationDriverRequiresAnEc2CapacityProviderWhenComputeTypeIsEc2(t *testing.T) {
+	s := newTestStore(t, newTestEncryptor(t))
+	ctx := WithAccount(context.Background(), "acct-a")
+	rw, err := s.Create(ctx, awsRequest(t, ModeReadWrite))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Every other launch default is complete, but ComputeType=ec2 with no
+	// provider name must still be refused here, with a clear reason,
+	// rather than surfacing much later as an opaque CloudFormation
+	// parameter error.
+	if _, err := s.UpdateLaunchDefaults(ctx, rw.ID, UpdateLaunchDefaultsRequest{
+		Region: "us-east-1", ClusterARN: "arn:aws:ecs:us-east-1:111111111111:cluster/karst", ExecutionRoleARN: "arn:aws:iam::111111111111:role/karst-exec",
+		CPU: "256", Memory: "512", LogGroup: "/karst/estavelle", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1"},
+		ComputeType: "ec2",
+	}); err != nil {
+		t.Fatalf("update launch defaults: %v", err)
+	}
+	if _, err := s.ActuationDriver(ctx, rw.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("got %v, want ErrInvalid when compute_type is ec2 with no ec2_capacity_provider", err)
+	}
+
+	if _, err := s.UpdateLaunchDefaults(ctx, rw.ID, UpdateLaunchDefaultsRequest{
+		Region: "us-east-1", ClusterARN: "arn:aws:ecs:us-east-1:111111111111:cluster/karst", ExecutionRoleARN: "arn:aws:iam::111111111111:role/karst-exec",
+		CPU: "256", Memory: "512", LogGroup: "/karst/estavelle", SubnetID: "subnet-1", SecurityGroupIDs: []string{"sg-1"},
+		ComputeType: "ec2", EC2CapacityProvider: "karst-estavelle-launch-defaults-asg",
+	}); err != nil {
+		t.Fatalf("update launch defaults: %v", err)
+	}
+	if _, err := s.ActuationDriver(ctx, rw.ID); err != nil {
+		t.Fatalf("actuation driver: %v, want no error once ec2_capacity_provider is set", err)
 	}
 }
 

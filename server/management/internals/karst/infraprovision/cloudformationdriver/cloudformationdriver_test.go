@@ -340,3 +340,36 @@ func TestCreatePassesThePullCredentialsSecretArnFromLaunchDefaults(t *testing.T)
 		t.Fatalf("got PullCredentialsSecretArn %q, want %q", got, want)
 	}
 }
+
+func TestCreateDefaultsComputeTypeToFargateAndPassesEc2ValuesThrough(t *testing.T) {
+	ecsFake := newFakeECS()
+	cfn := newFakeCFN(ecsFake)
+	d := testDriver(cfn, ecsFake)
+	ctx := context.Background()
+
+	// Unset in LaunchDefaults (testDriver's own default, and every
+	// connection stored before ComputeType existed): the template's own
+	// Parameter must see "fargate" explicitly, not an empty string a
+	// stray third case could later be confused with.
+	if _, err := d.Create(ctx, "alloc-11", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-11", Image: testImage}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got := cfn.lastParams["ComputeType"]; got != "fargate" {
+		t.Fatalf("got ComputeType %q, want %q", got, "fargate")
+	}
+	if got := cfn.lastParams["Ec2CapacityProviderName"]; got != "" {
+		t.Fatalf("got Ec2CapacityProviderName %q, want empty", got)
+	}
+
+	d.defaults.ComputeType = "ec2"
+	d.defaults.Ec2CapacityProviderName = "karst-estavelle-launch-defaults-asg"
+	if _, err := d.Create(ctx, "alloc-12", infraprovision.CreateRequest{ControlAPIBase: "https://control.example", Token: "tok-12", Image: testImage}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got := cfn.lastParams["ComputeType"]; got != "ec2" {
+		t.Fatalf("got ComputeType %q, want %q", got, "ec2")
+	}
+	if got, want := cfn.lastParams["Ec2CapacityProviderName"], d.defaults.Ec2CapacityProviderName; got != want {
+		t.Fatalf("got Ec2CapacityProviderName %q, want %q", got, want)
+	}
+}

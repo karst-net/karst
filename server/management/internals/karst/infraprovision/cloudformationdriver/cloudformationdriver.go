@@ -89,8 +89,9 @@ const (
 const instanceTemplate = `AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
-  One estavelle ECS Fargate Spot service for one estavellealloc allocation
-  -- driven only by cloudformationdriver, never deployed by hand.
+  One estavelle ECS service (Fargate Spot, or EC2-backed for a Local Zone)
+  for one estavellealloc allocation -- driven only by cloudformationdriver,
+  never deployed by hand.
 
 Parameters:
   ClusterArn:
@@ -124,17 +125,25 @@ Parameters:
   PullCredentialsSecretArn:
     Type: String
     Default: ""
+  ComputeType:
+    Type: String
+    Default: fargate
+    AllowedValues: [fargate, ec2]
+  Ec2CapacityProviderName:
+    Type: String
+    Default: ""
 
 Conditions:
   HasPullCredentials: !Not [!Equals [!Ref PullCredentialsSecretArn, ""]]
+  UseEc2Capacity: !Equals [!Ref ComputeType, ec2]
 
 Resources:
   EstavelleTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub "karst-estavelle-${PoolId}"
-      RequiresCompatibilities: [FARGATE]
-      NetworkMode: awsvpc
+      RequiresCompatibilities: !If [UseEc2Capacity, [EC2], [FARGATE]]
+      NetworkMode: !If [UseEc2Capacity, bridge, awsvpc]
       Cpu: !Ref Cpu
       Memory: !Ref Memory
       ExecutionRoleArn: !Ref ExecutionRoleArn
@@ -148,8 +157,10 @@ Resources:
             - !Ref "AWS::NoValue"
           PortMappings:
             - ContainerPort: 443
+              HostPort: 443
               Protocol: tcp
             - ContainerPort: 443
+              HostPort: 443
               Protocol: udp
           Environment:
             - Name: KARST_CONTROL_API_BASE
@@ -173,14 +184,19 @@ Resources:
       Cluster: !Ref ClusterArn
       TaskDefinition: !Ref EstavelleTaskDefinition
       DesiredCount: 1
-      CapacityProviderStrategy:
-        - CapacityProvider: FARGATE_SPOT
-          Weight: 1
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          Subnets: [!Ref SubnetId]
-          SecurityGroups: !Ref SecurityGroupIds
-          AssignPublicIp: ENABLED
+      CapacityProviderStrategy: !If
+        - UseEc2Capacity
+        - - CapacityProvider: !Ref Ec2CapacityProviderName
+            Weight: 1
+        - - CapacityProvider: FARGATE_SPOT
+            Weight: 1
+      NetworkConfiguration: !If
+        - UseEc2Capacity
+        - !Ref "AWS::NoValue"
+        - AwsvpcConfiguration:
+            Subnets: [!Ref SubnetId]
+            SecurityGroups: !Ref SecurityGroupIds
+            AssignPublicIp: ENABLED
       EnableECSManagedTags: true
       PropagateTags: SERVICE
       Tags:
@@ -216,6 +232,29 @@ type LaunchDefaults struct {
 	// estavelle-launch-defaults.yaml's own header comment for how to
 	// create the secret and grant the execution role access to it.
 	PullCredentialsSecretARN string
+	// ComputeType is "fargate" (the default, including the empty string --
+	// every connection that predates this field) or "ec2". AWS Fargate is
+	// not supported in Local Zones at all; "ec2" actuates against the EC2
+	// capacity provider estavelle-launch-defaults.yaml's own ComputeType
+	// creates for exactly that case instead. See estavelle-instance.yaml's
+	// own header comment for why that path uses bridge networking rather
+	// than awsvpc.
+	ComputeType string
+	// Ec2CapacityProviderName is required when ComputeType is "ec2" --
+	// estavelle-launch-defaults.yaml's own Ec2CapacityProviderName output.
+	// Meaningless (and left empty) for the default, fargate, path.
+	Ec2CapacityProviderName string
+}
+
+// computeType defaults an empty LaunchDefaults.ComputeType to "fargate" --
+// every connection stored before this field existed has one, and an empty
+// column value must keep meaning exactly what it always meant rather than
+// becoming a new, third, unintended case.
+func (d LaunchDefaults) computeType() string {
+	if d.ComputeType == "" {
+		return "fargate"
+	}
+	return d.ComputeType
 }
 
 // cfnAPI/ecsAPI are the handful of calls this driver makes, narrowed so
@@ -389,6 +428,8 @@ func (d *Driver) Create(ctx context.Context, allocationID string, req infraprovi
 			{ParameterKey: aws.String("EnrollToken"), ParameterValue: aws.String(req.Token)},
 			{ParameterKey: aws.String("ControlApiCaPem"), ParameterValue: aws.String(req.ControlAPICACertPEM)},
 			{ParameterKey: aws.String("PullCredentialsSecretArn"), ParameterValue: aws.String(d.defaults.PullCredentialsSecretARN)},
+			{ParameterKey: aws.String("ComputeType"), ParameterValue: aws.String(d.defaults.computeType())},
+			{ParameterKey: aws.String("Ec2CapacityProviderName"), ParameterValue: aws.String(d.defaults.Ec2CapacityProviderName)},
 		},
 		Tags: []cftypes.Tag{{Key: aws.String(poolTagKey), Value: aws.String(allocationID)}},
 	})
