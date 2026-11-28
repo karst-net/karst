@@ -190,8 +190,8 @@ struct EnrollBundle {
 }
 
 /// The same registry-entry shape `pubkey` prints, but as the JSON
-/// `relayreg.Entry` the control server's `POST /karst/v1/relays/enroll`
-/// expects — see `server/management/internals/karst/relayreg/relayreg.go`.
+/// `estavellereg.Entry` the control server's `POST /karst/v1/estavelles/enroll`
+/// expects — see `server/management/internals/karst/estavellereg/estavellereg.go`.
 #[derive(Debug, serde::Serialize)]
 struct RegistryEntry<'a> {
     address: &'a str,
@@ -230,7 +230,7 @@ fn enroll_args(args: &[&str]) -> Result<(PathBuf, PathBuf), String> {
 
 /// Resolves `address` (`host:port`, where `host` may already be a
 /// literal IP or may be a DNS name) to one concrete `ip:port` --
-/// `relayreg.go`'s own `compile()` requires a literal
+/// `estavellereg.go`'s own `compile()` requires a literal
 /// `netip.ParseAddrPort`, matching `bins/karstd/src/netmap.rs::Relay::
 /// from_wire`'s own `SocketAddr`-only parse. `karst-scaler-k8s`'s own
 /// bundle writes a pod's stable DNS name here (chosen for its stability
@@ -409,7 +409,19 @@ fn extra_ca_certs(pem: &str) -> Result<Vec<CertificateDer<'static>>, String> {
     Ok(certs)
 }
 
-/// POSTs `entry` to `control_api_base`'s relay-enroll endpoint, bearing
+/// `control_api_base`'s own enroll endpoint -- split out so a stale path
+/// here (as this one was, `/karst/v1/relays/enroll` surviving ADR-0069's
+/// Relay→Estavelle rename on the server side) is a one-line unit test
+/// failure, not a 404 nobody notices until a real enroll call against a
+/// real server, which is how this one was actually found.
+fn enroll_url(control_api_base: &str) -> String {
+    format!(
+        "{}/karst/v1/estavelles/enroll",
+        control_api_base.trim_end_matches('/')
+    )
+}
+
+/// POSTs `entry` to `control_api_base`'s own enroll endpoint, bearing
 /// `token` — the one outbound HTTP call this crate makes; see
 /// `Cargo.toml`'s own comment on the `ureq` dependency this needs.
 fn enroll(control_api_base: &str, token: &str, entry: &RegistryEntry<'_>) -> Result<(), String> {
@@ -437,10 +449,7 @@ fn enroll(control_api_base: &str, token: &str, entry: &RegistryEntry<'_>) -> Res
     let config = ureq::Agent::config_builder().tls_config(tls_config).build();
     let agent = ureq::Agent::new_with_config(config);
 
-    let url = format!(
-        "{}/karst/v1/relays/enroll",
-        control_api_base.trim_end_matches('/')
-    );
+    let url = enroll_url(control_api_base);
     agent
         .post(&url)
         .header("Authorization", &format!("Bearer {token}"))
@@ -635,6 +644,22 @@ mod tests {
     #[test]
     fn extra_ca_certs_rejects_pem_with_no_certificate() {
         assert!(extra_ca_certs("not a pem file").is_err());
+    }
+
+    #[test]
+    fn enroll_url_matches_the_servers_own_route() {
+        // server/management/internals/karst/api/nodes.go registers
+        // POST /karst/v1/estavelles/enroll -- not /relays/enroll, the
+        // pre-ADR-0069 path this once silently regressed to.
+        assert_eq!(
+            enroll_url("https://control.example.test/api"),
+            "https://control.example.test/api/karst/v1/estavelles/enroll"
+        );
+        // A trailing slash on control_api_base must not double it.
+        assert_eq!(
+            enroll_url("https://control.example.test/api/"),
+            "https://control.example.test/api/karst/v1/estavelles/enroll"
+        );
     }
 
     #[test]

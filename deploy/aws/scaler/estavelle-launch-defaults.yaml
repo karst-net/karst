@@ -233,10 +233,24 @@ Resources:
     Properties:
       LaunchTemplateData:
         ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id}}"
-        InstanceType: t3.small
+        # Local Zones offer a far smaller instance-type catalog than the
+        # parent region -- t3.small is not in it (confirmed via
+        # ec2:DescribeInstanceTypeOfferings against a real Local Zone);
+        # t3.medium is the smallest burstable type that is.
+        InstanceType: t3.medium
         IamInstanceProfile:
           Arn: !GetAtt EstavelleEc2InstanceProfile.Arn
         SecurityGroupIds: [!Ref EstavelleSecurityGroup]
+        # The AMI's own default root volume is gp3 -- not supported in
+        # every opted-in Local Zone (confirmed: us-west-2-den-1 refuses
+        # it outright, "Instance launch can not be fulfilled"). gp2 is
+        # the one EBS volume type every zone, Local or otherwise,
+        # supports.
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeType: gp2
+              VolumeSize: 30
         UserData: !Base64
           Fn::Sub: |
             #!/bin/bash
