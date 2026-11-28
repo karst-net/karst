@@ -888,6 +888,24 @@ func (e EstavelleUsageReportCoverage) Valid() bool {
 	}
 }
 
+// Defines values for InfrastructureConnectionLaunchComputeType.
+const (
+	InfrastructureConnectionLaunchComputeTypeEc2     InfrastructureConnectionLaunchComputeType = "ec2"
+	InfrastructureConnectionLaunchComputeTypeFargate InfrastructureConnectionLaunchComputeType = "fargate"
+)
+
+// Valid indicates whether the value is a known member of the InfrastructureConnectionLaunchComputeType enum.
+func (e InfrastructureConnectionLaunchComputeType) Valid() bool {
+	switch e {
+	case InfrastructureConnectionLaunchComputeTypeEc2:
+		return true
+	case InfrastructureConnectionLaunchComputeTypeFargate:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InfrastructureConnectionMode.
 const (
 	InfrastructureConnectionModeReadOnly  InfrastructureConnectionMode = "read_only"
@@ -996,6 +1014,24 @@ func (e InfrastructureConnectionCreateType) Valid() bool {
 	case InfrastructureConnectionCreateTypeLxd:
 		return true
 	case InfrastructureConnectionCreateTypeNomad:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InfrastructureConnectionLaunchDefaultsComputeType.
+const (
+	InfrastructureConnectionLaunchDefaultsComputeTypeEc2     InfrastructureConnectionLaunchDefaultsComputeType = "ec2"
+	InfrastructureConnectionLaunchDefaultsComputeTypeFargate InfrastructureConnectionLaunchDefaultsComputeType = "fargate"
+)
+
+// Valid indicates whether the value is a known member of the InfrastructureConnectionLaunchDefaultsComputeType enum.
+func (e InfrastructureConnectionLaunchDefaultsComputeType) Valid() bool {
+	switch e {
+	case InfrastructureConnectionLaunchDefaultsComputeTypeEc2:
+		return true
+	case InfrastructureConnectionLaunchDefaultsComputeTypeFargate:
 		return true
 	default:
 		return false
@@ -2623,18 +2659,24 @@ type GroupLocation struct {
 
 // InfrastructureConnection defines model for InfrastructureConnection.
 type InfrastructureConnection struct {
-	CreatedAt              *time.Time `json:"created_at,omitempty"`
-	Id                     *string    `json:"id,omitempty"`
-	Label                  *string    `json:"label,omitempty"`
-	LastError              *string    `json:"last_error,omitempty"`
-	LastValidatedAt        *time.Time `json:"last_validated_at,omitempty"`
-	Lat                    *float32   `json:"lat,omitempty"`
-	LaunchClusterArn       *string    `json:"launch_cluster_arn,omitempty"`
-	LaunchCpu              *string    `json:"launch_cpu,omitempty"`
-	LaunchExecutionRoleArn *string    `json:"launch_execution_role_arn,omitempty"`
-	LaunchKubernetesCpu    *string    `json:"launch_kubernetes_cpu,omitempty"`
-	LaunchKubernetesImage  *string    `json:"launch_kubernetes_image,omitempty"`
-	LaunchKubernetesMemory *string    `json:"launch_kubernetes_memory,omitempty"`
+	CreatedAt        *time.Time `json:"created_at,omitempty"`
+	Id               *string    `json:"id,omitempty"`
+	Label            *string    `json:"label,omitempty"`
+	LastError        *string    `json:"last_error,omitempty"`
+	LastValidatedAt  *time.Time `json:"last_validated_at,omitempty"`
+	Lat              *float32   `json:"lat,omitempty"`
+	LaunchClusterArn *string    `json:"launch_cluster_arn,omitempty"`
+
+	// LaunchComputeType fargate (the default, including empty) for a normal AZ/region. ec2 for a Local Zone target -- AWS Fargate is not supported there at all -- actuating instead against the EC2 capacity provider launch_ec2_capacity_provider names.
+	LaunchComputeType *InfrastructureConnectionLaunchComputeType `json:"launch_compute_type,omitempty"`
+	LaunchCpu         *string                                    `json:"launch_cpu,omitempty"`
+
+	// LaunchEc2CapacityProvider Required when launch_compute_type is ec2
+	LaunchEc2CapacityProvider *string `json:"launch_ec2_capacity_provider,omitempty"`
+	LaunchExecutionRoleArn    *string `json:"launch_execution_role_arn,omitempty"`
+	LaunchKubernetesCpu       *string `json:"launch_kubernetes_cpu,omitempty"`
+	LaunchKubernetesImage     *string `json:"launch_kubernetes_image,omitempty"`
+	LaunchKubernetesMemory    *string `json:"launch_kubernetes_memory,omitempty"`
 
 	// LaunchKubernetesNamespace ADR-0067. The Kubernetes launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Kubernetes connection, set via PUT .../kubernetes-launch-defaults.
 	LaunchKubernetesNamespace      *string `json:"launch_kubernetes_namespace,omitempty"`
@@ -2664,6 +2706,9 @@ type InfrastructureConnection struct {
 	SupportsAllocation bool                         `json:"supports_allocation"`
 	Type               InfrastructureConnectionType `json:"type"`
 }
+
+// InfrastructureConnectionLaunchComputeType fargate (the default, including empty) for a normal AZ/region. ec2 for a Local Zone target -- AWS Fargate is not supported there at all -- actuating instead against the EC2 capacity provider launch_ec2_capacity_provider names.
+type InfrastructureConnectionLaunchComputeType string
 
 // InfrastructureConnectionMode defines model for InfrastructureConnection.Mode.
 type InfrastructureConnectionMode string
@@ -2704,11 +2749,17 @@ type InfrastructureConnectionKubernetesLaunchDefaults struct {
 
 // InfrastructureConnectionLaunchDefaults ADR-0045's 2026-11-04 addendum; ADR-0067's CloudFormation actuation path. Every field replaces the stored value, including to empty -- there is no partial-update shape. Only meaningful for a read-write AWS connection; refused otherwise. Actuates as an ECS Fargate Spot service: cluster_arn/execution_role_arn/cpu/memory/log_group size and place the task, and there is no AMI id here -- an allocation's own desired/running image already supplies a real ghcr.io/karst-net/karst-estavelle:<tag> reference.
 type InfrastructureConnectionLaunchDefaults struct {
-	ClusterArn       *string `json:"cluster_arn,omitempty"`
-	Cpu              *string `json:"cpu,omitempty"`
-	ExecutionRoleArn *string `json:"execution_role_arn,omitempty"`
-	LogGroup         *string `json:"log_group,omitempty"`
-	Memory           *string `json:"memory,omitempty"`
+	ClusterArn *string `json:"cluster_arn,omitempty"`
+
+	// ComputeType Optional. See InfrastructureConnection.launch_compute_type.
+	ComputeType *InfrastructureConnectionLaunchDefaultsComputeType `json:"compute_type,omitempty"`
+	Cpu         *string                                            `json:"cpu,omitempty"`
+
+	// Ec2CapacityProvider Optional. See InfrastructureConnection.launch_ec2_capacity_provider.
+	Ec2CapacityProvider *string `json:"ec2_capacity_provider,omitempty"`
+	ExecutionRoleArn    *string `json:"execution_role_arn,omitempty"`
+	LogGroup            *string `json:"log_group,omitempty"`
+	Memory              *string `json:"memory,omitempty"`
 
 	// PullCredentialsSecretArn Optional. See InfrastructureConnection.launch_pull_credentials_secret_arn.
 	PullCredentialsSecretArn *string   `json:"pull_credentials_secret_arn,omitempty"`
@@ -2716,6 +2767,9 @@ type InfrastructureConnectionLaunchDefaults struct {
 	SecurityGroupIds         *[]string `json:"security_group_ids,omitempty"`
 	SubnetId                 *string   `json:"subnet_id,omitempty"`
 }
+
+// InfrastructureConnectionLaunchDefaultsComputeType Optional. See InfrastructureConnection.launch_compute_type.
+type InfrastructureConnectionLaunchDefaultsComputeType string
 
 // InfrastructureConnectionNomadLaunchDefaults ADR-0067. The Nomad analog of InfrastructureConnectionLaunchDefaults -- every field replaces the stored value, including to empty. Only meaningful for a read-write Nomad connection; refused otherwise. job_id names a parameterized job the operator has already registered against this connection's Nomad cluster; this endpoint does not register or validate the job itself.
 type InfrastructureConnectionNomadLaunchDefaults struct {

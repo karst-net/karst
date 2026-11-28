@@ -29,7 +29,17 @@
 #     --stack-name karst-estavelle-launch-defaults \
 #     --template-file deploy/aws/scaler/estavelle-launch-defaults.yaml \
 #     --capabilities CAPABILITY_NAMED_IAM \
-#     --parameter-overrides VpcId=vpc-xxxx SubnetId=subnet-xxxx
+#     --parameter-overrides AvailabilityZone=us-west-2-den-1a
+#
+# Self-contained and isolated by design: this stack creates its own VPC
+# (never an existing one an operator might also keep other resources in),
+# its own Internet Gateway, route table, and one subnet in the
+# AvailabilityZone you name -- a normal AZ or an opted-in Local Zone, both
+# work identically once opted in (`aws ec2 describe-availability-zones
+# --all-availability-zones`). Tearing down this stack and the
+# per-allocation ones it spawns is then always exactly `aws cloudformation
+# delete-stack`, never a leftover subnet or security group to hunt down by
+# hand in a shared VPC.
 #
 # This stack deliberately does NOT create an IAM access key or put one in
 # Outputs: CloudFormation's NoEcho attribute only applies to Parameters, not
@@ -51,19 +61,42 @@
 # repo does not make its package public by default). If it is, a Fargate
 # task has no registry credentials of its own and every pull fails with
 # 401 Unauthorized, even though the image exists and the task's own
-# networking is otherwise fine. Fix: create a Secrets Manager secret
-# holding a classic PAT scoped to read:packages only (ideally from a
-# bot/service account, not a personal one), pass its ARN as this stack's
-# own PullCredentialsSecretArn parameter so the execution role above can
-# read it, and paste the same ARN into the console's launch defaults
-# (InfrastructureConnectionLaunchDefaults.pull_credentials_secret_arn) so
-# cloudformationdriver passes it to every per-allocation instance stack:
+# networking is otherwise fine. This stack always creates a Secrets Manager
+# secret and grants the execution role read access to it (for the same
+# "simple teardown, nothing to hunt down by hand" reason the VPC above is
+# self-contained) -- but, the same as the access key above, CloudFormation
+# never sees the real credential. Fill it in once, outside CloudFormation's
+# own state, with a classic PAT scoped to read:packages only (ideally from
+# a bot/service account, not a personal one):
 #
-#   aws secretsmanager create-secret --name karst-estavelle-ghcr-pull \
+#   secret=$(aws cloudformation describe-stacks --stack-name karst-estavelle-launch-defaults \
+#     --query "Stacks[0].Outputs[?OutputKey=='PullCredentialsSecretArn'].OutputValue" --output text)
+#   aws secretsmanager put-secret-value --secret-id "$secret" \
 #     --secret-string '{"username":"<gh-username>","password":"<classic PAT>"}'
 #
-# Leave PullCredentialsSecretArn empty (the default) if the package is
-# public -- ECS will then pull anonymously, as this file originally assumed.
+# Then paste that same ARN into the console's launch defaults
+# (InfrastructureConnectionLaunchDefaults.pull_credentials_secret_arn) so
+# cloudformationdriver passes it to every per-allocation instance stack. If
+# the image is actually public, leave the secret at its placeholder value --
+# estavelle-instance.yaml's own RepositoryCredentials is only ever set when
+# the connection's own launch defaults name a secret ARN at all, so an
+# operator who never pastes one in gets today's anonymous-pull behavior
+# unchanged, same as before this stack always created the secret.
+#
+# AWS Fargate is not supported in Local Zones at all (confirmed against
+# AWS's own ECS docs) -- a Fargate-targeted AllocatorPolicy and a
+# Local-Zone AvailabilityZone above will create cleanly and then never
+# place a single task, with zero ECS events, forever. Pass
+# ComputeType=ec2 for a Local Zone AvailabilityZone (keep the default,
+# `fargate`, for a normal AZ/region): this additionally stands up an
+# Auto Scaling Group of ECS-optimized EC2 instances as a second capacity
+# provider on the same cluster. AllocatorPolicy needs no new permissions
+# for this either way -- the AllocatorUser only ever touches the
+# per-allocation Service/TaskDefinition, never the ASG/capacity
+# provider/instances directly; ECS's own managed scaling handles those.
+# Paste the new Ec2CapacityProviderName output into the console's launch
+# defaults (InfrastructureConnectionLaunchDefaults.ec2_capacity_provider)
+# alongside compute_type=ec2.
 
 AWSTemplateFormatVersion: "2010-09-09"
 
@@ -73,41 +106,177 @@ Description: >
   AWS infrastructure connection launch defaults.
 
 Parameters:
-  VpcId:
-    Type: AWS::EC2::VPC::Id
-    Description: VPC the estavelle's subnet lives in.
-  SubnetId:
-    Type: AWS::EC2::Subnet::Id
-    Description: >
-      Subnet to place estavelle tasks' ENIs into -- must already be one of
-      the console's Authorized Locations resources, and must route to the
-      internet (an IGW or NAT) so the task can pull its own public image
-      and reach the control API.
-  PullCredentialsSecretArn:
+  AvailabilityZone:
     Type: String
-    Default: ""
     Description: >
-      Optional. An already-existing Secrets Manager secret ARN (see this
-      file's own header comment) the execution role below is granted
-      secretsmanager:GetSecretValue on -- needed only if
-      ghcr.io/karst-net/karst-estavelle is a private package. Empty (the
-      default) grants nothing extra; the execution role stays scoped to
-      log delivery only.
+      Where the estavelle's own subnet lives -- a normal AZ (e.g.
+      us-west-2a) or an opted-in Local Zone (e.g. us-west-2-den-1a), both
+      work identically once opted in. No default: a Local Zone's own
+      geography is exactly the reason to pick this template over picking
+      whichever AZ happened to already have a subnet.
+  VpcCidr:
+    Type: String
+    Default: 10.42.0.0/16
+    Description: >
+      This stack's own, isolated VPC -- never an existing one, so a
+      teardown is always exactly `aws cloudformation delete-stack`, never
+      a leftover subnet or security group to find by hand in a shared VPC.
+  SubnetCidr:
+    Type: String
+    Default: 10.42.0.0/24
+    Description: Must fall within VpcCidr.
+  ComputeType:
+    Type: String
+    Default: fargate
+    AllowedValues: [fargate, ec2]
+    Description: >
+      fargate (the default) for a normal AZ/region. ec2 for a Local Zone
+      AvailabilityZone -- Fargate is not supported there at all (see this
+      file's own header comment) -- which additionally stands up an Auto
+      Scaling Group of ECS-optimized EC2 instances as a second capacity
+      provider on the same cluster.
 
 Conditions:
-  HasPullCredentials: !Not [!Equals [!Ref PullCredentialsSecretArn, ""]]
+  UseEc2Capacity: !Equals [!Ref ComputeType, ec2]
 
 Resources:
+  EstavelleVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  EstavelleInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  EstavelleVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref EstavelleVpc
+      InternetGatewayId: !Ref EstavelleInternetGateway
+
+  # One route table, one subnet: this stack's whole point is a single
+  # estavelle launch point, not a multi-AZ network -- a second subnet is
+  # exactly as easy to add later as it would be to carry unused today.
+  EstavelleRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref EstavelleVpc
+
+  EstavelleDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: EstavelleVpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref EstavelleRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref EstavelleInternetGateway
+
+  EstavelleSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref EstavelleVpc
+      CidrBlock: !Ref SubnetCidr
+      AvailabilityZone: !Ref AvailabilityZone
+      # estavelle-instance.yaml's own task definition sets
+      # AssignPublicIp: ENABLED explicitly regardless, but a subnet that
+      # does not hand out public IPs by default is a surprise for
+      # anything else ever placed in this stack's own VPC.
+      MapPublicIpOnLaunch: true
+
+  EstavelleSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref EstavelleSubnet
+      RouteTableId: !Ref EstavelleRouteTable
+
   EstavelleCluster:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: !Sub "${AWS::StackName}-cluster"
 
+  # The EC2 agent's own role -- just enough to register itself as a
+  # container instance and ship its own logs, the EC2 analog of
+  # EstavelleExecutionRole above (which stays Fargate's own execution
+  # role either way: an EC2 container instance's agent, not its task,
+  # needs this one).
+  EstavelleEc2InstanceRole:
+    Type: AWS::IAM::Role
+    Condition: UseEc2Capacity
+    Properties:
+      RoleName: !Sub "karst-estavelle-ec2-instance-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+
+  EstavelleEc2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: UseEc2Capacity
+    Properties:
+      Roles: [!Ref EstavelleEc2InstanceRole]
+
+  # The ECS-optimized AMI is resolved at deploy time, not pinned here --
+  # the same reasoning this whole mechanism already applies to
+  # karst-estavelle's own image (ADR-0067: no operator-run AMI-build
+  # pipeline to maintain). UserData's only job is pointing the preinstalled
+  # ECS agent at this stack's own cluster; everything else about the
+  # instance is this template's concern, not a per-instance one.
+  EstavelleLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: UseEc2Capacity
+    Properties:
+      LaunchTemplateData:
+        ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id}}"
+        InstanceType: t3.small
+        IamInstanceProfile:
+          Arn: !GetAtt EstavelleEc2InstanceProfile.Arn
+        SecurityGroupIds: [!Ref EstavelleSecurityGroup]
+        UserData: !Base64
+          Fn::Sub: |
+            #!/bin/bash
+            echo ECS_CLUSTER=${EstavelleCluster} >> /etc/ecs/ecs.config
+
+  # MinSize/DesiredCapacity 0: ECS's own ManagedScaling below is what
+  # actually drives this up and down as allocations come and go --
+  # nothing here keeps an instance running when no estavelle needs one.
+  EstavelleAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: UseEc2Capacity
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-asg"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref EstavelleLaunchTemplate
+        Version: !GetAtt EstavelleLaunchTemplate.LatestVersionNumber
+      MinSize: "0"
+      MaxSize: "5"
+      DesiredCapacity: "0"
+      VPCZoneIdentifier: [!Ref EstavelleSubnet]
+
+  EstavelleEc2CapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Condition: UseEc2Capacity
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref EstavelleAutoScalingGroup
+        ManagedScaling:
+          Status: ENABLED
+          TargetCapacity: 100
+        ManagedTerminationProtection: DISABLED
+
   EstavelleClusterCapacityProviders:
     Type: AWS::ECS::ClusterCapacityProviderAssociations
     Properties:
       Cluster: !Ref EstavelleCluster
-      CapacityProviders: [FARGATE, FARGATE_SPOT]
+      CapacityProviders: !If
+        - UseEc2Capacity
+        - [FARGATE, FARGATE_SPOT, !Ref EstavelleEc2CapacityProvider]
+        - [FARGATE, FARGATE_SPOT]
       DefaultCapacityProviderStrategy:
         - CapacityProvider: FARGATE_SPOT
           Weight: 1
@@ -125,7 +294,7 @@ Resources:
         Karst estavelle transport -- Ponor spec Section 4.1 TCP/TLS listener
         (port 443 by default) and ADR-0020 additive QUIC listener on the
         same port number over UDP.
-      VpcId: !Ref VpcId
+      VpcId: !Ref EstavelleVpc
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 443
@@ -141,11 +310,25 @@ Resources:
         - Key: Name
           Value: !Sub "${AWS::StackName}-estavelle"
 
-  # The Fargate agent's own role -- log delivery always, plus (via the
-  # conditional policy below) permission to read the pull-credentials
-  # secret if ghcr.io/karst-net/karst-estavelle turns out to be a private
-  # package rather than the public one this mechanism was designed around
-  # (see this file's own header comment).
+  # A real value is never in this template's own state -- see the header
+  # comment's put-secret-value command. The placeholder lets the stack
+  # create successfully (Secrets Manager requires some initial value) and
+  # is obviously not a usable credential if a Fargate task ever pulls
+  # before an operator fills in the real one.
+  EstavellePullCredentialsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}-ghcr-pull"
+      Description: >-
+        GHCR pull credentials for a private ghcr.io/karst-net/karst-estavelle
+        image -- see estavelle-launch-defaults.yaml's own header comment.
+      SecretString: '{"username":"REPLACE_ME","password":"REPLACE_ME"}'
+
+  # The Fargate agent's own role -- log delivery, and permission to read
+  # the pull-credentials secret above. Always granted, even before an
+  # operator fills in a real credential: this stack's own point is being
+  # self-contained, not conditioning IAM on whether that step has
+  # happened yet.
   EstavelleExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -164,24 +347,13 @@ Resources:
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !GetAtt EstavelleLogGroup.Arn
-
-  # A separate resource (not a second statement on the Policies list
-  # above) so the whole thing can be skipped outright via Condition when
-  # ghcr.io/karst-net/karst-estavelle is public and this was never set --
-  # an empty-string Resource on an always-present statement would instead
-  # be a policy CloudFormation accepts but that can never match anything.
-  EstavelleExecutionPullCredentialsPolicy:
-    Type: AWS::IAM::Policy
-    Condition: HasPullCredentials
-    Properties:
-      PolicyName: karst-estavelle-execution-pull-credentials
-      Roles: [!Ref EstavelleExecutionRole]
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Action: secretsmanager:GetSecretValue
-            Resource: !Ref PullCredentialsSecretArn
+        - PolicyName: karst-estavelle-execution-pull-credentials
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref EstavellePullCredentialsSecret
 
   AllocatorUser:
     Type: AWS::IAM::User
@@ -252,6 +424,21 @@ Resources:
             Condition:
               StringEquals:
                 "iam:PassedToService": ecs-tasks.amazonaws.com
+          # CloudFormation validates estavelle-instance.yaml's own
+          # AWS::EC2::Subnet::Id/List<AWS::EC2::SecurityGroup::Id>-typed
+          # parameters by calling these Describe APIs as the caller
+          # (this user) when it creates that stack -- without them,
+          # CreateStack itself fails outright with AccessDenied before a
+          # single resource is touched. Neither API supports
+          # resource-level ARNs to scope further; read-only, so "*" is
+          # the correct shape here, the same reasoning
+          # KarstEstavelleEcsTagResources above already uses.
+          - Sid: KarstEstavelleDescribeNetworking
+            Effect: Allow
+            Action:
+              - ec2:DescribeSubnets
+              - ec2:DescribeSecurityGroups
+            Resource: "*"
 
 Outputs:
   ClusterArn:
@@ -264,13 +451,27 @@ Outputs:
     Description: Launch defaults -- CloudWatch Logs group name
     Value: !Ref EstavelleLogGroup
   SubnetId:
-    Description: Launch defaults -- Subnet id (as given)
-    Value: !Ref SubnetId
+    Description: Launch defaults -- this stack's own, newly created subnet id.
+    Value: !Ref EstavelleSubnet
   SecurityGroupId:
     Description: Launch defaults -- Security group id
     Value: !GetAtt EstavelleSecurityGroup.GroupId
+  PullCredentialsSecretArn:
+    Description: >
+      Launch defaults -- Secrets Manager secret ARN for GHCR pull
+      credentials. Fill in the real credential with put-secret-value (see
+      this file's own header comment) before pasting this into the
+      console.
+    Value: !Ref EstavellePullCredentialsSecret
   AllocatorUserName:
     Description: >
       IAM user to mint an access key for (see this file's header comment --
       CloudFormation never sees or stores the key itself).
     Value: !Ref AllocatorUser
+  Ec2CapacityProviderName:
+    Description: >
+      Launch defaults -- empty unless ComputeType=ec2, in which case this
+      is the capacity provider name to paste into the console's launch
+      defaults (InfrastructureConnectionLaunchDefaults.ec2_capacity_provider)
+      alongside compute_type=ec2.
+    Value: !If [UseEc2Capacity, !Ref EstavelleEc2CapacityProvider, ""]

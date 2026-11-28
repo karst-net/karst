@@ -1051,6 +1051,14 @@ export type InfrastructureConnection = {
      */
     launch_pull_credentials_secret_arn?: string;
     /**
+     * fargate (the default, including empty) for a normal AZ/region. ec2 for a Local Zone target -- AWS Fargate is not supported there at all -- actuating instead against the EC2 capacity provider launch_ec2_capacity_provider names.
+     */
+    launch_compute_type?: 'fargate' | 'ec2';
+    /**
+     * Required when launch_compute_type is ec2
+     */
+    launch_ec2_capacity_provider?: string;
+    /**
      * ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
      */
     launch_nomad_job_id?: string;
@@ -1085,6 +1093,14 @@ export type InfrastructureConnectionLaunchDefaults = {
      * Optional. See InfrastructureConnection.launch_pull_credentials_secret_arn.
      */
     pull_credentials_secret_arn?: string;
+    /**
+     * Optional. See InfrastructureConnection.launch_compute_type.
+     */
+    compute_type?: 'fargate' | 'ec2';
+    /**
+     * Optional. See InfrastructureConnection.launch_ec2_capacity_provider.
+     */
+    ec2_capacity_provider?: string;
 };
 
 /**
@@ -1426,6 +1442,14 @@ export type InfrastructureConnectionWritable = {
      * Optional. An AWS Secrets Manager secret ARN (holding {"username","password"}) the ECS task execution role may read to pull a private ghcr.io/karst-net/karst-estavelle image -- empty (the default) means an anonymous/public pull, unchanged from before this field existed.
      */
     launch_pull_credentials_secret_arn?: string;
+    /**
+     * fargate (the default, including empty) for a normal AZ/region. ec2 for a Local Zone target -- AWS Fargate is not supported there at all -- actuating instead against the EC2 capacity provider launch_ec2_capacity_provider names.
+     */
+    launch_compute_type?: 'fargate' | 'ec2';
+    /**
+     * Required when launch_compute_type is ec2
+     */
+    launch_ec2_capacity_provider?: string;
     /**
      * ADR-0067. The Nomad launch shape an ADR-0063 relay allocation actuates against -- meaningful only for a read-write Nomad connection, set via PUT .../nomad-launch-defaults.
      */

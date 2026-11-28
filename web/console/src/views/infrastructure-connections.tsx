@@ -22,6 +22,7 @@ type ConnectionMode = InfrastructureConnection["mode"];
 type LaunchDefaultsDraft = {
   region: string; clusterArn: string; executionRoleArn: string; cpu: string; memory: string;
   logGroup: string; subnetId: string; securityGroupIds: string; pullCredentialsSecretArn: string;
+  computeType: "fargate" | "ec2"; ec2CapacityProvider: string;
 };
 function blankLaunchDefaultsDraft(connection: InfrastructureConnection): LaunchDefaultsDraft {
   return {
@@ -31,6 +32,8 @@ function blankLaunchDefaultsDraft(connection: InfrastructureConnection): LaunchD
     subnetId: connection.launch_subnet_id ?? "",
     securityGroupIds: (connection.launch_security_group_ids ?? []).join(", "),
     pullCredentialsSecretArn: connection.launch_pull_credentials_secret_arn ?? "",
+    computeType: connection.launch_compute_type ?? "fargate",
+    ec2CapacityProvider: connection.launch_ec2_capacity_provider ?? "",
   };
 }
 
@@ -160,6 +163,8 @@ export function InfrastructureConnections() {
       subnet_id: launchDefaultsDraft.subnetId.trim(),
       security_group_ids: launchDefaultsDraft.securityGroupIds.split(/[\n,]/).map((id) => id.trim()).filter(Boolean),
       pull_credentials_secret_arn: launchDefaultsDraft.pullCredentialsSecretArn.trim(),
+      compute_type: launchDefaultsDraft.computeType,
+      ec2_capacity_provider: launchDefaultsDraft.ec2CapacityProvider.trim(),
     };
     if (await run(() => api.updateInfrastructureConnectionLaunchDefaults(launchDefaultsFor.id, defaults), `Launch defaults for ${launchDefaultsFor.label || launchDefaultsFor.type} were saved.`)) {
       setLaunchDefaultsFor(undefined);
@@ -296,6 +301,11 @@ export function InfrastructureConnections() {
         <label>Subnet ID<input aria-label="Launch subnet ID" placeholder="subnet-0123456789abcdef0" required value={launchDefaultsDraft.subnetId} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, subnetId: event.target.value })} /></label>
         <label>Security group IDs<textarea aria-label="Launch security group IDs" rows={3} placeholder={"sg-0123456789abcdef0\nsg-0123456789abcdef1"} required value={launchDefaultsDraft.securityGroupIds} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, securityGroupIds: event.target.value })} /></label>
         <label>Pull credentials secret ARN (optional)<input aria-label="Launch pull credentials secret ARN" placeholder="arn:aws:secretsmanager:us-east-1:111111111111:secret:karst-estavelle-ghcr-pull" value={launchDefaultsDraft.pullCredentialsSecretArn} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, pullCredentialsSecretArn: event.target.value })} /></label>
+        <label>Compute type<select aria-label="Launch compute type" value={launchDefaultsDraft.computeType} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, computeType: event.target.value as "fargate" | "ec2" })}>
+          <option value="fargate">Fargate (normal AZ/region)</option>
+          <option value="ec2">EC2 (Local Zone -- Fargate is not supported there)</option>
+        </select></label>
+        <label>EC2 capacity provider (required if compute type is EC2)<input aria-label="Launch EC2 capacity provider" placeholder="karst-estavelle-launch-defaults-asg" value={launchDefaultsDraft.ec2CapacityProvider} onChange={(event) => setLaunchDefaultsDraft((current) => current && { ...current, ec2CapacityProvider: event.target.value })} /></label>
         <p className="lede">One per line or comma-separated.</p>
         <div className="actions"><button type="button" onClick={() => setLaunchDefaultsFor(undefined)}>Cancel</button><button className="primary" type="submit">Save launch defaults</button></div>
       </form>}
